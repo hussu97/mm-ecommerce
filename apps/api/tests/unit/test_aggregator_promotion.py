@@ -4,12 +4,14 @@ pure mapping logic, without a DB.
 The DB write paths run against Postgres in production; what is pinned here is the
 logic that would go wrong silently: which branch owns an order, that a
 GrubOps-owned Barsha/Sharjah order is never re-created, the status vocabulary per
-channel, and the money mapping.
+channel, the money mapping, modifier→snapshot conversion, customer field fill,
+and per-rung timestamp selection.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -17,6 +19,7 @@ import pytest
 
 from app.models.order import OrderStatusEnum
 from app.services.aggregators import promote
+from app.services.aggregators.normalized import StandardModifier
 
 
 def _agg(**over):
@@ -40,6 +43,9 @@ def _agg(**over):
 
 class _FakeDB:
     async def flush(self):
+        return None
+
+    async def execute(self, _stmt):
         return None
 
 
@@ -290,3 +296,219 @@ async def test_approved_override_wins_over_name_match(monkeypatch):
     )
     assert db.calls == 0  # never reached the direct name query
     assert called["proposal"] == 0  # an approved override records no proposal
+
+
+# ── modifier → snapshot ──────────────────────────────────────────────────────
+
+
+class _OptionDB:
+    """Fake db for modifier snapshot tests. Always returns no approved map."""
+
+    def __init__(self, *, opt_id=None):
+        self._opt_id = opt_id
+        self.proposals: list[str] = []
+        self.execute_calls = 0
+
+    async def execute(self, _stmt):
+        self.execute_calls += 1
+
+        class _R:
+            def first(inner_self):
+                return None
+
+        return _R()
+
+
+async def test_modifier_snapshot_with_quantity(monkeypatch):
+    """Modifiers round-trip through the snapshot with the correct quantity field."""
+
+    async def _no_opt(db, system, name, *, ref=None):
+        return None, None, None
+
+    proposals: list[str] = []
+
+    async def _record_opt(db, system, name, *, ref=None, guess_modifier_option_id=None):
+        proposals.append(name)
+
+    monkeypatch.setattr(promote.external_item_map_service, "resolve_option", _no_opt)
+    monkeypatch.setattr(
+        promote.external_item_map_service, "record_option_proposal", _record_opt
+    )
+
+    mods = [
+        StandardModifier(
+            name="Dark Chocolate", quantity=Decimal("2"), unit_price=Decimal("3.00")
+        ),
+        StandardModifier(
+            name="Caramel Sauce", quantity=Decimal("1"), unit_price=Decimal("1.50")
+        ),
+    ]
+    db = _OptionDB()
+    snapshot, options_price = await promote._build_modifier_snapshot(
+        db, "deliveroo", mods
+    )
+
+    assert len(snapshot) == 2
+    assert snapshot[0]["option_name"] == "Dark Chocolate"
+    assert snapshot[0]["quantity"] == 2
+    assert snapshot[0]["option_price"] == 3.00
+    assert snapshot[1]["option_name"] == "Caramel Sauce"
+    assert snapshot[1]["quantity"] == 1
+
+    # options_price = (3.00 * 2) + (1.50 * 1)
+    assert options_price == Decimal("7.50")
+
+    # Both names proposed for review since no approved map exists.
+    assert set(proposals) == {"Dark Chocolate", "Caramel Sauce"}
+
+
+async def test_modifier_snapshot_unknown_price_contributes_zero(monkeypatch):
+    """A modifier with no price from the aggregator does not invent a price."""
+
+    async def _no_opt(db, system, name, *, ref=None):
+        return None, None, None
+
+    async def _noop_record(db, system, name, **kw):
+        pass
+
+    monkeypatch.setattr(promote.external_item_map_service, "resolve_option", _no_opt)
+    monkeypatch.setattr(
+        promote.external_item_map_service, "record_option_proposal", _noop_record
+    )
+
+    mods = [
+        StandardModifier(name="Extra Nuts", quantity=Decimal("1"), unit_price=None),
+        StandardModifier(
+            name="Brownie", quantity=Decimal("2"), unit_price=Decimal("5.00")
+        ),
+    ]
+    db = _OptionDB()
+    snapshot, options_price = await promote._build_modifier_snapshot(db, "keeta", mods)
+
+    # Extra Nuts has no price → contributes 0; Brownie contributes 5.00 * 2 = 10.00
+    assert options_price == Decimal("10.00")
+    assert snapshot[0]["option_price"] == 0.0
+    assert snapshot[1]["option_price"] == 5.0
+
+
+async def test_modifier_snapshot_approved_map_sets_option_id(monkeypatch):
+    """An approved option map row links modifier_option_id in the snapshot."""
+    opt_uuid = uuid.uuid4()
+
+    async def _approved(db, system, name, *, ref=None):
+        if name == "Salted Caramel":
+            return opt_uuid, "Salted Caramel", Decimal("2.00")
+        return None, None, None
+
+    async def _noop_record(db, system, name, **kw):
+        pass
+
+    monkeypatch.setattr(promote.external_item_map_service, "resolve_option", _approved)
+    monkeypatch.setattr(
+        promote.external_item_map_service, "record_option_proposal", _noop_record
+    )
+
+    mods = [
+        StandardModifier(
+            name="Salted Caramel", quantity=Decimal("1"), unit_price=Decimal("2.00")
+        )
+    ]
+    db = _OptionDB()
+    snapshot, _ = await promote._build_modifier_snapshot(db, "noon", mods)
+
+    assert snapshot[0]["modifier_option_id"] == str(opt_uuid)
+    assert snapshot[0]["option_id"] == str(opt_uuid)
+
+
+async def test_modifier_snapshot_no_proposal_when_approved(monkeypatch):
+    """An approved map hit must not emit a proposal — it is already mapped."""
+    opt_uuid = uuid.uuid4()
+
+    async def _approved(db, system, name, *, ref=None):
+        return opt_uuid, "Matched", Decimal("1.00")
+
+    proposals: list[str] = []
+
+    async def _should_not_be_called(db, system, name, **kw):
+        proposals.append(name)
+
+    monkeypatch.setattr(promote.external_item_map_service, "resolve_option", _approved)
+    monkeypatch.setattr(
+        promote.external_item_map_service,
+        "record_option_proposal",
+        _should_not_be_called,
+    )
+
+    mods = [
+        StandardModifier(
+            name="Matched Option", quantity=Decimal("1"), unit_price=Decimal("1.00")
+        )
+    ]
+    db = _OptionDB()
+    await promote._build_modifier_snapshot(db, "careem", mods)
+    assert proposals == []
+
+
+# ── customer field fill ──────────────────────────────────────────────────────
+
+
+def _agg_with_customer(**over):
+    base = dict(
+        id=uuid.uuid4(),
+        channel="keeta",
+        external_order_id="EXT2",
+        branch_id=uuid.uuid4(),
+        gross_sales=Decimal("30.00"),
+        vat_amount=None,
+        delivery_fee=Decimal("0"),
+        status="40",
+        placed_at=None,
+        accepted_at=None,
+        delivered_at=None,
+        cancelled_at=None,
+        business_date="2026-08-27",
+        mm_order_id=None,
+        promoted_at=None,
+        customer_name=None,
+        customer_phone=None,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+def test_rung_at_uses_delivered_at_for_delivered_rung():
+    delivered = datetime(2026, 8, 27, 10, 0, tzinfo=timezone.utc)
+    placed = datetime(2026, 8, 27, 9, 0, tzinfo=timezone.utc)
+    agg = _agg_with_customer(placed_at=placed, delivered_at=delivered)
+    assert promote._rung_at(agg, OrderStatusEnum.DELIVERED) == delivered
+
+
+def test_rung_at_falls_back_to_placed_at_for_delivered_when_absent():
+    placed = datetime(2026, 8, 27, 9, 0, tzinfo=timezone.utc)
+    agg = _agg_with_customer(placed_at=placed, delivered_at=None)
+    assert promote._rung_at(agg, OrderStatusEnum.DELIVERED) == placed
+
+
+def test_rung_at_uses_cancelled_at_for_cancelled_rung():
+    cancelled = datetime(2026, 8, 27, 11, 0, tzinfo=timezone.utc)
+    agg = _agg_with_customer(placed_at=None, cancelled_at=cancelled)
+    assert promote._rung_at(agg, OrderStatusEnum.CANCELLED) == cancelled
+
+
+def test_rung_at_uses_accepted_at_for_confirmed_rung():
+    accepted = datetime(2026, 8, 27, 9, 5, tzinfo=timezone.utc)
+    placed = datetime(2026, 8, 27, 9, 0, tzinfo=timezone.utc)
+    agg = _agg_with_customer(placed_at=placed, accepted_at=accepted)
+    assert promote._rung_at(agg, OrderStatusEnum.CONFIRMED) == accepted
+
+
+def test_rung_at_falls_back_to_placed_at_for_confirmed_when_no_accepted_at():
+    placed = datetime(2026, 8, 27, 9, 0, tzinfo=timezone.utc)
+    agg = _agg_with_customer(placed_at=placed, accepted_at=None)
+    assert promote._rung_at(agg, OrderStatusEnum.CONFIRMED) == placed
+
+
+def test_rung_at_uses_accepted_at_for_packed_rung():
+    accepted = datetime(2026, 8, 27, 9, 5, tzinfo=timezone.utc)
+    agg = _agg_with_customer(accepted_at=accepted)
+    assert promote._rung_at(agg, OrderStatusEnum.PACKED) == accepted

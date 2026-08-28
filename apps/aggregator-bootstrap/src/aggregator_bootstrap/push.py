@@ -74,3 +74,28 @@ async def push_keeta_orders(payloads: list[dict]) -> dict[str, Any]:
             body = resp.json()
             ingested += int(body.get("ingested") or 0)
     return {"ingested": ingested}
+
+
+async def push_keeta_finance(payloads: list[dict]) -> dict[str, Any]:
+    """POST in-page-fetched Keeta finance payloads to /aggregators/keeta/finance.
+
+    Mirrors the orders push: chunked to avoid edge timeouts on a large dump.
+    Returns accumulated `{"statements": int, "payouts": int}` across all chunks.
+    When the worker obtained only download-task metadata (no settled figures yet),
+    the API still responds 200 with zero counts; the caller should log that case.
+    """
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/keeta/finance"
+    chunk_size = 2
+    statements = 0
+    payouts = 0
+    async with httpx.AsyncClient(timeout=180) as client:
+        for i in range(0, len(payloads), chunk_size):
+            chunk = payloads[i : i + chunk_size]
+            resp = await client.post(
+                url, json={"payloads": chunk}, headers=_headers()
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            statements += int(body.get("statements") or 0)
+            payouts += int(body.get("payouts") or 0)
+    return {"statements": statements, "payouts": payouts}

@@ -44,21 +44,26 @@ import csv
 import io
 import logging
 import re
+import zipfile
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from openpyxl import load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.aggregator import CHANNEL_TALABAT, GRAIN_LINE
 from app.services.aggregators.normalized import (
-    FinanceResult,
+    PayoutsResult,
     SalesResult,
+    StandardModifier,
     StandardOrder,
     StandardOrderItem,
     StandardPayout,
     StandardStatement,
+    StandardStatementLine,
+    StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import (
@@ -233,6 +238,43 @@ query ListAdditionalStatements($params: ListAdditionalStatementsRequest!) {
 }
 """.strip()
 
+_BULK_STATEMENT_COUNTS_QUERY = """
+query GetBulkAdditionalStatementDownloadCounts($params: GetBulkAdditionalStatementDownloadCountsRequest!) {
+  finances {
+    getBulkAdditionalStatementDownloadCounts(input: $params) {
+      fileCounts {
+        totalFilesCount
+        fileCountsDetails {
+          filesCount
+          fileFormat
+          __typename
+        }
+        __typename
+      }
+      fileLimits {
+        directDownloadLimit
+        emailDownloadLimit
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+""".strip()
+
+_BULK_STATEMENT_DOWNLOAD_QUERY = """
+query RequestBulkDownloadAdditionalStatements($params: BulkDownloadAdditionalStatementsRequest!) {
+  finances {
+    bulkDownloadAdditionalStatements(input: $params) {
+      downloadUrl
+      __typename
+    }
+    __typename
+  }
+}
+""".strip()
+
 
 # ── value helpers ─────────────────────────────────────────────────────────────
 def _money(value: Any) -> Decimal | None:
@@ -311,24 +353,161 @@ def _date_str(value: Any) -> str | None:
     return parsed.isoformat() if parsed else None
 
 
+def _split_balanced(value: str) -> list[str]:
+    """Comma-split a string, keeping commas inside (…) as part of the same token.
+
+    `"1 Burger (No pickle, Extra cheese), 2 Fries"` → two tokens, not three.
+    """
+    tokens: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in value:
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+        elif ch == ")":
+            depth = max(0, depth - 1)
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            tok = "".join(current).strip()
+            if tok:
+                tokens.append(tok)
+            current = []
+        else:
+            current.append(ch)
+    last = "".join(current).strip()
+    if last:
+        tokens.append(last)
+    return tokens
+
+
+def _extract_item_modifiers(name: str) -> tuple[str, list[str]]:
+    """Strip trailing parenthetical or `+ addon` chains from an item name token.
+
+    Returns `(cleaned_name, list_of_modifier_texts)`. Handles:
+    - Parenthetical: `"Burger (No pickle, Extra cheese)"` →
+      `("Burger", ["No pickle", "Extra cheese"])`
+    - Plus-addon chain: `"Burger + Extra sauce + No pickle"` →
+      `("Burger", ["Extra sauce", "No pickle"])`
+    - Both combined: parenthetical is extracted first, then any remaining `+` chains.
+    """
+    mods: list[str] = []
+    # Parenthetical group at end
+    paren = re.search(r"\(([^)]+)\)\s*$", name)
+    if paren:
+        inner = [s.strip() for s in paren.group(1).split(",") if s.strip()]
+        mods.extend(inner)
+        name = name[: paren.start()].strip()
+    # Plus-addon chain
+    if " + " in name:
+        parts = name.split(" + ")
+        name = parts[0].strip()
+        mods.extend(p.strip() for p in parts[1:] if p.strip())
+    return name, mods
+
+
 def _parse_items_text(value: str | None) -> list[tuple[Decimal, str]]:
     """The CSV's free-text `Order Items` field split into (qty, name) lines.
 
     A cell is a delimiter-joined list of `"<qty> <name>"` tokens; a token that
     does not start with a number is taken as quantity 1. Ported from the
     exporter's `_parse_talabat_order_items_text`.
+
+    Newlines and semicolons are always safe item separators. Commas are split
+    only when outside balanced parentheses, so modifier lists like
+    `"1 Burger (No pickle, Extra cheese), 2 Fries"` produce two items rather
+    than three broken fragments.
     """
     if not value:
         return []
-    tokens = [tok.strip() for tok in re.split(r"[\n,;]+", value) if tok.strip()]
+    # Newlines / semicolons are unambiguous item separators.
+    if "\n" in value or ";" in value:
+        raw_tokens = [t.strip() for t in re.split(r"[\n;]+", value) if t.strip()]
+    else:
+        raw_tokens = _split_balanced(value)
     parsed: list[tuple[Decimal, str]] = []
-    for token in tokens:
+    for token in raw_tokens:
         match = re.match(r"^(?P<qty>\d+(?:\.\d+)?)\s+(?P<name>.+)$", token)
         if match:
             parsed.append((Decimal(match.group("qty")), match.group("name").strip()))
         else:
             parsed.append((Decimal(1), token))
     return parsed
+
+
+# ── statement bundle helpers (ported from automation parsers.py) ──────────────
+
+_STATEMENT_PERIOD_PATTERN = re.compile(
+    r"(?P<brand>.+?)\s*-\s*(?P<start>\d{2}/\d{2}/\d{4})"
+    r"\s*-\s*(?P<end>\d{2}/\d{2}/\d{4})$"
+)
+
+
+def _bundle_period(title: object) -> tuple[date | None, date | None]:
+    """Parse the sheet title `"Brand - DD/MM/YYYY - DD/MM/YYYY"` into dates."""
+    if not isinstance(title, str):
+        return None, None
+    m = _STATEMENT_PERIOD_PATTERN.match(title.strip())
+    if not m:
+        return None, None
+    return _parse_date(m.group("start")), _parse_date(m.group("end"))
+
+
+def _bundle_headers(row: tuple[object, ...]) -> dict[str, int]:
+    """Normalised column-name → index map for an xlsx header row."""
+    return {
+        str(v).strip(): i
+        for i, v in enumerate(row)
+        if isinstance(v, str) and str(v).strip()
+    }
+
+
+def _bundle_cell(
+    row: tuple[object, ...], headers: dict[str, int], label: str
+) -> object | None:
+    idx = headers.get(label)
+    return row[idx] if idx is not None and idx < len(row) else None
+
+
+def _bundle_is_order_id(value: object) -> bool:
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return value.is_integer()
+    return str(value or "").strip().isdigit()
+
+
+def _bundle_order_id_str(value: object) -> str:
+    if isinstance(value, float):
+        return str(int(value))
+    return str(value or "").strip()
+
+
+def _bundle_money(
+    row: tuple[object, ...], headers: dict[str, int], col: str
+) -> Decimal:
+    """A Talabat xlsx cell as Decimal; zero for absent / blank / bad values."""
+    return _money(_bundle_cell(row, headers, col)) or Decimal("0")
+
+
+def _month_windows(from_date: date, to_date: date) -> list[tuple[date, date]]:
+    """Monthly sub-windows covering `[from_date, to_date]` inclusive.
+
+    Used when the file count exceeds the portal's direct-download limit and the
+    request must be chunked by calendar month — ported from automation exports.py.
+    """
+    windows: list[tuple[date, date]] = []
+    current = date(from_date.year, from_date.month, 1)
+    while current <= to_date:
+        if current.month == 12:
+            next_month = date(current.year + 1, 1, 1)
+        else:
+            next_month = date(current.year, current.month + 1, 1)
+        windows.append(
+            (max(from_date, current), min(to_date, next_month - timedelta(days=1)))
+        )
+        current = next_month
+    return windows
 
 
 class TalabatClient(BaseAggregatorClient):
@@ -695,11 +874,42 @@ class TalabatClient(BaseAggregatorClient):
         one item, that item's amount is the order subtotal; with several items
         the per-line split is unknown, so `amount_is_known` is False and the
         money is left null rather than guessed.
+
+        Modifiers are extracted from the item name token via two patterns:
+        - Trailing parenthetical: `"Burger (No pickle, Extra cheese)"`
+        - Plus-addon chain:       `"Burger + Extra sauce"`
+
+        When the Report Builder CSV carries a dedicated modifier column
+        (`Modifier names` / `Modifiers` / `Add-ons`) and there is exactly one
+        item in the order (so the column's text unambiguously belongs to it),
+        that column takes priority over the free-text extraction.
         """
         parsed = _parse_items_text(row.get("Order Items"))
         known = len(parsed) == 1
+        # Dedicated modifier column — only reliable when there's one item.
+        col_mod_text: str | None = None
+        if known:
+            raw_col = _first(row, "Modifier names", "Modifiers", "Add-ons")
+            if isinstance(raw_col, str) and raw_col.strip():
+                col_mod_text = raw_col.strip()
+
         items: list[StandardOrderItem] = []
-        for index, (quantity, name) in enumerate(parsed, start=1):
+        for index, (quantity, raw_name) in enumerate(parsed, start=1):
+            # Extract modifiers from the name token (parenthetical / + chain).
+            name, free_mod_texts = _extract_item_modifiers(raw_name)
+            if col_mod_text and known:
+                # Column takes priority; split on comma/semicolon.
+                mod_texts = [
+                    s.strip() for s in re.split(r"[,;]+", col_mod_text) if s.strip()
+                ]
+            else:
+                mod_texts = free_mod_texts
+
+            modifiers = [
+                StandardModifier(name=m, quantity=Decimal("1")) for m in mod_texts if m
+            ]
+            modifiers_text = raw_name if modifiers else None
+
             unit_price: Decimal | None = None
             if known and subtotal is not None and quantity:
                 unit_price = subtotal / quantity
@@ -713,34 +923,24 @@ class TalabatClient(BaseAggregatorClient):
                     gross_sales=subtotal if known else None,
                     net_sales=subtotal if known else None,
                     amount_is_known=known,
+                    modifiers=modifiers,
+                    modifiers_text=modifiers_text,
                 )
             )
         return items
 
-    # ── finance (payouts + additional statements) ─────────────────────────────
-    async def fetch_finance(
+    # ── finance (statements + payouts as distinct surfaces) ───────────────────
+    async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
-    ) -> FinanceResult:
+    ) -> StatementsResult:
         accounts = self._finance_accounts(session)
         if not accounts:
             raise AggregatorUnavailableError(
                 f"{self.channel} session carries no finance accounts "
-                "(tokens.finance_accounts) — cannot query payouts/statements"
+                "(tokens.finance_accounts) — cannot query statements"
             )
         from_date = since.date()
         to_date = until.date()
-
-        payout_rows = await self._paginate_finance(
-            session,
-            accounts=accounts,
-            from_date=from_date,
-            to_date=to_date,
-            query=_LIST_PAYOUTS_QUERY,
-            operation_name="ListPayouts",
-            root_key="listPayouts",
-            item_key="payouts",
-            date_keys=("startDate", "endDate"),
-        )
         statement_rows = await self._paginate_finance(
             session,
             accounts=accounts,
@@ -752,12 +952,52 @@ class TalabatClient(BaseAggregatorClient):
             item_key="additionalStatements",
             date_keys=("statementDateFrom", "statementDateTo"),
         )
+        statements: list[StandardStatement] = [
+            s
+            for s in (self._statement_from(r) for r in statement_rows)
+            if s is not None
+        ]
+        # Attempt to enrich with the detailed xlsx bundle (per-order fee lines).
+        # If the bulk download fails — bot wall, network blip, missing permission —
+        # we degrade gracefully: the metadata statements above are still correct.
+        try:
+            bundle_statements = await self._fetch_bundle_statements(
+                session, accounts=accounts, from_date=from_date, to_date=to_date
+            )
+            statements.extend(bundle_statements)
+        except AggregatorUnavailableError as exc:
+            logger.warning(
+                "%s bundle download skipped (%s); metadata statements only",
+                self.channel,
+                exc,
+            )
+        return StatementsResult(statements=statements)
 
+    async def fetch_payouts(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> PayoutsResult:
+        accounts = self._finance_accounts(session)
+        if not accounts:
+            raise AggregatorUnavailableError(
+                f"{self.channel} session carries no finance accounts "
+                "(tokens.finance_accounts) — cannot query payouts"
+            )
+        from_date = since.date()
+        to_date = until.date()
+        payout_rows = await self._paginate_finance(
+            session,
+            accounts=accounts,
+            from_date=from_date,
+            to_date=to_date,
+            query=_LIST_PAYOUTS_QUERY,
+            operation_name="ListPayouts",
+            root_key="listPayouts",
+            item_key="payouts",
+            date_keys=("startDate", "endDate"),
+        )
         payouts = [self._payout_from(r) for r in payout_rows]
         payouts = [p for p in payouts if p is not None]
-        statements = [self._statement_from(r) for r in statement_rows]
-        statements = [s for s in statements if s is not None]
-        return FinanceResult(statements=statements, payouts=payouts)
+        return PayoutsResult(payouts=payouts)
 
     async def _paginate_finance(
         self,
@@ -816,6 +1056,349 @@ class TalabatClient(BaseAggregatorClient):
                 break
             seen_tokens.add(page_token)
         return rows
+
+    # ── statement bundle download + parse ────────────────────────────────────
+    async def _fetch_bundle_statements(
+        self,
+        session: LoadedSession,
+        *,
+        accounts: list[dict[str, Any]],
+        from_date: date,
+        to_date: date,
+    ) -> list[StandardStatement]:
+        """Download the Talabat bulk statement zip and parse per-branch xlsx sheets.
+
+        The portal's `bulkDownloadAdditionalStatements` GraphQL returns a
+        pre-signed download URL for a zip that contains `Detailed_*.xlsx` files.
+        httpx can fetch that URL with just the bearer token — no browser needed.
+        If the file count exceeds the portal's direct-download limit the window
+        is chunked into calendar months, matching the automation's behaviour.
+
+        Raises `AggregatorUnavailableError` on any transport or API failure so
+        the caller can degrade gracefully without dropping the metadata statements.
+        """
+        counts_data = await self._graphql(
+            session,
+            endpoint=_FINANCE_GRAPHQL,
+            query=_BULK_STATEMENT_COUNTS_QUERY,
+            variables={
+                "params": {
+                    "globalEntityId": _GLOBAL_ENTITY_ID,
+                    "accounts": accounts,
+                    "statementDateFrom": from_date.isoformat(),
+                    "statementDateTo": to_date.isoformat(),
+                    "filter": {},
+                }
+            },
+            operation_name="GetBulkAdditionalStatementDownloadCounts",
+        )
+        counts_obj = (counts_data.get("finances") or {}).get(
+            "getBulkAdditionalStatementDownloadCounts"
+        ) or {}
+        file_limits = counts_obj.get("fileLimits") or {}
+        direct_limit = int(file_limits.get("directDownloadLimit") or 0)
+        total_files = int(
+            (counts_obj.get("fileCounts") or {}).get("totalFilesCount") or 0
+        )
+        windows = [(from_date, to_date)]
+        if direct_limit and total_files > direct_limit:
+            windows = _month_windows(from_date, to_date)
+            logger.info(
+                "%s chunking statement download into %d monthly windows "
+                "(direct limit=%d, total=%d)",
+                self.channel,
+                len(windows),
+                direct_limit,
+                total_files,
+            )
+
+        all_statements: list[StandardStatement] = []
+        for win_start, win_end in windows:
+            url = await self._bundle_download_url(
+                session, accounts=accounts, from_date=win_start, to_date=win_end
+            )
+            if not url:
+                logger.debug(
+                    "%s no bundle download URL for window %s – %s",
+                    self.channel,
+                    win_start,
+                    win_end,
+                )
+                continue
+            bundle_bytes = await self._download_bundle(session, url)
+            parsed = self._parse_bundle_bytes(bundle_bytes)
+            logger.info(
+                "%s bundle %s – %s: %d detailed statements",
+                self.channel,
+                win_start,
+                win_end,
+                len(parsed),
+            )
+            all_statements.extend(parsed)
+        return all_statements
+
+    async def _bundle_download_url(
+        self,
+        session: LoadedSession,
+        *,
+        accounts: list[dict[str, Any]],
+        from_date: date,
+        to_date: date,
+    ) -> str | None:
+        """Request the bulk statement zip download URL for a single date window."""
+        data = await self._graphql(
+            session,
+            endpoint=_FINANCE_GRAPHQL,
+            query=_BULK_STATEMENT_DOWNLOAD_QUERY,
+            variables={
+                "params": {
+                    "globalEntityId": _GLOBAL_ENTITY_ID,
+                    "accounts": accounts,
+                    "statementDateFrom": from_date.isoformat(),
+                    "statementDateTo": to_date.isoformat(),
+                    "filter": {},
+                }
+            },
+            operation_name="RequestBulkDownloadAdditionalStatements",
+        )
+        url = str(
+            (data.get("finances") or {})
+            .get("bulkDownloadAdditionalStatements", {})
+            .get("downloadUrl")
+            or ""
+        ).strip()
+        return url or None
+
+    async def _download_bundle(
+        self, session: LoadedSession, download_url: str
+    ) -> bytes:
+        """GET the bundle zip bytes, replaying the bearer as the browser did."""
+        token = self._access_token(session)
+        headers = {"authorization": f"Bearer {token}"} if token else None
+        response = await self.request_raw(
+            session,
+            "GET",
+            download_url,
+            headers=headers,
+            timeout=_CSV_DOWNLOAD_TIMEOUT_SECONDS,
+        )
+        if self._is_auth_failure(response):
+            raise AggregatorUnavailableError(
+                f"{self.channel} bundle download was challenged/blocked"
+            )
+        status = getattr(response, "status_code", 0)
+        if status >= 400:
+            raise AggregatorUnavailableError(
+                f"{self.channel} bundle download returned HTTP {status}"
+            )
+        content = getattr(response, "content", None)
+        if isinstance(content, (bytes, bytearray)):
+            return bytes(content)
+        raise AggregatorUnavailableError(
+            f"{self.channel} bundle download returned no binary content"
+        )
+
+    @staticmethod
+    def _parse_bundle_bytes(bundle_bytes: bytes) -> list[StandardStatement]:
+        """Parse a Talabat statement zip bundle into per-branch StandardStatement objects.
+
+        Each `Detailed_*.xlsx` inside the zip covers one billing period. Rows are
+        per-order; we accumulate totals and per-order fee lines per branch, then
+        emit one `StandardStatement` per branch with those lines attached.
+
+        The statement_id uses `detailed-{start}-{end}-{branch}` — the same
+        per-branch key the automation uses — so two branches in one period produce
+        two distinct statements rather than one overwriting the other (see the
+        automation comments on the unique-key bug that was fixed there).
+        """
+        statements: list[StandardStatement] = []
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(bundle_bytes))
+        except zipfile.BadZipFile as exc:
+            raise AggregatorUnavailableError(
+                f"Talabat bundle is not a valid zip: {exc}"
+            ) from exc
+
+        with archive:
+            workbook_names = [
+                name
+                for name in archive.namelist()
+                if name.lower().endswith(".xlsx") and "detailed_" in name.lower()
+            ]
+            for member_name in workbook_names:
+                wb = load_workbook(
+                    io.BytesIO(archive.read(member_name)),
+                    data_only=True,
+                    read_only=True,
+                )
+                sheet = wb[wb.sheetnames[0]]
+                period_start, period_end = _bundle_period(sheet["A1"].value)
+
+                header_map: dict[str, int] = {}
+                header_row_idx: int | None = None
+                for row_idx, row in enumerate(
+                    sheet.iter_rows(min_row=1, max_row=10, values_only=True), start=1
+                ):
+                    cands = _bundle_headers(row)
+                    if "Order Id" in cands and "Net Payment Per Order" in cands:
+                        header_row_idx = row_idx
+                        header_map = cands
+                        break
+                if header_row_idx is None:
+                    logger.debug(
+                        "Talabat bundle sheet %s: no recognisable header row",
+                        member_name,
+                    )
+                    continue
+
+                start_token = (
+                    period_start.isoformat() if period_start else "unknown-start"
+                )
+                end_token = period_end.isoformat() if period_end else "unknown-end"
+
+                # per_branch_totals[branch_id] = {gross_sales, net_payable, total_fees, total_vat}
+                per_branch_totals: dict[str, dict[str, Decimal]] = {}
+                per_branch_lines: dict[str, list[StandardStatementLine]] = {}
+
+                for row in sheet.iter_rows(
+                    min_row=header_row_idx + 1, values_only=True
+                ):
+                    order_id_raw = _bundle_cell(row, header_map, "Order Id")
+                    if not _bundle_is_order_id(order_id_raw):
+                        continue
+                    external_order_id = _bundle_order_id_str(order_id_raw)
+                    branch_id = str(
+                        _bundle_cell(row, header_map, "Branch Id") or ""
+                    ).strip()
+                    branch_token = f"-{branch_id}" if branch_id else ""
+                    statement_id = f"detailed-{start_token}-{end_token}{branch_token}"
+
+                    # Parse line date
+                    line_date_raw = _bundle_cell(row, header_map, "Date / Time")
+                    line_date_str: str | None = None
+                    if isinstance(line_date_raw, datetime):
+                        line_date_str = line_date_raw.date().isoformat()
+                    elif line_date_raw:
+                        d = _parse_date(str(line_date_raw).split(" ")[0])
+                        line_date_str = d.isoformat() if d else None
+
+                    # Money helpers for this row
+                    def m(col: str) -> Decimal:
+                        return _bundle_money(row, header_map, col)
+
+                    gross = m("SubTotal")
+                    fee = (
+                        m("Commission VAT Exclu.")
+                        + m("Payment Handling Charges")
+                        + m("Promotional Fees")
+                        + m("Sponsored Deal Fees")
+                        + m("Avoidable Wait Time Fee")
+                        + m("Cost Per Order")
+                        + m("GEM Fee")
+                        + m("Loyalty Charges")
+                    )
+                    vat = (
+                        m("Commission VAT")
+                        + m("Payment Handling Charges VAT")
+                        + m("Avoidable Wait Time Fee VAT")
+                    )
+                    net = m("Net Payment Per Order")
+
+                    totals = per_branch_totals.setdefault(
+                        branch_id,
+                        {
+                            "gross_sales": Decimal("0"),
+                            "net_payable": Decimal("0"),
+                            "total_fees": Decimal("0"),
+                            "total_vat": Decimal("0"),
+                        },
+                    )
+                    totals["gross_sales"] += gross
+                    totals["total_fees"] += fee
+                    totals["total_vat"] += vat
+                    totals["net_payable"] += net
+
+                    # Emit per-order fee lines (skip zero amounts)
+                    lines_for_branch = per_branch_lines.setdefault(branch_id, [])
+                    line_specs = [
+                        ("gross_sales", "subtotal", gross),
+                        ("fee", "commission", -abs(m("Commission VAT Exclu."))),
+                        ("vat", "commission_vat", -abs(m("Commission VAT"))),
+                        (
+                            "fee",
+                            "payment_handling",
+                            -abs(m("Payment Handling Charges")),
+                        ),
+                        (
+                            "vat",
+                            "payment_handling_vat",
+                            -abs(m("Payment Handling Charges VAT")),
+                        ),
+                        ("fee", "promotional_fees", -abs(m("Promotional Fees"))),
+                        ("fee", "sponsored_deal_fees", -abs(m("Sponsored Deal Fees"))),
+                        (
+                            "fee",
+                            "avoidable_wait_time_fee",
+                            -abs(m("Avoidable Wait Time Fee")),
+                        ),
+                        (
+                            "vat",
+                            "avoidable_wait_time_fee_vat",
+                            -abs(m("Avoidable Wait Time Fee VAT")),
+                        ),
+                        ("fee", "cost_per_order", -abs(m("Cost Per Order"))),
+                        ("fee", "gem_fee", -abs(m("GEM Fee"))),
+                        ("fee", "loyalty_charges", -abs(m("Loyalty Charges"))),
+                        ("net_payable", "net_payable", net),
+                    ]
+                    for line_type, fee_category, amount in line_specs:
+                        if amount == Decimal("0"):
+                            continue
+                        lines_for_branch.append(
+                            StandardStatementLine(
+                                source_key=f"{statement_id}:{external_order_id}:{fee_category}",
+                                statement_id=statement_id,
+                                external_order_id=external_order_id,
+                                line_date=line_date_str,
+                                line_type=line_type,
+                                fee_category=fee_category,
+                                description=(
+                                    f"Talabat detailed statement {fee_category.replace('_', ' ')}"
+                                ),
+                                amount=amount,
+                                currency="AED",
+                            )
+                        )
+
+                for branch_id, totals in sorted(per_branch_totals.items()):
+                    if totals["gross_sales"] == Decimal("0") and totals[
+                        "net_payable"
+                    ] == Decimal("0"):
+                        continue
+                    branch_token = f"-{branch_id}" if branch_id else ""
+                    statement_id = f"detailed-{start_token}-{end_token}{branch_token}"
+                    q = Decimal("0.01")
+                    statements.append(
+                        StandardStatement(
+                            statement_id=statement_id,
+                            period_start=period_start.isoformat()
+                            if period_start
+                            else None,
+                            period_end=period_end.isoformat() if period_end else None,
+                            payment_due_date=period_end.isoformat()
+                            if period_end
+                            else None,
+                            gross_sales=totals["gross_sales"].quantize(q),
+                            net_payable=totals["net_payable"].quantize(q),
+                            total_fees=totals["total_fees"].quantize(q),
+                            total_vat=totals["total_vat"].quantize(q),
+                            currency="AED",
+                            external_outlet_id=branch_id if branch_id else None,
+                            lines=per_branch_lines.get(branch_id, []),
+                        )
+                    )
+
+        return statements
 
     @staticmethod
     def _payout_from(row: dict[str, Any]) -> StandardPayout | None:

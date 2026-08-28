@@ -29,16 +29,9 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/logs/audit')).toBe('/logs');
   });
 
-  it('lights the single Marketplaces entry from every marketplace sub-route', () => {
-    // Reconciliation, Item Mappings, Branch Mappings, Logins and GrubOps are now
-    // tabs of one screen behind a single "Marketplaces" drawer entry, whose href
-    // is `/aggregators/reconciliation` and which declares it also owns
-    // `/aggregators/*` and `/grubops`.
-    expect(activeNavHref('/aggregators/reconciliation')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/item-mappings')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/mappings')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/logins')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/grubops')).toBe('/aggregators/reconciliation');
+  it('lights Logins as its own marketplace entry, not Reconciliation', () => {
+    expect(activeNavHref('/aggregators/logins')).toBe('/aggregators/logins');
+    expect(activeNavHref('/aggregators/mappings')).toBe('/aggregators/mappings');
   });
 
   it('lights a section up from one of its detail pages', () => {

@@ -11727,6 +11727,51 @@
         "title": "JoinOrderRequest",
         "type": "object"
       },
+      "KeetaFinancePush": {
+        "description": "A batch of in-page-fetched Keeta finance payloads, pushed in for ingest.\n\nThe bootstrap worker fetches the finance data in-page (where the portal's JS\nsigns the request), then hands the raw payloads here. Each is parsed by\n`keeta_provider.parse_finance` into channel-neutral statements and payouts\nand upserted. When the payload contains only download-task metadata (the\nactual figures live in PDF invoices), the parse returns empty lists and\nrecords a truncation note \u2014 the response still returns 200 with zero counts\nso the worker can surface the note.",
+        "properties": {
+          "payloads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Payloads",
+            "type": "array"
+          }
+        },
+        "title": "KeetaFinancePush",
+        "type": "object"
+      },
+      "KeetaFinanceResult": {
+        "description": "How many statements and payouts the pushed Keeta finance payloads upserted.",
+        "properties": {
+          "payouts": {
+            "title": "Payouts",
+            "type": "integer"
+          },
+          "statements": {
+            "title": "Statements",
+            "type": "integer"
+          },
+          "truncation_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncation Note"
+          }
+        },
+        "required": [
+          "statements",
+          "payouts"
+        ],
+        "title": "KeetaFinanceResult",
+        "type": "object"
+      },
       "KeetaOrdersPush": {
         "description": "A batch of in-page-fetched Keeta order payloads, pushed in for ingest.\n\nKeeta cannot be swept over httpx (its `mtgsig` request signing lives in the\npage), so the bootstrap worker fetches each `getOrders` response in-page and\nhands the raw payloads here. Each payload is parsed by `keeta_provider` into\nchannel-neutral orders and upserted, exactly as the httpx sweep does for the\nother four channels \u2014 this endpoint is simply Keeta's transport.",
         "properties": {
@@ -29567,6 +29612,66 @@
           }
         ],
         "summary": "Delete Branch Map Row",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/keeta/finance": {
+      "post": {
+        "description": "Ingest a batch of in-page-fetched Keeta finance payloads.\n\nKeeta's finance data is fetched in-page by the bootstrap worker (where the\nportal's JS signs the request) and pushed here. Each payload is parsed by\n`keeta_provider.parse_finance` into statements and payouts and upserted.\nWhen the payload is only download-task metadata (figures live in PDF invoices),\nthe parse returns empty lists with a truncation note \u2014 the response still\nreturns 200 with zero counts and includes the note so the worker can log it.",
+        "operationId": "push_keeta_finance_api_v1_aggregators_keeta_finance_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeetaFinancePush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaFinanceResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Keeta Finance",
         "tags": [
           "Aggregators"
         ]

@@ -1,53 +1,53 @@
-"""noon Food, as its restaurant console (RMS) answers over httpx.
+"""noon Food — dual-source sales: OMS (near-realtime items) + RMS (settled fees).
 
 Ported from the Playwright exporter the bootstrap used to drive by hand. The
 browser is only there to solve the login (email OTP + a passkey nag) and to run
 Akamai's sensor; once a session is captured, every read here is a plain request
 the console's own SPA makes — so the hourly path never opens a browser.
 
-**Where the reads come from.** noon's RMS lives at `restaurant.noon.partners`.
-Two surfaces matter:
+**Where the reads come from.**
 
-- The *order-level statement*: `POST /_food-restaurant/finance/statement/orders`
-  with `{"statementNrList": [...]}`. It answers a CSV of every settled order on
-  those statements — the sales truth, with the real fees noon charged. You have
-  to know which statements to ask for, which is what the wallet gives you.
-- The *wallet* tabs: `POST /_food-restaurant/finance/wallet` with
-  `{"entryType": "statement" | "payment"}` — the settlement ledger the console's
-  "Export Current View" button serialises to CSV. The Statement tab lists the
-  published statements (and their reference numbers, which feed the order-level
-  call); the Payment tab lists the transfers noon actually made.
+*OMS* (`restaurant-orders.noon.partners`):
+  `POST /_oms/order/panel/history` — near-realtime per-order JSON with item
+  lines, modifier quantities, and outlet/customer timing. Paginated at
+  `_OMS_PAGE_SIZE` per page, capped at `_OMS_MAX_PAGES` total pages (≈1 000
+  orders). Orders whose `createdAt` falls outside the `since`/`until` window are
+  discarded in Python. If the OMS call fails (auth or unavailability), `fetch_sales`
+  falls back to RMS-only with a truncation note — the nightly ingest keeps running.
 
-**Identity (`n-restaurantcode` / `x-project` / `x-locale`).** The RMS calls are
-scoped to one restaurant and one project by three request headers. The
-Playwright port read them from local secrets, hardcoded to one outlet; here they
-are read generically off the captured session — `session.tokens` first (a
-bootstrap that knows to stash them puts them under `restaurant_code` / `project`
-/ `locale`), then whatever the browser sent verbatim in `session.header_profile`
-(`n-restaurantcode` / `x-project` / `x-locale`), then `en-ae` for the locale.
-Nothing is pinned to a single branch, so a second outlet is a different captured
-session, not a code change. A session that carries neither the token nor the
-header can't be scoped, so it is treated as needing a fresh bootstrap.
+*RMS* (`restaurant.noon.partners`):
+  Two surfaces:
+  - *Order-level statement*: `POST /_food-restaurant/finance/statement/orders`
+    with `{"statementNrList": [...]}`. CSV of every settled order — the source of
+    truth for fees (commission, payment, delivery, VAT) and `statement_id`.
+  - *Wallet tabs*: `POST /_food-restaurant/finance/wallet` with
+    `{"entryType": "statement" | "payment"}`. Used to discover which statement
+    reference numbers to query, and by `fetch_statements` / `fetch_payouts`.
 
-**Anti-bot.** noon sits behind Akamai Bot Manager (the `bm_sv` cookie), which
-fingerprints the TLS ClientHello — so `uses_tls_impersonation` is set and, where
-`curl_cffi` is installed, the base sends a real Chrome handshake. Akamai's block
-is not always a 401/403: it can answer 200 (or 406) with an "Access Denied /
-Reference #" page, so `_is_auth_failure` is widened to read the body for that,
-and a block is routed as an auth failure (only a browser can re-arm the sensor),
-never as a transient outage that would be retried into a lockout.
+**Merge strategy.** `fetch_sales` reads both sources for the window and merges
+by `external_order_id`: OMS contributes `items`, `placed_at`/`accepted_at`/
+`delivered_at`, `external_outlet_id`, and the outlet-subtotal money fields; RMS
+fills `commission_amount`, per-fee fields, `vat_amount`, `net_payable`, and
+`statement_id`. OMS-only orders (not yet settled) are returned with fee fields
+as None. RMS-only orders (settled before / outside the OMS cap) carry no items.
 
-**Item-detail limitation.** The RMS order-level statement is per *order*, not per
-*line*: it carries no item breakdown at all. So `fetch_sales` emits orders with
-an empty `items` list — no `StandardOrderItem` rows. Were a companion source
-(the capped OMS history feed) ever wired in, its items would be a period
-aggregate, so the grain is documented as `GRAIN_AGGREGATE`; the money we do have
-is order-level and known, and none of it is faked to fill the item gap.
+**Modifier quantities.** OMS items carry modifiers as a nested qty map
+`{MDxxx: {Ixxx: qty}}`. `expand_modifiers` expands this into `StandardModifier`
+rows with the option code as `name` and `external_ref`, and the true qty — never
+`json.dumps`.
 
-Money is defensive throughout: `Decimal | None`, where None means "noon did not
-say", never zero. `commission_amount` is derived from the statement's
-`fees_exc_vat` minus the itemised fees (matching the Playwright normaliser) and
-is None when `fees_exc_vat` itself is absent. Every record keeps its `raw`.
+**Identity (`n-restaurantcode` / `x-project` / `x-locale`).** Shared by both
+hosts. Read from `session.tokens` first, then `session.header_profile`, then
+`en-ae` for the locale. Not pinned to one outlet.
+
+**Anti-bot.** Both hosts sit behind Akamai Bot Manager (`bm_sv` cookie, scoped
+to `.noon.partners` so it covers both). `uses_tls_impersonation` is set;
+`_is_auth_failure` reads the body for the "Access Denied / Reference #" deny
+page. A block is an auth failure, never a transient retry.
+
+Money is `Decimal | None`: None means "noon did not say", not zero. `commission_amount`
+is derived from `fees_exc_vat` minus the itemised fees; None when `fees_exc_vat`
+is absent. Every RMS record keeps its `raw`; OMS items keep their source order.
 """
 
 from __future__ import annotations
@@ -60,13 +60,17 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from app.models.aggregator import CHANNEL_NOON, GRAIN_AGGREGATE
+from app.models.aggregator import CHANNEL_NOON
+from app.services.aggregators.modifiers import expand_modifiers
 from app.services.aggregators.normalized import (
-    FinanceResult,
+    PayoutsResult,
     SalesResult,
+    StandardModifier,
     StandardOrder,
+    StandardOrderItem,
     StandardPayout,
     StandardStatement,
+    StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import (
@@ -82,6 +86,14 @@ _ORDER_STATEMENT_URL = f"{_RMS}/_food-restaurant/finance/statement/orders"
 _WALLET_URL = f"{_RMS}/_food-restaurant/finance/wallet"
 _DEFAULT_LOCALE = "en-ae"
 
+_OMS = "https://restaurant-orders.noon.partners"
+_OMS_HISTORY_URL = f"{_OMS}/_oms/order/panel/history"
+#: Orders per OMS page. 100 matches the console's own page size.
+_OMS_PAGE_SIZE = 100
+#: Hard cap: fetch at most this many pages (≈1 000 orders) per `fetch_sales` call.
+#: If `data.pages` exceeds this, a truncation note is added to the result.
+_OMS_MAX_PAGES = 10
+
 #: Noon publishes wallet statements roughly weekly (~7–8 days between refs). The
 #: shared daily ingest lookback is 1 day (order-date channels), which almost
 #: always contains no statement *publication* date — so nightly sales looked
@@ -94,12 +106,6 @@ def _publication_since(since: datetime) -> datetime:
     """Earliest date for wallet statement/payment discovery (weekly publish grain)."""
     return since - timedelta(days=max(_PUBLICATION_LOOKBACK_DAYS - 1, 0))
 
-
-#: The grain the item rows would carry *if* a companion source ever supplied
-#: them — the RMS order-level statement carries none, so `fetch_sales` emits no
-#: item rows at all (see the module docstring). Referenced so the intended grain
-#: is stated in code, not only in prose.
-_ITEM_GRAIN = GRAIN_AGGREGATE
 
 #: Distinctive phrases from an Akamai Bot Manager deny page. Kept narrow so a
 #: legitimate JSON/CSV settlement body never trips them.
@@ -174,6 +180,19 @@ def _parse_date(value: Any) -> date | None:
         return None
     try:
         return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    """ISO-8601 datetime string → datetime, or None. Naive strings stay naive."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
     except ValueError:
         return None
 
@@ -262,6 +281,46 @@ def _truncation_note(rows: list[dict[str, Any]], since: datetime) -> str | None:
             "'current view' may be capped, so earlier in-window entries could be missing."
         )
     return None
+
+
+def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder:
+    """Merge an OMS order (items/timing) with a matching RMS order (settled fees).
+
+    OMS is the primary source for: items, timestamps, external_outlet_id, and
+    the outlet-subtotal money (gross_sales / net_sales as a fallback when RMS
+    carries no value).  RMS is authoritative for the settlement layer:
+    commission_amount, payment/delivery/vat/cancellation fees, net_payable, and
+    statement_id.  The `coalesce(rms, oms)` rule mirrors what the ingest's
+    `_PRESERVE_IF_NULL` would do across two separate passes, but collapses them
+    into a single upsert so the row is complete on arrival.
+    """
+    return StandardOrder(
+        external_order_id=rms.external_order_id,
+        external_outlet_id=rms.external_outlet_id or oms.external_outlet_id,
+        business_date=rms.business_date or oms.business_date,
+        placed_at=oms.placed_at or rms.placed_at,
+        accepted_at=oms.accepted_at or rms.accepted_at,
+        delivered_at=oms.delivered_at or rms.delivered_at,
+        cancelled_at=oms.cancelled_at or rms.cancelled_at,
+        status=rms.status or oms.status,
+        currency=rms.currency or oms.currency,
+        customer_name=oms.customer_name,
+        customer_phone=oms.customer_phone,
+        gross_sales=rms.gross_sales if rms.gross_sales is not None else oms.gross_sales,
+        net_sales=rms.net_sales if rms.net_sales is not None else oms.net_sales,
+        commission_amount=rms.commission_amount,
+        payment_fee=rms.payment_fee if rms.payment_fee is not None else oms.payment_fee,
+        delivery_fee=rms.delivery_fee
+        if rms.delivery_fee is not None
+        else oms.delivery_fee,
+        vat_amount=rms.vat_amount,
+        cancellation_fee=rms.cancellation_fee,
+        refund_amount=rms.refund_amount,
+        net_payable=rms.net_payable if rms.net_payable is not None else oms.net_payable,
+        statement_id=rms.statement_id,
+        items=oms.items,
+        raw=oms.raw,
+    )
 
 
 class NoonClient(BaseAggregatorClient):
@@ -367,27 +426,242 @@ class NoonClient(BaseAggregatorClient):
             )
         return _parse_tabular(getattr(response, "text", "") or "")
 
+    async def _post_tabular_with_raw(
+        self, session: LoadedSession, url: str, json_body: Any
+    ) -> tuple[list[dict[str, Any]], bytes]:
+        """POST an RMS endpoint and return (parsed rows, raw response bytes).
+
+        Same auth/status validation as `_post_tabular`; also returns the raw
+        bytes so callers can archive the settlement document verbatim.
+        """
+        response = await self.request_raw(
+            session,
+            "POST",
+            url,
+            headers=self._rms_headers(session),
+            json_body=json_body,
+        )
+        if self._is_auth_failure(response):
+            raise AggregatorAuthError(
+                f"{self.channel} returned {getattr(response, 'status_code', '?')} "
+                "or an Akamai block — session no longer authenticates"
+            )
+        status = getattr(response, "status_code", 0)
+        if status >= 500:
+            raise AggregatorUnavailableError(f"{self.channel} returned {status}")
+        if status >= 400:
+            raise AggregatorUnavailableError(
+                f"{self.channel} returned {status}: "
+                f"{getattr(response, 'text', '')[:200]}"
+            )
+        text = getattr(response, "text", "") or ""
+        # Prefer the original bytes (preserves encoding); fall back to UTF-8.
+        raw_bytes: bytes = getattr(response, "content", None) or text.encode("utf-8")
+        return _parse_tabular(text), raw_bytes
+
     async def _wallet_rows(
         self, session: LoadedSession, entry_type: str
     ) -> list[dict[str, Any]]:
         """One wallet tab's ledger — the `Export Current View` dataset."""
         return await self._post_tabular(session, _WALLET_URL, {"entryType": entry_type})
 
-    # ── sales ───────────────────────────────────────────────────────────────
+    # ── OMS (near-realtime items + modifiers) ───────────────────────────────
+    async def _fetch_oms_orders(
+        self,
+        session: LoadedSession,
+        *,
+        since: datetime,
+        until: datetime,
+    ) -> tuple[list[StandardOrder], str | None]:
+        """Paginate OMS order history and return orders in the since/until window.
+
+        Fetches up to `_OMS_MAX_PAGES` pages of `_OMS_PAGE_SIZE` orders each.
+        Orders whose `createdAt` falls outside the window are skipped. Returns
+        `(orders, truncation_note)`; the note is non-None when the cap was hit
+        and more pages exist.
+        """
+        orders: list[StandardOrder] = []
+        truncation: str | None = None
+        total_pages = 1
+
+        for page_no in range(1, _OMS_MAX_PAGES + 1):
+            data = await self.request_json(
+                session,
+                "POST",
+                _OMS_HISTORY_URL,
+                headers=self._rms_headers(session),
+                json_body={"pageNo": page_no, "pageSize": _OMS_PAGE_SIZE},
+            )
+            data_block = (data or {}).get("data") if isinstance(data, dict) else None
+            if not isinstance(data_block, dict):
+                break
+            total_pages = int(data_block.get("pages") or 1)
+            raw_orders = data_block.get("orders") or []
+            if not raw_orders:
+                break
+
+            for raw_order in raw_orders:
+                if not isinstance(raw_order, dict):
+                    continue
+                placed_at = _parse_datetime(raw_order.get("createdAt"))
+                if placed_at is None:
+                    continue
+                if placed_at.date() < since.date() or placed_at.date() > until.date():
+                    continue
+                order = self._order_from_oms(raw_order)
+                if order:
+                    orders.append(order)
+
+            if page_no >= total_pages:
+                break
+
+            if page_no >= _OMS_MAX_PAGES:
+                truncation = (
+                    f"noon OMS history capped at {_OMS_MAX_PAGES} pages "
+                    f"({_OMS_MAX_PAGES * _OMS_PAGE_SIZE} orders); "
+                    f"{total_pages} total pages exist — orders earlier in the "
+                    "window may be missing."
+                )
+                break
+
+        return orders, truncation
+
+    def _order_from_oms(self, order: dict[str, Any]) -> StandardOrder | None:
+        """Parse an OMS JSON order into a StandardOrder with items.
+
+        Provides: identity, timing, outlet, gross_sales/net_sales, and item rows
+        with expanded modifier quantities.  Settlement fields (commission, fees,
+        vat, statement_id) are left None — RMS fills them in `_merge_oms_into_rms`.
+        """
+        order_id = _str_or_none(_first(order, "orderNr", "order_nr"))
+        if not order_id:
+            return None
+        placed_at = _parse_datetime(order.get("createdAt"))
+        outlet_info = order.get("outletInfo") or {}
+        return StandardOrder(
+            external_order_id=order_id,
+            external_outlet_id=_str_or_none(
+                outlet_info.get("outletCode") if isinstance(outlet_info, dict) else None
+            ),
+            business_date=placed_at.date().isoformat() if placed_at else None,
+            placed_at=placed_at,
+            accepted_at=_parse_datetime(order.get("estimatedAcceptedAt")),
+            delivered_at=_parse_datetime(order.get("estimatedDeliveryAt")),
+            cancelled_at=None,
+            status=_str_or_none(order.get("orderStatusCode")),
+            currency=_str_or_none(order.get("currencyCode")) or "AED",
+            customer_name=None,
+            customer_phone=None,
+            gross_sales=_num(
+                order.get("orderOutletSubtotal")
+                if order.get("orderOutletSubtotal") is not None
+                else order.get("orderSubtotal")
+            ),
+            net_sales=_num(order.get("orderRestaurantToInvoice")),
+            commission_amount=None,
+            payment_fee=_abs(_num(order.get("orderPostpaidFee"))),
+            delivery_fee=_abs(_num(order.get("orderDeliveryFeeOutlet"))),
+            vat_amount=None,
+            cancellation_fee=None,
+            refund_amount=None,
+            net_payable=_num(order.get("orderRestaurantToInvoice")),
+            statement_id=None,
+            items=self._items_from_oms(order),
+            raw=order,
+        )
+
+    def _items_from_oms(self, order: dict[str, Any]) -> list[StandardOrderItem]:
+        """Extract and normalise OMS line items with expanded modifier quantities."""
+        order_nr = str(order.get("orderNr") or "")
+        menu_info = order.get("menuInfo") or {}
+        if not isinstance(menu_info, dict):
+            menu_info = {}
+
+        # Name/category lookups from menuInfo
+        item_lookup: dict[str, dict[str, Any]] = {}
+        for mi in menu_info.get("items") or []:
+            if isinstance(mi, dict) and mi.get("itemCode"):
+                item_lookup[str(mi["itemCode"])] = mi
+
+        category_lookup: dict[str, str] = {}
+        for cat in menu_info.get("categories") or []:
+            if isinstance(cat, dict) and cat.get("categoryCode"):
+                category_lookup[str(cat["categoryCode"])] = str(
+                    cat.get("nameEn") or cat.get("nameAr") or cat.get("name") or ""
+                )
+
+        placed_at = _parse_datetime(order.get("createdAt"))
+        result: list[StandardOrderItem] = []
+        for index, item in enumerate(order.get("items") or [], start=1):
+            if not isinstance(item, dict):
+                continue
+            item_code = str(item.get("itemCode") or f"item-{index}")
+            menu_item = item_lookup.get(item_code, {})
+            category_code = str(menu_item.get("categoryCode") or "")
+            raw_mods = item.get("modifiers")
+            mods: list[StandardModifier] = (
+                expand_modifiers(raw_mods) if raw_mods else []
+            )
+            result.append(
+                StandardOrderItem(
+                    source_key=f"{order_nr}:{item_code}:{index}",
+                    item_name=str(
+                        menu_item.get("name")
+                        or menu_item.get("nameEn")
+                        or menu_item.get("nameAr")
+                        or item_code
+                    ),
+                    category_name=category_lookup.get(category_code) or None,
+                    quantity=_num(item.get("qty")),
+                    unit_price=_num(item.get("price")),
+                    gross_sales=_num(item.get("totalPrice")),
+                    net_sales=_num(item.get("totalPrice")),
+                    amount_is_known=True,
+                    modifiers=mods,
+                    business_date=placed_at.date().isoformat() if placed_at else None,
+                )
+            )
+        return result
+
+    # ── sales (dual-source: OMS items + RMS fees) ───────────────────────────
     async def fetch_sales(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> SalesResult:
-        """Orders settled on statements published in the (widened) window.
+        """Orders in the window, items from OMS, settlement fees from RMS.
 
-        noon's sales truth is the RMS order-level statement, so we first read the
-        wallet Statement tab for the reference numbers in range, then ask the
-        order-level endpoint for exactly those. Orders carry no item rows — the
-        statement has no per-line detail (see the module docstring).
+        Two sources are read and merged by `external_order_id`:
 
-        Statement *publication* is weekly; discovery uses
-        `_publication_since(since)` so a 1-day ingest pass still sees the latest
-        published statement(s).
+        1. OMS history (`_oms/order/panel/history`): near-realtime per-order JSON
+           with item lines and modifier quantities. Capped at
+           `_OMS_MAX_PAGES × _OMS_PAGE_SIZE` orders.  If the OMS call fails, a
+           truncation note is added and the method falls back to RMS-only so the
+           nightly ingest keeps running.
+
+        2. RMS order-level statement (`statement/orders`): settled orders with
+           commission / fee / vat figures. Statement publication is weekly so
+           `_publication_since` widens discovery.
+
+        OMS-only orders (not yet settled) are returned with fee fields as None.
+        RMS-only orders (outside the OMS cap / window) carry no items.
         """
+        # ── OMS pull (best-effort; auth/network failures fall back gracefully) ──
+        oms_orders: dict[str, StandardOrder] = {}
+        oms_truncation: str | None = None
+        try:
+            raw_oms, oms_truncation = await self._fetch_oms_orders(
+                session, since=since, until=until
+            )
+            for o in raw_oms:
+                if o.external_order_id:
+                    oms_orders[o.external_order_id] = o
+        except (AggregatorAuthError, AggregatorUnavailableError) as exc:
+            oms_truncation = (
+                f"noon OMS history unavailable ({exc}); order items will be "
+                "absent until the next successful OMS pull"
+            )
+            logger.warning("noon OMS history failed, continuing with RMS-only: %s", exc)
+
+        # ── RMS pull (authoritative for fees; propagates auth failures) ──────
         statement_rows = await self._wallet_rows(session, "statement")
         publish_since = _publication_since(since)
         in_window = [
@@ -401,8 +675,18 @@ class NoonClient(BaseAggregatorClient):
             for row in in_window
             if (ref := _first(row, "reference_nr", "referenceNr", "reference"))
         ]
-        truncation = _truncation_note(statement_rows, publish_since)
-        if not statement_ids:
+        rms_truncation = _truncation_note(statement_rows, publish_since)
+
+        rms_orders: dict[str, StandardOrder] = {}
+        if statement_ids:
+            order_rows = await self._post_tabular(
+                session, _ORDER_STATEMENT_URL, {"statementNrList": statement_ids}
+            )
+            for row in order_rows:
+                o = self._order_from(row)
+                if o and o.external_order_id:
+                    rms_orders[o.external_order_id] = o
+        else:
             logger.info(
                 "noon sales: 0/%s wallet statements in publication window "
                 "%s..%s (ingest since=%s)",
@@ -411,18 +695,30 @@ class NoonClient(BaseAggregatorClient):
                 until.date().isoformat(),
                 since.date().isoformat(),
             )
-            return SalesResult(
-                orders=[],
-                truncation_note=truncation
-                or "No noon statements were published in the requested window.",
+
+        # ── merge ──────────────────────────────────────────────────────────────
+        merged: list[StandardOrder] = []
+        for order_id, oms_order in oms_orders.items():
+            rms_order = rms_orders.get(order_id)
+            merged.append(
+                _merge_oms_into_rms(oms_order, rms_order)
+                if rms_order is not None
+                else oms_order
             )
-        order_rows = await self._post_tabular(
-            session, _ORDER_STATEMENT_URL, {"statementNrList": statement_ids}
+        for order_id, rms_order in rms_orders.items():
+            if order_id not in oms_orders:
+                merged.append(rms_order)
+
+        notes = [n for n in (oms_truncation, rms_truncation) if n]
+        if not merged and not notes:
+            notes.append(
+                "No noon orders found: the OMS window is empty and no "
+                "statements were published in the requested window."
+            )
+        return SalesResult(
+            orders=merged,
+            truncation_note=" | ".join(notes) if notes else None,
         )
-        orders = [
-            order for row in order_rows if (order := self._order_from(row)) is not None
-        ]
-        return SalesResult(orders=orders, truncation_note=truncation)
 
     def _order_from(self, row: dict[str, Any]) -> StandardOrder | None:
         order_id = _first(row, "order_nr", "orderNr", "order_id")
@@ -458,7 +754,7 @@ class NoonClient(BaseAggregatorClient):
             ),
             net_payable=_num(_first(row, "net_payable", "netPayable")),
             statement_id=_str_or_none(_first(row, "statement_nr", "statementNr")),
-            # The RMS order-level statement carries no per-item lines; see docstring.
+            # RMS has no per-item lines; OMS items are merged in by fetch_sales.
             items=[],
             raw=row,
         )
@@ -489,18 +785,33 @@ class NoonClient(BaseAggregatorClient):
         value = abs(fees_exc_vat) - other
         return value if value > 0 else Decimal(0)
 
-    # ── finance (statements + payouts) ──────────────────────────────────────
-    async def fetch_finance(
+    # ── finance (statements + payouts as distinct wallet tabs) ──────────────
+    async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
-    ) -> FinanceResult:
-        """The wallet's published statements and the transfers noon has made.
-
-        Both come from the wallet tabs' `Export Current View` — the Statement tab
-        for settlement summaries, the Payment tab for transfers. Discovery uses
-        the same widened publication lookback as sales (weekly grain).
-        """
-        payment_rows = await self._wallet_rows(session, "payment")
+    ) -> StatementsResult:
+        """Wallet Statement tab — settlement summaries (invoice archival deferred until PDF discovery)."""
         statement_rows = await self._wallet_rows(session, "statement")
+        publish_since = _publication_since(since)
+        statements: list[StandardStatement] = []
+        for row in statement_rows:
+            if _entry_type(row) != "statement":
+                continue
+            if not _in_window(_row_date(row), publish_since, until):
+                continue
+            statement = self._statement_from(row)
+            if statement is not None:
+                statements.append(statement)
+
+        return StatementsResult(
+            statements=statements,
+            truncation_note=_truncation_note(statement_rows, publish_since),
+        )
+
+    async def fetch_payouts(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> PayoutsResult:
+        """Wallet Payment tab — transfers noon has made (not statements)."""
+        payment_rows = await self._wallet_rows(session, "payment")
         publish_since = _publication_since(since)
         payouts = [
             payout
@@ -509,16 +820,9 @@ class NoonClient(BaseAggregatorClient):
             and _in_window(_row_date(row), publish_since, until)
             and (payout := self._payout_from(row)) is not None
         ]
-        statements = [
-            statement
-            for row in statement_rows
-            if _entry_type(row) == "statement"
-            and _in_window(_row_date(row), publish_since, until)
-            and (statement := self._statement_from(row)) is not None
-        ]
-        truncation = _truncation_note(payment_rows + statement_rows, publish_since)
-        return FinanceResult(
-            statements=statements, payouts=payouts, truncation_note=truncation
+        return PayoutsResult(
+            payouts=payouts,
+            truncation_note=_truncation_note(payment_rows, publish_since),
         )
 
     @staticmethod

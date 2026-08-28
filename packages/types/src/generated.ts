@@ -283,6 +283,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/keeta/finance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Keeta Finance
+         * @description Ingest a batch of in-page-fetched Keeta finance payloads.
+         *
+         *     Keeta's finance data is fetched in-page by the bootstrap worker (where the
+         *     portal's JS signs the request) and pushed here. Each payload is parsed by
+         *     `keeta_provider.parse_finance` into statements and payouts and upserted.
+         *     When the payload is only download-task metadata (figures live in PDF invoices),
+         *     the parse returns empty lists with a truncation note — the response still
+         *     returns 200 with zero counts and includes the note so the worker can log it.
+         */
+        post: operations["push_keeta_finance_api_v1_aggregators_keeta_finance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/orders": {
         parameters: {
             query?: never;
@@ -11097,6 +11124,36 @@ export interface components {
             source_order_id: string;
         };
         /**
+         * KeetaFinancePush
+         * @description A batch of in-page-fetched Keeta finance payloads, pushed in for ingest.
+         *
+         *     The bootstrap worker fetches the finance data in-page (where the portal's JS
+         *     signs the request), then hands the raw payloads here. Each is parsed by
+         *     `keeta_provider.parse_finance` into channel-neutral statements and payouts
+         *     and upserted. When the payload contains only download-task metadata (the
+         *     actual figures live in PDF invoices), the parse returns empty lists and
+         *     records a truncation note — the response still returns 200 with zero counts
+         *     so the worker can surface the note.
+         */
+        KeetaFinancePush: {
+            /** Payloads */
+            payloads?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * KeetaFinanceResult
+         * @description How many statements and payouts the pushed Keeta finance payloads upserted.
+         */
+        KeetaFinanceResult: {
+            /** Payouts */
+            payouts: number;
+            /** Statements */
+            statements: number;
+            /** Truncation Note */
+            truncation_note?: string | null;
+        };
+        /**
          * KeetaOrdersPush
          * @description A batch of in-page-fetched Keeta order payloads, pushed in for ingest.
          *
@@ -17306,6 +17363,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_keeta_finance_api_v1_aggregators_keeta_finance_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeetaFinancePush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaFinanceResult"];
                 };
             };
             /** @description Validation Error */

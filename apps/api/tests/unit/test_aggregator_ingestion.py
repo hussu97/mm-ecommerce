@@ -682,3 +682,235 @@ async def test_keeta_is_bootstrap_driven_not_httpx():
     now = _dt.datetime.now(_dt.timezone.utc)
     with pytest.raises(AggregatorUnavailableError):
         await keeta.fetch_sales(session, since=now, until=now)
+
+
+# ── Deliveroo modifier extraction ─────────────────────────────────────────────
+
+_BASE_LIST_ROW = {
+    "order_id": "ord-abc-123",
+    "order_number": "4999",
+    "status": "delivered",
+    "amount": {"fractional": 6500},
+    "placed_at": "2026-08-26T17:00:00+04:00",
+}
+
+_BASE_DETAIL: dict = {
+    "id": "ord-abc-123",
+    "status": "delivered",
+    "amount": {"fractional": 6500},
+    "items": [],
+}
+
+
+def _list_order():
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    return DeliverooClient()._parse_list_order(_BASE_LIST_ROW, "693359")
+
+
+def test_deliveroo_modifier_nested_groups_extracted_with_qty():
+    """Nested modifier-group shape: item.modifiers → [{name, options: [...]}]"""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "items": [
+            {
+                "name": "Chocolate Cake",
+                "quantity": 1,
+                "total_price": {"fractional": 6500},
+                "modifiers": [
+                    {
+                        "name": "Candles",
+                        "options": [
+                            {
+                                "id": "opt-candle-3",
+                                "name": "3 Candles",
+                                "quantity": 2,
+                                "price": {"fractional": 500},
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    assert len(order.items) == 1
+    item = order.items[0]
+    assert len(item.modifiers) == 1
+    mod = item.modifiers[0]
+    assert mod.name == "3 Candles"
+    assert mod.quantity == Decimal("2")
+    assert mod.external_ref == "opt-candle-3"
+    assert item.modifiers_text is not None
+    assert "3 Candles" in item.modifiers_text
+
+
+def test_deliveroo_modifier_flat_options_extracted():
+    """Flat shape: item.options = [{id, name, quantity, price}]"""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "items": [
+            {
+                "name": "Brownie Box",
+                "quantity": 1,
+                "total_price": {"fractional": 4000},
+                "options": [
+                    {"id": "opt-fudge", "name": "Fudge Sauce", "quantity": 1},
+                    {"id": "opt-nuts", "name": "Nuts", "quantity": 2},
+                ],
+            }
+        ],
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    item = order.items[0]
+    assert len(item.modifiers) == 2
+    names = {m.name for m in item.modifiers}
+    assert names == {"Fudge Sauce", "Nuts"}
+    nuts = next(m for m in item.modifiers if m.name == "Nuts")
+    assert nuts.quantity == Decimal("2")
+    assert nuts.external_ref == "opt-nuts"
+
+
+def test_deliveroo_modifier_addons_fallback():
+    """Fallback to item.addons when no modifiers/options key is present."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "items": [
+            {
+                "name": "Cupcakes",
+                "quantity": 3,
+                "total_price": {"fractional": 3000},
+                "addons": [
+                    {"id": "add-box", "name": "Gift Box", "quantity": 1},
+                ],
+            }
+        ],
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    item = order.items[0]
+    assert len(item.modifiers) == 1
+    assert item.modifiers[0].name == "Gift Box"
+    assert item.modifiers[0].quantity == Decimal("1")
+
+
+def test_deliveroo_no_modifiers_gives_empty_list_and_no_text():
+    """Items without any modifier/option key produce empty modifiers, no modifiers_text."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "items": [
+            {
+                "name": "Plain Cake",
+                "quantity": 1,
+                "total_price": {"fractional": 2500},
+            }
+        ],
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    item = order.items[0]
+    assert item.modifiers == []
+    assert item.modifiers_text is None
+
+
+def test_deliveroo_timeline_fills_accepted_and_delivered():
+    """Timeline keys on the detail populate accepted_at / delivered_at."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "timeline": {
+            "placed_at": "2026-08-26T13:00:00+00:00",
+            "accepted_at": "2026-08-26T13:02:30+00:00",
+            "delivered_at": "2026-08-26T13:25:00+00:00",
+        },
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    assert order.accepted_at is not None
+    assert order.accepted_at.minute == 2
+    assert order.delivered_at is not None
+    assert order.delivered_at.minute == 25
+    assert order.cancelled_at is None
+
+
+def test_deliveroo_timeline_cancelled_at():
+    """cancelled_at is filled when the timeline has a cancellation key."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "timeline": {
+            "placed_at": "2026-08-26T13:00:00+00:00",
+            "cancelled_at": "2026-08-26T13:01:00+00:00",
+        },
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    assert order.cancelled_at is not None
+    assert order.accepted_at is None
+    assert order.delivered_at is None
+
+
+def test_deliveroo_customer_from_nested_dict():
+    """customer.name / customer.phone on the detail populate StandardOrder fields."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "customer": {"name": "Ahmed Al-Farsi", "phone": "+971501234567"},
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    assert order.customer_name == "Ahmed Al-Farsi"
+    assert order.customer_phone == "+971501234567"
+
+
+def test_deliveroo_customer_absent_stays_none():
+    """No customer key on the detail → customer fields remain None."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    order = DeliverooClient()._merge_order_detail(_list_order(), _BASE_DETAIL, "693359")
+    assert order.customer_name is None
+    assert order.customer_phone is None
+
+
+def test_deliveroo_multiple_modifier_groups_all_options_collected():
+    """Multiple modifier groups → all options from all groups in one flat list."""
+    from app.services.providers.deliveroo_provider import DeliverooClient
+
+    detail = {
+        **_BASE_DETAIL,
+        "items": [
+            {
+                "name": "Cake Slice",
+                "quantity": 1,
+                "total_price": {"fractional": 3500},
+                "modifiers": [
+                    {
+                        "name": "Flavour",
+                        "options": [
+                            {"id": "fl-choc", "name": "Chocolate", "quantity": 1}
+                        ],
+                    },
+                    {
+                        "name": "Topping",
+                        "options": [
+                            {"id": "tp-cream", "name": "Cream", "quantity": 1},
+                            {"id": "tp-berry", "name": "Berries", "quantity": 2},
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+    order = DeliverooClient()._merge_order_detail(_list_order(), detail, "693359")
+    item = order.items[0]
+    assert len(item.modifiers) == 3
+    names = {m.name for m in item.modifiers}
+    assert names == {"Chocolate", "Cream", "Berries"}
+    berries = next(m for m in item.modifiers if m.name == "Berries")
+    assert berries.quantity == Decimal("2")

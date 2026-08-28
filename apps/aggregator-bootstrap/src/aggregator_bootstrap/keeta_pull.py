@@ -15,6 +15,12 @@ raw `getOrders` response payloads unchanged — the exact shape the mm-ecommerce
 `keeta_provider.parse_orders` walks (`data.list[]` of
 `baseOrder`/`merchantOrder`/`products`/`feeDtl` envelopes).
 
+`fetch_keeta_finance` is best-effort: it navigates to the financial-center SPA
+and attempts to fetch the bill list in-page. Keeta's finance surface currently
+exposes settled figures inside commission-invoice PDFs, so most responses will be
+download-task metadata only; when no structured data is found the function returns
+an empty list with a truncation note explaining why. Do NOT attempt PDF OCR here.
+
 Ported from mm-aggregator-automation `channels/keeta/exports.py`
 (`_fetch_keeta_history_rows` / `_request_keeta_browser_json`). Playwright is
 imported nowhere here — the function is handed an already-open context, so this
@@ -217,3 +223,120 @@ async def fetch_keeta_orders(context: Any, *, months_back: int = 1) -> list[dict
         return payloads
     finally:
         await page.close()
+
+
+# ── finance (best-effort in-page pull) ──────────────────────────────────────
+#: The financial-center SPA page — navigating here primes the session on
+#: merchant.mykeeta.com and populates SHOP_IDS in sessionStorage.
+KEETA_FINANCE_ROUTE = (
+    "https://merchant.mykeeta.com/financial-center/m/web/mach/"
+    "b_pc_finance_statement?containerType=financialCenter"
+)
+#: Keeta's bill-list endpoint (relative — the in-page fetch signs it with mtgsig).
+KEETA_FINANCE_ENDPOINT = "/api/finance/bill/getBillList"
+
+_GET_FINANCE_JS = """
+async ({ endpoint, payload }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": "0",
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const response = await fetch(endpoint, {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload || {})
+  });
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { status: response.status, text };
+  }
+}
+"""
+
+#: Keeta finance page size (bills per page).
+_FINANCE_PAGE_SIZE = 20
+
+#: Explain once, reference everywhere — the PDF constraint is not a code gap.
+_PDF_TRUNCATION_NOTE = (
+    "Keeta finance figures live in commission-invoice PDFs behind each "
+    "download-task URL; the in-page worker can extract only the task "
+    "metadata. Resolve the PDF invoices to obtain settled amounts."
+)
+
+
+async def fetch_keeta_finance(
+    context: Any, *, months_back: int = 2
+) -> tuple[list[dict], str | None]:
+    """Best-effort pull of Keeta finance data in-page from an open browser context.
+
+    Navigates to the financial-center SPA, then for each shop and each
+    calendar-month window attempts the signed `getBillList` fetch. Returns
+    `(payloads, truncation_note)`.
+
+    The truncation_note is set (and payloads may be empty) when:
+    - The endpoint returns no structured bill rows (only task/download metadata).
+    - The fetch throws entirely (network, session, etc.).
+
+    In either case the caller should push whatever payloads were collected (for
+    `parse_finance` to walk) and log the note. Do NOT attempt PDF OCR here.
+    """
+    page = await context.new_page()
+    payloads: list[dict] = []
+    truncation_note: str | None = None
+    try:
+        await page.goto(
+            KEETA_FINANCE_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        await page.wait_for_timeout(6_000)
+
+        shop_ids = await _read_shop_ids(page)
+        shop_groups = [[shop_id] for shop_id in shop_ids] or [[]]
+        windows = _month_windows(months_back)
+
+        for shop_group in shop_groups:
+            for window_start, window_end in windows:
+                payload = {
+                    "startTime": _date_ms(window_start),
+                    "endTime": _date_ms(window_end, end_of_day=True),
+                    "pageNum": 1,
+                    "pageSize": _FINANCE_PAGE_SIZE,
+                    "shopIds": shop_group,
+                }
+                response = await evaluate_in_page(
+                    page,
+                    _GET_FINANCE_JS,
+                    {"endpoint": KEETA_FINANCE_ENDPOINT, "payload": payload},
+                )
+                if isinstance(response, dict):
+                    payloads.append(response)
+
+        if not payloads:
+            truncation_note = _PDF_TRUNCATION_NOTE
+        else:
+            # Check whether any payload carries settled rows or is task-only.
+            has_rows = any(
+                isinstance(r.get("data"), dict)
+                and isinstance(r["data"].get("list"), list)
+                and r["data"]["list"]
+                for r in payloads
+            )
+            if not has_rows:
+                truncation_note = _PDF_TRUNCATION_NOTE
+    except Exception:  # noqa: BLE001 — best-effort; a broken page must not stop orders
+        logger.exception("keeta finance in-page fetch failed — skipped")
+        truncation_note = (
+            "Keeta finance in-page fetch failed (see logs). "
+            + _PDF_TRUNCATION_NOTE
+        )
+    finally:
+        await page.close()
+
+    return payloads, truncation_note

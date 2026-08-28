@@ -32,7 +32,12 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.services.aggregators.normalized import FinanceResult, SalesResult
+from app.services.aggregators.normalized import (
+    FinanceResult,
+    PayoutsResult,
+    SalesResult,
+    StatementsResult,
+)
 from app.services.aggregators.session_store import LoadedSession
 
 logger = logging.getLogger(__name__)
@@ -338,7 +343,26 @@ class BaseAggregatorClient(ABC):
         """Orders placed in the window, as channel-neutral DTOs."""
 
     @abstractmethod
+    async def fetch_statements(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> StatementsResult:
+        """Settlement documents published in the window (not payouts)."""
+
+    @abstractmethod
+    async def fetch_payouts(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> PayoutsResult:
+        """Bank/transfer payouts published in the window (not statements)."""
+
     async def fetch_finance(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> FinanceResult:
-        """Statements and payouts published in the window."""
+        """Compat wrapper: statements then payouts from the distinct methods."""
+        statements = await self.fetch_statements(session, since=since, until=until)
+        payouts = await self.fetch_payouts(session, since=since, until=until)
+        notes = [n for n in (statements.truncation_note, payouts.truncation_note) if n]
+        return FinanceResult(
+            statements=statements.statements,
+            payouts=payouts.payouts,
+            truncation_note=" | ".join(notes) if notes else None,
+        )

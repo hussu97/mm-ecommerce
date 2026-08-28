@@ -58,6 +58,7 @@ from app.models.aggregator import (
 )
 from app.models.base import utcnow
 from app.services.aggregators import crypto, reconcile, session_store
+from app.services.aggregators.modifiers import modifiers_to_json
 from app.services.aggregators.normalized import (
     FinanceResult,
     SalesResult,
@@ -78,6 +79,8 @@ __all__ = [
     "sweep_finance_once",
     "run_daily_once",
     "PROVIDERS",
+    "ingest_keeta_payloads",
+    "ingest_keeta_finance_payloads",
 ]
 
 #: "mmBATCH" + 5/6, after the GrubOps order loop (…4804). Each loop needs a key
@@ -137,6 +140,21 @@ async def _branch_for(
     )
 
 
+async def _mm_order_for_external(
+    db: AsyncSession, channel: str, external_order_id: str | None
+) -> uuid.UUID | None:
+    """The promoted MM order for this marketplace id, if promotion already linked it."""
+    if not external_order_id:
+        return None
+    return await db.scalar(
+        select(AggregatorOrder.mm_order_id).where(
+            AggregatorOrder.channel == channel,
+            AggregatorOrder.external_order_id == external_order_id,
+            AggregatorOrder.mm_order_id.is_not(None),
+        )
+    )
+
+
 # ── upserts ──────────────────────────────────────────────────────────────────
 #: Columns a thinner re-fetch may legitimately omit: the hourly *sales* pull has
 #: no settlement figures and the daily *finance* pull is what fills them, and a
@@ -156,6 +174,11 @@ _PRESERVE_IF_NULL = (
     "refund_amount",
     "net_payable",
     "statement_id",
+    "customer_name",
+    "customer_phone",
+    "accepted_at",
+    "delivered_at",
+    "cancelled_at",
 )
 
 
@@ -202,8 +225,13 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "branch_id": branch_id,
         "business_date": order.business_date,
         "placed_at": order.placed_at,
+        "accepted_at": order.accepted_at,
+        "delivered_at": order.delivered_at,
+        "cancelled_at": order.cancelled_at,
         "status": order.status,
         "currency": order.currency,
+        "customer_name": order.customer_name,
+        "customer_phone": order.customer_phone,
         "gross_sales": order.gross_sales,
         "net_sales": order.net_sales,
         "commission_amount": order.commission_amount,
@@ -247,6 +275,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
             "gross_sales": item.gross_sales,
             "net_sales": item.net_sales,
             "amount_is_known": item.amount_is_known,
+            "modifiers": modifiers_to_json(item.modifiers),
             "modifiers_text": item.modifiers_text,
             "business_date": item.business_date,
             "period_start": item.period_start,
@@ -289,6 +318,42 @@ async def ingest_keeta_payloads(db: AsyncSession, payloads: list[dict]) -> int:
     return ingested
 
 
+async def ingest_keeta_finance_payloads(
+    db: AsyncSession, payloads: list[dict]
+) -> tuple[int, int]:
+    """Parse and upsert a batch of in-page-fetched Keeta finance payloads.
+
+    The bootstrap worker fetches finance data in-page (where `mtgsig` is signed)
+    and pushes the raw payloads to `/keeta/finance`, which calls this. Each
+    payload is isolated — a single malformed one is logged and skipped. Returns
+    `(statements_written, payouts_written)`.
+
+    When the payload is only download-task metadata (figures live in PDFs rather
+    than in the JSON), `parse_finance` sets a `truncation_note` and returns empty
+    lists; this is logged but not an error — the API still responds 200 with zero
+    counts, so the bootstrap worker can surface it to its caller.
+    """
+    from app.services.providers import keeta_provider
+
+    statements_written = 0
+    payouts_written = 0
+    for payload in payloads:
+        try:
+            result = keeta_provider.provider.parse_finance(payload)
+        except Exception:  # noqa: BLE001 — one bad payload must not fail the batch
+            logger.exception("keeta finance payload parse failed — skipped")
+            continue
+        if result.truncation_note:
+            logger.info("keeta finance payload truncated: %s", result.truncation_note)
+        for statement in result.statements:
+            await _upsert_statement(db, CHANNEL_KEETA, statement)
+            statements_written += 1
+        for payout in result.payouts:
+            await _upsert_payout(db, CHANNEL_KEETA, payout)
+            payouts_written += 1
+    return statements_written, payouts_written
+
+
 async def _upsert_statement(
     db: AsyncSession, channel: str, statement: StandardStatement
 ) -> None:
@@ -303,16 +368,49 @@ async def _upsert_statement(
         "total_fees": statement.total_fees,
         "total_vat": statement.total_vat,
         "currency": statement.currency,
+        "external_outlet_id": statement.external_outlet_id,
+        "invoice_object_key": statement.invoice_object_key,
+        "invoice_content_type": statement.invoice_content_type,
+        "invoice_original_filename": statement.invoice_original_filename,
+        "invoice_fetched_at": statement.invoice_fetched_at,
+        "invoice_attachments": (
+            _json_safe(statement.invoice_attachments)
+            if statement.invoice_attachments is not None
+            else None
+        ),
         "raw": _json_safe(statement.raw) if statement.raw is not None else None,
     }
-    update = {k: v for k, v in values.items() if k not in ("channel", "statement_id")}
+    insert_stmt = pg_insert(AggregatorStatement).values(**values)
+    preserve = {
+        "invoice_object_key",
+        "invoice_content_type",
+        "invoice_original_filename",
+        "invoice_fetched_at",
+        "invoice_attachments",
+        "external_outlet_id",
+        "total_fees",
+        "total_vat",
+        "gross_sales",
+        "net_payable",
+    }
+    update = {}
+    for k in values:
+        if k in ("channel", "statement_id"):
+            continue
+        proposed = getattr(insert_stmt.excluded, k)
+        update[k] = (
+            func.coalesce(proposed, getattr(AggregatorStatement, k))
+            if k in preserve
+            else proposed
+        )
     update["updated_at"] = _touched_at(AggregatorStatement, update)
     await db.execute(
-        pg_insert(AggregatorStatement)
-        .values(**values)
-        .on_conflict_do_update(constraint="uq_aggregator_statement", set_=update)
+        insert_stmt.on_conflict_do_update(
+            constraint="uq_aggregator_statement", set_=update
+        )
     )
     for line in statement.lines:
+        mm_order_id = await _mm_order_for_external(db, channel, line.external_order_id)
         line_values = {
             "channel": channel,
             "source_key": line.source_key,
@@ -325,6 +423,8 @@ async def _upsert_statement(
             "description": line.description,
             "amount": line.amount,
             "currency": line.currency,
+            "mm_order_id": mm_order_id,
+            "grain": line.grain,
         }
         line_update = {
             k: v for k, v in line_values.items() if k not in ("channel", "source_key")

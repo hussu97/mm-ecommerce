@@ -35,11 +35,12 @@ from typing import Any
 
 from app.models.aggregator import CHANNEL_CAREEM
 from app.services.aggregators.normalized import (
-    FinanceResult,
+    PayoutsResult,
     SalesResult,
     StandardOrder,
     StandardOrderItem,
     StandardPayout,
+    StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import BaseAggregatorClient
@@ -194,10 +195,15 @@ class CareemClient(BaseAggregatorClient):
             raw=row,
         )
 
-    # ── finance (payouts; balances snapshot) ────────────────────────────────
-    async def fetch_finance(
+    # ── finance (payouts only; Careem has no statement document) ────────────
+    async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
-    ) -> FinanceResult:
+    ) -> StatementsResult:
+        return StatementsResult(statements=[])
+
+    async def fetch_payouts(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> PayoutsResult:
         outlets = await self.discover_outlets(session)
         accounts = self._billing_accounts(outlets)
         payouts: list[StandardPayout] = []
@@ -225,7 +231,7 @@ class CareemClient(BaseAggregatorClient):
             page += 1
             if not rows or page * _PAGE_SIZE >= total:
                 break
-        return FinanceResult(statements=[], payouts=payouts)
+        return PayoutsResult(payouts=payouts)
 
     def _payout_from(self, row: dict[str, Any]) -> StandardPayout:
         amount = _first(row, "amount", "payoutAmount", "transferAmount")

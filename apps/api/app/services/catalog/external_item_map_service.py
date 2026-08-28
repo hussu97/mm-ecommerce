@@ -24,11 +24,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.external_item_map import (
+    KIND_OPTION,
     KIND_PRODUCT,
     METHOD_EXACT,
     METHOD_FUZZY,
     ExternalItemMap,
 )
+from app.models.modifier import ModifierOption
 from app.models.product import Product
 
 
@@ -88,6 +90,81 @@ async def record_proposal(
             approved=False,
             match_method=METHOD_EXACT if guess_product_id is not None else METHOD_FUZZY,
             match_score=Decimal("100.00") if guess_product_id is not None else None,
+        )
+        .on_conflict_do_nothing(constraint="uq_external_item_map_identity")
+    )
+
+
+async def resolve_option(
+    db: AsyncSession,
+    system: str,
+    name: str | None,
+    *,
+    ref: str | None = None,
+) -> tuple:
+    """The (modifier_option_id, option_name, option_price) from an approved option map
+    row, keyed on `ref` (external modifier code) when present, otherwise on the
+    normalised name. Returns (None, None, None) when no approved row exists.
+
+    Approved rows only — an unapproved proposal is a guess that must not silently
+    attach to an order, exactly as resolve_product treats product proposals."""
+    key = normalize_ref(ref or name)
+    if key is None:
+        return None, None, None
+    row = (
+        await db.execute(
+            select(
+                ExternalItemMap.modifier_option_id,
+                ModifierOption.name,
+                ModifierOption.price,
+            )
+            .join(
+                ModifierOption, ModifierOption.id == ExternalItemMap.modifier_option_id
+            )
+            .where(
+                ExternalItemMap.system == system,
+                ExternalItemMap.external_ref == key,
+                ExternalItemMap.mm_kind == KIND_OPTION,
+                ExternalItemMap.approved.is_(True),
+                ExternalItemMap.modifier_option_id.isnot(None),
+            )
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None, None, None
+    return row[0], row[1], row[2]
+
+
+async def record_option_proposal(
+    db: AsyncSession,
+    system: str,
+    name: str | None,
+    *,
+    ref: str | None = None,
+    guess_modifier_option_id=None,
+) -> None:
+    """Record a first sighting of an external modifier name as an unapproved proposal
+    for review — same ON CONFLICT DO NOTHING semantics as record_proposal, so a
+    human's approval or edit is never overwritten."""
+    key = normalize_ref(ref or name)
+    if key is None:
+        return
+    await db.execute(
+        pg_insert(ExternalItemMap)
+        .values(
+            system=system,
+            external_ref=key,
+            external_name=(name or "").strip()[:255] or None,
+            mm_kind=KIND_OPTION,
+            modifier_option_id=guess_modifier_option_id,
+            approved=False,
+            match_method=METHOD_EXACT
+            if guess_modifier_option_id is not None
+            else METHOD_FUZZY,
+            match_score=Decimal("100.00")
+            if guess_modifier_option_id is not None
+            else None,
         )
         .on_conflict_do_nothing(constraint="uq_external_item_map_identity")
     )

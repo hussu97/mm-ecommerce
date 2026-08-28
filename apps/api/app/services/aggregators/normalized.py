@@ -9,6 +9,9 @@ that writes `aggregator_order` / `aggregator_statement` reads one vocabulary.
 Money is `Decimal | None`. None means "the marketplace did not tell us", which
 is not zero: a null commission is "unknown", a zero commission is "charged
 nothing", and a reconciliation that confuses the two lies about the fee.
+
+Modifiers are first-class: each option carries a name **and** a quantity (default
+1 only when the portal omits it — never invent qty by repeating rows).
 """
 
 from __future__ import annotations
@@ -17,7 +20,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
-from app.models.aggregator import GRAIN_LINE
+from app.models.aggregator import GRAIN_LINE, STATEMENT_GRAIN_ORDER
+
+
+@dataclass(frozen=True)
+class StandardModifier:
+    """One chosen option on a sold line — name + quantity are both load-bearing."""
+
+    name: str
+    #: Portal qty/count. Default to 1 only when the source truly omitted it.
+    quantity: Decimal = Decimal("1")
+    unit_price: Decimal | None = None
+    #: Portal option / modifier code when present — feeds `external_item_map`.
+    external_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,9 @@ class StandardOrderItem:
     #: False when the channel gives a name/quantity but no per-line money — a
     #: zero there would read as free.
     amount_is_known: bool = True
+    #: Structured options with qty; prefer this over `modifiers_text`.
+    modifiers: list[StandardModifier] = field(default_factory=list)
+    #: Raw portal dump for debugging when structure is lossy.
     modifiers_text: str | None = None
     business_date: str | None = None
     period_start: str | None = None
@@ -51,8 +69,13 @@ class StandardOrder:
     external_outlet_id: str | None = None
     business_date: str | None = None
     placed_at: datetime | None = None
+    accepted_at: datetime | None = None
+    delivered_at: datetime | None = None
+    cancelled_at: datetime | None = None
     status: str | None = None
     currency: str | None = None
+    customer_name: str | None = None
+    customer_phone: str | None = None
     gross_sales: Decimal | None = None
     net_sales: Decimal | None = None
     commission_amount: Decimal | None = None
@@ -81,6 +104,8 @@ class StandardStatementLine:
     description: str | None = None
     amount: Decimal | None = None
     currency: str | None = None
+    #: `order` when keyed to an external_order_id; `summary` for period totals.
+    grain: str = STATEMENT_GRAIN_ORDER
 
 
 @dataclass(frozen=True)
@@ -96,6 +121,14 @@ class StandardStatement:
     total_fees: Decimal | None = None
     total_vat: Decimal | None = None
     currency: str | None = None
+    #: Marketplace outlet when the statement is per-branch (Talabat detailed).
+    external_outlet_id: str | None = None
+    #: Populated when the provider archives the settlement invoice bytes.
+    invoice_object_key: str | None = None
+    invoice_content_type: str | None = None
+    invoice_original_filename: str | None = None
+    invoice_fetched_at: datetime | None = None
+    invoice_attachments: list[dict] | None = None
     lines: list[StandardStatementLine] = field(default_factory=list)
     raw: dict | None = None
 
@@ -126,8 +159,24 @@ class SalesResult:
 
 
 @dataclass(frozen=True)
+class StatementsResult:
+    """What a `fetch_statements` returns."""
+
+    statements: list[StandardStatement] = field(default_factory=list)
+    truncation_note: str | None = None
+
+
+@dataclass(frozen=True)
+class PayoutsResult:
+    """What a `fetch_payouts` returns."""
+
+    payouts: list[StandardPayout] = field(default_factory=list)
+    truncation_note: str | None = None
+
+
+@dataclass(frozen=True)
 class FinanceResult:
-    """What a `fetch_finance` returns: statements + payouts, and truncation."""
+    """Combined statements + payouts (compat wrapper over the split methods)."""
 
     statements: list[StandardStatement] = field(default_factory=list)
     payouts: list[StandardPayout] = field(default_factory=list)

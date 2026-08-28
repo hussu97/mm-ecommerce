@@ -169,6 +169,11 @@ GRAIN_LINE = "line"
 GRAIN_AGGREGATE = "aggregate"
 ITEM_GRAINS: tuple[str, ...] = (GRAIN_LINE, GRAIN_AGGREGATE)
 
+#: Statement-line grain: order-level fee rows vs period summary totals.
+STATEMENT_GRAIN_ORDER = "order"
+STATEMENT_GRAIN_SUMMARY = "summary"
+STATEMENT_GRAINS: tuple[str, ...] = (STATEMENT_GRAIN_ORDER, STATEMENT_GRAIN_SUMMARY)
+
 # ── Reconciliation outcome ──────────────────────────────────────────────────
 MATCH_MATCHED = "matched"
 MATCH_UNMATCHED_AGG = "unmatched_agg"  # aggregator has it, MM does not
@@ -441,10 +446,21 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     placed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancelled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: The marketplace's own status word, unconstrained by design — provider
     #: vocabulary, like the courier words on `order_delivery`.
     status: Mapped[str | None] = mapped_column(String(40), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    customer_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     gross_sales: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     net_sales: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -520,6 +536,8 @@ class AggregatorOrderItem(Base, UUIDMixin, TimestampMixin):
     amount_is_known: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: Structured options `[{name, quantity, unit_price, external_ref}, ...]`.
+    modifiers: Mapped[list | dict | None] = mapped_column(JSONB, nullable=True)
     modifiers_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     business_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
     period_start: Mapped[str | None] = mapped_column(String(10), nullable=True)
@@ -555,6 +573,22 @@ class AggregatorStatement(Base, UUIDMixin, TimestampMixin):
     total_fees: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     total_vat: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    #: Marketplace outlet when the statement is per-branch (Talabat detailed).
+    external_outlet_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Private R2 object key for the archived settlement invoice
+    #: (`aggregator-statements/{channel}/{statement_id}/…`). Not a public URL.
+    invoice_object_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    invoice_content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    invoice_original_filename: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    invoice_fetched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Extra archived files `[{object_key, content_type, original_filename, size_bytes}]`.
+    invoice_attachments: Mapped[list | dict | None] = mapped_column(
+        JSONB, nullable=True
+    )
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
@@ -593,12 +627,26 @@ class AggregatorStatementLine(Base, UUIDMixin, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    #: Filled when `(channel, external_order_id)` has a promoted aggregator order.
+    mm_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    grain: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=STATEMENT_GRAIN_ORDER
+    )
 
     __table_args__ = (
         UniqueConstraint("channel", "source_key", name="uq_aggregator_statement_line"),
         CheckConstraint(
             f"channel IN ({_CHANNELS_SQL})",
             name="ck_aggregator_statement_line_channel",
+        ),
+        CheckConstraint(
+            f"grain IN ({', '.join(repr(g) for g in STATEMENT_GRAINS)})",
+            name="ck_aggregator_statement_line_grain",
         ),
     )
 

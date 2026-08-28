@@ -97,6 +97,8 @@ scripts/marketing/package-lock.json
 # Aggregator worker local session cache. Never commit — these are live logins.
 .aggregator-sessions/
 apps/aggregator-bootstrap/.sessions/
+# Local uv lockfile — prod Docker/CI install from pyproject.toml via pip, not uv lock.
+apps/aggregator-bootstrap/uv.lock
 *.chrome-profile/
 *.chrome/
 

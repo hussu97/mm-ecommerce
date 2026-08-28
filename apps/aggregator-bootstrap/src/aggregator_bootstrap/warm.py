@@ -6,8 +6,9 @@ headed `login` writes it; a deploy/restart hydrates it from the API; a warm
 reopens it, rotates the anti-bot cookie, and pushes the refresh back.
 
 Keeta is the exception: it has no httpx sweep, so warming it also pulls its
-orders in-page (its `mtgsig` signing lives in the page) and pushes the raw
-payloads to `/aggregators/keeta/orders`.
+orders (and best-effort finance) in-page (its `mtgsig` signing lives in the
+page) and pushes the raw payloads to `/aggregators/keeta/orders` and
+`/aggregators/keeta/finance`.
 """
 
 from __future__ import annotations
@@ -16,10 +17,9 @@ import logging
 from typing import Any
 
 from .browser import NeedsHumanLogin, NotLoggedInError, _storage_state_path
-from .config import settings
 from .hydrate import hydrate_from_api
-from .keeta_pull import fetch_keeta_orders
-from .push import push_keeta_orders, push_session
+from .keeta_pull import fetch_keeta_finance, fetch_keeta_orders
+from .push import push_keeta_finance, push_keeta_orders, push_session
 from .session_capture import capture, payload_from_probe
 
 logger = logging.getLogger(__name__)
@@ -47,12 +47,13 @@ async def warm_channel(channel: str) -> dict[str, Any]:
     """Re-capture the channel's session from its stored state and push it.
 
     Keeta is the exception: it has no httpx replay path, so warming it means
-    pulling its orders in-page (mtgsig is signed there) and pushing those, rather
-    than capturing a session fingerprint for the sweep to replay.
+    pulling its orders (and best-effort finance) in-page (mtgsig is signed
+    there) and pushing those, rather than capturing a session fingerprint for
+    the sweep to replay.
     """
     if channel == "keeta":
         # Still recapture the browser state so a Keeta warm refreshes cookies
-        # in the DB, then pull orders in-page.
+        # in the DB, then pull orders + finance in-page.
         try:
             payload = await capture("keeta")
             await push_session(payload)
@@ -75,7 +76,7 @@ async def push_probe(channel: str, result) -> dict[str, Any]:
 
 
 async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
-    """Fetch Keeta's getOrders in-page (mtgsig-signed) and push the payloads.
+    """Fetch Keeta orders + best-effort finance in-page and push the payloads.
 
     Uses the hydrated Playwright `storage_state` + sessionStorage, *not* the
     headed Chrome profile. That profile often keeps a stale HK login redirect
@@ -95,16 +96,34 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
         opened = await _open_storage_state_context(pw, "keeta")
         try:
             payloads = await fetch_keeta_orders(opened.context, months_back=months_back)
+            finance_payloads, finance_note = await fetch_keeta_finance(
+                opened.context, months_back=max(months_back, 2)
+            )
         finally:
             await opened.close()
 
-    if not payloads:
+    out: dict[str, Any] = {"ingested": 0, "payloads": 0}
+    if payloads:
+        result = await push_keeta_orders(payloads)
+        logger.info("pushed %d keeta getOrders payloads: %s", len(payloads), result)
+        out.update(result)
+        out["payloads"] = len(payloads)
+    else:
         logger.warning("keeta: no getOrders payloads fetched; nothing to push")
-        return {"ingested": 0, "payloads": 0}
 
-    result = await push_keeta_orders(payloads)
-    logger.info("pushed %d keeta getOrders payloads: %s", len(payloads), result)
-    return result
+    if finance_payloads:
+        finance_result = await push_keeta_finance(finance_payloads)
+        logger.info(
+            "pushed %d keeta finance payloads: %s",
+            len(finance_payloads),
+            finance_result,
+        )
+        out["finance"] = finance_result
+    elif finance_note:
+        logger.warning("keeta finance: %s", finance_note)
+        out["finance_truncation_note"] = finance_note
+
+    return out
 
 
 __all__ = [

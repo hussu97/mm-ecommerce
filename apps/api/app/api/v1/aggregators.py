@@ -52,6 +52,8 @@ from app.schemas.aggregator import (
     AggregatorSessionResponse,
     AggregatorWorkerAccount,
     AggregatorWorkerSession,
+    KeetaFinancePush,
+    KeetaFinanceResult,
     KeetaOrdersPush,
     KeetaOrdersResult,
     ReconSummaryOut,
@@ -355,6 +357,25 @@ async def push_keeta_orders(
     """
     ingested = await ingest.ingest_keeta_payloads(db, body.payloads)
     return KeetaOrdersResult(ingested=ingested)
+
+
+@router.post("/keeta/finance", response_model=KeetaFinanceResult)
+async def push_keeta_finance(
+    body: KeetaFinancePush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> KeetaFinanceResult:
+    """Ingest a batch of in-page-fetched Keeta finance payloads.
+
+    Keeta's finance data is fetched in-page by the bootstrap worker (where the
+    portal's JS signs the request) and pushed here. Each payload is parsed by
+    `keeta_provider.parse_finance` into statements and payouts and upserted.
+    When the payload is only download-task metadata (figures live in PDF invoices),
+    the parse returns empty lists with a truncation note — the response still
+    returns 200 with zero counts and includes the note so the worker can log it.
+    """
+    statements, payouts = await ingest.ingest_keeta_finance_payloads(db, body.payloads)
+    return KeetaFinanceResult(statements=statements, payouts=payouts)
 
 
 def _flagged_clause():

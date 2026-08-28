@@ -185,6 +185,29 @@ class KeetaOrdersResult(BaseModel):
     ingested: int
 
 
+class KeetaFinancePush(BaseModel):
+    """A batch of in-page-fetched Keeta finance payloads, pushed in for ingest.
+
+    The bootstrap worker fetches the finance data in-page (where the portal's JS
+    signs the request), then hands the raw payloads here. Each is parsed by
+    `keeta_provider.parse_finance` into channel-neutral statements and payouts
+    and upserted. When the payload contains only download-task metadata (the
+    actual figures live in PDF invoices), the parse returns empty lists and
+    records a truncation note — the response still returns 200 with zero counts
+    so the worker can surface the note.
+    """
+
+    payloads: list[dict] = Field(default_factory=list)
+
+
+class KeetaFinanceResult(BaseModel):
+    """How many statements and payouts the pushed Keeta finance payloads upserted."""
+
+    statements: int
+    payouts: int
+    truncation_note: str | None = None
+
+
 class AggregatorBranchMapIn(BaseModel):
     """An outlet↔branch mapping to create or update from the admin.
 

@@ -45,6 +45,7 @@ a business date means to the people reading the reconciliation.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -54,14 +55,17 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.models.aggregator import CHANNEL_KEETA, GRAIN_LINE
+from app.services.aggregators.modifiers import expand_modifiers
 from app.services.aggregators.normalized import (
     FinanceResult,
+    PayoutsResult,
     SalesResult,
     StandardOrder,
     StandardOrderItem,
     StandardPayout,
     StandardStatement,
     StandardStatementLine,
+    StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import (
@@ -459,6 +463,88 @@ def _nested_items(row: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _archive_keeta_invoice(row: dict[str, Any], statement_id: str) -> "Any | None":
+    """Archive a Keeta commission invoice and return a `StoredStatementInvoice`.
+
+    Priority order:
+    1. PDF bytes from `invoice_pdf_b64` (base64 encoded by the bootstrap worker
+       after downloading the commission invoice in-page).
+    2. ZIP bytes from `invoice_zip_b64` as primary when no PDF is available.
+    3. JSON of the bill-list row as a weak audit fallback — the bootstrap did not
+       resolve the PDF yet, but at least finance has the metadata.
+
+    Archive failures are logged and return None — a missing R2 document must
+    not abort the finance parse.
+    """
+    from app.services.aggregators.statement_docs import store_statement_invoice
+
+    pdf_bytes: bytes | None = None
+    zip_bytes: bytes | None = None
+
+    pdf_b64 = _get_value(row, "invoice_pdf_b64")
+    if pdf_b64:
+        try:
+            pdf_bytes = base64.b64decode(pdf_b64)
+        except Exception:
+            logger.warning(
+                "keeta: invalid invoice_pdf_b64 for %s — skipping PDF", statement_id
+            )
+
+    zip_b64 = _get_value(row, "invoice_zip_b64")
+    if zip_b64:
+        try:
+            zip_bytes = base64.b64decode(zip_b64)
+        except Exception:
+            logger.warning(
+                "keeta: invalid invoice_zip_b64 for %s — skipping zip", statement_id
+            )
+
+    if pdf_bytes:
+        extra = [("invoice.zip", zip_bytes, "application/zip")] if zip_bytes else None
+        try:
+            return store_statement_invoice(
+                channel=CHANNEL_KEETA,
+                statement_id=statement_id,
+                filename=f"{statement_id}.pdf",
+                body=pdf_bytes,
+                content_type="application/pdf",
+                extra_files=extra,
+            )
+        except Exception:
+            logger.warning(
+                "keeta: PDF archival failed for %s — trying JSON fallback", statement_id
+            )
+
+    if zip_bytes and not pdf_bytes:
+        try:
+            return store_statement_invoice(
+                channel=CHANNEL_KEETA,
+                statement_id=statement_id,
+                filename=f"{statement_id}.zip",
+                body=zip_bytes,
+                content_type="application/zip",
+            )
+        except Exception:
+            logger.warning(
+                "keeta: zip archival failed for %s — trying JSON fallback", statement_id
+            )
+
+    # JSON fallback — the PDF is not yet downloaded; archive the bill-list row so
+    # finance has at least the metadata as an auditable document.
+    try:
+        json_bytes = json.dumps(row, default=str, ensure_ascii=False).encode("utf-8")
+        return store_statement_invoice(
+            channel=CHANNEL_KEETA,
+            statement_id=statement_id,
+            filename=f"{statement_id}.json",
+            body=json_bytes,
+            content_type="application/json",
+        )
+    except Exception:
+        logger.warning("keeta: JSON archival fallback failed for %s", statement_id)
+        return None
+
+
 class KeetaClient(BaseAggregatorClient):
     """Keeta's parser, and a fetch path that refuses rather than lies.
 
@@ -573,6 +659,7 @@ class KeetaClient(BaseAggregatorClient):
                 or item_name
             )
             gross = _first_money(item, ("totalAmount", "totalPrice", "amount", "price"))
+            raw_mods = _get_value(item, "modifiers") or _get_value(item, "attributes")
             items.append(
                 StandardOrderItem(
                     source_key=f"{order_id}:{item_key}:{index}",
@@ -584,6 +671,9 @@ class KeetaClient(BaseAggregatorClient):
                     gross_sales=gross,
                     net_sales=gross,
                     amount_is_known=gross is not None,
+                    modifiers=expand_modifiers(raw_mods)
+                    if raw_mods not in (None, "", [])
+                    else [],
                     modifiers_text=_mods_text(item),
                     business_date=business_date,
                 )
@@ -601,6 +691,11 @@ class KeetaClient(BaseAggregatorClient):
         dates), this maps them; when the payload is only task metadata, there is
         nothing to settle yet, so it returns empty with a note rather than
         inventing zeros.
+
+        When the row carries `invoice_pdf_b64` / `invoice_zip_b64` (base64 bytes
+        the bootstrap worker downloaded in-page), those fields are preserved on
+        `raw` for a future PDF-first archival pass — nothing is uploaded until
+        prod discovery confirms the canonical VAT document per channel.
         """
         rows = _extract_rows(payload)
         statements: list[StandardStatement] = []
@@ -784,11 +879,14 @@ class KeetaClient(BaseAggregatorClient):
         misrouted Keeta session on the ingest loop fails loudly."""
         raise AggregatorUnavailableError(_UNAVAILABLE)
 
-    async def fetch_finance(
+    async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
-    ) -> FinanceResult:
-        """Not reachable over httpx — see the module docstring. Raises so a
-        misrouted Keeta session on the ingest loop fails loudly."""
+    ) -> StatementsResult:
+        raise AggregatorUnavailableError(_UNAVAILABLE)
+
+    async def fetch_payouts(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> PayoutsResult:
         raise AggregatorUnavailableError(_UNAVAILABLE)
 
 

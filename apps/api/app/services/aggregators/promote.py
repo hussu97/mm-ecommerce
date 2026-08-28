@@ -58,6 +58,7 @@ from app.models.aggregator import (
     GRAIN_LINE,
     AggregatorOrder,
     AggregatorOrderItem,
+    AggregatorStatementLine,
 )
 from app.models.base import utcnow
 from app.models.order import Order, OrderItem, OrderStatusEnum
@@ -65,6 +66,7 @@ from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
 from app.services.aggregators import reconcile
+from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
 
@@ -221,6 +223,65 @@ async def _match_product(
     return hit[0], hit[1] or ""
 
 
+def _rung_at(agg: AggregatorOrder, rung: OrderStatusEnum) -> datetime | None:
+    """The most accurate timestamp for a rung transition.
+
+    Prefers the portal's own event columns — the moment the event actually
+    happened — over placed_at, which is only "when the order was placed". Using
+    a single placed_at for every rung flattens the order's real timeline and
+    confuses the status-event log when two rungs stamp the same second.
+    """
+    if rung == OrderStatusEnum.CANCELLED:
+        return agg.cancelled_at or agg.placed_at
+    if rung == OrderStatusEnum.DELIVERED:
+        return agg.delivered_at or agg.placed_at
+    # CONFIRMED / ARRIVED_AT_POS / PACKED: "accepted" is the closest event most
+    # portals carry for the order-taken moment.
+    return agg.accepted_at or agg.placed_at
+
+
+async def _build_modifier_snapshot(
+    db: AsyncSession,
+    channel: str,
+    mods: list,
+) -> tuple[list[dict], Decimal]:
+    """Resolve a StandardModifier list to catalog options and build the snapshot.
+
+    Returns (snapshot, options_price). options_price only sums unit_prices the
+    aggregator reported — a None price contributes 0. The catalog lookup is used
+    for modifier_option_id linkage only; we never substitute catalog price for an
+    aggregator price the portal did not report, per the money convention.
+
+    The snapshot shape mirrors the GrubOps ingest (option_name / option_price
+    dialect) so the admin item table and the register decode it identically.
+    """
+    snapshot: list[dict] = []
+    options_price = Decimal("0")
+    for mod in mods:
+        opt_id, _, _ = await external_item_map_service.resolve_option(
+            db, channel, mod.name, ref=mod.external_ref
+        )
+        if opt_id is None:
+            await external_item_map_service.record_option_proposal(
+                db, channel, mod.name, ref=mod.external_ref
+            )
+        unit_price = mod.unit_price if mod.unit_price is not None else Decimal("0")
+        quantity = int(mod.quantity)
+        options_price += unit_price * quantity
+        snapshot.append(
+            {
+                "option_name": mod.name,
+                "option_price": float(unit_price),
+                "option_id": str(opt_id) if opt_id is not None else None,
+                "modifier_option_id": str(opt_id) if opt_id is not None else None,
+                "modifier_name": None,
+                "modifier_id": None,
+                "quantity": quantity,
+            }
+        )
+    return snapshot, options_price
+
+
 async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> int:
     """Write the order's lines from the aggregator's line-grain items, mapping each
     to a catalog product by name where one is found. Returns the count of lines
@@ -239,9 +300,15 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
     unmapped = 0
     for it in items:
         qty = int(it.quantity) if it.quantity is not None else 1
-        unit = money(it.unit_price or Decimal("0"))
+        base_price = money(it.unit_price or Decimal("0"))
+        mods = modifiers_from_json(it.modifiers)
+        snapshot, opt_price = await _build_modifier_snapshot(db, agg.channel, mods)
+        opt_price = money(opt_price)
+        unit_price = money(base_price + opt_price)
         total = (
-            money(it.gross_sales) if it.gross_sales is not None else money(unit * qty)
+            money(it.gross_sales)
+            if it.gross_sales is not None
+            else money(unit_price * qty)
         )
         product_id, sku = await _match_product(db, agg.channel, it.item_name)
         if product_id is None:
@@ -254,11 +321,11 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
                 product_sku=sku,
                 product_translations={},
                 quantity=qty,
-                base_price=unit,
-                options_price=Decimal("0"),
-                unit_price=unit,
+                base_price=base_price,
+                options_price=opt_price,
+                unit_price=unit_price,
                 total_price=total,
-                selected_options_snapshot=[],
+                selected_options_snapshot=snapshot,
                 tax_amount=Decimal("0"),
             )
         )
@@ -304,9 +371,8 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
         )
         target = OrderStatusEnum.CONFIRMED
 
-    at = agg.placed_at
     if target == OrderStatusEnum.CANCELLED:
-        with acting_as(StatusSourceEnum.AGGREGATOR, at=at):
+        with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, target)):
             await order_lifecycle.transition(db, order, target, on_invalid="skip")
         return
 
@@ -321,7 +387,7 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
         if current_idx >= target_idx:
             return
         rung = _LADDER[current_idx + 1]
-        with acting_as(StatusSourceEnum.AGGREGATOR, at=at):
+        with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, rung)):
             moved = await order_lifecycle.transition(db, order, rung, on_invalid="skip")
         if not moved:
             return
@@ -352,7 +418,8 @@ async def _build_order(db: AsyncSession, agg: AggregatorOrder, label: str) -> Or
         order_number=await _order_number(db),
         user_id=None,
         email="",
-        customer_name=None,
+        customer_name=agg.customer_name or None,
+        customer_phone=agg.customer_phone or None,
         locale="en",
         delivery_method="delivery",
         order_type="delivery",
@@ -411,6 +478,25 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     await _drive_status(db, order, agg)
 
 
+async def _backfill_statement_lines(
+    db: AsyncSession, channel: str, external_order_id: str, mm_order_id
+) -> None:
+    """Link statement lines for the same (channel, external_order_id) to the MM
+    order just promoted, so finance queries can join without a separate
+    aggregator_order hop. Only touches rows that are still null — a row already
+    linked by an earlier promotion or by a direct write is left as is."""
+    await db.execute(
+        sql_update(AggregatorStatementLine)
+        .where(
+            AggregatorStatementLine.channel == channel,
+            AggregatorStatementLine.external_order_id == external_order_id,
+            AggregatorStatementLine.mm_order_id.is_(None),
+        )
+        .values(mm_order_id=mm_order_id)
+        .execution_options(synchronize_session=False)
+    )
+
+
 async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
     """Create or update the MM order for one aggregator order, honouring the
     per-branch ownership rules. Returns the MM order, or None when skipped."""
@@ -441,6 +527,7 @@ async def promote_order(db: AsyncSession, agg: AggregatorOrder) -> Order | None:
     agg.mm_order_id = order.id
     agg.promoted_at = utcnow()
     await db.flush()
+    await _backfill_statement_lines(db, agg.channel, agg.external_order_id, order.id)
     return order
 
 

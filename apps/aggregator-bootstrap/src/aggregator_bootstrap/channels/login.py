@@ -362,7 +362,6 @@ async def login_noon(
             return page
         return page
 
-    identifier_input = surface.locator("input[name='channelIdentifier']")
     otp_since = datetime.now(UTC)
     await _noon_submit_email(surface, page, address=address)
 

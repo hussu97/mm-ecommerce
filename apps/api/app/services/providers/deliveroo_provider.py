@@ -46,14 +46,15 @@ from app.models.aggregator import (
     AggregatorBranchMap,
 )
 from app.models.base import utcnow
+from app.services.aggregators.modifiers import expand_modifiers
 from app.services.aggregators.normalized import (
-    FinanceResult,
+    PayoutsResult,
     SalesResult,
     StandardOrder,
     StandardOrderItem,
-    StandardPayout,
     StandardStatement,
     StandardStatementLine,
+    StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import BaseAggregatorClient
@@ -152,6 +153,44 @@ def _as_list(payload: Any, *keys: str) -> list[Any]:
             value = payload.get(key)
             if isinstance(value, list):
                 return value
+    return []
+
+
+def _raw_modifiers(item: dict[str, Any]) -> list[Any]:
+    """Flatten Deliveroo's modifier/option payload to a list of option dicts.
+
+    Two shapes are observed on the Partner Hub:
+
+    1. Nested groups — ``item.modifiers = [{name, options: [{id, name, qty, price}]}]``
+    2. Flat list  — ``item.options`` / ``item.addons`` / ``item.modifier_items``
+
+    In either case the result is a flat list of individual option objects that
+    ``expand_modifiers`` can digest.  The modifier-group name is intentionally
+    discarded here; it is decorative for analytics and adding it would invent a
+    second "option" row for the group itself.
+    """
+    groups = item.get("modifiers")
+    if isinstance(groups, list) and groups:
+        flat: list[Any] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            inner = (
+                group.get("options")
+                or group.get("modifier_items")
+                or group.get("items")
+            )
+            if isinstance(inner, list):
+                flat.extend(inner)
+            else:
+                # Group entry has no sub-list — treat it as the option itself.
+                flat.append(group)
+        if flat:
+            return flat
+    for key in ("options", "addons", "modifier_items"):
+        candidates = item.get(key)
+        if isinstance(candidates, list) and candidates:
+            return candidates
     return []
 
 
@@ -573,6 +612,14 @@ class DeliverooClient(BaseAggregatorClient):
             total = _fils(
                 item.get("total_price") or item.get("total") or item.get("amount")
             )
+            raw_mods = _raw_modifiers(item)
+            parsed_mods = expand_modifiers(raw_mods) if raw_mods else []
+            mods_text: str | None = None
+            if raw_mods:
+                try:
+                    mods_text = json.dumps(raw_mods)
+                except (TypeError, ValueError):
+                    mods_text = str(raw_mods)
             items.append(
                 StandardOrderItem(
                     source_key=f"{order.external_order_id}:{index}",
@@ -583,9 +630,65 @@ class DeliverooClient(BaseAggregatorClient):
                     gross_sales=total,
                     net_sales=total,
                     amount_is_known=total is not None,
+                    modifiers=parsed_mods,
+                    modifiers_text=mods_text,
                     business_date=order.business_date,
                 )
             )
+
+        # Timeline — accepted / delivered / cancelled timestamps.
+        detail_timeline = detail.get("timeline")
+        if not isinstance(detail_timeline, dict):
+            detail_timeline = {}
+        accepted_at = _parse_dt(
+            _first(
+                detail_timeline,
+                "accepted_at",
+                "acceptedAt",
+                "confirmed_at",
+                "confirmedAt",
+            )
+        )
+        delivered_at = _parse_dt(
+            _first(
+                detail_timeline,
+                "delivered_at",
+                "deliveredAt",
+                "completed_at",
+                "completedAt",
+            )
+        )
+        cancelled_at = _parse_dt(
+            _first(
+                detail_timeline,
+                "cancelled_at",
+                "cancelledAt",
+                "cancellation_at",
+                "cancellationAt",
+            )
+        )
+
+        # Customer — name and phone when the detail exposes them.
+        customer = detail.get("customer")
+        if not isinstance(customer, dict):
+            customer = {}
+        customer_name = (
+            str(
+                _first(customer, "name", "full_name", "fullName")
+                or _first(detail, "customer_name", "customerName")
+                or ""
+            ).strip()
+            or None
+        )
+        customer_phone = (
+            str(
+                _first(customer, "phone", "phone_number", "phoneNumber", "mobile")
+                or _first(detail, "customer_phone", "customerPhone", "customer_mobile")
+                or ""
+            ).strip()
+            or None
+        )
+
         raw = dict(order.raw or {})
         raw["detail"] = detail
         return StandardOrder(
@@ -593,8 +696,13 @@ class DeliverooClient(BaseAggregatorClient):
             external_outlet_id=order.external_outlet_id or restaurant_id,
             business_date=order.business_date,
             placed_at=order.placed_at,
+            accepted_at=accepted_at or order.accepted_at,
+            delivered_at=delivered_at or order.delivered_at,
+            cancelled_at=cancelled_at or order.cancelled_at,
             status=order.status or (detail.get("status") or None),
             currency=order.currency,
+            customer_name=customer_name or order.customer_name,
+            customer_phone=customer_phone or order.customer_phone,
             gross_sales=order.gross_sales
             or _fils(detail.get("amount") or detail.get("total")),
             net_sales=order.net_sales
@@ -606,14 +714,13 @@ class DeliverooClient(BaseAggregatorClient):
             raw=raw,
         )
 
-    # ── finance (statements + payouts) ───────────────────────────────────────
-    async def fetch_finance(
+    # ── finance (statements from invoices; payouts only when distinct) ───────
+    async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
-    ) -> FinanceResult:
+    ) -> StatementsResult:
         org_id = self._org_id(session)
         from_date, to_date = since.date(), until.date()
         statements: list[StandardStatement] = []
-        payouts: list[StandardPayout] = []
         gaps: list[str] = []
         for invoice in await self._list_invoices(session, org_id):
             period_start = _parse_date(
@@ -646,7 +753,9 @@ class DeliverooClient(BaseAggregatorClient):
             currency = _first(invoice, "currency", "currency_code") or "AED"
 
             lines: list[StandardStatementLine] = []
-            csv_text = await self._invoice_csv(session, org_id, statement_id)
+            csv_text, _csv_bytes = await self._invoice_csv(
+                session, org_id, statement_id
+            )
             if csv_text is None:
                 gaps.append(statement_id)
             else:
@@ -664,27 +773,25 @@ class DeliverooClient(BaseAggregatorClient):
                     raw=invoice if isinstance(invoice, dict) else None,
                 )
             )
-            payouts.append(
-                StandardPayout(
-                    transfer_id=statement_id,
-                    statement_id=statement_id,
-                    transfer_date=_iso(due_date),
-                    payment_due_date=_iso(due_date),
-                    transfer_amount=net_payable,
-                    transfer_status="scheduled",
-                    payment_reference=str(_first(invoice, "reference") or statement_id),
-                    currency=currency,
-                )
-            )
-        return FinanceResult(
+        return StatementsResult(
             statements=statements,
-            payouts=payouts,
             truncation_note=(
                 "Deliveroo statement CSVs unavailable for invoices: " + ", ".join(gaps)
                 if gaps
                 else None
             ),
         )
+
+    async def fetch_payouts(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> PayoutsResult:
+        """Real transfers only — do not synthesize payouts from invoice ids.
+
+        Partner Hub exposes settlement as invoices/statement CSVs; a distinct
+        bank-transfer feed is not wired yet. Returning empty keeps Layer A honest
+        rather than inventing `transfer_id = statement_id` rows.
+        """
+        return PayoutsResult(payouts=[])
 
     async def _list_invoices(
         self, session: LoadedSession, org_id: str
@@ -700,7 +807,13 @@ class DeliverooClient(BaseAggregatorClient):
 
     async def _invoice_csv(
         self, session: LoadedSession, org_id: str, invoice_id: str
-    ) -> str | None:
+    ) -> tuple[str | None, bytes | None]:
+        """Download a statement CSV, returning `(text, raw_bytes)`.
+
+        Returns `(None, None)` on a 403 / HTML gate-page — callers treat that as
+        a missing statement rather than a hard error. `raw_bytes` is the verbatim
+        response body used for archival; the text is the decoded CSV for parsing.
+        """
         response = await self.request_raw(
             session,
             "GET",
@@ -711,14 +824,20 @@ class DeliverooClient(BaseAggregatorClient):
             },
         )
         status = getattr(response, "status_code", 0)
-        text = getattr(response, "text", None) or ""
         ctype = ""
-        headers = getattr(response, "headers", None)
-        if headers is not None:
-            ctype = str(headers.get("content-type") or "")
+        resp_headers = getattr(response, "headers", None)
+        if resp_headers is not None:
+            ctype = str(resp_headers.get("content-type") or "")
+        raw_content = getattr(response, "content", None)
+        if isinstance(raw_content, (bytes, bytearray)):
+            raw_bytes: bytes | None = bytes(raw_content)
+            text = raw_bytes.decode("utf-8-sig", errors="replace")
+        else:
+            raw_bytes = None
+            text = getattr(response, "text", None) or ""
         if status != 200 or "text/html" in ctype or text.lstrip().startswith("<!"):
-            return None
-        return text
+            return None, None
+        return text, (raw_bytes if raw_bytes else text.encode())
 
     def _statement_lines(
         self, statement_id: str, text: str
