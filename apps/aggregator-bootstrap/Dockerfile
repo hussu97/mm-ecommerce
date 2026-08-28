@@ -30,8 +30,15 @@ COPY src ./src
 # Install the package (which brings the playwright python driver), then ONLY
 # Google Chrome and its OS deps — not the firefox/webkit the all-browsers base
 # carried. `--with-deps` is the apt half and needs root, which we still are here.
+#
+# `xvfb` + `xauth` give real Chrome a virtual display so it can run HEADED: the
+# anti-bot edges (Akamai/PerimeterX/Cloudflare) drop headless Chrome, so the warm
+# and login run under Xvfb via the entrypoint below. Both packages are small and
+# the only addition beyond the browser itself.
 RUN pip install --no-cache-dir . \
  && playwright install --with-deps chrome \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends xvfb xauth \
  && rm -rf /var/lib/apt/lists/* /root/.cache
 
 # storage_state (the logged-in Playwright sessions) persists under /data, which
@@ -46,12 +53,22 @@ RUN groupadd --gid 1001 pwuser \
  && chown -R pwuser:pwuser /data
 VOLUME ["/data"]
 
+# The Xvfb wrapper (starts a virtual display, runs the CLI headed under it).
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Drop root: run as the unprivileged pwuser, exactly as the old image did.
 USER pwuser
 
-# Runs on a schedule (the /etc/cron.d Keeta pull). Hydrates Playwright state from
-# the API first so a new image with an empty volume resumes the previous login.
+# Real Chrome must run HEADED to pass the anti-bot walls (see docker-entrypoint.sh
+# and browser.py). The entrypoint provides the display; this makes the Playwright
+# launches use it. A caller can still override `-e HEADLESS=true` for a headless run.
+ENV HEADLESS=false
+
+# Runs on a schedule (the /etc/cron.d Keeta pull + the anti-bot warm). Hydrates
+# Playwright state from the API first so a new image with an empty volume resumes
+# the previous login. The entrypoint wraps every command in Xvfb so Chrome is headed.
 #   aggregator-bootstrap warm-sessions
-#   aggregator-bootstrap login --channel noon   # headed, once, from a laptop
-ENTRYPOINT ["aggregator-bootstrap"]
+#   aggregator-bootstrap login --channel noon   # headed reauth (now runnable on the VM)
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["warm-sessions"]

@@ -67,9 +67,7 @@ async def push_keeta_orders(payloads: list[dict]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=180) as client:
         for i in range(0, len(payloads), chunk_size):
             chunk = payloads[i : i + chunk_size]
-            resp = await client.post(
-                url, json={"payloads": chunk}, headers=_headers()
-            )
+            resp = await client.post(url, json={"payloads": chunk}, headers=_headers())
             resp.raise_for_status()
             body = resp.json()
             ingested += int(body.get("ingested") or 0)
@@ -91,11 +89,32 @@ async def push_keeta_finance(payloads: list[dict]) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=180) as client:
         for i in range(0, len(payloads), chunk_size):
             chunk = payloads[i : i + chunk_size]
-            resp = await client.post(
-                url, json={"payloads": chunk}, headers=_headers()
-            )
+            resp = await client.post(url, json={"payloads": chunk}, headers=_headers())
             resp.raise_for_status()
             body = resp.json()
             statements += int(body.get("statements") or 0)
             payouts += int(body.get("payouts") or 0)
     return {"statements": statements, "payouts": payouts}
+
+
+async def push_deliveroo_finance(payloads: list[dict]) -> dict[str, Any]:
+    """POST in-page-fetched Deliveroo invoice payloads to /aggregators/deliveroo/finance.
+
+    Mirrors the Keeta finance push: chunked to avoid edge timeouts on a large
+    dump. Each payload carries one invoice's raw dict plus its statement CSV
+    text and (when Cloudflare let the download through) its statement PDF as
+    base64. Returns accumulated `{"statements": int, "lines": int}`.
+    """
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/deliveroo/finance"
+    chunk_size = 2
+    statements = 0
+    lines = 0
+    async with httpx.AsyncClient(timeout=180) as client:
+        for i in range(0, len(payloads), chunk_size):
+            chunk = payloads[i : i + chunk_size]
+            resp = await client.post(url, json={"payloads": chunk}, headers=_headers())
+            resp.raise_for_status()
+            body = resp.json()
+            statements += int(body.get("statements") or 0)
+            lines += int(body.get("lines") or 0)
+    return {"statements": statements, "lines": lines}

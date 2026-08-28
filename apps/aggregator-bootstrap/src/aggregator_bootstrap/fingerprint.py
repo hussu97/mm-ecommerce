@@ -76,6 +76,18 @@ def free_debug_port() -> int:
         return int(sock.getsockname()[1])
 
 
+#: The two flags every Chrome we launch inside the container needs, whether via
+#: Playwright (`warm_persistent_kwargs` / `_open_storage_state_context`) or the
+#: standalone spawn (`standalone_chrome_args`). Without a user namespace the
+#: sandbox helper cannot fork and Chrome exits before opening a page ("Chrome did
+#: not open a debug port"); the default 64 MB `/dev/shm` crashes it under real
+#: pages. As non-root `pwuser`, Playwright's own root-detection never auto-adds
+#: `--no-sandbox`, so every launch path must pass these explicitly. Neither flag
+#: is readable by page JS, so neither is an anti-bot signal. Harmless on a
+#: developer's macOS where the sandbox would work anyway.
+CONTAINER_CHROME_ARGS: list[str] = ["--no-sandbox", "--disable-dev-shm-usage"]
+
+
 def standalone_chrome_args(
     *,
     binary: str,
@@ -89,6 +101,15 @@ def standalone_chrome_args(
     Chrome 136+ requires a non-default `--user-data-dir` alongside it.
     `--remote-allow-origins=*` is required for a CDP client on modern Chrome;
     page JS cannot read the process command line, so it is not a CF signal.
+
+    `--no-sandbox` / `--disable-dev-shm-usage` are required to start Chrome inside
+    the container at all: without a user namespace the sandbox helper cannot fork
+    and Chrome exits before it ever opens the debug port ("Chrome did not open a
+    debug port"), and the default 64 MB `/dev/shm` makes it crash under real
+    pages. Neither is readable by page JS, so neither is an anti-bot signal — the
+    Playwright launch path passes both too (`CONTAINER_CHROME_ARGS`); this is the
+    standalone spawn using the same constant so a headed `login` runs on the VM,
+    not only a laptop.
     """
     return [
         binary,
@@ -96,6 +117,7 @@ def standalone_chrome_args(
         f"--remote-debugging-port={port}",
         "--remote-debugging-address=127.0.0.1",
         "--remote-allow-origins=*",
+        *CONTAINER_CHROME_ARGS,
         "--no-first-run",
         "--no-default-browser-check",
         url,
@@ -116,6 +138,7 @@ def warm_persistent_kwargs(*, headed: bool) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "channel": chrome_channel(),
         "headless": not headed,
+        "args": [*CONTAINER_CHROME_ARGS],
     }
     if headed:
         kwargs["no_viewport"] = True
@@ -124,7 +147,9 @@ def warm_persistent_kwargs(*, headed: bool) -> dict[str, Any]:
     return kwargs
 
 
-def context_kwargs(*, storage_state: str | None = None, headed: bool = False) -> dict[str, Any]:
+def context_kwargs(
+    *, storage_state: str | None = None, headed: bool = False
+) -> dict[str, Any]:
     """Fallback context for a non-persistent launch. Still no UA spoof."""
     kwargs: dict[str, Any] = {
         "no_viewport": True,

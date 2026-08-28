@@ -67,8 +67,17 @@ CHANNEL_PROBES: dict[str, ChannelProbe] = {
         token_from_cookie={"accessToken": "accessToken"},
     ),
     "noon": ChannelProbe(
-        probe_url="https://restaurant.noon.partners/_food-restaurant/finance/wallet",
-        match="/_food-restaurant/finance",
+        # The console SPA root — an HTML page. It MUST NOT be a bare API path:
+        # `page.goto` GETs the probe_url, and pointing it at the POST-only JSON
+        # endpoint `/_food-restaurant/finance/wallet` made the browser navigation
+        # fail with net::ERR_HTTP2_PROTOCOL_ERROR, so the whole warm aborted and
+        # noon's Akamai cookie (bm_sv/_abck) was never rotated — the session was
+        # kept alive only by the httpx ingest touching it, not by the warm. The
+        # root loads under Akamai (rotating the cookie, the point of the warm),
+        # and its own scripts make the authenticated `/_food-restaurant/` calls
+        # the `match` lifts scope headers off.
+        probe_url="https://restaurant.noon.partners/",
+        match="/_food-restaurant/",
         header_keys=_COMMON_UA
         + ("n-restaurantcode", "x-project", "x-locale", "x-platform"),
         token_from_header={

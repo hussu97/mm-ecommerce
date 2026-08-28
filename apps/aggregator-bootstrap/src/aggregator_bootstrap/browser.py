@@ -44,6 +44,7 @@ from .channels.probes import CHANNEL_PROBES, ChannelProbe
 from .config import settings
 from .engine import async_playwright, evaluate_in_page
 from .fingerprint import (
+    CONTAINER_CHROME_ARGS,
     chrome_binary,
     chrome_profile_dir,
     context_kwargs,
@@ -288,7 +289,9 @@ async def _connect_cdp(pw, port: int):
     return browser, context, page
 
 
-async def _snapshot_context(channel: str, context, page, captured: dict[str, str]) -> ProbeResult:
+async def _snapshot_context(
+    channel: str, context, page, captured: dict[str, str]
+) -> ProbeResult:
     final_url = page.url
     cookies = await context.cookies()
     os.makedirs(settings.STORAGE_STATE_DIR, exist_ok=True)
@@ -311,9 +314,25 @@ async def _snapshot_context(channel: str, context, page, captured: dict[str, str
     )
 
 
-async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool):
+#: Extra chromium launch flags per channel. noon's console sits behind an
+#: Akamai edge that trips Playwright/Chromium's HTTP/2 client — every
+#: `page.goto` to `restaurant.noon.partners` fails with
+#: net::ERR_HTTP2_PROTOCOL_ERROR, which aborted the warm so noon's bm_sv/_abck
+#: was never rotated. Forcing HTTP/1.1 for noon's browser gets the page to load
+#: (the httpx ingest, on curl_cffi, negotiates HTTP/2 fine — this flag is only
+#: for the Playwright warm). Real Chrome in `login_interactive` is unaffected and
+#: keeps HTTP/2. Other channels keep their natural HTTP/2 fingerprint.
+_CHANNEL_LAUNCH_ARGS: dict[str, list[str]] = {
+    "noon": ["--disable-http2"],
+}
+
+
+async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool, channel: str):
     os.makedirs(user_data_dir, exist_ok=True)
     kwargs = warm_persistent_kwargs(headed=headed)
+    extra_args = _CHANNEL_LAUNCH_ARGS.get(channel)
+    if extra_args:
+        kwargs["args"] = [*kwargs.get("args", []), *extra_args]
     try:
         return await pw.chromium.launch_persistent_context(str(user_data_dir), **kwargs)
     except Exception as exc:
@@ -322,31 +341,48 @@ async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool):
         logger.warning("branded Chrome unavailable (%s); falling back to Chromium", exc)
         fallback = dict(kwargs)
         fallback.pop("channel", None)
-        return await pw.chromium.launch_persistent_context(str(user_data_dir), **fallback)
+        return await pw.chromium.launch_persistent_context(
+            str(user_data_dir), **fallback
+        )
 
 
 async def _open_context(pw, channel: str, *, headed: bool) -> _Opened:
     """Open the channel's Chrome profile for a warm/probe (already logged in)."""
     extra = load_extra_state(channel)
     profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
-    context = await _launch_persistent(pw, profile, headed=headed)
+    context = await _launch_persistent(pw, profile, headed=headed, channel=channel)
     if extra:
         await context.add_init_script(_session_storage_init_script(extra))
     return _Opened(context=context, browser=context.browser, persistent=True)
 
 
 async def _open_storage_state_context(pw, channel: str) -> _Opened:
-    """Headless warm when we only have a storage_state blob, not a Chrome profile."""
+    """Warm from a storage_state blob when there is no Chrome profile yet.
+
+    This is the path a freshly-hydrated container takes (hydrate writes a
+    `.session.json` storage_state, not a Chrome user-data dir), so it is the one
+    that actually runs in production — and it must honour `HEADLESS` exactly like
+    the persistent path. It used to hardcode `headless=True`, which is why the
+    anti-bot channels stalled even when the worker was told to run headed: the
+    real Chrome, headless, is what Akamai/PerimeterX drop. Headed under a virtual
+    display (Xvfb) loads the page and rotates the cookie (verified on the VM).
+    """
     extra = load_extra_state(channel)
+    # Container sandbox flags first (Chrome won't launch as non-root pwuser
+    # without them), then any per-channel extras like noon's --disable-http2.
+    launch_args = [*CONTAINER_CHROME_ARGS, *(_CHANNEL_LAUNCH_ARGS.get(channel) or [])]
+    headed = not settings.HEADLESS
     try:
-        browser = await pw.chromium.launch(headless=True, channel="chrome")
+        browser = await pw.chromium.launch(
+            headless=not headed, channel="chrome", args=launch_args
+        )
     except Exception:
-        browser = await pw.chromium.launch(headless=True)
+        browser = await pw.chromium.launch(headless=not headed, args=launch_args)
     state = _storage_state_path(channel)
     context = await browser.new_context(
         **context_kwargs(
             storage_state=str(state) if state.exists() else None,
-            headed=False,
+            headed=headed,
         )
     )
     if extra:
@@ -382,11 +418,36 @@ async def probe_channel(channel: str) -> ProbeResult:
                     captured.update(request.headers)
 
             page.on("request", _on_request)
-            await page.goto(
-                probe.probe_url,
-                wait_until="domcontentloaded",
-                timeout=max(settings.PROBE_TIMEOUT_MS, 60_000),
-            )
+            try:
+                # `commit` (fires on the first response byte, when the anti-bot
+                # edge sets its cookie) rather than `domcontentloaded`: noon's
+                # Akamai SPA holds the connection open and never fired
+                # `domcontentloaded` within 60s even over HTTP/1.1, aborting the
+                # warm. The warm only needs the rotated edge cookie, which is set
+                # at commit; the `sleep(3)` after lets the sensor JS run.
+                await page.goto(
+                    probe.probe_url,
+                    wait_until="commit",
+                    timeout=max(settings.PROBE_TIMEOUT_MS, 45_000),
+                )
+            except Exception as exc:  # noqa: BLE001 — playwright errors are lazy
+                # A single-page-app whose root never fires `domcontentloaded`
+                # (or a slow Akamai edge) must not abort the warm: if the page
+                # actually navigated, the request already went out under the
+                # anti-bot edge and the load-bearing cookie has rotated — which
+                # is the whole point of the warm, not a fully-painted page.
+                # `_url_looks_logged_out` below still catches a real login
+                # redirect. But if nothing committed (still about:blank), the
+                # navigation truly failed — re-raise so a genuine breakage on
+                # any channel is not masked as a silent empty snapshot.
+                if not page.url or page.url == "about:blank":
+                    raise
+                logger.warning(
+                    "%s probe goto did not settle (%s); snapshotting the "
+                    "rotated cookies anyway",
+                    channel,
+                    str(exc).splitlines()[0][:120],
+                )
             await asyncio.sleep(3)
             result = await _snapshot_context(channel, opened.context, page, captured)
         finally:
@@ -492,9 +553,7 @@ async def login_interactive(channel: str) -> ProbeResult:
                 )
                 await asyncio.sleep(4)
                 if await page_looks_authenticated(channel, page):
-                    result = await _snapshot_context(
-                        channel, context, page, captured
-                    )
+                    result = await _snapshot_context(channel, context, page, captured)
                 else:
                     logger.warning(
                         "%s: probe page is %s; keeping the login snapshot",
@@ -678,9 +737,7 @@ async def login_with_account(
                 )
                 await asyncio.sleep(4)
                 if await page_looks_authenticated(channel, page):
-                    result = await _snapshot_context(
-                        channel, context, page, captured
-                    )
+                    result = await _snapshot_context(channel, context, page, captured)
                 else:
                     logger.warning(
                         "%s: probe page is %s; keeping the login snapshot",

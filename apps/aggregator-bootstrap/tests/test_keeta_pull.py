@@ -68,6 +68,8 @@ class _FakePage:
 
     async def evaluate(self, script: str, arg: object = None):
         self.evaluate_calls.append((script, arg))
+        if "LOGIN_ACCOUNTID" in script and "fetch" not in script:
+            return "acct-1"
         if "SHOP_IDS" in script:
             return list(self._shop_ids)
         return self._payload
@@ -135,3 +137,131 @@ async def test_fetched_payload_matches_keeta_provider_parse_contract():
     assert order.external_order_id == "70012345"
     assert order.external_outlet_id == "123"
     assert order.items and order.items[0].item_name == "Chocolate Cake"
+
+
+# ── shop-id resolution: account extras preferred, hard-coded set the last resort
+
+
+class _FakeResolvePage:
+    """A page for `_resolve_shop_ids`: the V2 POST and the SHOP_IDS reader only."""
+
+    def __init__(self, *, v2_response: object, session_shop_ids: list[str]) -> None:
+        self._v2_response = v2_response
+        self._session_shop_ids = session_shop_ids
+        self.post_args: list[object] = []
+
+    async def evaluate(self, script: str, arg: object = None):
+        if "SHOP_IDS" in script:
+            return list(self._session_shop_ids)
+        self.post_args.append(arg)
+        return self._v2_response
+
+
+async def test_resolve_shop_ids_prefers_account_extras_over_the_constant():
+    from aggregator_bootstrap import keeta_pull as kp
+
+    page = _FakeResolvePage(v2_response={"data": []}, session_shop_ids=[])
+    ids = await kp._resolve_shop_ids(page, fallback_shop_ids=["999", "888"])
+    # The account's extras win; the hard-coded _KNOWN_SHOP_IDS is not used.
+    assert ids == ["999", "888"]
+    assert ids != list(kp._KNOWN_SHOP_IDS)
+
+
+async def test_resolve_shop_ids_falls_back_to_known_constant_without_extras():
+    from aggregator_bootstrap import keeta_pull as kp
+
+    page = _FakeResolvePage(v2_response={"data": []}, session_shop_ids=[])
+    ids = await kp._resolve_shop_ids(page)
+    # No live ids, no sessionStorage, no extras → the historical constant stands.
+    assert ids == list(kp._KNOWN_SHOP_IDS)
+
+
+async def test_resolve_shop_ids_live_v2_wins_over_extras_and_constant():
+    from aggregator_bootstrap import keeta_pull as kp
+
+    page = _FakeResolvePage(
+        v2_response={"data": [{"shopId": "111"}]}, session_shop_ids=[]
+    )
+    ids = await kp._resolve_shop_ids(page, fallback_shop_ids=["999"])
+    assert ids == ["111"]
+
+
+async def test_resolve_shop_ids_sends_customer_id_in_the_v2_body():
+    from aggregator_bootstrap import keeta_pull as kp
+
+    page = _FakeResolvePage(v2_response={"data": []}, session_shop_ids=[])
+    await kp._resolve_shop_ids(page, customer_id="330066")
+    assert page.post_args, "expected a V2 shop-list POST"
+    assert page.post_args[0]["payload"] == {"customerId": "330066"}
+
+
+# ── page-loop guard: a runaway totalCount is stopped at the hard cap ──────────
+
+
+class _CapPage:
+    """A page whose getOrders always returns a full page and an unreachable total."""
+
+    def __init__(self) -> None:
+        self.get_orders_calls = 0
+        self.closed = False
+
+    async def goto(self, *args, **kwargs) -> None:
+        return None
+
+    async def wait_for_timeout(self, *args, **kwargs) -> None:
+        return None
+
+    async def evaluate(self, script: str, arg: object = None):
+        if "LOGIN_ACCOUNTID" in script and "fetch" not in script:
+            return "acct-1"
+        if "SHOP_IDS" in script:
+            return ["123"]
+        self.get_orders_calls += 1
+        # totalCount never satisfied → only the cap can stop the loop.
+        return {"data": {"totalCount": 10**9, "list": [{"x": 1}]}}
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+async def test_order_pagination_stops_at_the_page_cap():
+    from aggregator_bootstrap import keeta_pull as kp
+
+    page = _CapPage()
+    payloads = await fetch_keeta_orders(_FakeContext(page), months_back=0)
+    # One shop, one (current-month) window: exactly _MAX_ORDER_PAGES fetches.
+    assert page.get_orders_calls == kp._MAX_ORDER_PAGES
+    assert len(payloads) == kp._MAX_ORDER_PAGES
+    assert page.closed
+
+
+class _SignedOutPage:
+    """A page whose LOGIN_ACCOUNTID is empty — the session is signed out."""
+
+    def __init__(self) -> None:
+        self.get_orders_calls = 0
+
+    async def goto(self, *a, **k) -> None:
+        return None
+
+    async def wait_for_timeout(self, *a, **k) -> None:
+        return None
+
+    async def evaluate(self, script: str, arg: object = None):
+        if "LOGIN_ACCOUNTID" in script and "fetch" not in script:
+            return ""  # signed out
+        self.get_orders_calls += 1
+        return {"data": {"list": [{"x": 1}]}}
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_empty_login_accountid_raises_needs_login_not_a_silent_pull():
+    from aggregator_bootstrap.browser import NeedsHumanLogin
+
+    page = _SignedOutPage()
+    with pytest.raises(NeedsHumanLogin):
+        await fetch_keeta_orders(_FakeContext(page), months_back=0)
+    # It must fail BEFORE firing a single risk-controlled getOrders fetch.
+    assert page.get_orders_calls == 0

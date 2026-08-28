@@ -1,24 +1,41 @@
-# Keeta daily order pull — installed to /etc/cron.d by deploy.yml so a redeploy
+# Aggregator browser cron — installed to /etc/cron.d by deploy.yml so a redeploy
 # always re-establishes it (nothing manual to lose).
 #
-# Keeta is the only channel that needs a browser: every request is mtgsig-signed
-# in-page, so it cannot be replayed over httpx. Deliveroo (and the other httpx
-# channels) authenticate themselves inside the API's daily sweep with stored
-# email/password and need nothing here.
+# The worker runs real Chrome HEADED under a virtual display (Xvfb, via the image
+# entrypoint) because the anti-bot edges drop headless Chrome — see
+# docker-entrypoint.sh. Two staggered one-shot jobs; each warms one channel at a
+# time. They also share an `flock` (/var/lock/aggregator-warm.lock) so that even
+# if the Keeta pull overruns its 15-minute head start, the noon/talabat warm
+# WAITS rather than starting a second headed-Chrome container alongside it — at
+# most one Chrome runs at any instant, which is what keeps this within the VM's
+# RAM. VM clock is UTC; TZ=Asia/Dubai makes the hours Dubai wall-clock, one
+# timeline with the API's AGGREGATOR_RUN_HOUR_DXB=23 pass.
 #
-# This is a plain cold start, not a keep-alive "warm": the container boots,
-# hydrates Keeta's captured storage_state from the API, opens a headless browser,
-# pulls the orders in-page and pushes them back, then exits — so Chrome is alive
-# only for the ~30s pull and never sits resident on this <1 GB VM. Running it more
-# than once a day bought no session-liveness benefit (the Keeta path only pulls;
-# it does not refresh a session), so it runs once, at 22:00 Asia/Dubai — ~1 h
-# before the API's AGGREGATOR_RUN_HOUR_DXB=23 pass, so that pass sees the day's
-# orders. The VM clock is UTC; TZ=Asia/Dubai below is required so "22" means
-# Dubai wall-clock (without it the job silently ran at 02:00 Dubai). One cron,
-# one Dubai timeline — same as the API scheduler; do not add a second UTC cron.
-# A dead session needs a one-off headed `login` from a laptop regardless of
-# cadence; the health log surfaces it.
+# ⚠ RAM: a headed Chrome under Xvfb needs materially more memory than the old
+# headless pull. On the 1 GB e2-micro a single warm dipped free memory to
+# ~110–145 MB (survived, no OOM), but running this regularly wants a larger VM
+# (e2-small/2 GB comfortably, e2-medium/4 GB with headroom). Size the VM up before
+# leaning on the anti-bot warms.
+#
+# 1) Keeta order pull (22:00). Keeta is mtgsig-signed in-page, pulled here and
+#    pushed back.
+# 2) Anti-bot cookie warm (22:15) for the TLS-impersonation httpx channels —
+#    Talabat (PerimeterX _px3/pxcts) and Noon (Akamai bm_sv/_abck). Their
+#    load-bearing cookie DECAYS: the API's httpx sweep replays it but never
+#    refreshes it, so it eventually gets flagged and the session 401s (this is
+#    what killed Talabat, 2026-08). The warm reopens the hydrated session HEADED,
+#    loads a probe page so the edge rotates the cookie, and pushes the refreshed
+#    blob back — verified on the VM: a headed warm rotated Noon's Akamai cookie
+#    and pushed it `live` where every headless attempt stalled. Runs from the VM's
+#    Doha egress, the SAME egress the ingest replays from, so the cookie stays
+#    bound to the right IP/ASN. Deliveroo/Careem self-heal in the API sweep
+#    (email/password via prepare_session) and are not warmed here.
+#
+# A dead anti-bot session needs a `login --channel X` (headed OTP/captcha) — which
+# now runs on this VM under Xvfb too, no separate laptop required. The API health
+# log surfaces a dead channel. Do not add a second UTC cron — one Dubai timeline.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
-0 22 * * * root cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
+0 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
+15 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
