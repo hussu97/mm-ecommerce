@@ -503,18 +503,54 @@ async def _upsert_statement(
 async def link_statements_to_payouts(db: AsyncSession, channel: str) -> int:
     """Couple each statement to the payout that settled it. Returns links made.
 
-    A marketplace pays in batches: one transfer clears every statement that came
-    due since the last transfer (verified on noon — a payout of 8328.29 is exactly
-    the 5046.48 + 3281.81 of the two statements due before it). So the link is
-    statement→payout, MANY statements to one `transfer_id`, and it is resolved by
-    the payment window rather than by amount (talabat's statements carry no
-    net_payable at all — they are per-invoice-file rows — so an amount match
-    could never fire). Each statement is settled by the FIRST payout on or after
-    its `payment_due_date`. Only a still-null `payout_transfer_id` is filled, so a
-    re-run is idempotent and a hand-corrected link is never clobbered. This is the
-    payments leg of the reconciliation chain: payout ← statement ← line ← order ←
-    mm_order.
+    Two ways a payout names the statement it cleared, tried in order; only a
+    still-null `payout_transfer_id` is ever filled, so a re-run is idempotent and a
+    hand-corrected link is never clobbered. This is the payments leg of the
+    reconciliation chain: payout ← statement ← line ← order ← mm_order.
+
+    1. **Direct id.** Some marketplaces put the statement id ON the payout: Keeta's
+       weekly bill payout carries the `statement_id` it settles, and Deliveroo's
+       derived 1:1 payout is keyed by the statement itself. Back-link by that id —
+       exact, and it reaches statements the date roll-up cannot (Keeta's statements
+       carry no `payment_due_date`).
+
+    2. **Date roll-up.** Where the payout does not name a statement (noon, talabat),
+       a marketplace pays in batches: one transfer clears every statement that came
+       due since the last transfer (verified on noon — a payout of 8328.29 is
+       exactly the 5046.48 + 3281.81 of the two statements due before it). So each
+       remaining statement is settled by the FIRST payout on or after its
+       `payment_due_date`, resolved by the payment window rather than by amount
+       (talabat's per-invoice statements carry no net_payable to match on).
     """
+    linked = 0
+
+    # Pass 1 — direct id (Keeta, derived-Deliveroo).
+    named_payouts = list(
+        await db.scalars(
+            select(AggregatorPayout).where(
+                AggregatorPayout.channel == channel,
+                AggregatorPayout.statement_id.is_not(None),
+            )
+        )
+    )
+    if named_payouts:
+        transfer_by_statement: dict[str, str] = {}
+        for payout in named_payouts:
+            transfer_by_statement.setdefault(payout.statement_id, payout.transfer_id)
+        named = list(
+            await db.scalars(
+                select(AggregatorStatement).where(
+                    AggregatorStatement.channel == channel,
+                    AggregatorStatement.payout_transfer_id.is_(None),
+                    AggregatorStatement.statement_id.in_(transfer_by_statement.keys()),
+                )
+            )
+        )
+        for statement in named:
+            statement.payout_transfer_id = transfer_by_statement[statement.statement_id]
+            linked += 1
+
+    # Pass 2 — date roll-up for whatever a payout did not name directly.
     statements = list(
         await db.scalars(
             select(AggregatorStatement).where(
@@ -524,31 +560,28 @@ async def link_statements_to_payouts(db: AsyncSession, channel: str) -> int:
             )
         )
     )
-    if not statements:
-        return 0
-    payouts = sorted(
-        (
-            p
-            for p in await db.scalars(
-                select(AggregatorPayout).where(
-                    AggregatorPayout.channel == channel,
-                    AggregatorPayout.transfer_date.is_not(None),
+    if statements:
+        payouts = sorted(
+            (
+                p
+                for p in await db.scalars(
+                    select(AggregatorPayout).where(
+                        AggregatorPayout.channel == channel,
+                        AggregatorPayout.transfer_date.is_not(None),
+                    )
                 )
-            )
-        ),
-        key=lambda p: p.transfer_date,
-    )
-    if not payouts:
-        return 0
-    linked = 0
-    for statement in statements:
-        due = statement.payment_due_date
-        # The first payout whose transfer landed on or after this statement's due
-        # date is the one that cleared it (payouts are date-sorted).
-        settling = next((p for p in payouts if p.transfer_date >= due), None)
-        if settling is not None:
-            statement.payout_transfer_id = settling.transfer_id
-            linked += 1
+            ),
+            key=lambda p: p.transfer_date,
+        )
+        for statement in statements:
+            due = statement.payment_due_date
+            # The first payout whose transfer landed on or after this statement's due
+            # date is the one that cleared it (payouts are date-sorted).
+            settling = next((p for p in payouts if p.transfer_date >= due), None)
+            if settling is not None:
+                statement.payout_transfer_id = settling.transfer_id
+                linked += 1
+
     if linked:
         await db.flush()
     return linked

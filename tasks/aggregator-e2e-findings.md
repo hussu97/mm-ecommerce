@@ -425,3 +425,44 @@ noon/…` (25 KB each), retrievable via the now-working signed URLs.
 2415 API + 42 bootstrap tests pass; ruff clean; VM healthy on e2-small (1 GB+
 free), all services up. Prod containers untouched (all live runs ephemeral).
 Nothing pushed.
+
+---
+
+# ROUND 6 — coupling completeness + low-prio + deferred (2026-08-28)
+
+## Deferred VAT check — RESOLVED, no change
+`promote._money_fields` treats `gross_sales` as VAT-inclusive. Verified against
+LIVE prod data: Talabat orders carry `Tax Amount = 0` / `Tax Charge = 0`
+(subtotal=40, gross=40, vat=0) — UAE menu prices are VAT-inclusive and Talabat
+does not itemise the embedded VAT. So the feared "double VAT subtraction" never
+occurs (vat is 0, so `excl = total - 0 = total`), and `total = gross_sales` is
+the amount the customer paid. The code is correct as written; the earlier agent
+finding rested on a non-UAE assumption (exclusive subtotal + additive tax).
+
+## Low-prio fixes
+- **Dead Chromium fallback** (`browser.py`): the branded-Chrome→bundled-Chromium
+  fallback can't work in the container (only branded Chrome is installed), and it
+  masked the real error (a stale profile lock) with "chromium-1234 not found".
+  Now: clear stale `Singleton*` locks before a persistent launch (the actual root
+  cause — a SIGKILLed warm leaves a lock keyed to a dead container), and if the
+  fallback also fails, re-raise the ORIGINAL branded-Chrome error. + tests.
+- **Deliveroo download test coverage**: removed the dead `_FakePage.evaluate`
+  arrayBuffer/text branches (the download moved to the native-download seam) and
+  added real coverage for `_capture_download` (the Playwright download event).
+
+## Coupling: at least one order-mapping + statement + payout per channel
+Gap matrix before: deliveroo missing payout; talabat missing statement; keeta
+statement↔payout link broken. Three fixes:
+- **Keeta (shared)**: `link_statements_to_payouts` gains a DIRECT pass — a payout
+  that names its `statement_id` (keeta bill payouts do) back-links the statement
+  by id, reaching statements the date roll-up cannot (keeta's carry no due date).
+- **Talabat**: the primary settlement metadata lives in each payout's
+  `invoices[]` (`ListPayouts`), not in the usually-empty `ListAdditionalStatements`
+  feed. `fetch_statements` now derives a statement per invoice (id/period/amount,
+  due-date = the payout's transfer date so the roll-up couples it), deduped so a
+  real additional-statement/bundle row wins.
+- **Deliveroo**: `fetch_payouts` derives one payout per invoice (Deliveroo settles
+  1:1; the invoice IS the transfer), keyed `transfer_id = statement_id` and marked
+  `transfer_status = "derived"`, so the shared back-link closes its payments leg.
+
+All 2419 API + 46 bootstrap tests pass; ruff clean; no schema/type change.

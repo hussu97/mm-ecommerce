@@ -207,6 +207,37 @@ async def test_fetch_statements_empty_lines_when_csv_unavailable():
     assert result.statements[0].invoice_object_key is None
 
 
+@pytest.mark.asyncio
+async def test_fetch_payouts_derives_one_per_invoice():
+    """Deliveroo settles each invoice 1:1, so a payout is derived per invoice —
+    keyed on the statement id so the statement↔payout back-link can close."""
+    client = DeliverooClient()
+    session = MagicMock()
+    _invoice_meta = {
+        "id": "INV-99",
+        "period_start": "2026-08-01",
+        "period_end": "2026-08-31",
+        "due_at": "2026-09-07",
+        "total": {"fractional": 4000},
+        "currency": "AED",
+        "reference": "REF-99",
+    }
+    with patch.object(client, "_list_invoices", return_value=[_invoice_meta]):
+        result = await client.fetch_payouts(
+            session,
+            since=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            until=datetime(2026, 8, 31, tzinfo=timezone.utc),
+        )
+    assert len(result.payouts) == 1
+    p = result.payouts[0]
+    assert p.transfer_id == "INV-99"  # same id as the statement → links directly
+    assert p.statement_id == "INV-99"
+    assert p.transfer_amount == Decimal("40.00")
+    assert p.transfer_date == "2026-09-07"
+    assert p.transfer_status == "derived"
+    assert p.payment_reference == "REF-99"
+
+
 # ── 4. parse_pushed_finance (in-page worker payload) ──────────────────────────
 
 _PUSHED_PAYLOAD = {

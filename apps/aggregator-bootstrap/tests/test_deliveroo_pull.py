@@ -64,11 +64,11 @@ _PDF_B64 = base64.b64encode(b"%PDF-1.4 fake pdf").decode("ascii")
 
 
 class _FakePage:
-    """Stands in for a Playwright page: evaluate answers by script kind."""
+    """Stands in for a Playwright page. The invoice LIST is still fetched in-page
+    via `page.evaluate` (JSON.parse); the per-file CSV/PDF now come through the
+    native download seam, which the tests mock at `_capture_download` instead."""
 
-    def __init__(self, *, csv_html: bool = False, pdf_html: bool = False) -> None:
-        self._csv_html = csv_html
-        self._pdf_html = pdf_html
+    def __init__(self) -> None:
         self.evaluate_calls: list[tuple[str, object]] = []
         self.closed = False
 
@@ -82,30 +82,7 @@ class _FakePage:
         self.evaluate_calls.append((script, arg))
         if "JSON.parse" in script:
             return {"status": 200, "json": {"invoices": [_INVOICE]}}
-        if "arrayBuffer" in script:
-            if self._pdf_html:
-                return {
-                    "status": 200,
-                    "contentType": "text/html",
-                    "length": 12,
-                    "head": "<!DOCTYPE ht",
-                    "b64": base64.b64encode(b"<!DOCTYPE ht").decode("ascii"),
-                }
-            return {
-                "status": 200,
-                "contentType": "application/pdf",
-                "length": 17,
-                "head": "%PDF-1.4 fake pd",
-                "b64": _PDF_B64,
-            }
-        # text (CSV) fetch
-        if self._csv_html:
-            return {
-                "status": 200,
-                "contentType": "text/html",
-                "text": "<!DOCTYPE html><html>challenge</html>",
-            }
-        return {"status": 200, "contentType": "text/csv", "text": _SAMPLE_CSV}
+        return {"status": 200}
 
     async def close(self) -> None:
         self.closed = True
@@ -144,7 +121,7 @@ async def test_fetch_returns_csv_and_pdf_payloads(monkeypatch):
 
 async def test_cloudflare_interstitial_on_pdf_yields_note_not_crash(monkeypatch):
     _patch_downloads(monkeypatch, pdf_html=True)
-    page = _FakePage(pdf_html=True)
+    page = _FakePage()
     payloads, note = await fetch_deliveroo_invoices(
         _FakeContext(page), org_id="497912", since_days=45
     )
@@ -159,7 +136,7 @@ async def test_cloudflare_interstitial_on_pdf_yields_note_not_crash(monkeypatch)
 
 async def test_cloudflare_interstitial_on_csv_yields_note(monkeypatch):
     _patch_downloads(monkeypatch, csv_html=True)
-    page = _FakePage(csv_html=True)
+    page = _FakePage()
     payloads, note = await fetch_deliveroo_invoices(
         _FakeContext(page), org_id="497912", since_days=45
     )
@@ -167,6 +144,64 @@ async def test_cloudflare_interstitial_on_csv_yields_note(monkeypatch):
     assert len(payloads) == 1
     assert payloads[0]["statement_csv"] is None
     assert note is not None and "CSV blocked" in note
+
+
+# ── _capture_download (Playwright native download seam) ───────────────────────
+
+
+class _FakeDownload:
+    def __init__(self, path):
+        self._path = path
+
+    async def path(self):
+        return self._path
+
+
+class _ExpectDownloadCM:
+    """Async context manager returned by page.expect_download()."""
+
+    def __init__(self, download):
+        self._download = download
+
+    async def __aenter__(self):
+        async def _value():
+            return self._download
+
+        return type("Info", (), {"value": _value()})()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _DownloadPage:
+    def __init__(self, download):
+        self._download = download
+
+    def expect_download(self, timeout=None):
+        return _ExpectDownloadCM(self._download)
+
+    async def goto(self, url, timeout=None):
+        # A real navigation to a download URL aborts once it becomes a download.
+        raise RuntimeError("net::ERR_ABORTED — became a download")
+
+
+async def test_capture_download_reads_the_downloaded_file(tmp_path):
+    """The native-download path returns the saved attachment's bytes."""
+    from aggregator_bootstrap.deliveroo_pull import _capture_download
+
+    f = tmp_path / "attachment.csv"
+    f.write_bytes(b"col1,col2\n1,2\n")
+    page = _DownloadPage(_FakeDownload(str(f)))
+    data = await _capture_download(page, "INV-1", "statement_csv")
+    assert data == b"col1,col2\n1,2\n"
+
+
+async def test_capture_download_none_when_no_path(tmp_path):
+    """A download whose path() is None (still in flight / failed) yields None, no crash."""
+    from aggregator_bootstrap.deliveroo_pull import _capture_download
+
+    page = _DownloadPage(_FakeDownload(None))
+    assert await _capture_download(page, "INV-1", "statement_pdf") is None
 
 
 def _load_deliveroo_provider():

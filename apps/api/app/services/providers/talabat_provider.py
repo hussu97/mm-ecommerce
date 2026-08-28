@@ -1008,7 +1008,78 @@ class TalabatClient(BaseAggregatorClient):
                 "breakdowns are absent — the statements returned carry "
                 "settlement metadata only."
             )
+        # The `ListAdditionalStatements` feed is only Talabat's *adjustment*
+        # statements and is usually empty; the primary settlement metadata lives
+        # inside each payout's `invoices[]` (invoiceId/period/totalPayout). Derive a
+        # statement per invoice so every payout has a statement to couple to — the
+        # payments leg of the chain — deduped by id so a real additional-statement
+        # or bundle row always wins over the derived one.
+        seen = {s.statement_id for s in statements}
+        for invoice in await self._payout_invoice_rows(
+            session, accounts=accounts, from_date=from_date, to_date=to_date
+        ):
+            if invoice.statement_id not in seen:
+                statements.append(invoice)
+                seen.add(invoice.statement_id)
         return StatementsResult(statements=statements, truncation_note=truncation_note)
+
+    async def _payout_invoice_rows(
+        self,
+        session: LoadedSession,
+        *,
+        accounts: list[dict[str, Any]],
+        from_date: date,
+        to_date: date,
+    ) -> list[StandardStatement]:
+        """A statement per invoice inside the `ListPayouts` rows.
+
+        Each payout batches one or more invoices, and the invoice sub-object is the
+        only place Talabat exposes primary settlement metadata over httpx. The
+        derived statement's `payment_due_date` is the payout's own transfer date, so
+        `link_statements_to_payouts`'s date roll-up couples it back to that payout.
+        """
+        rows = await self._paginate_finance(
+            session,
+            accounts=accounts,
+            from_date=from_date,
+            to_date=to_date,
+            query=_LIST_PAYOUTS_QUERY,
+            operation_name="ListPayouts",
+            root_key="listPayouts",
+            item_key="payouts",
+            date_keys=("startDate", "endDate"),
+        )
+        out: list[StandardStatement] = []
+        for row in rows:
+            transfer_date = _date_str(_first(row, "at", "paymentDateLocal"))
+            invoices = row.get("invoices")
+            if not isinstance(invoices, list):
+                continue
+            for invoice in invoices:
+                if not isinstance(invoice, dict):
+                    continue
+                invoice_id = str(invoice.get("invoiceId") or "").strip()
+                if not invoice_id:
+                    continue
+                period = invoice.get("period") if isinstance(invoice, dict) else None
+                period = period if isinstance(period, dict) else {}
+                amount = _money(_first(invoice, "invoiceAmount", "totalPayout"))
+                out.append(
+                    StandardStatement(
+                        statement_id=invoice_id,
+                        period_start=_date_str(period.get("from")),
+                        period_end=_date_str(period.get("to")),
+                        payment_due_date=_date_str(invoice.get("processedDate"))
+                        or transfer_date,
+                        gross_sales=amount,
+                        net_payable=amount,
+                        currency=str(
+                            _first(invoice, "invoiceCurrency", "currency") or "AED"
+                        ),
+                        raw=dict(invoice),
+                    )
+                )
+        return out
 
     async def fetch_payouts(
         self, session: LoadedSession, *, since: datetime, until: datetime

@@ -52,6 +52,7 @@ from app.services.aggregators.normalized import (
     SalesResult,
     StandardOrder,
     StandardOrderItem,
+    StandardPayout,
     StandardStatement,
     StandardStatementLine,
     StatementsResult,
@@ -912,13 +913,54 @@ class DeliverooClient(BaseAggregatorClient):
     async def fetch_payouts(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> PayoutsResult:
-        """Real transfers only — do not synthesize payouts from invoice ids.
+        """One derived payout per invoice — Deliveroo settles each 1:1.
 
-        Partner Hub exposes settlement as invoices/statement CSVs; a distinct
-        bank-transfer feed is not wired yet. Returning empty keeps Layer A honest
-        rather than inventing `transfer_id = statement_id` rows.
+        Partner Hub exposes settlement as invoices, not a separate bank-transfer
+        feed: each invoice IS the payment (its `total` is transferred on its
+        `due_at`). So a payout is derived per invoice, keyed on the same id as the
+        statement (`transfer_id = statement_id`) and marked `transfer_status
+        = "derived"` so it is never mistaken for a bank-feed row — this is what
+        lets the statement↔payout back-link (`link_statements_to_payouts`) close
+        the payments leg for Deliveroo like the other channels, and it is honest
+        because for Deliveroo the invoice and the transfer are the same event.
         """
-        return PayoutsResult(payouts=[])
+        org_id = self._org_id(session)
+        from_date, to_date = since.date(), until.date()
+        payouts: list[StandardPayout] = []
+        for invoice in await self._list_invoices(session, org_id):
+            period_start = _parse_date(
+                _first(invoice, "period_start", "start_date", "from", "billing_start")
+            )
+            period_end = _parse_date(
+                _first(invoice, "period_end", "end_date", "to", "billing_end")
+            )
+            if period_end and period_end < from_date:
+                continue
+            if period_start and period_start > to_date:
+                continue
+            invoice_id = _first(invoice, "id", "invoice_id", "reference", "number")
+            if invoice_id is None:
+                continue
+            statement_id = str(invoice_id)
+            due_date = _parse_date(
+                _first(invoice, "payment_due_date", "due_date", "due_at", "paid_at")
+            )
+            payouts.append(
+                StandardPayout(
+                    transfer_id=statement_id,
+                    statement_id=statement_id,
+                    transfer_date=_iso(due_date),
+                    payment_due_date=_iso(due_date),
+                    transfer_amount=_fils(invoice.get("total"))
+                    or _num(_first(invoice, "net_payable", "amount", "amount_due")),
+                    transfer_status="derived",
+                    payment_reference=str(
+                        _first(invoice, "reference", "number") or statement_id
+                    ),
+                    currency=_first(invoice, "currency", "currency_code") or "AED",
+                )
+            )
+        return PayoutsResult(payouts=payouts)
 
     async def _list_invoices(
         self, session: LoadedSession, org_id: str

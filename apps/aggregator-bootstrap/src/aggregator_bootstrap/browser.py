@@ -327,8 +327,29 @@ _CHANNEL_LAUNCH_ARGS: dict[str, list[str]] = {
 }
 
 
+def _clear_stale_singleton_locks(user_data_dir: Path) -> None:
+    """Remove a previous Chrome's Singleton* lock files from the profile.
+
+    Chrome writes `SingletonLock` (a symlink to `<host>-<pid>`) into the
+    user-data dir and refuses to launch when it points at a process it cannot
+    verify is dead — "the profile appears to be in use by another Chrome process
+    on another computer". A warm that was SIGKILLed (a timeout, an OOM) leaves
+    that lock behind, and since each warm runs in a fresh container the hostname
+    never matches, so every subsequent warm is blocked forever. These files are
+    pure runtime state (no session data), safe to delete before we relaunch.
+    """
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (user_data_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:  # pragma: no cover — best effort
+            logger.warning("could not clear %s in %s: %s", name, user_data_dir, exc)
+
+
 async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool, channel: str):
     os.makedirs(user_data_dir, exist_ok=True)
+    _clear_stale_singleton_locks(user_data_dir)
     kwargs = warm_persistent_kwargs(headed=headed)
     extra_args = _CHANNEL_LAUNCH_ARGS.get(channel)
     if extra_args:
@@ -338,12 +359,21 @@ async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool, channel: 
     except Exception as exc:
         if kwargs.get("channel") != "chrome":
             raise
-        logger.warning("branded Chrome unavailable (%s); falling back to Chromium", exc)
+        # Fall back to Playwright's bundled Chromium — present on a dev laptop
+        # (`playwright install`) but NOT in the container image, which ships only
+        # branded Chrome. So in the container this fallback cannot succeed; if it
+        # fails, re-raise the ORIGINAL branded-Chrome error (e.g. a profile lock),
+        # not the confusing "Executable doesn't exist …/chromium-1234" that masks
+        # the real cause.
+        logger.warning("branded Chrome failed (%s); trying bundled Chromium", exc)
         fallback = dict(kwargs)
         fallback.pop("channel", None)
-        return await pw.chromium.launch_persistent_context(
-            str(user_data_dir), **fallback
-        )
+        try:
+            return await pw.chromium.launch_persistent_context(
+                str(user_data_dir), **fallback
+            )
+        except Exception:
+            raise exc from None
 
 
 async def _open_context(pw, channel: str, *, headed: bool) -> _Opened:
@@ -376,8 +406,14 @@ async def _open_storage_state_context(pw, channel: str) -> _Opened:
         browser = await pw.chromium.launch(
             headless=not headed, channel="chrome", args=launch_args
         )
-    except Exception:
-        browser = await pw.chromium.launch(headless=not headed, args=launch_args)
+    except Exception as exc:
+        # Bundled Chromium exists on a dev laptop but not in the container image
+        # (branded Chrome only); if it also fails, surface the real branded-Chrome
+        # error rather than the misleading "chromium-1234 not found".
+        try:
+            browser = await pw.chromium.launch(headless=not headed, args=launch_args)
+        except Exception:
+            raise exc from None
     state = _storage_state_path(channel)
     context = await browser.new_context(
         **context_kwargs(
