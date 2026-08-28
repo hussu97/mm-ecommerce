@@ -92,7 +92,12 @@ def _first(mapping: dict[str, Any], *keys: str) -> Any:
 
 class CareemClient(BaseAggregatorClient):
     channel = CHANNEL_CAREEM
-    uses_tls_impersonation = False
+    # Careem's partner API sits behind Cloudflare and rejects a plain-httpx TLS
+    # ClientHello with a bare 401 (not a challenge page) even with a valid bearer
+    # + cookies — verified live: the identical request via curl_cffi impersonating
+    # Chrome returns 200. So it needs TLS impersonation like Talabat/Noon.
+    uses_tls_impersonation = True
+    impersonate_target = "chrome"
 
     @staticmethod
     def _city_id(session: LoadedSession) -> str:
