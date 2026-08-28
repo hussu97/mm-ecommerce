@@ -38,6 +38,8 @@ def _agg(**over):
         business_date="2026-08-27",
         mm_order_id=None,
         promoted_at=None,
+        customer_name=None,
+        customer_phone=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -49,6 +51,41 @@ class _FakeDB:
 
     async def execute(self, _stmt):
         return None
+
+
+# ── _refresh_order backfills a customer onto an existing order ────────────────
+
+
+async def test_refresh_order_backfills_missing_customer(monkeypatch):
+    """An order first filed without a customer (early promote / convergence) gets
+    the scraped customer on the next refresh."""
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(promote.order_fees, "stamp", _noop)
+    monkeypatch.setattr(promote, "_drive_status", _noop)
+
+    agg = _agg(customer_name="Aisha", customer_phone="+971500000000")
+    order = SimpleNamespace(customer_name=None, customer_phone=None)
+    await promote._refresh_order(_FakeDB(), order, agg)
+    assert order.customer_name == "Aisha"
+    assert order.customer_phone == "+971500000000"
+
+
+async def test_refresh_order_never_overwrites_an_existing_customer(monkeypatch):
+    """A value already on the order (e.g. a GrubOps-sourced one) is preserved."""
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(promote.order_fees, "stamp", _noop)
+    monkeypatch.setattr(promote, "_drive_status", _noop)
+
+    agg = _agg(customer_name="Scraped Name")
+    order = SimpleNamespace(customer_name="GrubOps Name", customer_phone="+971")
+    await promote._refresh_order(_FakeDB(), order, agg)
+    assert order.customer_name == "GrubOps Name"  # not overwritten
 
 
 # ── status vocabulary ────────────────────────────────────────────────────────

@@ -498,6 +498,16 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     and status, in case the marketplace mutated the order after we first filed it."""
     for field, value in _money_fields(agg).items():
         setattr(order, field, value)
+    # Backfill the customer the scraper captured onto an order first filed without
+    # it — one promoted before its channel exposed the customer (Keeta's
+    # recipientInfo, Noon's customerInfo), or one this pass converged onto by
+    # `(source, external_reference)`. Fill-only: a value already on the order (a
+    # GrubOps-sourced order carries its own) is never overwritten, and `_build_order`
+    # already sets it on a fresh promote — this closes the gap for the existing rows.
+    if not order.customer_name and agg.customer_name:
+        order.customer_name = agg.customer_name
+    if not order.customer_phone and agg.customer_phone:
+        order.customer_phone = agg.customer_phone
     await db.flush()
     await order_fees.stamp(db, order, **_actual_fee_overrides(agg))
     await _drive_status(db, order, agg)
