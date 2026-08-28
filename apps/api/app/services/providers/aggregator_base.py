@@ -84,6 +84,16 @@ class _RateLimiter:
             self._next_at = time.monotonic() + self._interval
 
 
+def _parse_cookie_header(cookie: str) -> dict[str, str]:
+    """A `name=value; …` Cookie header back into a jar dict (first value wins)."""
+    jar: dict[str, str] = {}
+    for part in (cookie or "").split(";"):
+        name, sep, value = part.strip().partition("=")
+        if sep and name and name not in jar:
+            jar[name] = value
+    return jar
+
+
 def _retry_after_seconds(response: Any, *, default: float = 2.0) -> float:
     raw = None
     headers = getattr(response, "headers", None) or {}
@@ -313,6 +323,17 @@ class BaseAggregatorClient(ABC):
         *,
         timeout: float | None = None,
     ) -> Any:
+        # Hand curl_cffi the cookie JAR, not a pre-folded `Cookie` header: under
+        # impersonation it emits the Cookie header itself, in the impersonated
+        # browser's exact header ORDER. A manually-folded Cookie header lands out
+        # of order, and a Cloudflare-fronted API (Careem) rejects the mismatched
+        # fingerprint with a bare 401 — verified live: identical request, cookies
+        # as param 200 vs cookies as header 401. Talabat/Noon are unaffected (they
+        # do not gate on this), so the split is safe for every impersonated channel.
+        headers = dict(headers)
+        cookies: dict[str, str] | None = None
+        for key in [k for k in headers if k.lower() == "cookie"]:
+            cookies = _parse_cookie_header(headers.pop(key))
         async with curl_requests.AsyncSession() as client:  # type: ignore[union-attr]
             return await client.request(
                 method,
@@ -321,6 +342,7 @@ class BaseAggregatorClient(ABC):
                 params=params,
                 json=json_body,
                 data=data,
+                cookies=cookies,
                 impersonate=self.impersonate_target,
                 timeout=timeout or self._timeout,
             )
