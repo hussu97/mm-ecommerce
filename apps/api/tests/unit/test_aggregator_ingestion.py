@@ -793,12 +793,13 @@ def test_registry_has_the_four_httpx_channels_and_not_keeta():
     ingest.PROVIDERS.clear()
     ingest._register_providers()
     assert set(ingest.PROVIDERS) == {"careem", "deliveroo", "talabat", "noon"}
-    # Talabat, Noon and Careem go out behind TLS impersonation (all Cloudflare/
-    # Akamai/PerimeterX fronted); Deliveroo does not.
+    # All four go out behind TLS impersonation — every partner API here is
+    # Cloudflare/Akamai/PerimeterX fronted (Deliveroo's JSON tolerates httpx but
+    # its invoice-file download needs the impersonated ClientHello).
     assert ingest.PROVIDERS["talabat"].uses_tls_impersonation is True
     assert ingest.PROVIDERS["noon"].uses_tls_impersonation is True
     assert ingest.PROVIDERS["careem"].uses_tls_impersonation is True
-    assert ingest.PROVIDERS["deliveroo"].uses_tls_impersonation is False
+    assert ingest.PROVIDERS["deliveroo"].uses_tls_impersonation is True
 
 
 async def test_branch_map_admin_requires_permission(client):
