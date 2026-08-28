@@ -488,6 +488,39 @@ async def test_fetch_sales_oms_unavailable_falls_back_to_rms(session_with_tokens
 
 
 @pytest.mark.asyncio
+async def test_fetch_sales_excludes_rms_only_orders_before_the_window(
+    session_with_tokens,
+):
+    """RMS statements are discovered over a wider (publication) window so late fees
+    land, but an RMS-only order dated BEFORE the sales window is an older sale
+    settling now — it must not inflate a 'yesterday' pull (the 267-vs-19 bug)."""
+    client = NoonClient()
+    since = datetime(2026, 4, 21, 0, 0)
+    until = datetime(2026, 4, 22, 0, 0)
+    old_rms = {**_RMS_ROW, "order_nr": "OLD_SETTLING_ORDER", "order_date": "2026-04-01"}
+
+    async def _fake_request_json(session, method, url, **kwargs):
+        raise AggregatorUnavailableError("OMS down")  # force the RMS-only path
+
+    async def _fake_post_tabular(session, url, json_body):
+        if "wallet" in url:
+            return _rows_from_csv(_WALLET_CSV_WITH_STATEMENT)
+        if "statement/orders" in url:
+            return [_RMS_ROW, old_rms]  # one in-window (04-21), one old (04-01)
+        return []
+
+    with (
+        patch.object(client, "request_json", side_effect=_fake_request_json),
+        patch.object(client, "_post_tabular", side_effect=_fake_post_tabular),
+    ):
+        result = await client.fetch_sales(session_with_tokens, since=since, until=until)
+
+    ids = {o.external_order_id for o in result.orders}
+    assert "FG4LNN5NPGYI0JA" in ids  # in-window RMS-only order kept
+    assert "OLD_SETTLING_ORDER" not in ids  # older settling order excluded
+
+
+@pytest.mark.asyncio
 async def test_fetch_sales_merges_oms_items_with_rms_fees(session_with_tokens):
     client = NoonClient()
     since = datetime(2026, 4, 21, 0, 0)

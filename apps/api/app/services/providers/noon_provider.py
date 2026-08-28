@@ -217,6 +217,16 @@ def _in_window(day: date | None, since: datetime, until: datetime) -> bool:
     return day is not None and since.date() <= day <= until.date()
 
 
+def _order_business_date(order: StandardOrder) -> date | None:
+    """The order's Dubai business date as a `date`, from its ISO `business_date`."""
+    if not order.business_date:
+        return None
+    try:
+        return date.fromisoformat(order.business_date)
+    except (TypeError, ValueError):
+        return None
+
+
 def _rows_from_csv(text: str) -> list[dict[str, str]]:
     """CSV → list of stripped dicts. The shape "Export Current View" produces."""
     reader = csv.DictReader(io.StringIO(text))
@@ -718,7 +728,17 @@ class NoonClient(BaseAggregatorClient):
                 else oms_order
             )
         for order_id, rms_order in rms_orders.items():
-            if order_id not in oms_orders:
+            if order_id in oms_orders:
+                continue
+            # RMS statements are discovered over a WIDER window than the sales one
+            # (`_publication_since`, because fees post up to a couple weeks late), so
+            # this loop sees settled orders from well before `since`. An RMS-only
+            # order outside the sales window is an OLDER sale now settling, not part
+            # of THIS window's sales — including it made a 1-day "yesterday" pull
+            # return a fortnight of settlements. Its fee data still reaches the MM
+            # order through the finance sweep's statement lines; here we keep only
+            # RMS-only orders that actually fall in the sales window.
+            if _in_window(_order_business_date(rms_order), since, until):
                 merged.append(rms_order)
 
         notes = [n for n in (oms_truncation, rms_truncation) if n]

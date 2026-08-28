@@ -655,13 +655,18 @@ async def _sweep_channel(
         since = now - timedelta(hours=lookback_hours)
         until = now
     else:
-        until = _start_of_today_dubai(now)
+        today_start = _start_of_today_dubai(now)
         days = (
             lookback_days
             if lookback_days is not None
             else settings.AGGREGATOR_LOOKBACK_DAYS
         )
-        since = until - timedelta(days=days)
+        # End at the last instant of yesterday (Dubai), so `until.date()` is
+        # yesterday and the inclusive `<= until.date()` filters never reach today;
+        # start at the first instant of the oldest day in the window. For the
+        # default 1-day lookback that is exactly yesterday's Dubai date.
+        until = today_start - timedelta(microseconds=1)
+        since = today_start - timedelta(days=days)
     try:
         if mode == RUN_MODE_SALES:
             result: SalesResult = await provider.fetch_sales(
@@ -871,17 +876,18 @@ async def run_daily_once() -> tuple[int, int]:
 
 
 def _start_of_today_dubai(now: datetime) -> datetime:
-    """Midnight (00:00 Asia/Dubai) at the start of today, as an aware UTC datetime.
+    """Midnight (00:00) at the start of today, as a Dubai-AWARE datetime.
 
-    The exclusive upper bound of the daily window. Anchoring the window's end to a
-    calendar day boundary — rather than to `now` — is what makes a 1-day lookback
-    mean "yesterday's date" exactly, so the daily pass mirrors whole days and two
-    consecutive runs never double-count or skip the seam between them.
+    Kept in Dubai time on purpose: every provider filters its window with
+    `since.date()` / `until.date()` (and Talabat/Deliveroo pass those dates
+    straight to their export APIs), and marketplace orders are dated in Dubai
+    business time. Returning a UTC instant here would make `.date()` fall on the
+    previous calendar day for the four hours Dubai is ahead of UTC, so "yesterday"
+    would silently become "the day before". Anchoring to the Dubai day boundary is
+    what makes a 1-day lookback mean yesterday's Dubai date exactly, with whole
+    days tiling and no double-count at the seam.
     """
-    local_midnight = now.astimezone(_DUBAI).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    return local_midnight.astimezone(timezone.utc)
+    return now.astimezone(_DUBAI).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _run_hour_local(now: datetime) -> datetime:
