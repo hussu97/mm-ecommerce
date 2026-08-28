@@ -36,6 +36,7 @@ from .channels.login import (
     LOGIN_START_URLS,
     deliveroo_login_form_visible,
     fill_deliveroo_login,
+    login_careem,
     login_noon,
     login_talabat,
     page_looks_authenticated,
@@ -624,8 +625,9 @@ async def login_with_account(
     - **deliveroo** — email+password once the login form is visible
     - **noon** — email → Graph OTP via `login_noon` (needs mailbox-auth)
     - **talabat** — email+password → Graph OTP via `login_talabat`
+    - **careem** — email → Graph OTP via `login_careem` (needs mailbox-auth)
     """
-    if channel not in ("deliveroo", "noon", "talabat"):
+    if channel not in ("deliveroo", "noon", "talabat", "careem"):
         raise NeedsHumanLogin(
             f"{channel} auto-login is not wired yet; run `login --channel "
             f"{channel}` headed, or store the recipe and wait for that channel's "
@@ -651,6 +653,16 @@ async def login_with_account(
                 "Talabat needs a linked Graph mailbox for OTP. "
                 "Run: aggregator-bootstrap mailbox-auth --channel talabat"
             )
+    if channel == "careem":
+        if not email:
+            raise NeedsHumanLogin(
+                "Careem account has no email in the DB. Save it on Admin → Logins."
+            )
+        if not mailbox or not str((mailbox or {}).get("refresh_token") or "").strip():
+            raise NeedsHumanLogin(
+                "Careem needs a linked Graph mailbox for OTP. "
+                "Run: aggregator-bootstrap mailbox-auth --channel careem"
+            )
     if channel not in CHANNEL_PROBES:
         raise NeedsHumanLogin(f"unknown channel {channel}")
 
@@ -674,6 +686,13 @@ async def login_with_account(
             f"poll the linked Graph mailbox for the OTP (up to "
             f"{_LOGIN_WAIT_SECONDS // 60} minutes). Complete any PerimeterX\n"
             f"challenge in the window if it appears.\n"
+        )
+    elif channel == "careem":
+        hint = (
+            f"Google Chrome opened on Careem Partners. I pick the Email method,\n"
+            f"fill the email and poll the linked Graph mailbox for the OTP (up to\n"
+            f"{_LOGIN_WAIT_SECONDS // 60} minutes). If reCAPTCHA challenges, "
+            f"complete it in the window.\n"
         )
     else:
         hint = (
@@ -727,6 +746,16 @@ async def login_with_account(
                                 "%s: driving email/password + Graph OTP", channel
                             )
                             page = await login_talabat(
+                                context,
+                                mailbox=mailbox,
+                                email=email,
+                                password=password,
+                                page=page,
+                            )
+                            filled = True
+                        elif channel == "careem" and not filled:
+                            logger.info("%s: driving email + Graph OTP", channel)
+                            page = await login_careem(
                                 context,
                                 mailbox=mailbox,
                                 email=email,

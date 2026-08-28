@@ -581,19 +581,110 @@ async def login_keeta(context) -> None:
 
 
 # --- Careem -----------------------------------------------------------------
-# Not ported: the standalone mm-aggregator-automation repo has no `careem`
-# channel package (only deliveroo, keeta, noon, talabat), so there is no login
-# flow to carry across. Careem sessions still have to be hand-established until a
-# scraper login exists to port.
+# Partner portal (partners.careem.com → auth-partners.careem.com) offers Phone /
+# Email / Staff-Credentials; the Email method redirects to auth.careem.com for an
+# email → one-time-code flow (reCAPTCHA-gated, no password on this path). The OTP
+# arrives from `go@careem.com` / "Careem One Time Password", read via the linked
+# Graph mailbox — the same mechanism noon/talabat use.
 
 
-async def login_careem(context) -> None:
-    raise NotImplementedError(
-        "Careem automated login is not ported: mm-aggregator-automation has no "
-        "channels/careem package to port a login flow from. Establish the Careem "
-        "storage_state manually (partners.careem.com) until a scraper login "
-        "exists. See channels/login.py."
-    )
+CAREEM_PORTAL_URL = "https://partners.careem.com/"
+CAREEM_OTP_SENDER = "go@careem.com"
+CAREEM_OTP_SUBJECT = "Careem One Time Password"
+
+
+async def login_careem(
+    context,
+    *,
+    mailbox: dict | None = None,
+    email: str | None = None,
+    password: str | None = None,
+    page=None,
+):
+    """Drive Careem Partners email → Graph OTP.
+
+    The portal (`partners.careem.com` → `auth-partners.careem.com`) offers Phone /
+    Email / Staff-Credentials; the **Email** method redirects to `auth.careem.com`
+    for an email → one-time-code flow. The OTP is the second factor — this path
+    takes no password (Careem's `email_password_otp` stores one for the
+    staff-credentials path, unused here). `password` is accepted for signature
+    symmetry with the other flows and ignored. Returns the authenticated page.
+    """
+    address = (email or settings.CAREEM_EMAIL or "").strip()
+    if not address:
+        raise LoginError(
+            "Careem login needs an email on the account recipe or CAREEM_EMAIL."
+        )
+    owned_page = page is None
+    if page is None:
+        page = await context.new_page()
+
+    on_auth = "auth.careem.com" in page.url or "auth-partners.careem.com" in page.url
+    if not on_auth and not await _careem_is_authenticated(page):
+        await page.goto(
+            CAREEM_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000
+        )
+        await page.wait_for_timeout(4_000)
+    if await _careem_is_authenticated(page):
+        return page
+
+    # Partner-portal method chooser → pick the Email option (→ auth.careem.com).
+    if "auth.careem.com" not in page.url:
+        for label in ("Receive a one-time code via email", "Email Address"):
+            try:
+                await page.get_by_text(label, exact=False).first.click(timeout=8_000)
+                break
+            except Exception:  # noqa: BLE001 — try the next label / assume redirect
+                continue
+        await page.wait_for_timeout(3_000)
+
+    # auth.careem.com email step.
+    email_input = page.locator("input[type='email']")
+    try:
+        await email_input.wait_for(state="visible", timeout=20_000)
+    except Exception as exc:  # noqa: BLE001
+        if await _careem_is_authenticated(page):
+            return page
+        raise LoginError(
+            f"Careem login did not expose an email input at {page.url}"
+        ) from exc
+    await email_input.fill(address)
+    otp_since = datetime.now(UTC)
+    await page.locator("button[type='submit']").click(timeout=5_000)
+    await page.wait_for_timeout(3_000)
+
+    # Verification-code step — one text box, submit, done.
+    otp_input = page.locator("input[type='text']").first
+    try:
+        await otp_input.wait_for(state="visible", timeout=20_000)
+    except Exception as exc:  # noqa: BLE001
+        if await _careem_is_authenticated(page):
+            return page
+        raise LoginError(
+            f"Careem did not present a verification-code input at {page.url}"
+        ) from exc
+    box = mailbox or {}
+    try:
+        otp = await wait_for_otp(
+            sender_filter=str(box.get("sender_filter") or "") or CAREEM_OTP_SENDER,
+            subject_filter=str(box.get("subject_filter") or "") or CAREEM_OTP_SUBJECT,
+            since=otp_since,
+            timeout=120,
+            mailbox=mailbox,
+            channel="careem",
+        )
+    except OTPPollingError as exc:
+        if owned_page:
+            await page.close()
+        raise LoginChallengeError(
+            "Careem requested an email OTP but none could be read from the linked "
+            "mailbox. Save this channel's Microsoft app on Admin → Logins, run "
+            "mailbox-auth, or complete the login manually."
+        ) from exc
+    await otp_input.fill(otp.strip())
+    await page.locator("button[type='submit']").click(timeout=5_000)
+    await page.wait_for_timeout(6_000)
+    return page
 
 
 #: Channel -> login flow. `login --auto` calls these for email_password
