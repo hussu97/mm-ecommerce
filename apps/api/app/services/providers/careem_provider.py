@@ -90,6 +90,18 @@ def _first(mapping: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _currency_code(value: Any) -> str:
+    """The 3-letter code from Careem's `currency`, which is an object
+    (`{code: "AED", …}`) on the orders endpoint but may be a bare string
+    elsewhere. Defaults to AED."""
+    if isinstance(value, dict):
+        code = _first(value, "code", "currency_code", "iso_code")
+        return str(code) if code else "AED"
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "AED"
+
+
 class CareemClient(BaseAggregatorClient):
     channel = CHANNEL_CAREEM
     # Careem's partner API sits behind Cloudflare and rejects a plain-httpx TLS
@@ -196,7 +208,13 @@ class CareemClient(BaseAggregatorClient):
             return None
         placed_raw = _first(row, "created_at", "createdAt", "placedAt", "date")
         placed_at = _parse_dt(placed_raw)
-        totals = _first(row, "totals", "price", "amount") or {}
+        # `partner-orders-minimal` nests the order value under `price.total` and the
+        # currency under a `currency` OBJECT (`{code: "AED", …}`), not a string.
+        price = _first(row, "price", "totals", "amount")
+        price = price if isinstance(price, dict) else {}
+        gross = _num(_first(row, "total", "grand_total", "totalAmount"))
+        if gross is None:
+            gross = _num(_first(price, "total", "grand_total", "amount"))
         items = [
             StandardOrderItem(
                 source_key=f"{external}:{idx}",
@@ -217,10 +235,8 @@ class CareemClient(BaseAggregatorClient):
             business_date=placed_at.strftime("%Y-%m-%d") if placed_at else None,
             placed_at=placed_at,
             status=_first(row, "status", "state", "orderStatus"),
-            currency=_first(row, "currency", "currencyCode") or "AED",
-            gross_sales=_num(
-                _first(row, "total", "grand_total", "totalAmount") or totals
-            ),
+            currency=_currency_code(_first(row, "currency", "currencyCode")),
+            gross_sales=gross,
             commission_amount=_num(_first(row, "commission", "commissionAmount")),
             delivery_fee=_num(_first(row, "delivery_fee", "deliveryFee")),
             vat_amount=_num(_first(row, "tax", "vat", "taxAmount")),
