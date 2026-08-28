@@ -593,6 +593,24 @@ CAREEM_OTP_SENDER = "go@careem.com"
 CAREEM_OTP_SUBJECT = "Careem One Time Password"
 
 
+async def _careem_submit(page, field) -> None:
+    """Advance a Careem auth step. The "Continue" button lags behind the
+    reCAPTCHA-v3 token and field validation, so a bare `button[type=submit]`
+    click races it and times out — wait for the button, then fall back to
+    pressing Enter in the field (which submits the form just the same)."""
+    await page.wait_for_timeout(1_500)
+    button = page.get_by_role("button", name="Continue")
+    try:
+        await button.wait_for(state="visible", timeout=15_000)
+        await button.click(timeout=10_000)
+        return
+    except Exception:  # noqa: BLE001 — the button never became actionable; use Enter
+        try:
+            await field.press("Enter")
+        except Exception:  # noqa: BLE001 — best effort; the caller re-checks state
+            pass
+
+
 async def login_careem(
     context,
     *,
@@ -650,7 +668,7 @@ async def login_careem(
         ) from exc
     await email_input.fill(address)
     otp_since = datetime.now(UTC)
-    await page.locator("button[type='submit']").click(timeout=5_000)
+    await _careem_submit(page, email_input)
     await page.wait_for_timeout(3_000)
 
     # Verification-code step — one text box, submit, done.
@@ -682,7 +700,7 @@ async def login_careem(
             "mailbox-auth, or complete the login manually."
         ) from exc
     await otp_input.fill(otp.strip())
-    await page.locator("button[type='submit']").click(timeout=5_000)
+    await _careem_submit(page, otp_input)
     await page.wait_for_timeout(6_000)
     return page
 
