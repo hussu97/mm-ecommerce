@@ -715,7 +715,12 @@ class TalabatClient(BaseAggregatorClient):
             )
         entity = self._global_entity_id(session)
         from_iso = since.date().isoformat()
-        to_iso = until.date().isoformat()
+        # Talabat's export `to` is EXCLUSIVE (a `to` of the 27th returns the 26th),
+        # while `until` here is the LAST day to include — so advance `to` by one day.
+        # This also keeps a single-day window (`until.date() == since.date()`, the
+        # "yesterday" pull) valid: without it `from == to` is an empty range and the
+        # portal rejects it with a VALIDATION_ERROR from vp-report-builder.
+        to_iso = (until.date() + timedelta(days=1)).isoformat()
         filters = {
             "from": from_iso,
             "to": to_iso,
