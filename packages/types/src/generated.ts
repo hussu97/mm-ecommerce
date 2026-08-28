@@ -429,6 +429,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sync Runs
+         * @description The ingest run trail for the admin Runs table — newest first, with the
+         *     total for the filter. Each row is one channel×trigger: when it ran, whether it
+         *     succeeded (and why not), and what it retrieved/promoted.
+         */
+        get: operations["list_sync_runs_api_v1_aggregators_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/session": {
         parameters: {
             query?: never;
@@ -7828,6 +7850,70 @@ export interface components {
             status: string;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /**
+         * AggregatorSyncRunList
+         * @description A page of sync-run rows, newest first, plus the unpaginated total.
+         */
+        AggregatorSyncRunList: {
+            /** Items */
+            items: components["schemas"]["AggregatorSyncRunOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * AggregatorSyncRunOut
+         * @description One recorded ingest run — a channel×trigger, with its outcome and stats.
+         *
+         *     `stats` is the run's JSON blob verbatim (what was retrieved and the promotion
+         *     split); the flat fields lift the figures the table columns show so the UI does
+         *     not have to know the blob's shape. `error` is the failure reason (or the
+         *     per-mode partial reasons), null on a clean run.
+         */
+        AggregatorSyncRunOut: {
+            /** Channel */
+            channel: string;
+            /** Error */
+            error?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** From Date */
+            from_date?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Invoices Total */
+            invoices_total?: number | null;
+            /** Mode */
+            mode: string;
+            /** Orders Not Promoted */
+            orders_not_promoted?: number | null;
+            /** Orders Promoted */
+            orders_promoted?: number | null;
+            /** Orders Promoted Existing */
+            orders_promoted_existing?: number | null;
+            /** Orders Promoted New */
+            orders_promoted_new?: number | null;
+            /** Orders Retrieved */
+            orders_retrieved?: number | null;
+            /** Payouts Total */
+            payouts_total?: number | null;
+            /** Pct Promoted */
+            pct_promoted?: number | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Statements Total */
+            statements_total?: number | null;
+            /** Stats */
+            stats?: {
+                [key: string]: unknown;
+            } | null;
+            /** Status */
+            status: string;
+            /** To Date */
+            to_date?: string | null;
         };
         /**
          * AggregatorWorkerAccount
@@ -17768,6 +17854,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReconSummaryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sync_runs_api_v1_aggregators_runs_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                mode?: string | null;
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorSyncRunList"];
                 };
             };
             /** @description Validation Error */

@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
  * screens read as one section with tabs rather than unrelated pages.
  */
 const TABS = [
+  { href: '/aggregators/runs', label: 'Runs' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
   { href: '/aggregators/mappings', label: 'Mappings' },
   { href: '/aggregators/logins', label: 'Logins' },

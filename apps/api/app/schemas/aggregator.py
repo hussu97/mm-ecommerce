@@ -302,6 +302,46 @@ class AggregatorReconciliationList(BaseModel):
     total: int
 
 
+# ── sync runs (the ingest trail the admin Runs table shows) ───────────────────
+class AggregatorSyncRunOut(BaseModel):
+    """One recorded ingest run — a channel×trigger, with its outcome and stats.
+
+    `stats` is the run's JSON blob verbatim (what was retrieved and the promotion
+    split); the flat fields lift the figures the table columns show so the UI does
+    not have to know the blob's shape. `error` is the failure reason (or the
+    per-mode partial reasons), null on a clean run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    channel: str
+    mode: str
+    status: str
+    from_date: str | None = None
+    to_date: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    stats: dict | None = None
+    # Lifted from stats for the table columns (null when a run recorded none).
+    orders_retrieved: int | None = None
+    orders_promoted: int | None = None
+    orders_promoted_new: int | None = None
+    orders_promoted_existing: int | None = None
+    orders_not_promoted: int | None = None
+    pct_promoted: float | None = None
+    statements_total: int | None = None
+    payouts_total: int | None = None
+    invoices_total: int | None = None
+
+
+class AggregatorSyncRunList(BaseModel):
+    """A page of sync-run rows, newest first, plus the unpaginated total."""
+
+    items: list[AggregatorSyncRunOut]
+    total: int
+
+
 class ReconSummaryRow(BaseModel):
     """The reconciliation tallies for one channel (or the `all` total row).
 

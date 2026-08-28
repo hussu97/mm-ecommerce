@@ -27,6 +27,7 @@ import type {
 // contract (rule 8); these aliases keep the friendly names the code below uses.
 type ReconList = Schemas['AggregatorReconciliationList'];
 type ReconSummary = Schemas['ReconSummaryOut'];
+type SyncRunList = Schemas['AggregatorSyncRunList'];
 type BranchMapRow = Schemas['AggregatorBranchMapOut'];
 type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 type AggregatorAccount = Schemas['AggregatorAccountPublic'];
@@ -677,6 +678,18 @@ export const reconciliationApi = {
   /** Per-channel roll-up and a grand total, for the stat cards. */
   summary: (params?: { channel?: string; branch_id?: string }) =>
     api.get<ReconSummary>(`/aggregators/reconciliation/summary${buildQs(params)}`),
+};
+
+// ─── Aggregator ingest runs (the Runs table) ──────────────────────────────────
+export const aggregatorRunsApi = {
+  /** The ingest run trail, newest first, with the total for the filter. */
+  list: (params: {
+    channel?: string;
+    mode?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) => api.get<SyncRunList>(`/aggregators/runs${buildQs(params)}`),
 };
 
 // ─── Aggregator outlet↔branch mappings ────────────────────────────────────────

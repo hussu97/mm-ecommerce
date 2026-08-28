@@ -39,6 +39,7 @@ from app.models.aggregator import (
     AggregatorBranchMap,
     AggregatorReconciliation,
     AggregatorSession,
+    AggregatorSyncRun,
 )
 from app.models.branch import Branch
 from app.schemas.aggregator import (
@@ -50,6 +51,8 @@ from app.schemas.aggregator import (
     AggregatorReconciliationOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
+    AggregatorSyncRunList,
+    AggregatorSyncRunOut,
     AggregatorWorkerAccount,
     AggregatorWorkerSession,
     DeliverooFinancePush,
@@ -554,6 +557,72 @@ async def reconciliation_summary(
         avg_rate_effective=totals_row.avg_rate_effective,
     )
     return ReconSummaryOut(by_channel=by_channel, totals=totals)
+
+
+def _run_out(run: AggregatorSyncRun) -> AggregatorSyncRunOut:
+    """Lift the stats blob's headline figures onto flat fields for the table."""
+    stats = run.stats or {}
+    return AggregatorSyncRunOut(
+        id=run.id,
+        channel=run.channel,
+        mode=run.mode,
+        status=run.status,
+        from_date=run.from_date,
+        to_date=run.to_date,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        error=run.error,
+        stats=stats or None,
+        orders_retrieved=stats.get("orders_retrieved"),
+        orders_promoted=stats.get("orders_promoted"),
+        orders_promoted_new=stats.get("orders_promoted_new"),
+        orders_promoted_existing=stats.get("orders_promoted_existing"),
+        orders_not_promoted=stats.get("orders_not_promoted"),
+        pct_promoted=stats.get("pct_promoted"),
+        statements_total=stats.get("statements_total"),
+        payouts_total=stats.get("payouts_total"),
+        invoices_total=stats.get("invoices_total"),
+    )
+
+
+@router.get(
+    "/runs",
+    response_model=AggregatorSyncRunList,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def list_sync_runs(
+    channel: str | None = Query(None),
+    mode: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> AggregatorSyncRunList:
+    """The ingest run trail for the admin Runs table — newest first, with the
+    total for the filter. Each row is one channel×trigger: when it ran, whether it
+    succeeded (and why not), and what it retrieved/promoted."""
+    stmt = select(AggregatorSyncRun)
+    if channel:
+        stmt = stmt.where(AggregatorSyncRun.channel == channel)
+    if mode:
+        stmt = stmt.where(AggregatorSyncRun.mode == mode)
+    if status:
+        stmt = stmt.where(AggregatorSyncRun.status == status)
+
+    total = (
+        await db.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar_one()
+
+    stmt = (
+        stmt.order_by(
+            AggregatorSyncRun.started_at.desc().nullslast(),
+            AggregatorSyncRun.created_at.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    runs = (await db.execute(stmt)).scalars().all()
+    return AggregatorSyncRunList(items=[_run_out(r) for r in runs], total=total)
 
 
 @router.get(
