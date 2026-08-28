@@ -451,8 +451,16 @@ async def probe_channel(channel: str) -> ProbeResult:
             page = await _first_page(opened)
 
             def _on_request(request) -> None:
-                if not captured and probe.match in request.url:
-                    captured.update(request.headers)
+                if probe.match not in request.url or "authorization" in captured:
+                    return
+                headers = request.headers
+                # Capture the first match, but prefer one that carries the
+                # Authorization bearer: Careem fires bearer-less `/api/saturn-ext/`
+                # calls (the OAuth code-exchange) before the authenticated ones, so
+                # overwrite a bearer-less snapshot once a bearer request appears.
+                if not captured or "authorization" in headers:
+                    captured.clear()
+                    captured.update(headers)
 
             page.on("request", _on_request)
             try:
@@ -486,6 +494,26 @@ async def probe_channel(channel: str) -> ProbeResult:
                     str(exc).splitlines()[0][:120],
                 )
             await asyncio.sleep(3)
+            # Careem's finances page bounces through an OAuth code-exchange
+            # (`/saturn-ext/auth/identity?code=…`) before the authenticated
+            # `/api/saturn-ext/` call fires, so the Authorization header the
+            # provider replays is often not captured on the first settle. Give the
+            # exchange a moment and re-load the probe page until the header lands.
+            if channel == "careem" and "authorization" not in captured:
+                for _ in range(4):
+                    await asyncio.sleep(4)
+                    if "authorization" in captured:
+                        break
+                    try:
+                        await page.goto(
+                            probe.probe_url, wait_until="commit", timeout=30_000
+                        )
+                    except Exception:  # noqa: BLE001 — SPA lazy nav; keep polling
+                        pass
+                logger.info(
+                    "careem: authorization captured=%s",
+                    "authorization" in captured,
+                )
             result = await _snapshot_context(channel, opened.context, page, captured)
         finally:
             await opened.close()
