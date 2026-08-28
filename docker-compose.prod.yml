@@ -523,6 +523,13 @@ services:
     image: ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest
     pull_policy: always
     profiles: ["worker"]
+    # tini as PID 1. The entrypoint `exec xvfb-run …`, and xvfb-run run as PID 1
+    # hangs on teardown (it backgrounds Xvfb and nothing reaps it), so the warm
+    # never exits — the whole warm cron would stall. tini reaps the zombie and
+    # forwards signals, so xvfb-run exits cleanly, exactly as it does when it is
+    # a child process rather than PID 1. Verified on the VM: `docker run --init`
+    # exits 0 where the same image without it hangs.
+    init: true
     environment:
       AGGREGATOR_API_URL: ${AGGREGATOR_API_URL:-https://api.meltingmomentscakes.com}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
