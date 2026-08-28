@@ -38,4 +38,4 @@ SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
 0 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
-15 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
+15 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat careem; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm

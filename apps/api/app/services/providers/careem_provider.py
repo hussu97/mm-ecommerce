@@ -229,9 +229,15 @@ class CareemClient(BaseAggregatorClient):
                 _first(row, "items", "orderItems", "lineItems") or []
             )
         ]
+        # Attribute the order to the outlet it actually belongs to via its own
+        # `merchant.id` — the per-outlet orders endpoint returns every outlet's
+        # orders on each call, so the loop's `outlet_id` is not reliable and all
+        # orders would collapse onto one branch. Fall back to the loop id.
+        merchant = row.get("merchant")
+        merchant_id = _first(merchant, "id") if isinstance(merchant, dict) else None
         return StandardOrder(
             external_order_id=str(external),
-            external_outlet_id=str(outlet_id),
+            external_outlet_id=str(merchant_id or outlet_id),
             business_date=placed_at.strftime("%Y-%m-%d") if placed_at else None,
             placed_at=placed_at,
             status=_first(row, "status", "state", "orderStatus"),
