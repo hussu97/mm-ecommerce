@@ -88,15 +88,6 @@ _LADDER: list[OrderStatusEnum] = [
     OrderStatusEnum.DELIVERED,
 ]
 
-#: Keeta's numeric order-status codes → the MM status they mean. `40` is the
-#: settled/completed state (the overwhelming majority on prod); `50` is a
-#: cancelled/closed order. Anything else is left indeterminate — promoted only as
-#: far as `confirmed` and logged — rather than guessed into delivered or cancelled.
-_KEETA_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
-    "40": OrderStatusEnum.DELIVERED,
-    "50": OrderStatusEnum.CANCELLED,
-}
-
 #: English status words shared by Deliveroo, Talabat, and similar portals.
 _ENGLISH_AGGREGATOR_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "delivered": OrderStatusEnum.DELIVERED,
@@ -107,6 +98,19 @@ _ENGLISH_AGGREGATOR_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "rejected": OrderStatusEnum.CANCELLED,
     "failed": OrderStatusEnum.CANCELLED,
     "declined": OrderStatusEnum.CANCELLED,
+}
+
+#: Keeta's order status. It historically arrived as a NUMERIC code (`40` settled,
+#: `50` cancelled) but the current parser decodes it to an English word
+#: ("completed"), so the map accepts BOTH — a promotion-owned Keeta order (DSO/Al
+#: Karama) whose status the map does not recognise stalls at `confirmed` and so
+#: never reaches the register or the reports, which is exactly what left 16 of a
+#: day's Keeta orders off the daily sales report. Anything still unknown is left
+#: indeterminate (promoted only as far as `confirmed` and logged), never guessed.
+_KEETA_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
+    **_ENGLISH_AGGREGATOR_STATUS_TO_MM,
+    "40": OrderStatusEnum.DELIVERED,
+    "50": OrderStatusEnum.CANCELLED,
 }
 
 _STATUS_MAPS = {

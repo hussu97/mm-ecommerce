@@ -261,6 +261,17 @@ async def test_grubops_owned_order_is_not_re_attached_to_pos(monkeypatch):
     assert attach_calls == []  # never re-attached — GrubOps owns the register row
 
 
+def test_keeta_status_accepts_both_numeric_and_words():
+    """Keeta emits the word 'completed' now (it used to be numeric '40'); both must
+    map to delivered, else a promotion-owned Keeta order stalls at confirmed and
+    never reaches the register/reports."""
+    assert promote._target_status("keeta", "completed") == OrderStatusEnum.DELIVERED
+    assert promote._target_status("keeta", "40") == OrderStatusEnum.DELIVERED
+    assert promote._target_status("keeta", "cancelled") == OrderStatusEnum.CANCELLED
+    assert promote._target_status("keeta", "50") == OrderStatusEnum.CANCELLED
+    assert promote._target_status("keeta", "who-knows") is None
+
+
 def test_promoter_channel_label_matches_grubops_noon_food():
     """Promoted noon orders must carry "Noon Food" (the marketplace/GrubOps name),
     not "Noon", so they group with GrubOps noon orders everywhere."""
