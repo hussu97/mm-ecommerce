@@ -809,9 +809,54 @@ async def _session_for(db: AsyncSession, channel: str, provider: BaseAggregatorC
     prepare = getattr(provider, "prepare_session", None)
     if callable(prepare):
         session = await prepare(db, session)
-    if session is None or session.status != SESSION_LIVE:
+    # Proactive liveness: not just status == live, but also not past a stored
+    # token/cookie expiry — so a predictably-dead session is skipped before the
+    # run wastes a pass discovering its 401.
+    if not session_store.is_session_usable(session):
         return None
     return session
+
+
+async def _await_reauth(
+    channel: str, provider: BaseAggregatorClient
+) -> "session_store.LoadedSession | None":
+    """Trigger the reauth daemon and wait for the channel to come back live.
+
+    The re-login runs in the worker (headed Chrome); the API cannot do it itself.
+    So the trigger is a state signal: flag the session `needs_bootstrap` on its
+    OWN committed transaction — the daemon runs in another process and only sees
+    committed state — then poll (fresh reads) until the daemon has pushed a fresh
+    session. Returns a usable `LoadedSession`, or None if it did not recover
+    within `AGGREGATOR_REAUTH_WAIT_SECONDS` (or waiting is disabled).
+    """
+    wait = settings.AGGREGATOR_REAUTH_WAIT_SECONDS
+    if wait <= 0:
+        return None
+    async with AsyncSessionFactory() as flag_db:
+        reason = session_store.session_unusable_reason(
+            await session_store.load(flag_db, channel)
+        )
+        await session_store.mark_needs_bootstrap(
+            flag_db, channel, error=f"reauth requested by ingest ({reason})"
+        )
+        await flag_db.commit()
+    logger.info(
+        "aggregator %s: session unusable (%s) — awaiting reauth daemon (<=%ss)",
+        channel,
+        reason,
+        wait,
+    )
+    poll = max(settings.AGGREGATOR_REAUTH_POLL_SECONDS, 1.0)
+    deadline = utcnow() + timedelta(seconds=wait)
+    while utcnow() < deadline:
+        await asyncio.sleep(poll)
+        async with AsyncSessionFactory() as poll_db:
+            session = await _session_for(poll_db, channel, provider)
+        if session is not None:
+            logger.info("aggregator %s: reauth completed — session live", channel)
+            return session
+    logger.warning("aggregator %s: reauth did not complete within %ss", channel, wait)
+    return None
 
 
 async def _sweep_channel(
@@ -829,10 +874,16 @@ async def _sweep_channel(
 
     With `from_date`/`to_date` (Dubai business dates) it sweeps that explicit
     inclusive range; otherwise the Dubai-calendar lookback window (daily default).
+
+    Trigger-based re-auth: a dead/expired session — found up front or hit as an
+    `AggregatorAuthError` mid-pull — flags the session and waits for the worker's
+    reauth daemon to bring it back, then retries once, instead of skipping.
     """
     session = await _session_for(db, channel, provider)
     if session is None:
-        return 0
+        session = await _await_reauth(channel, provider)
+        if session is None:
+            return 0
 
     run = await _new_run(db, channel, mode, from_date=from_date, to_date=to_date)
     since, until = _sweep_window(
@@ -842,23 +893,34 @@ async def _sweep_channel(
         lookback_days=lookback_days,
         lookback_hours=lookback_hours,
     )
-    try:
-        written, truncation, _detail = await _fetch_and_persist(
-            db, channel, provider, mode, session, since=since, until=until
-        )
-    except AggregatorAuthError as exc:
-        run.status = RUN_FAILED
-        run.error = str(exc)[:2000]
-        run.finished_at = utcnow()
-        await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
-        logger.warning("aggregator %s %s: session dead — %s", channel, mode, exc)
-        return 0
-    except AggregatorUnavailableError as exc:
-        run.status = RUN_FAILED
-        run.error = str(exc)[:2000]
-        run.finished_at = utcnow()
-        logger.warning("aggregator %s %s unavailable: %s", channel, mode, exc)
-        return 0
+    attempted_reauth = False
+    while True:
+        try:
+            written, truncation, _detail = await _fetch_and_persist(
+                db, channel, provider, mode, session, since=since, until=until
+            )
+            break
+        except AggregatorAuthError as exc:
+            # Died mid-pull. Trigger reauth and retry once before giving up; the
+            # upserts are idempotent, so re-fetching from the start is safe.
+            if not attempted_reauth:
+                attempted_reauth = True
+                fresh = await _await_reauth(channel, provider)
+                if fresh is not None:
+                    session = fresh
+                    continue
+            run.status = RUN_FAILED
+            run.error = str(exc)[:2000]
+            run.finished_at = utcnow()
+            await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
+            logger.warning("aggregator %s %s: session dead — %s", channel, mode, exc)
+            return 0
+        except AggregatorUnavailableError as exc:
+            run.status = RUN_FAILED
+            run.error = str(exc)[:2000]
+            run.finished_at = utcnow()
+            logger.warning("aggregator %s %s unavailable: %s", channel, mode, exc)
+            return 0
 
     run.status = RUN_COMPLETED
     run.finished_at = utcnow()
@@ -1151,6 +1213,9 @@ async def _run_range_channel(
     else:
         session = await _session_for(db, channel, provider)
         if session is None:
+            # Trigger-based reauth: flag + wait for the daemon before giving up.
+            session = await _await_reauth(channel, provider)
+        if session is None:
             run.status = RUN_FAILED
             run.error = "session not live — needs a headed re-login"
             run.finished_at = utcnow()
@@ -1159,22 +1224,37 @@ async def _run_range_channel(
             return {"channel": channel, "status": run.status, "stats": stats}
 
         since, until = _dubai_range_window(from_date, to_date)
+        reauth_tried = False
         for mode in modes:
-            try:
-                written, trunc, detail = await _fetch_and_persist(
-                    db, channel, provider, mode, session, since=since, until=until
-                )
-                stats["modes"][mode] = {"written": written, **detail}
-                if trunc:
-                    stats["modes"][mode]["truncation"] = trunc
-            except AggregatorAuthError as exc:
-                errors.append(f"{mode}: session dead: {exc}")
-                await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
-            except AggregatorUnavailableError as exc:
-                errors.append(f"{mode}: unavailable: {exc}")
-            except Exception as exc:  # noqa: BLE001 — one mode must not kill the run row
-                errors.append(f"{mode}: {exc}")
-                logger.exception("aggregator %s range %s failed", channel, mode)
+            while True:
+                try:
+                    written, trunc, detail = await _fetch_and_persist(
+                        db, channel, provider, mode, session, since=since, until=until
+                    )
+                    stats["modes"][mode] = {"written": written, **detail}
+                    if trunc:
+                        stats["modes"][mode]["truncation"] = trunc
+                    break
+                except AggregatorAuthError as exc:
+                    # Trigger reauth once for the whole range run, then retry.
+                    if not reauth_tried:
+                        reauth_tried = True
+                        fresh = await _await_reauth(channel, provider)
+                        if fresh is not None:
+                            session = fresh
+                            continue
+                    errors.append(f"{mode}: session dead: {exc}")
+                    await session_store.mark_needs_bootstrap(
+                        db, channel, error=str(exc)
+                    )
+                    break
+                except AggregatorUnavailableError as exc:
+                    errors.append(f"{mode}: unavailable: {exc}")
+                    break
+                except Exception as exc:  # noqa: BLE001 — one mode must not kill the run
+                    errors.append(f"{mode}: {exc}")
+                    logger.exception("aggregator %s range %s failed", channel, mode)
+                    break
 
     if promote:
         try:
@@ -1349,6 +1429,38 @@ def _launch_tracked(coro) -> bool:
     _manual_runs.add(task)
     task.add_done_callback(_manual_runs.discard)
     return True
+
+
+async def session_readiness(
+    db: AsyncSession, channels: list[str] | None = None
+) -> list[dict]:
+    """Per-channel run-readiness, so the adhoc trigger can tell an operator which
+    channels will actually run and which need a headed re-login BEFORE launching —
+    instead of it being discovered afterwards in a failed sync-run record. A
+    channel is `usable` when its session is live and not past a stored expiry
+    (`session_store.session_unusable_reason`). Keeta is reported like the rest,
+    but a live status there reflects the last worker push, not an httpx session.
+    """
+    wanted = list(channels) if channels else list(AGGREGATOR_CHANNELS)
+    out: list[dict] = []
+    for ch in wanted:
+        session = await session_store.load(db, ch)
+        reason = session_store.session_unusable_reason(session)
+        out.append(
+            {
+                "channel": ch,
+                "status": session.status if session is not None else "missing",
+                "usable": reason is None,
+                "reason": reason,
+                "token_expires_at": (
+                    session.token_expires_at if session is not None else None
+                ),
+                "cookie_expires_at": (
+                    session.cookie_expires_at if session is not None else None
+                ),
+            }
+        )
+    return out
 
 
 def trigger_daily_in_background() -> bool:

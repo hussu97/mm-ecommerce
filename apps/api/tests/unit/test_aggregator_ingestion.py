@@ -1274,7 +1274,12 @@ async def test_trigger_no_dates_runs_the_daily_pass(monkeypatch):
         "trigger_range_in_background",
         lambda *a, **k: pytest.fail("range must not run without dates"),
     )
-    out = await trigger_sync_run(None)
+
+    async def fake_readiness(db, channels):
+        return []
+
+    monkeypatch.setattr(ingest, "session_readiness", fake_readiness)
+    out = await trigger_sync_run(None, db=None)
     assert out.started is True
     assert "daily" in seen
 
@@ -1295,12 +1300,54 @@ async def test_trigger_with_both_dates_runs_a_range_backfill(monkeypatch):
         "trigger_daily_in_background",
         lambda: pytest.fail("daily must not run when a range is given"),
     )
+
+    async def fake_readiness(db, channels):
+        return []
+
+    monkeypatch.setattr(ingest, "session_readiness", fake_readiness)
     body = AggregatorRunTriggerIn(
         from_date=date(2026, 8, 27), to_date=date(2026, 8, 28)
     )
-    out = await trigger_sync_run(body)
+    out = await trigger_sync_run(body, db=None)
     assert out.started is True
     assert captured["args"] == (date(2026, 8, 27), date(2026, 8, 28), None)
+
+
+async def test_trigger_surfaces_dead_sessions(monkeypatch):
+    """A dead channel is reported on the trigger response (detail + session_health)
+    so the operator sees it immediately, not after a failed run row."""
+    from app.api.v1.aggregators import trigger_sync_run
+
+    monkeypatch.setattr(ingest, "trigger_daily_in_background", lambda: True)
+
+    async def fake_readiness(db, channels):
+        return [
+            {
+                "channel": "noon",
+                "status": "live",
+                "usable": True,
+                "reason": None,
+                "token_expires_at": None,
+                "cookie_expires_at": None,
+            },
+            {
+                "channel": "careem",
+                "status": "needs_bootstrap",
+                "usable": False,
+                "reason": "needs_bootstrap",
+                "token_expires_at": None,
+                "cookie_expires_at": None,
+            },
+        ]
+
+    monkeypatch.setattr(ingest, "session_readiness", fake_readiness)
+    out = await trigger_sync_run(None, db=None)
+    assert out.started is True
+    assert "careem" in out.detail and "not authenticated" in out.detail
+    assert {r.channel: r.usable for r in out.session_health} == {
+        "noon": True,
+        "careem": False,
+    }
 
 
 async def test_trigger_requires_both_dates_or_neither():

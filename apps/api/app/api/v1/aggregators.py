@@ -51,6 +51,7 @@ from app.schemas.aggregator import (
     AggregatorReconciliationOut,
     AggregatorRunTriggerIn,
     AggregatorRunTriggerOut,
+    AggregatorSessionHealthOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
     AggregatorSyncRunList,
@@ -639,6 +640,7 @@ _MAX_TRIGGER_RANGE_DAYS = 92
 )
 async def trigger_sync_run(
     body: AggregatorRunTriggerIn | None = None,
+    db: AsyncSession = Depends(get_db),
 ) -> AggregatorRunTriggerOut:
     """Kick off an aggregator pass now — the "Run now" button on the Runs table.
 
@@ -687,7 +689,26 @@ async def trigger_sync_run(
         raise ServiceUnavailableError(
             "The aggregator ingest is disabled or not configured on this deployment."
         )
-    return AggregatorRunTriggerOut(started=True, detail=detail)
+
+    # Pre-run readiness, for information only: the run itself now self-heals a
+    # dead session — it flags the channel and waits for the reauth daemon to drive
+    # a headed re-login, then retries — so a dead channel is re-authenticated
+    # automatically rather than skipped. We still surface the current state so the
+    # operator knows a channel will take the extra re-login time on this pass.
+    health_rows = await ingest.session_readiness(db, channels)
+    not_ready = [r["channel"] for r in health_rows if not r["usable"]]
+    if not_ready:
+        detail += (
+            f" {', '.join(sorted(not_ready))} "
+            f"{'is' if len(not_ready) == 1 else 'are'} not authenticated — "
+            "re-authenticating automatically now, so that channel takes a little "
+            "longer on this pass."
+        )
+    return AggregatorRunTriggerOut(
+        started=True,
+        detail=detail,
+        session_health=[AggregatorSessionHealthOut(**r) for r in health_rows],
+    )
 
 
 @router.get(

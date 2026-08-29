@@ -449,6 +449,18 @@ class Settings(BaseSettings):
     #: standalone as recovery (and log it). Aggregator-only branches (DSO/Karama)
     #: are unaffected: they have no GrubOps writer to collide with.
     AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS: int = 12
+    #: Trigger-based re-auth. When an ingest pass needs a channel's data but its
+    #: session is dead/expired, it flags the session (the signal the worker's
+    #: `serve-reauth` daemon watches) and WAITS this many seconds for the daemon
+    #: to drive a headed re-login and push a fresh session, then RETRIES — instead
+    #: of silently skipping the channel until the once-a-day warm. The API cannot
+    #: re-login itself (no headed Chrome); the daemon does, and this is how the
+    #: request path waits on it. A headed re-login is ~60-120s, so the default
+    #: leaves room for one. 0 disables the wait (flag-and-skip, the old behaviour).
+    AGGREGATOR_REAUTH_WAIT_SECONDS: int = 360
+    #: How often the waiting ingest pass re-checks whether the daemon has brought
+    #: the session back live.
+    AGGREGATOR_REAUTH_POLL_SECONDS: float = 5.0
     #: Noon publishes wallet statements ~weekly, so its finance discovery widens
     #: the shared 1-day lookback to at least one publish cycle (else a nightly
     #: finance pass almost always lands on a day with no statement publication and

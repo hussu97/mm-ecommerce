@@ -15,7 +15,7 @@ and says so at its own call site.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -209,6 +209,45 @@ async def enrich_session(
     if session.channel == "careem":
         return await enrich_careem_from_account(db, session)
     return session
+
+
+def session_unusable_reason(
+    session: LoadedSession | None, *, now: datetime | None = None
+) -> str | None:
+    """Why a loaded session is not safe to replay, or None if it is fine.
+
+    Proactive liveness: the sweep used to check `status == live` only and
+    discover a dead session by its 401 mid-run. The stored token/cookie expiries
+    were written but never read (`upsert_bootstrap` sets them; nothing consumed
+    them). This reads them: a session whose stored expiry has passed is unusable
+    *before* the run wastes a pass on it. A NULL expiry is "unknown", so it never
+    downgrades a session on its own — only a status that is not live, or an
+    expiry that has demonstrably passed, does. Returns a short reason for the
+    operator ("needs_bootstrap", "token expired", …) so the trigger can say which
+    channels will not run and why.
+    """
+    if session is None:
+        return "no session — never bootstrapped"
+    if session.status != SESSION_LIVE:
+        return session.status
+    now = now or utcnow()
+    for label, exp in (
+        ("token", session.token_expires_at),
+        ("cookie", session.cookie_expires_at),
+    ):
+        if exp is not None:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= now:
+                return f"{label} expired"
+    return None
+
+
+def is_session_usable(
+    session: LoadedSession | None, *, now: datetime | None = None
+) -> bool:
+    """Whether a loaded session is live and not past a known expiry."""
+    return session_unusable_reason(session, now=now) is None
 
 
 async def _row(

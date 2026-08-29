@@ -354,15 +354,35 @@ class AggregatorRunTriggerIn(BaseModel):
     channels: list[str] | None = None
 
 
+class AggregatorSessionHealthOut(BaseModel):
+    """One channel's run-readiness, surfaced on "Run now" so an operator sees
+    which channels will actually run and which need a headed re-login BEFORE the
+    pass — instead of reading it out of a failed sync-run row afterwards."""
+
+    channel: str
+    status: str
+    #: Live and not past a stored token/cookie expiry — the run will use it.
+    usable: bool
+    #: Why not, when `usable` is false ("needs_bootstrap", "token expired", …).
+    reason: str | None = None
+    token_expires_at: datetime | None = None
+    cookie_expires_at: datetime | None = None
+
+
 class AggregatorRunTriggerOut(BaseModel):
     """The answer to a manual "Run now" — did the pass start, and a line to show.
 
     The pass runs in the background (it takes minutes), so this only reports that
     it was accepted; the Runs table shows the outcome as each channel's row lands.
-    `started` is False when the ingest is disabled or unconfigured."""
+    `started` is False when the ingest is disabled or unconfigured.
+
+    `session_health` is the pre-run readiness of each channel that will run, so a
+    dead session (the usual cause of an empty pass) is visible immediately rather
+    than after the fact."""
 
     started: bool
     detail: str
+    session_health: list[AggregatorSessionHealthOut] = []
 
 
 class ReconSummaryRow(BaseModel):

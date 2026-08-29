@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 
 import typer
 
+from . import push
 from .accounts import PortalAccount, from_env, pull_account, push_account
 from .browser import (
     NeedsHumanLogin,
@@ -435,6 +437,97 @@ def warm_sessions(
         hydrate_first=True,
         auto_relogin=auto_relogin,
     )
+
+
+def _channel_needs_reauth(bundle: dict) -> str | None:
+    """Why a channel's session needs a headed re-login, or None if it is fine.
+
+    Dead outright (`status != live`), or live but past a stored token/cookie
+    expiry — the same proactive check the API's `session_store.is_session_usable`
+    makes, so the daemon and the ingest agree on what "dead" means.
+    """
+    status = bundle.get("status")
+    if status != "live":
+        return status or "missing"
+    now = datetime.now(timezone.utc)
+    for label in ("token_expires_at", "cookie_expires_at"):
+        raw = bundle.get(label)
+        if not raw:
+            continue
+        try:
+            exp = (
+                raw
+                if isinstance(raw, datetime)
+                else datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            )
+        except ValueError:
+            continue
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= now:
+            return f"{label.split('_')[0]} expired"
+    return None
+
+
+def _heal_once(only: set[str] | None = None) -> int:
+    """Re-login every channel the API reports dead/expired. Returns how many were
+    healed. Cheap when all are healthy: one API call, and headed Chrome only for
+    a channel that actually needs it."""
+    try:
+        bundles = asyncio.run(push.pull_sessions())
+    except Exception:  # noqa: BLE001 — a transient API blip must not kill the loop
+        logger.exception("reauth: could not read session health from the API")
+        return 0
+    healed = 0
+    for bundle in bundles:
+        ch = bundle.get("channel")
+        if not ch or (only is not None and ch not in only):
+            continue
+        reason = _channel_needs_reauth(bundle)
+        if reason is None:
+            continue
+        logger.warning("reauth: %s is %s — re-logging in", ch, reason)
+        if _try_auto_relogin(ch):
+            healed += 1
+    return healed
+
+
+@app.command("heal-sessions")
+def heal_sessions(
+    channel: str = typer.Option(None, help="Channel to check; omit for all"),
+) -> None:
+    """Re-login ONLY the sessions the API reports dead/expired, once, and exit.
+
+    No headed Chrome for a healthy session — so this is cheap enough to run
+    often, and is the single-shot form of the `serve-reauth` daemon."""
+    only = {channel} if channel else None
+    if _heal_once(only) == 0:
+        logger.info("heal-sessions: nothing to heal")
+
+
+@app.command("serve-reauth")
+def serve_reauth(
+    interval: float = typer.Option(
+        10.0, help="Seconds between health checks when idle."
+    ),
+) -> None:
+    """Trigger-based re-auth daemon: watch session health and re-login any channel
+    that goes dead, so a session that dies mid-day self-heals in ~one interval
+    plus the login time — the API request path only has to mark a session
+    `needs_bootstrap` and wait, and this brings it back.
+
+    Long-running but light: it holds no browser open, spawning headed Chrome only
+    for the seconds it takes to re-login a channel that actually needs it. Run as
+    the worker's persistent service (compose `serve-reauth`) alongside the daily
+    warm cron.
+    """
+    logger.info("reauth daemon started (interval=%ss)", interval)
+    while True:
+        try:
+            _heal_once()
+        except Exception:  # noqa: BLE001 — the daemon must outlive any one failure
+            logger.exception("reauth daemon: heal pass failed")
+        time.sleep(max(interval, 2.0))
 
 
 @app.command("bootstrap")

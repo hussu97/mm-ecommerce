@@ -1384,11 +1384,19 @@
         "type": "object"
       },
       "AggregatorRunTriggerOut": {
-        "description": "The answer to a manual \"Run now\" \u2014 did the pass start, and a line to show.\n\nThe pass runs in the background (it takes minutes), so this only reports that\nit was accepted; the Runs table shows the outcome as each channel's row lands.\n`started` is False when the ingest is disabled or unconfigured.",
+        "description": "The answer to a manual \"Run now\" \u2014 did the pass start, and a line to show.\n\nThe pass runs in the background (it takes minutes), so this only reports that\nit was accepted; the Runs table shows the outcome as each channel's row lands.\n`started` is False when the ingest is disabled or unconfigured.\n\n`session_health` is the pre-run readiness of each channel that will run, so a\ndead session (the usual cause of an empty pass) is visible immediately rather\nthan after the fact.",
         "properties": {
           "detail": {
             "title": "Detail",
             "type": "string"
+          },
+          "session_health": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AggregatorSessionHealthOut"
+            },
+            "title": "Session Health",
+            "type": "array"
           },
           "started": {
             "title": "Started",
@@ -1400,6 +1408,65 @@
           "detail"
         ],
         "title": "AggregatorRunTriggerOut",
+        "type": "object"
+      },
+      "AggregatorSessionHealthOut": {
+        "description": "One channel's run-readiness, surfaced on \"Run now\" so an operator sees\nwhich channels will actually run and which need a headed re-login BEFORE the\npass \u2014 instead of reading it out of a failed sync-run row afterwards.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cookie Expires At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Expires At"
+          },
+          "usable": {
+            "title": "Usable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "status",
+          "usable"
+        ],
+        "title": "AggregatorSessionHealthOut",
         "type": "object"
       },
       "AggregatorSessionPush": {

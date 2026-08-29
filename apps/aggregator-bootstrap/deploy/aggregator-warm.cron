@@ -39,8 +39,21 @@
 # (a captcha/passkey, or no connected mailbox for the OTP) falls through to a manual
 # `login --channel X` (also runnable on this VM). The API health log still surfaces
 # a channel that stays dead. Do not add a second UTC cron — one Dubai timeline.
+# 3) Trigger-based re-auth (every 2 min). `heal-sessions` asks the API which
+#    sessions are dead/expired (one cheap HTTP call — no browser) and re-logs in
+#    ONLY those, headed. So a session that dies mid-day is back within ~2 min plus
+#    the login time, instead of waiting for the 22:15 warm. This is the worker
+#    half of the API's trigger-based reauth: an ingest pass that needs a dead
+#    channel flags it `needs_bootstrap` and WAITS (AGGREGATOR_REAUTH_WAIT_SECONDS,
+#    360s) for this cron to bring it back, then retries. It SHARES the warm lock,
+#    so it can never run a second headed Chrome alongside the warm — a healthy
+#    tick releases the lock in the second it takes to make the API call, and only
+#    a tick that actually re-logs in holds Chrome (and the lock) for its ~90s.
+#    `-w 100` < 120s so a tick that cannot get the lock (a warm is running) is
+#    dropped rather than piling up behind the next one.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
 0 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
 15 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat careem; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
+*/2 * * * * root /usr/bin/flock -w 100 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions' 2>&1 | /usr/bin/logger -t aggregator-reauth
