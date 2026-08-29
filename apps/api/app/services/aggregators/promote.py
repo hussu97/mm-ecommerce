@@ -564,6 +564,13 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
         order.aggregator_driver_phone = agg.driver_phone
     if not order.aggregator_driver_status and agg.driver_status:
         order.aggregator_driver_status = agg.driver_status
+    # If the marketplace's short customer code has since landed, correct the
+    # pickup/display code first derived from the long id (its last-4), so the
+    # ticket and any later GrubOps-adopt lookup see the value GrubTech quotes.
+    if agg.display_ref:
+        want = _display_code(agg.display_ref)
+        if want and order.aggregator_display_code != want:
+            order.aggregator_display_code = want
     # Correct the created_at of an order first filed before this rule (or one this
     # pass converged onto) to the marketplace placed_at, so historical rows line
     # up with the aggregator timeline too. Only when the scrape has a timestamp.
@@ -591,6 +598,29 @@ async def _backfill_statement_lines(
         .values(mm_order_id=mm_order_id)
         .execution_options(synchronize_session=False)
     )
+
+
+def _grubops_adopt_grace_elapsed(agg: AggregatorOrder) -> bool:
+    """Whether enough time has passed that a still-absent GrubOps order means
+    GrubOps will not ingest this order — so promotion may file a standalone —
+    rather than merely that the aggregator and GrubOps ingests raced.
+
+    Dated off the marketplace `placed_at` (tz-aware after ingest), falling back to
+    the Dubai `business_date`. With neither, do not defer forever.
+    """
+    grace = timedelta(hours=max(settings.AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS, 0))
+    placed = agg.placed_at
+    if placed is not None:
+        if placed.tzinfo is None:  # defensive — ingest stamps Dubai, but guard
+            placed = placed.replace(tzinfo=_TZ)
+        return utcnow() - placed >= grace
+    if agg.business_date:
+        try:
+            bd = datetime.strptime(agg.business_date, "%Y-%m-%d").replace(tzinfo=_TZ)
+        except ValueError:
+            return True
+        return utcnow() - bd >= grace
+    return True  # nothing to date it by — do not defer indefinitely
 
 
 async def promote_order(
@@ -631,6 +661,28 @@ async def promote_order(
             if agg.commission_amount is not None or agg.payment_fee is not None:
                 await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
             return grubops_order
+        # No GrubOps order found on a GrubOps branch. GrubOps is the source of
+        # truth here, so filing a standalone now is how the same order gets filed
+        # twice — promotion racing ahead of the GrubOps ingest, or ahead of the
+        # short `display_ref` that convergence keys on. Defer within the grace
+        # window and retry next tick (the incremental cursor re-selects this order
+        # until it links). Only past the grace — GrubOps genuinely never took the
+        # order — fall through and file a standalone as recovery.
+        if not _grubops_adopt_grace_elapsed(agg):
+            logger.info(
+                "promote %s %s: GrubOps branch, no GrubOps order yet — deferring "
+                "(within adopt grace) rather than filing a duplicate",
+                agg.channel,
+                agg.external_order_id,
+            )
+            return None
+        logger.warning(
+            "promote %s %s: GrubOps branch, no GrubOps order after %dh grace — "
+            "filing a standalone; GrubOps appears not to have ingested this order",
+            agg.channel,
+            agg.external_order_id,
+            settings.AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS,
+        )
 
     existing = await _find_convergence_order(db, agg)
     if existing is None:

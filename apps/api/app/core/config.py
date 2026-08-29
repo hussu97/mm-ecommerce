@@ -437,6 +437,18 @@ class Settings(BaseSettings):
     #: day. Idempotent, so a wider window only re-touches rows. 30 days comfortably
     #: covers every marketplace's settlement cadence.
     AGGREGATOR_PROMOTE_LOOKBACK_DAYS: int = 30
+    #: On a GrubOps branch (Barsha/Sharjah) the GrubOps/Foodics order is the source
+    #: of truth and promotion must only ever LINK to it — never file a competing
+    #: standalone. But the two ingests race: promotion can run before GrubOps has
+    #: created the order, or before the shared short code (`display_ref`) has landed
+    #: to converge on. Building a standalone in that window is exactly how a Barsha
+    #: Noon order ended up filed twice. So on a GrubOps branch with no GrubOps order
+    #: yet found, promotion DEFERS (skips, retries next tick) for this many hours,
+    #: giving GrubOps time to ingest and `display_ref` time to arrive. Only past the
+    #: grace — GrubOps genuinely never took the order — does promotion file a
+    #: standalone as recovery (and log it). Aggregator-only branches (DSO/Karama)
+    #: are unaffected: they have no GrubOps writer to collide with.
+    AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS: int = 12
     #: Noon publishes wallet statements ~weekly, so its finance discovery widens
     #: the shared 1-day lookback to at least one publish cycle (else a nightly
     #: finance pass almost always lands on a day with no statement publication and

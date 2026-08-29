@@ -11,7 +11,7 @@ and per-rung timestamp selection.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -342,8 +342,39 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     assert stamp_calls["kwargs"]["actual_commission"] == Decimal("9.00")
 
 
-async def test_grubops_branch_gap_is_filled(monkeypatch):
-    """Barsha/Sharjah with NO GrubOps order → promotion gap-fills."""
+async def test_grubops_branch_defers_within_grace(monkeypatch):
+    """Barsha/Sharjah, no GrubOps order yet, order still fresh → DEFER, don't build.
+
+    This is the duplicate-prevention: promotion racing ahead of the GrubOps ingest
+    (or ahead of the short `display_ref` it converges on) must not file a standalone
+    that GrubOps then files again. It skips and retries next tick.
+    """
+    build_calls = {"n": 0}
+
+    async def fake_has_grubops(db, branch_id):
+        return True
+
+    async def fake_find_mm(db, channel, ext, display_ref=None):
+        return None  # GrubOps has not produced it *yet*
+
+    async def fake_build(db, agg, label, *, draw_stock=True):
+        build_calls["n"] += 1
+        return SimpleNamespace(id=uuid.uuid4())
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
+    monkeypatch.setattr(promote, "_build_order", fake_build)
+
+    agg = _agg(placed_at=datetime.now(timezone.utc) - timedelta(minutes=30))
+    out = await promote.promote_order(_FakeDB(), agg)
+    assert out is None  # deferred
+    assert build_calls["n"] == 0  # nothing filed — no duplicate
+    assert agg.promoted_at is None  # cursor stays open so it retries
+
+
+async def test_grubops_branch_gap_is_filled_past_grace(monkeypatch):
+    """Barsha/Sharjah, no GrubOps order after the grace window → recover by
+    filing a standalone (GrubOps genuinely never ingested it)."""
     built = SimpleNamespace(id=uuid.uuid4())
     build_calls = {"n": 0}
 
@@ -365,10 +396,11 @@ async def test_grubops_branch_gap_is_filled(monkeypatch):
     monkeypatch.setattr(promote, "_find_convergence_order", fake_find_conv)
     monkeypatch.setattr(promote, "_build_order", fake_build)
 
-    agg = _agg()
+    # Placed two days ago — well past the adopt grace.
+    agg = _agg(placed_at=datetime.now(timezone.utc) - timedelta(days=2))
     out = await promote.promote_order(_FakeDB(), agg)
     assert out is built
-    assert build_calls["n"] == 1  # gap-filled
+    assert build_calls["n"] == 1  # gap-filled as recovery
 
 
 async def test_no_branch_is_skipped(monkeypatch):
