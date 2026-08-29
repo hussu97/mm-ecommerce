@@ -4221,7 +4221,7 @@ export interface paths {
         };
         /**
          * List All Orders
-         * @description Every order, from any channel (admin only).
+         * @description Every order, from any channel (admin only). Filters mirror the dashboard.
          */
         get: operations["list_all_orders_api_v1_orders_admin_all_get"];
         put?: never;
@@ -9837,6 +9837,28 @@ export interface components {
             name: string;
         };
         /**
+         * CourierBreakdownRow
+         * @description One carrier's delivered orders and revenue — a courier scorecard.
+         *
+         *     A carrier code (`counter`, an aggregator marketplace, or a dispatch courier),
+         *     its display name and logo, and its **delivered** count and revenue. Delivered
+         *     only, deliberately: this section answers "how much did each courier actually
+         *     complete", so cancellations and in-progress orders are out — it is a
+         *     settled-money view, unlike `by_status` which is the whole spread.
+         */
+        CourierBreakdownRow: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Orders */
+            orders: number;
+            /** Revenue */
+            revenue: number;
+        };
+        /**
          * CourierResponse
          * @description A carrier and what it promises, for the admin's Estimates screen.
          *
@@ -10251,6 +10273,8 @@ export interface components {
             business_date_to?: string | null;
             /** By Channel */
             by_channel: components["schemas"]["BreakdownRow"][];
+            /** By Courier */
+            by_courier: components["schemas"]["CourierBreakdownRow"][];
             /** By Fulfillment */
             by_fulfillment: components["schemas"]["BreakdownRow"][];
             /** By Payment */
@@ -21539,6 +21563,8 @@ export interface operations {
                 date_to?: string | null;
                 /** @description Narrow every figure to these order statuses (multi-select) */
                 statuses?: string[] | null;
+                /** @description Narrow every figure to these carriers (multi-select) — `counter`, an aggregator marketplace, or a dispatch courier code */
+                couriers?: string[] | null;
             };
             header?: never;
             path?: never;
@@ -26154,8 +26180,16 @@ export interface operations {
                 search?: string | null;
                 /** @description `online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all — they are one ledger. */
                 channel?: string | null;
-                /** @description Narrow to one carrier by its code — a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`). */
+                /** @description Narrow to one carrier by its code — a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`), or `counter`. */
                 courier?: string | null;
+                /** @description Multi-select carrier codes; the OR of them (see `courier`). */
+                couriers?: string[] | null;
+                /** @description Multi-select order statuses; the OR of them. */
+                statuses?: string[] | null;
+                /** @description ISO date; with date_to, an inclusive day range. */
+                date_from?: string | null;
+                /** @description ISO date; with date_from, an inclusive day range. */
+                date_to?: string | null;
                 branch_id?: string | null;
                 page?: number;
                 per_page?: number;

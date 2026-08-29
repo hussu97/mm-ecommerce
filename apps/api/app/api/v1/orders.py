@@ -322,8 +322,21 @@ async def list_all_orders(
     courier: str | None = Query(
         None,
         description="Narrow to one carrier by its code — a marketplace channel "
-        "(`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch "
-        "provider (`lalamove`, `noon_send`, `slider`, `third_party`).",
+        "(`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch "
+        "provider (`lalamove`, `noon_send`, `slider`, `third_party`), or "
+        "`counter`.",
+    ),
+    couriers: list[str] | None = Query(
+        None, description="Multi-select carrier codes; the OR of them (see `courier`)."
+    ),
+    statuses: list[str] | None = Query(
+        None, description="Multi-select order statuses; the OR of them."
+    ),
+    date_from: str | None = Query(
+        None, description="ISO date; with date_to, an inclusive day range."
+    ),
+    date_to: str | None = Query(
+        None, description="ISO date; with date_from, an inclusive day range."
     ),
     branch_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
@@ -331,7 +344,7 @@ async def list_all_orders(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("orders.read")),
 ):
-    """Every order, from any channel (admin only)."""
+    """Every order, from any channel (admin only). Filters mirror the dashboard."""
     items, total = await order_service.get_all_admin(
         db,
         status=status,
@@ -341,6 +354,10 @@ async def list_all_orders(
         channel=channel,
         courier=courier,
         branch_id=branch_id,
+        statuses=statuses,
+        couriers=couriers,
+        date_from=date_from,
+        date_to=date_to,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return PaginatedOrders(

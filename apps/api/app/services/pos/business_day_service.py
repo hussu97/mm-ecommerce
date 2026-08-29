@@ -89,6 +89,32 @@ async def current_business_date(db: AsyncSession, branch: Branch) -> str:
     return business_date_for(branch, utcnow(), tz)
 
 
+async def range_bounds(
+    db: AsyncSession, date_from: str | None, date_to: str | None
+) -> tuple[datetime, datetime] | None:
+    """UTC bounds for an inclusive `[date_from, date_to]` in the shop's timezone.
+
+    The same window the dashboard aggregates over, so a date range on the orders
+    list and on the dashboard mean the same days. Returns `None` when either end
+    is missing — the caller then applies no date filter (an all-time list). A
+    reversed pair is swapped rather than rejected.
+    """
+    if not (date_from and date_to):
+        return None
+    tz = await resolve_timezone(db)
+    d_from = date.fromisoformat(date_from)
+    d_to = date.fromisoformat(date_to)
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+    start = datetime(d_from.year, d_from.month, d_from.day, tzinfo=tz).astimezone(
+        timezone.utc
+    )
+    # The last microsecond of `to`'s local day, so `created_at <= end` owns it.
+    end_local = datetime(d_to.year, d_to.month, d_to.day, tzinfo=tz) + timedelta(days=1)
+    end = end_local.astimezone(timezone.utc) - timedelta(microseconds=1)
+    return start, end
+
+
 def next_rollover(branch: Branch, moment: datetime, tz: ZoneInfo) -> datetime:
     """
     When `branch` stops trading the day `moment` falls in.

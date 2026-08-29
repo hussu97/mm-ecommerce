@@ -167,3 +167,33 @@ async def test_breakdown_titlecases_unlabelled_values():
     rows = [(SimpleNamespace(value="call_center"), 3, "0")]
     out = await mod._breakdown(_DB([_Result(rows)]), mod.Order.source, start=_A, end=_B)
     assert out[0].label == "Call Center"
+
+
+# ── delivered-by-courier groups the three carrier shapes into one menu ─────────
+
+
+async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
+    # (source, aggregator_channel, total, dispatch provider) for delivered orders.
+    rows = [
+        ("aggregator", "Talabat", "40.00", None),
+        ("aggregator", "Talabat", "30.00", None),
+        ("aggregator", "Keeta 2.0", "25.00", None),  # version noise → keeta
+        ("cashier", None, "50.00", None),  # the register → counter
+        ("online", None, "20.00", "lalamove"),  # a dispatched website courier
+        ("online", None, "34.00", None),  # an online pickup → no carrier, dropped
+    ]
+    out = await mod._by_courier(_DB([_Result(rows)]), start=_A, end=_B)
+
+    by_code = {r.code: r for r in out}
+    # The pickup with no carrier is counted under nobody.
+    assert set(by_code) == {"talabat", "keeta", "counter", "lalamove"}
+    # Busiest first.
+    assert out[0].code == "talabat" and out[0].orders == 2
+    assert out[0].revenue == 70.0
+    assert by_code["counter"].orders == 1 and by_code["counter"].revenue == 50.0
+    # The counter has no logo; a real courier does.
+    assert by_code["counter"].logo_url is None
+    assert by_code["talabat"].logo_url and by_code["talabat"].logo_url.endswith(
+        "talabat.png"
+    )
+    assert by_code["talabat"].label == "Talabat"

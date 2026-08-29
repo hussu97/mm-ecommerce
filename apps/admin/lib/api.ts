@@ -334,11 +334,18 @@ export const importApi = {
 export const ordersApi = {
   listAll: (params?: {
     status?: string;
+    /** Multi-select order statuses (the OR of them). */
+    statuses?: string[];
     search?: string;
     /** `online` storefront, `counter` till, `aggregator` marketplace. Omit for all. */
     channel?: string;
     /** One carrier by code — a marketplace (`talabat`…) or a courier (`lalamove`…). */
     courier?: string;
+    /** Multi-select carrier codes (`counter`, marketplaces, dispatch couriers). */
+    couriers?: string[];
+    /** Inclusive day range in the shop's timezone — the dashboard's window. */
+    date_from?: string;
+    date_to?: string;
     branch_id?: string;
     page?: number;
     per_page?: number;
@@ -532,8 +539,12 @@ export const dashboardApi = {
    * A `date_from`/`date_to` pair: that range. An optional `statuses` list narrows
    * every figure and the mix to those order statuses.
    */
-  today: (params?: { date_from?: string; date_to?: string; statuses?: string[] }) =>
-    api.get<DashboardToday>(`/dashboard/today${buildQs(params)}`),
+  today: (params?: {
+    date_from?: string;
+    date_to?: string;
+    statuses?: string[];
+    couriers?: string[];
+  }) => api.get<DashboardToday>(`/dashboard/today${buildQs(params)}`),
 };
 
 export const analyticsApi = {

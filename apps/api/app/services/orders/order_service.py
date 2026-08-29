@@ -11,7 +11,6 @@ from sqlalchemy import (
     Integer,
     case,
     cast,
-    exists,
     func,
     select,
 )
@@ -61,7 +60,7 @@ from app.schemas.order_preview import (
 from app.services import cart_service, email_service, promo_code_service, push_service
 from app.services.catalog import availability_service
 from app.services.catalog.storefront_visibility import is_website_product_visible
-from app.services.couriers import courier_catalog, courier_service, lalamove_service
+from app.services.couriers import courier_service, lalamove_service
 from app.services.delivery import delivery_promise, delivery_service, fulfilment_service
 from app.services.delivery.delivery_zone_service import Zone
 from app.services.orders import (
@@ -69,6 +68,7 @@ from app.services.orders import (
     order_fees,
     order_lifecycle,
     order_pricing,
+    order_query,
 )
 
 # Re-exported for the callers and tests that have always found it here. The
@@ -88,7 +88,7 @@ from app.services.orders.order_pricing import (  # noqa: F401
     tax_breakdown,
 )
 from app.services.payments import payment_methods
-from app.services.pos import pos_order_service
+from app.services.pos import business_day_service, pos_order_service
 
 logger = logging.getLogger(__name__)
 
@@ -1660,17 +1660,6 @@ async def update_status(
     return await to_response(db, result.scalar_one())
 
 
-#: An aggregator courier code → the prefix its `aggregator_channel` display name
-#: starts with, so a `courier=keeta` filter catches "Keeta 2.0" too.
-_AGGREGATOR_CHANNEL_PREFIX: dict[str, str] = {
-    "talabat": "talabat",
-    "keeta": "keeta",
-    "noon_food": "noon",
-    "deliveroo": "deliveroo",
-    "careem": "careem",
-}
-
-
 async def get_all_admin(
     db: AsyncSession,
     status: OrderStatusEnum | None = None,
@@ -1680,14 +1669,25 @@ async def get_all_admin(
     channel: str | None = None,
     courier: str | None = None,
     branch_id: uuid.UUID | None = None,
+    statuses: list[str] | None = None,
+    couriers: list[str] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> tuple[list[OrderListResponse], int]:
     """
     Every order, from any channel, newest first.
 
-    `channel` narrows to one source — `online`, `counter` or `aggregator`.
-    `courier` narrows to one carrier: an aggregator channel code matches on
-    `aggregator_channel`; a dispatch provider (`lalamove`, `noon_send`, …)
-    matches on the order's delivery record.
+    The filters mirror the dashboard's so a scorecard click carries straight into
+    this list:
+
+    * `statuses` / `couriers` — the multi-selects; `status` / `courier` are the
+      older single-value forms, folded in.
+    * `couriers` narrows by carrier via `order_query.courier_clause`: a counter
+      sale, an aggregator marketplace, or a dispatched website courier — the same
+      grouping the dashboard's per-courier scorecards use.
+    * `date_from` / `date_to` — an inclusive day range in the shop's timezone, the
+      same window the dashboard aggregates over.
+    * `channel` still narrows to one source for the list's channel tabs.
     """
     base_stmt = select(Order)
 
@@ -1698,27 +1698,28 @@ async def get_all_admin(
     elif channel == "aggregator":
         base_stmt = base_stmt.where(Order.source == OrderSourceEnum.AGGREGATOR.value)
 
+    picked_couriers = list(couriers or [])
     if courier:
-        if courier in courier_catalog.AGGREGATOR_CODES:
-            # `aggregator_channel` holds a marketplace display name ("Talabat",
-            # "Keeta 2.0"); match the family by prefix.
-            prefix = _AGGREGATOR_CHANNEL_PREFIX.get(courier, courier)
-            base_stmt = base_stmt.where(
-                Order.source == OrderSourceEnum.AGGREGATOR.value,
-                Order.aggregator_channel.ilike(f"{prefix}%"),
-            )
-        else:
-            base_stmt = base_stmt.where(
-                exists().where(
-                    OrderDelivery.order_id == Order.id,
-                    OrderDelivery.provider == courier,
-                )
-            )
+        picked_couriers.append(courier)
+    courier_filter = order_query.courier_clause(picked_couriers)
+    if courier_filter is not None:
+        base_stmt = base_stmt.where(courier_filter)
+
     if branch_id is not None:
         base_stmt = base_stmt.where(Order.branch_id == branch_id)
 
+    bounds = await business_day_service.range_bounds(db, date_from, date_to)
+    if bounds is not None:
+        start, end = bounds
+        base_stmt = base_stmt.where(Order.created_at >= start, Order.created_at <= end)
+
+    picked_statuses = list(statuses or [])
     if status:
-        base_stmt = base_stmt.where(Order.status == status)
+        picked_statuses.append(
+            status.value if isinstance(status, OrderStatusEnum) else status
+        )
+    if picked_statuses:
+        base_stmt = base_stmt.where(Order.status.in_(picked_statuses))
     if search:
         base_stmt = base_stmt.where(
             search_text.contains(Order.order_number, search)

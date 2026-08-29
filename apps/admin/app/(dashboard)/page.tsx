@@ -5,10 +5,22 @@ import Link from 'next/link';
 import { dashboardApi, ordersApi } from '@/lib/api';
 import type { DashboardToday, DashboardBreakdownRow, Order } from '@/lib/types';
 import { Badge, LoadError } from '@/components/ui';
+import { CourierMark } from '@/components/orders/CourierLogo';
+import {
+  useOrderFilters,
+  toDashboardParams,
+  toOrdersParams,
+  ordersHref,
+  hasAnyFilter,
+  type OrderFilters,
+} from '@/lib/order-filters';
 import { formatCurrency, formatTime, formatTimeAgo, cn } from '@/lib/utils';
 
 /** How often the live figures refetch themselves, in ms. */
 const REFRESH_MS = 60_000;
+
+/** How many orders the reactive orders list under the filters shows. */
+const RECENT_LIMIT = 15;
 
 const STATUS_BADGE: Record<string, 'warning' | 'info' | 'success' | 'danger' | 'neutral'> = {
   created: 'warning',
@@ -165,41 +177,39 @@ function BreakdownBars({ rows, empty }: { rows: DashboardBreakdownRow[]; empty: 
 }
 
 export default function DashboardPage() {
+  const { filters, patch, toggleStatus, toggleCourier, clearAll } = useOrderFilters();
+
   const [data, setData] = useState<DashboardToday | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
 
-  // Filters. Empty dates ⇒ the live current day; both set ⇒ that range. `statuses`
-  // narrows every figure to the picked order statuses. `search` finds orders by MM
-  // number, marketplace ref, or customer.
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [statuses, setStatuses] = useState<string[]>([]);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-
-  const isRange = Boolean(fromDate && toDate);
-  const isLive = !fromDate && !toDate;
-  const searching = debouncedSearch.length > 0;
-
-  // Debounce the search box so a keystroke is not a request.
+  // The search box is responsive while typing; the committed value lives in the
+  // URL (so a filtered view survives a refresh and is shareable), written after
+  // a short debounce.
+  const [searchInput, setSearchInput] = useState(filters.search);
   useEffect(() => {
-    const id = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    const id = setTimeout(() => {
+      if (searchInput !== filters.search) patch({ search: searchInput.trim() });
+    }, 300);
     return () => clearTimeout(id);
-  }, [search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
+  const isLive = !filters.from && !filters.to;
+  const isRange = Boolean(filters.from && filters.to);
+  const searching = filters.search.length > 0;
+
+  const dashParams = toDashboardParams(filters);
+  const ordersParams = toOrdersParams(filters);
+  const dashKey = JSON.stringify(dashParams);
+  const ordersKey = JSON.stringify(ordersParams);
 
   const load = useCallback(async () => {
-    // A one-sided date range is ignored (treated as live) until both ends are set.
-    const rangeReady = Boolean(fromDate) === Boolean(toDate);
     const [today, ordersRes] = await Promise.allSettled([
-      dashboardApi.today({
-        date_from: rangeReady ? fromDate || undefined : undefined,
-        date_to: rangeReady ? toDate || undefined : undefined,
-        statuses: statuses.length ? statuses : undefined,
-      }),
-      ordersApi.listAll({ per_page: 8, search: debouncedSearch || undefined }),
+      dashboardApi.today(dashParams),
+      ordersApi.listAll({ ...ordersParams, per_page: RECENT_LIMIT }),
     ]);
 
     if (today.status === 'fulfilled') {
@@ -212,7 +222,8 @@ export default function DashboardPage() {
 
     setRefreshedAt(new Date().toISOString());
     setLoading(false);
-  }, [fromDate, toDate, statuses, debouncedSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashKey, ordersKey]);
 
   // Re-run whenever a filter changes. The 60s live refresh runs only for the
   // current-day view — a historical range does not move, so polling it is noise.
@@ -223,9 +234,6 @@ export default function DashboardPage() {
     return () => clearInterval(id);
   }, [load, isLive]);
 
-  const toggleStatus = (key: string) =>
-    setStatuses(prev => (prev.includes(key) ? prev.filter(s => s !== key) : [...prev, key]));
-
   const s = data?.summary;
   const ops = data?.ops;
   const growthTitle = isRange ? 'vs the preceding period' : 'vs the same time yesterday';
@@ -234,6 +242,14 @@ export default function DashboardPage() {
       ? `${data.business_date} → ${data.business_date_to}`
       : data?.business_date
     : null;
+
+  const clearEverything = () => {
+    setSearchInput('');
+    clearAll();
+  };
+  // Carry the current filters into a link, with per-link overrides (a tile that
+  // means one status sets it, and lands on that status pre-filtered).
+  const href = (overrides?: Partial<OrderFilters>) => ordersHref(filters, overrides);
 
   return (
     <div>
@@ -272,9 +288,9 @@ export default function DashboardPage() {
           <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">From</label>
           <input
             type="date"
-            value={fromDate}
-            max={toDate || undefined}
-            onChange={e => setFromDate(e.target.value)}
+            value={filters.from}
+            max={filters.to || undefined}
+            onChange={e => patch({ from: e.target.value })}
             className="px-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
           />
         </div>
@@ -282,18 +298,15 @@ export default function DashboardPage() {
           <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">To</label>
           <input
             type="date"
-            value={toDate}
-            min={fromDate || undefined}
-            onChange={e => setToDate(e.target.value)}
+            value={filters.to}
+            min={filters.from || undefined}
+            onChange={e => patch({ to: e.target.value })}
             className="px-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
           />
         </div>
         {!isLive && (
           <button
-            onClick={() => {
-              setFromDate('');
-              setToDate('');
-            }}
+            onClick={() => patch({ from: '', to: '' })}
             className="h-10 px-3 text-xs font-body uppercase tracking-wider text-gray-500 border border-gray-300 hover:bg-gray-50 transition-colors"
           >
             Live today
@@ -305,19 +318,27 @@ export default function DashboardPage() {
             <span className="material-icons absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-[18px]">search</span>
             <input
               type="search"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
               placeholder="MM number, marketplace ref, customer name or email"
               className="w-full pl-9 pr-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
             />
           </div>
         </div>
+        {hasAnyFilter(filters) && (
+          <button
+            onClick={clearEverything}
+            className="h-10 px-3 text-xs font-body uppercase tracking-wider text-gray-500 border border-gray-300 hover:bg-gray-50 transition-colors"
+          >
+            Clear all
+          </button>
+        )}
       </div>
 
-      {statuses.length > 0 && (
-        <div className="mb-6 flex items-center gap-2 text-xs font-body text-gray-500">
+      {(filters.statuses.length > 0 || filters.couriers.length > 0) && (
+        <div className="mb-6 flex flex-wrap items-center gap-2 text-xs font-body text-gray-500">
           <span className="uppercase tracking-widest text-gray-400">Filtered to</span>
-          {statuses.map(k => (
+          {filters.statuses.map(k => (
             <button
               key={k}
               onClick={() => toggleStatus(k)}
@@ -328,9 +349,18 @@ export default function DashboardPage() {
               <span className="material-icons text-[13px]">close</span>
             </button>
           ))}
-          <button onClick={() => setStatuses([])} className="text-gray-400 hover:text-primary underline">
-            clear
-          </button>
+          {filters.couriers.map(k => (
+            <button
+              key={k}
+              onClick={() => toggleCourier(k)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary border border-primary/30"
+              title="Remove this courier"
+            >
+              <CourierMark code={k} size={13} />
+              {k.replace(/_/g, ' ')}
+              <span className="material-icons text-[13px]">close</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -346,7 +376,7 @@ export default function DashboardPage() {
           label={isRange ? 'Revenue' : 'Revenue Today'}
           value={formatCurrency(s?.revenue ?? 0)}
           icon="payments"
-          href="/orders"
+          href={href()}
           growth={s?.revenue_growth}
           growthTitle={growthTitle}
           loading={loading}
@@ -355,7 +385,7 @@ export default function DashboardPage() {
           label={isRange ? 'Orders' : 'Orders Today'}
           value={String(s?.orders ?? 0)}
           icon="receipt_long"
-          href="/orders"
+          href={href()}
           growth={s?.orders_growth}
           growthTitle={growthTitle}
           loading={loading}
@@ -364,7 +394,7 @@ export default function DashboardPage() {
           label="Delivered"
           value={String(s?.delivered ?? 0)}
           icon="check_circle"
-          href="/orders"
+          href={href({ statuses: ['delivered'] })}
           growthTitle={growthTitle}
           loading={loading}
         />
@@ -381,10 +411,10 @@ export default function DashboardPage() {
       {/* Needs attention — the open operational work, right now */}
       <Section title="Needs Attention">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          <AttentionTile label="Out for delivery" sub="Out for delivery" count={ops?.out_for_delivery ?? 0} icon="local_shipping" href="/orders" tone="warning" />
-          <AttentionTile label="Undelivered" sub="Undelivered" count={ops?.undelivered ?? 0} icon="error_outline" href="/orders" tone="danger" />
-          <AttentionTile label="Payment failed" sub="Payment failed" count={ops?.payment_failed_today ?? 0} icon="credit_card_off" href="/orders" tone="danger" />
-          <AttentionTile label="Refunds today" sub={ops ? `Refunds · ${formatCurrency(ops.refunds_amount_today)}` : 'Refunds today'} count={ops?.refunds_today ?? 0} icon="undo" href="/orders" tone="warning" />
+          <AttentionTile label="Out for delivery" sub="Out for delivery" count={ops?.out_for_delivery ?? 0} icon="local_shipping" href={href({ statuses: ['out_for_delivery'] })} tone="warning" />
+          <AttentionTile label="Undelivered" sub="Undelivered" count={ops?.undelivered ?? 0} icon="error_outline" href={href({ statuses: ['undelivered'] })} tone="danger" />
+          <AttentionTile label="Payment failed" sub="Payment failed" count={ops?.payment_failed_today ?? 0} icon="credit_card_off" href={href({ statuses: ['payment_failed'] })} tone="danger" />
+          <AttentionTile label="Refunds today" sub={ops ? `Refunds · ${formatCurrency(ops.refunds_amount_today)}` : 'Refunds today'} count={ops?.refunds_today ?? 0} icon="undo" href={href({ statuses: ['refunded'] })} tone="warning" />
           <AttentionTile label="Custom due today" sub="Custom due today" count={ops?.custom_orders_due_today ?? 0} icon="cake" href="/custom-orders" tone="warning" />
           <AttentionTile label="Open custom orders" sub="Open custom orders" count={ops?.open_custom_orders ?? 0} icon="pending_actions" href="/custom-orders" />
           <AttentionTile label="Low stock" sub="Low stock items" count={ops?.low_stock_items ?? 0} icon="inventory_2" href="/inventory" tone="warning" />
@@ -393,6 +423,38 @@ export default function DashboardPage() {
           <AttentionTile label="Active couriers" sub="Active couriers" count={ops?.active_couriers ?? 0} icon="two_wheeler" href="/delivery-zones" />
         </div>
       </Section>
+
+      {/* Delivered by courier — every carrier's completed orders and revenue.
+          Click to narrow every figure and the list below to that carrier. */}
+      {data?.by_courier && data.by_courier.length > 0 && (
+        <Section title="Delivered by Courier">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_courier.map((row) => {
+              const on = filters.couriers.includes(row.code);
+              return (
+                <button
+                  key={row.code}
+                  onClick={() => toggleCourier(row.code)}
+                  aria-pressed={on}
+                  title={on ? 'Remove from filter' : 'Filter to this courier'}
+                  className={cn(
+                    'flex items-center gap-2.5 border px-3 py-2 transition-colors',
+                    on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
+                  )}
+                >
+                  <CourierMark code={row.code} logoUrl={row.logo_url} size={22} />
+                  <div className="text-left leading-tight">
+                    <div className="text-xs font-body text-gray-600">{row.label}</div>
+                    <div className="font-display text-sm text-gray-800">
+                      {row.orders} · <span className="text-gray-500">{formatCurrency(row.revenue)}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </Section>
+      )}
 
       {/* Today's mix — where the orders and money came from */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
@@ -416,7 +478,7 @@ export default function DashboardPage() {
           <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
             {data.by_status.map((row) => {
               const key = statusKey(row.label);
-              const on = statuses.includes(key);
+              const on = filters.statuses.includes(key);
               return (
                 <button
                   key={row.label}
@@ -448,7 +510,7 @@ export default function DashboardPage() {
             <span className="material-icons text-[14px]">cake</span>
             Custom Orders
           </Link>
-          <Link href="/orders" className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors">
+          <Link href={href()} className="flex items-center gap-1.5 px-4 py-2 border border-gray-300 text-gray-600 text-xs font-body uppercase tracking-widest hover:bg-gray-50 transition-colors">
             <span className="material-icons text-[14px]">visibility</span>
             View All Orders
           </Link>
@@ -459,13 +521,14 @@ export default function DashboardPage() {
         </div>
       </Section>
 
-      {/* Recent orders — or the search results when the box has a query */}
+      {/* The orders under the current filters, newest first — the same ledger the
+          list page shows, moving live with every filter above. */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">
-            {searching ? `Search results for “${debouncedSearch}”` : 'Recent Orders'}
+            {hasAnyFilter(filters) ? 'Matching Orders' : 'Recent Orders'}
           </h2>
-          <Link href="/orders" className="inline-flex items-center min-h-11 md:min-h-0 text-xs text-primary hover:underline font-body">
+          <Link href={href()} className="inline-flex items-center min-h-11 md:min-h-0 text-xs text-primary hover:underline font-body">
             View all
           </Link>
         </div>
@@ -479,7 +542,7 @@ export default function DashboardPage() {
         ) : orders.length === 0 ? (
           <div className="text-center py-10 bg-white border border-gray-200">
             <p className="text-sm text-gray-400 font-body">
-              {searching ? 'No orders match that search' : 'No orders yet'}
+              {searching || hasAnyFilter(filters) ? 'No orders match these filters' : 'No orders yet'}
             </p>
           </div>
         ) : (
@@ -492,7 +555,13 @@ export default function DashboardPage() {
               >
                 <div className="flex items-center gap-4 min-w-0">
                   <span className="text-xs font-mono text-gray-700 font-medium shrink-0">{order.order_number}</span>
-                  <span className="text-xs text-gray-400 font-body truncate hidden sm:block">{order.email}</span>
+                  {order.courier ? (
+                    <CourierMark code={order.courier.code} logoUrl={order.courier.logo_url} size={18} />
+                  ) : (
+                    <span className="text-xs text-gray-400 font-body truncate hidden sm:block">
+                      {order.source === 'cashier' ? 'Counter' : order.email}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <Badge variant={STATUS_BADGE[order.status] ?? 'neutral'}>{order.status}</Badge>

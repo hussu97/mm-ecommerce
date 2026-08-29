@@ -17,45 +17,19 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { ordersApi, exportApi } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import type { Order, OrderStatus } from '@/lib/types';
-import { Badge, Button, Input, Pagination, Select, TabBar, LoadError, Spinner } from '@/components/ui';
+import { Badge, Button, Pagination, LoadError, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { CourierLogo } from '@/components/orders/CourierLogo';
+import { OrderFilterBar } from '@/components/orders/OrderFilterBar';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useOrderFilters, toOrdersParams } from '@/lib/order-filters';
 import { cn, formatCurrency, formatDate, formatTime } from '@/lib/utils';
-
-// Carriers a row can be filtered to — the five marketplaces and the four
-// couriers MM dispatches. Codes match the API's `courier` param and the DB
-// `couriers.code`.
-const COURIER_OPTIONS = [
-  { value: '', label: 'All couriers' },
-  { value: 'talabat', label: 'Talabat' },
-  { value: 'keeta', label: 'Keeta' },
-  { value: 'noon_food', label: 'Noon Food' },
-  { value: 'deliveroo', label: 'Deliveroo' },
-  { value: 'careem', label: 'Careem' },
-  { value: 'lalamove', label: 'Lalamove' },
-  { value: 'noon_send', label: 'noon Send' },
-  { value: 'slider', label: 'Slider' },
-  { value: 'third_party', label: 'Third party' },
-];
-
-const STATUS_OPTIONS = [
-  { value: '', label: 'All Statuses' },
-  { value: 'created', label: 'Created' },
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'arrived_at_pos', label: 'At the shop' },
-  { value: 'packed', label: 'Packed' },
-  { value: 'out_for_delivery', label: 'On The Way' },
-  { value: 'delivered', label: 'Delivered' },
-  { value: 'undelivered', label: 'Undelivered' },
-  { value: 'cancelled', label: 'Cancelled' },
-];
 
 // Packed is no longer the end of the line, so it reads as in-progress and only
 // a delivered order gets the green.
@@ -89,8 +63,6 @@ const POS_STATUS_VARIANT: Record<string, 'warning' | 'info' | 'success' | 'dange
   returned: 'warning',
   joined: 'neutral',
 };
-
-type Channel = '' | 'online' | 'counter' | 'aggregator';
 
 /**
  * Whether an order kept enough of its own menu value to be worth taking.
@@ -147,19 +119,19 @@ function CostCover({ order }: { order: Order }) {
 
 export default function OrdersPage() {
   const router = useRouter();
-  const params = useSearchParams();
+  const { filters, patch, toggleStatus, toggleCourier, clearAll } = useOrderFilters();
 
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [branchId, setBranchId] = useState('');
-  const [courier, setCourier] = useState('');
   const [exportError, setExportError] = useState('');
-  // Deep-linkable, so the old /pos-orders bookmark can land here on the right tab.
-  const [channel, setChannel] = useState<Channel>(
-    (params.get('channel') as Channel) || '',
-  );
-  const debouncedSearch = useDebouncedValue(search);
+  // The search box is responsive while typing; the committed value lives in the
+  // URL (so it persists and is shareable), written after a short debounce.
+  const [searchInput, setSearchInput] = useState(filters.search);
+  const debouncedSearch = useDebouncedValue(searchInput);
+
+  useEffect(() => {
+    if (debouncedSearch !== filters.search) patch({ search: debouncedSearch });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
 
   useEffect(() => {
     void branchesApi
@@ -168,20 +140,15 @@ export default function OrdersPage() {
       .catch(() => setBranches([]));
   }, []);
 
+  const orderParams = toOrdersParams(filters);
+
   // Server-side pagination: `/orders/admin/all` pages and filters in SQL, and
   // the hook resets to page 1 whenever a filter changes this fetcher.
   const fetchOrders = useCallback(
     (page: number, perPage: number) =>
-      ordersApi.listAll({
-        search: debouncedSearch || undefined,
-        status: statusFilter || undefined,
-        channel: channel || undefined,
-        courier: courier || undefined,
-        branch_id: branchId || undefined,
-        page,
-        per_page: perPage,
-      }),
-    [debouncedSearch, statusFilter, channel, courier, branchId],
+      ordersApi.listAll({ ...orderParams, page, per_page: perPage }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(orderParams)],
   );
 
   const {
@@ -192,14 +159,12 @@ export default function OrdersPage() {
   async function exportCsv() {
     setExportError('');
     try {
-      await exportApi.exportOrders({ status: statusFilter || undefined });
+      await exportApi.exportOrders({ status: filters.statuses[0] || undefined });
     } catch (err) {
       setExportError((err as Error).message);
     }
   }
 
-  const showCounterColumns = channel === '' || channel === 'counter';
-  const showOnlineColumns = channel === '' || channel === 'online';
   const branchRef = (id: string | null | undefined) =>
     branches.find(b => b.id === id)?.reference ?? '—';
 
@@ -219,51 +184,22 @@ export default function OrdersPage() {
         </Button>
       </div>
 
-      <TabBar
-        tabs={[
-          { key: '', label: 'All' },
-          { key: 'online', label: 'Website' },
-          { key: 'counter', label: 'Counter' },
-          { key: 'aggregator', label: 'Aggregator' },
-        ]}
-        active={channel}
-        onChange={key => setChannel(key as Channel)}
+      <OrderFilterBar
+        filters={filters}
+        search={searchInput}
+        onSearch={setSearchInput}
+        onPatch={patch}
+        onToggleStatus={toggleStatus}
+        onToggleCourier={toggleCourier}
+        onClearAll={() => {
+          setSearchInput('');
+          clearAll();
+        }}
+        branchOptions={branches.map(b => ({
+          value: b.id,
+          label: `${b.reference} · ${b.name}`,
+        }))}
       />
-
-      <div className="flex flex-wrap gap-3 mb-4">
-        <div className="flex-1 min-w-[16rem] max-w-xs">
-          <Input
-            placeholder="Search order #, email, name or phone…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="w-44">
-          <Select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            options={STATUS_OPTIONS}
-          />
-        </div>
-        <div className="w-44">
-          <Select
-            value={courier}
-            onChange={e => setCourier(e.target.value)}
-            options={COURIER_OPTIONS}
-          />
-        </div>
-        <div className="w-52">
-          <Select
-            value={branchId}
-            onChange={e => setBranchId(e.target.value)}
-            options={branches.map(b => ({
-              value: b.id,
-              label: `${b.reference} · ${b.name}`,
-            }))}
-            placeholder="All branches"
-          />
-        </div>
-      </div>
 
       {loading ? (
         <div className="flex justify-center py-16"><Spinner /></div>
@@ -301,36 +237,28 @@ export default function OrdersPage() {
                 </div>
               ),
             },
-            ...(showCounterColumns
-              ? [
-                  {
-                    header: 'Check',
-                    className: 'text-center',
-                    render: (o: Order) => o.check_number ?? '—',
-                  },
-                ]
-              : []),
-            ...(channel === '' || channel === 'aggregator'
-              ? [
-                  {
-                    header: 'Channel',
-                    className: 'text-center',
-                    // An aggregator order shows the marketplace's logo — the
-                    // thing that identifies it at a glance — in place of a bare
-                    // badge; counter and website keep their word.
-                    render: (o: Order) =>
-                      o.courier ? (
-                        <span className="inline-flex justify-center">
-                          <CourierLogo courier={o.courier} size={22} showName />
-                        </span>
-                      ) : (
-                        <Badge variant={o.source === 'cashier' ? 'neutral' : 'info'}>
-                          {o.source === 'cashier' ? 'Counter' : 'Website'}
-                        </Badge>
-                      ),
-                  },
-                ]
-              : []),
+            {
+              header: 'Check',
+              className: 'text-center',
+              render: (o: Order) => o.check_number ?? '—',
+            },
+            {
+              header: 'Channel',
+              className: 'text-center',
+              // An aggregator order shows the marketplace's logo — the thing that
+              // identifies it at a glance — in place of a bare badge; counter and
+              // website keep their word.
+              render: (o: Order) =>
+                o.courier ? (
+                  <span className="inline-flex justify-center">
+                    <CourierLogo courier={o.courier} size={22} showName />
+                  </span>
+                ) : (
+                  <Badge variant={o.source === 'cashier' ? 'neutral' : 'info'}>
+                    {o.source === 'cashier' ? 'Counter' : 'Website'}
+                  </Badge>
+                ),
+            },
             {
               header: 'Total',
               className: 'text-right',
@@ -346,22 +274,18 @@ export default function OrdersPage() {
               className: 'text-center',
               render: o => <Badge variant={STATUS_VARIANT[o.status]}>{o.status}</Badge>,
             },
-            ...(showCounterColumns
-              ? [
-                  {
-                    header: 'Counter',
-                    className: 'text-center',
-                    render: (o: Order) =>
-                      o.pos_status ? (
-                        <Badge variant={POS_STATUS_VARIANT[o.pos_status] ?? 'neutral'}>
-                          {o.pos_status}
-                        </Badge>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      ),
-                  },
-                ]
-              : []),
+            {
+              header: 'Counter',
+              className: 'text-center',
+              render: (o: Order) =>
+                o.pos_status ? (
+                  <Badge variant={POS_STATUS_VARIANT[o.pos_status] ?? 'neutral'}>
+                    {o.pos_status}
+                  </Badge>
+                ) : (
+                  <span className="text-gray-300">—</span>
+                ),
+            },
             {
               header: 'Branch',
               className: 'text-center',
@@ -372,20 +296,16 @@ export default function OrdersPage() {
               className: 'text-center',
               render: o => o.item_count ?? o.items?.length ?? '—',
             },
-            ...(showOnlineColumns
-              ? [
-                  {
-                    header: 'Delivery',
-                    className: 'text-right',
-                    render: (o: Order) =>
-                      o.delivery_fee != null
-                        ? o.delivery_fee > 0
-                          ? formatCurrency(o.delivery_fee)
-                          : 'Free'
-                        : '—',
-                  },
-                ]
-              : []),
+            {
+              header: 'Delivery',
+              className: 'text-right',
+              render: (o: Order) =>
+                o.delivery_fee != null
+                  ? o.delivery_fee > 0
+                    ? formatCurrency(o.delivery_fee)
+                    : 'Free'
+                  : '—',
+            },
             {
               header: 'Date',
               className: 'text-right',

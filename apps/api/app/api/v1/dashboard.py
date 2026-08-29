@@ -46,12 +46,16 @@ from app.models import (
     User,
 )
 from app.models.base import utcnow
+from app.models.order_delivery import OrderDelivery
 from app.schemas.dashboard import (
     BreakdownRow,
+    CourierBreakdownRow,
     DashboardOps,
     DashboardSummary,
     DashboardTodayResponse,
 )
+from app.services.couriers import courier_catalog
+from app.services.orders import order_query
 from app.services.pos import business_day_service
 
 router = APIRouter()
@@ -90,8 +94,17 @@ def _status_clause(statuses: list[str] | None):
     return _REVENUE_STATUSES
 
 
+def _filters(statuses, couriers):
+    """The status and courier where-clauses shared by every windowed figure."""
+    clauses = [_status_clause(statuses)]
+    courier_clause = order_query.courier_clause(couriers)
+    if courier_clause is not None:
+        clauses.append(courier_clause)
+    return clauses
+
+
 async def _breakdown(
-    db: AsyncSession, column, *, start, end, labels=None, statuses=None
+    db: AsyncSession, column, *, start, end, labels=None, statuses=None, couriers=None
 ) -> list[BreakdownRow]:
     """Orders and revenue grouped by `column` over the window, revenue-eligible only."""
     rows = (
@@ -104,7 +117,7 @@ async def _breakdown(
             .where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                _status_clause(statuses),
+                *_filters(statuses, couriers),
             )
             .group_by(column)
             .order_by(func.count(Order.id).desc())
@@ -123,7 +136,7 @@ async def _breakdown(
 
 
 async def _window_totals(
-    db: AsyncSession, *, start, end, statuses=None
+    db: AsyncSession, *, start, end, statuses=None, couriers=None
 ) -> tuple[int, float]:
     """(orders, revenue) for revenue-eligible orders created in the window."""
     result = (
@@ -134,11 +147,72 @@ async def _window_totals(
             ).where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                _status_clause(statuses),
+                *_filters(statuses, couriers),
             )
         )
     ).one()
     return int(result[0]), float(money(result[1]))
+
+
+async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownRow]:
+    """Delivered orders and revenue per carrier over the window.
+
+    Grouped in Python via `order_query.courier_code_for` rather than in SQL,
+    because "which courier" spans three different columns (source for the
+    counter, `aggregator_channel` for a marketplace, the delivery record's
+    provider for a dispatch courier) and there is no single column to group by.
+    Delivered-only, so this reads as settled courier revenue. One row per known
+    courier code, busiest first; a delivered order with no resolvable carrier
+    (an online pickup) counts under none.
+    """
+    provider = (
+        select(OrderDelivery.provider)
+        .where(OrderDelivery.order_id == Order.id)
+        .limit(1)
+        .scalar_subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                Order.source,
+                Order.aggregator_channel,
+                Order.total,
+                provider.label("provider"),
+            ).where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                Order.status == OrderStatusEnum.DELIVERED,
+            )
+        )
+    ).all()
+
+    totals: dict[str, list] = {code: [0, 0.0] for code in order_query.ALL_COURIER_CODES}
+    for source, channel, total, prov in rows:
+        code = order_query.courier_code_for(
+            getattr(source, "value", source), channel, prov
+        )
+        if code is None or code not in totals:
+            continue
+        totals[code][0] += 1
+        totals[code][1] += float(total or 0)
+
+    out = [
+        CourierBreakdownRow(
+            code=code,
+            label=order_query.courier_label(code),
+            logo_url=(
+                None
+                if code == order_query.COUNTER_CODE
+                else courier_catalog.logo_url_for(code)
+            ),
+            orders=orders,
+            revenue=float(money(revenue)),
+        )
+        for code, (orders, revenue) in totals.items()
+        if orders > 0
+    ]
+    out.sort(key=lambda r: r.orders, reverse=True)
+    return out
 
 
 def _growth(current: float, prior: float) -> float:
@@ -205,6 +279,11 @@ async def dashboard_today(
     statuses: list[str] | None = Query(
         None, description="Narrow every figure to these order statuses (multi-select)"
     ),
+    couriers: list[str] | None = Query(
+        None,
+        description="Narrow every figure to these carriers (multi-select) — "
+        "`counter`, an aggregator marketplace, or a dispatch courier code",
+    ),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("dashboard.access")),
 ):
@@ -225,20 +304,23 @@ async def dashboard_today(
         prior_end,
     ) = await _range_bounds(db, date_from, date_to)
     picked = statuses or None
+    carriers = couriers or None
 
     orders_cur, revenue_cur = await _window_totals(
-        db, start=start, end=end, statuses=picked
+        db, start=start, end=end, statuses=picked, couriers=carriers
     )
     orders_prev, revenue_prev = await _window_totals(
-        db, start=prior_start, end=prior_end, statuses=picked
+        db, start=prior_start, end=prior_end, statuses=picked, couriers=carriers
     )
 
+    delivered_clause = order_query.courier_clause(carriers)
     delivered = await _count(
         db,
         select(func.count(Order.id)).where(
             Order.created_at >= start,
             Order.created_at <= end,
             Order.status == OrderStatusEnum.DELIVERED,
+            *([delivered_clause] if delivered_clause is not None else []),
         ),
     )
 
@@ -251,8 +333,11 @@ async def dashboard_today(
         revenue_growth=_growth(revenue_cur, revenue_prev),
     )
 
-    # by_status keeps the FULL spread (cancellations included) regardless of the
-    # status selection — it is the menu the operator picks that selection from.
+    # by_status keeps the FULL status spread (cancellations included) regardless
+    # of the status selection — it is the menu the operator picks that selection
+    # from — but it does follow the courier filter, so picking a carrier narrows
+    # the status menu to that carrier.
+    courier_only = order_query.courier_clause(carriers)
     status_rows = (
         await db.execute(
             select(
@@ -260,7 +345,11 @@ async def dashboard_today(
                 func.count(Order.id),
                 func.coalesce(func.sum(Order.total), 0),
             )
-            .where(Order.created_at >= start, Order.created_at <= end)
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                *([courier_only] if courier_only is not None else []),
+            )
             .group_by(Order.status)
             .order_by(func.count(Order.id).desc())
         )
@@ -274,8 +363,16 @@ async def dashboard_today(
         for s, c, r in status_rows
     ]
 
+    by_courier = await _by_courier(db, start=start, end=end)
+
     by_channel = await _breakdown(
-        db, Order.source, start=start, end=end, labels=_CHANNEL_LABELS, statuses=picked
+        db,
+        Order.source,
+        start=start,
+        end=end,
+        labels=_CHANNEL_LABELS,
+        statuses=picked,
+        couriers=carriers,
     )
     by_fulfillment = await _breakdown(
         db,
@@ -287,6 +384,7 @@ async def dashboard_today(
             DeliveryMethodEnum.PICKUP.value: "Pickup",
         },
         statuses=picked,
+        couriers=carriers,
     )
     by_payment = await _breakdown(
         db,
@@ -295,6 +393,7 @@ async def dashboard_today(
         end=end,
         labels={"card": "Card", "cod": "Cash on delivery"},
         statuses=picked,
+        couriers=carriers,
     )
 
     ops = await _operational_snapshot(db, start=start, end=end, today=from_date)
@@ -306,6 +405,7 @@ async def dashboard_today(
         generated_at=utcnow(),
         summary=summary,
         by_status=by_status,
+        by_courier=by_courier,
         by_channel=by_channel,
         by_fulfillment=by_fulfillment,
         by_payment=by_payment,

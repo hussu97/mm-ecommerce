@@ -521,6 +521,16 @@ export interface DashboardBreakdownRow {
   revenue: number;
 }
 
+/** One carrier's delivered orders and revenue — a courier scorecard. */
+export interface DashboardCourierRow {
+  /** `counter`, an aggregator marketplace, or a dispatch courier code. */
+  code: string;
+  label: string;
+  logo_url: string | null;
+  orders: number;
+  revenue: number;
+}
+
 export interface DashboardSummary {
   orders: number;
   revenue: number;
@@ -552,6 +562,7 @@ export interface DashboardToday {
   generated_at: string;
   summary: DashboardSummary;
   by_status: DashboardBreakdownRow[];
+  by_courier: DashboardCourierRow[];
   by_channel: DashboardBreakdownRow[];
   by_fulfillment: DashboardBreakdownRow[];
   by_payment: DashboardBreakdownRow[];

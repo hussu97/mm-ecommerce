@@ -6957,6 +6957,46 @@
         "title": "CourierBadge",
         "type": "object"
       },
+      "CourierBreakdownRow": {
+        "description": "One carrier's delivered orders and revenue \u2014 a courier scorecard.\n\nA carrier code (`counter`, an aggregator marketplace, or a dispatch courier),\nits display name and logo, and its **delivered** count and revenue. Delivered\nonly, deliberately: this section answers \"how much did each courier actually\ncomplete\", so cancellations and in-progress orders are out \u2014 it is a\nsettled-money view, unlike `by_status` which is the whole spread.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "orders",
+          "revenue"
+        ],
+        "title": "CourierBreakdownRow",
+        "type": "object"
+      },
       "CourierResponse": {
         "description": "A carrier and what it promises, for the admin's Estimates screen.\n\n`supports_batching` is read-only here and shown anyway: it is the reason a\ncourier does or does not appear on the batching screen, and an admin\nwondering why noon Send has no schedule deserves the answer on the same\npage as the numbers.",
         "properties": {
@@ -8301,6 +8341,13 @@
             "title": "By Channel",
             "type": "array"
           },
+          "by_courier": {
+            "items": {
+              "$ref": "#/components/schemas/CourierBreakdownRow"
+            },
+            "title": "By Courier",
+            "type": "array"
+          },
           "by_fulfillment": {
             "items": {
               "$ref": "#/components/schemas/BreakdownRow"
@@ -8344,6 +8391,7 @@
           "generated_at",
           "summary",
           "by_status",
+          "by_courier",
           "by_channel",
           "by_fulfillment",
           "by_payment",
@@ -37248,6 +37296,27 @@
               "description": "Narrow every figure to these order statuses (multi-select)",
               "title": "Statuses"
             }
+          },
+          {
+            "description": "Narrow every figure to these carriers (multi-select) \u2014 `counter`, an aggregator marketplace, or a dispatch courier code",
+            "in": "query",
+            "name": "couriers",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow every figure to these carriers (multi-select) \u2014 `counter`, an aggregator marketplace, or a dispatch courier code",
+              "title": "Couriers"
+            }
           }
         ],
         "responses": {
@@ -45054,7 +45123,7 @@
     },
     "/api/v1/orders/admin/all": {
       "get": {
-        "description": "Every order, from any channel (admin only).",
+        "description": "Every order, from any channel (admin only). Filters mirror the dashboard.",
         "operationId": "list_all_orders_api_v1_orders_admin_all_get",
         "parameters": [
           {
@@ -45111,7 +45180,7 @@
             }
           },
           {
-            "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`).",
+            "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`), or `counter`.",
             "in": "query",
             "name": "courier",
             "required": false,
@@ -45124,8 +45193,86 @@
                   "type": "null"
                 }
               ],
-              "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`) or a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`).",
+              "description": "Narrow to one carrier by its code \u2014 a marketplace channel (`talabat`, `keeta`, `noon_food`, `deliveroo`, `careem`), a dispatch provider (`lalamove`, `noon_send`, `slider`, `third_party`), or `counter`.",
               "title": "Courier"
+            }
+          },
+          {
+            "description": "Multi-select carrier codes; the OR of them (see `courier`).",
+            "in": "query",
+            "name": "couriers",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-select carrier codes; the OR of them (see `courier`).",
+              "title": "Couriers"
+            }
+          },
+          {
+            "description": "Multi-select order statuses; the OR of them.",
+            "in": "query",
+            "name": "statuses",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-select order statuses; the OR of them.",
+              "title": "Statuses"
+            }
+          },
+          {
+            "description": "ISO date; with date_to, an inclusive day range.",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; with date_to, an inclusive day range.",
+              "title": "Date From"
+            }
+          },
+          {
+            "description": "ISO date; with date_from, an inclusive day range.",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; with date_from, an inclusive day range.",
+              "title": "Date To"
             }
           },
           {

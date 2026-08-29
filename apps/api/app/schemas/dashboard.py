@@ -22,6 +22,23 @@ class BreakdownRow(BaseModel):
     revenue: float
 
 
+class CourierBreakdownRow(BaseModel):
+    """One carrier's delivered orders and revenue — a courier scorecard.
+
+    A carrier code (`counter`, an aggregator marketplace, or a dispatch courier),
+    its display name and logo, and its **delivered** count and revenue. Delivered
+    only, deliberately: this section answers "how much did each courier actually
+    complete", so cancellations and in-progress orders are out — it is a
+    settled-money view, unlike `by_status` which is the whole spread.
+    """
+
+    code: str
+    label: str
+    logo_url: str | None = None
+    orders: int
+    revenue: float
+
+
 class DashboardSummary(BaseModel):
     """The day's headline figures, over every non-cancelled order created today."""
 
@@ -73,6 +90,9 @@ class DashboardTodayResponse(BaseModel):
     summary: DashboardSummary
     #: Every status present today, cancellations and refunds included.
     by_status: list[BreakdownRow]
+    #: By carrier — counter, each aggregator marketplace, each dispatch courier —
+    #: over delivered orders only. The full courier menu, like `by_status`.
+    by_courier: list[CourierBreakdownRow]
     #: By order source — storefront, cashier, aggregator.
     by_channel: list[BreakdownRow]
     #: Delivery vs pickup.
