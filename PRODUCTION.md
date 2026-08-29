@@ -944,6 +944,8 @@ it here and redeploying.
 | `AGGREGATOR_REAUTH_WAIT_SECONDS` | `360` | Trigger-based re-auth: an ingest pass that hits a dead/expired session flags it and waits this long for the worker's reauth daemon to bring it back, then retries. 0 disables the wait |
 | `AGGREGATOR_REAUTH_POLL_SECONDS` | `5.0` | How often the waiting ingest pass re-checks whether the session is live again |
 | `AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS` | `14` | Noon publishes wallet statements ~weekly; its finance discovery widens the 1-day lookback to at least one publish cycle |
+| `AGGREGATOR_SALES_REFRESH_MINUTES` | `60` | The rolling sales-only refresh cadence — separate from the daily pass. Every N minutes it re-scrapes only sales over a short rolling window and re-promotes, so values that settle after an order is first seen (a Talabat commission landing hours later) are caught within the hour. Shares the daily pass's sales lock. `0` = daily only |
+| `AGGREGATOR_SALES_ROLLING_HOURS` | `36` | That refresh's window, in hours back from now. 36 covers all of yesterday plus today across the Dubai/UTC offset |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
 

@@ -466,6 +466,19 @@ class Settings(BaseSettings):
     #: finance pass almost always lands on a day with no statement publication and
     #: looks empty). Marketplace-cadence knob, not a per-run dial.
     AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS: int = 14
+    #: The rolling sales-only refresh cadence, in minutes. SEPARATE from the daily
+    #: pass: it re-scrapes only sales (not finance) over a short rolling window and
+    #: re-promotes, so values that settle AFTER an order is first seen — a Talabat
+    #: commission that lands hours after completion, a Careem/Deliveroo order whose
+    #: details fill in later — are picked up within the hour instead of waiting for
+    #: the nightly run. Shares the daily pass's sales advisory lock, so the two
+    #: cadences never scrape the same session at once. 0 disables it (daily only).
+    #: 60 = hourly; the bigger VM comfortably carries it at 1 req/s per marketplace.
+    AGGREGATOR_SALES_REFRESH_MINUTES: int = 60
+    #: The rolling refresh's window, in hours back from now. 36 covers all of
+    #: yesterday plus today across the Dubai/UTC offset, so a late-settling value on
+    #: a late-yesterday order is still in range. Idempotent upserts, so widen freely.
+    AGGREGATOR_SALES_ROLLING_HOURS: int = 36
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
     #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.

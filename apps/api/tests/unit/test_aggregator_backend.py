@@ -235,3 +235,60 @@ async def test_keeta_orders_push_isolates_a_bad_payload(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"ingested": 2}
+
+
+# ── rolling sales-only refresh (frequent cadence) ─────────────────────────────
+@pytest.mark.asyncio
+async def test_run_sales_refresh_once_sweeps_rolling_window_then_promotes(monkeypatch):
+    """The frequent refresh re-scrapes ONLY sales over the rolling-hours window,
+    then promotes and reconciles — never a finance sweep."""
+    from app.services.aggregators import ingest
+
+    calls: dict = {}
+
+    async def fake_sweep_all(mode, lock_key, *, lookback_hours=None):
+        calls["sweep"] = (mode, lock_key, lookback_hours)
+        return 7
+
+    async def fake_promote():
+        calls["promoted"] = True
+        return 2
+
+    async def fake_reconcile():
+        calls["reconciled"] = True
+        return 1
+
+    monkeypatch.setattr(ingest, "is_enabled", lambda: True)
+    monkeypatch.setattr(ingest, "_sweep_all", fake_sweep_all)
+    monkeypatch.setattr(ingest, "sweep_promote_once", fake_promote)
+    monkeypatch.setattr(ingest, "sweep_reconcile_once", fake_reconcile)
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SALES_ROLLING_HOURS", 36)
+
+    written = await ingest.run_sales_refresh_once()
+
+    assert written == 7
+    assert calls["sweep"] == (ingest.RUN_MODE_SALES, ingest._SALES_LOCK_KEY, 36)
+    assert calls["promoted"] and calls["reconciled"]
+
+
+@pytest.mark.asyncio
+async def test_run_sales_refresh_once_noop_when_disabled(monkeypatch):
+    from app.services.aggregators import ingest
+
+    monkeypatch.setattr(ingest, "is_enabled", lambda: False)
+
+    async def boom(*a, **k):  # must not be reached
+        raise AssertionError("sweep ran while ingest disabled")
+
+    monkeypatch.setattr(ingest, "_sweep_all", boom)
+    assert await ingest.run_sales_refresh_once() == 0
+
+
+@pytest.mark.asyncio
+async def test_sales_refresh_scheduler_disabled_at_zero_interval(monkeypatch):
+    """interval <= 0 returns immediately instead of looping forever."""
+    from app.services.aggregators import ingest
+
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SALES_REFRESH_MINUTES", 0)
+    # Returns (does not hang); no sweep attempted.
+    await ingest.run_sales_refresh_scheduler_forever()

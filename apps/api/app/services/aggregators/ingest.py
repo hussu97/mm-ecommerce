@@ -1313,7 +1313,9 @@ async def _run_range_channel(
     return {"channel": channel, "status": run.status, "stats": stats}
 
 
-async def _sweep_all(mode: str, lock_key: int) -> int:
+async def _sweep_all(
+    mode: str, lock_key: int, *, lookback_hours: int | None = None
+) -> int:
     if not is_enabled():
         return 0
     _register_providers()
@@ -1324,7 +1326,9 @@ async def _sweep_all(mode: str, lock_key: int) -> int:
         async with AsyncSessionFactory() as db:
             for channel, provider in PROVIDERS.items():
                 try:
-                    touched += await _sweep_channel(db, channel, provider, mode)
+                    touched += await _sweep_channel(
+                        db, channel, provider, mode, lookback_hours=lookback_hours
+                    )
                     await db.commit()
                 except Exception:  # noqa: BLE001 — one channel must not stop the rest
                     await db.rollback()
@@ -1434,6 +1438,66 @@ async def run_daily_once() -> tuple[int, int]:
     if reconciled:
         logger.info("aggregator reconciliation wrote %s row(s)", reconciled)
     return sales, finance
+
+
+async def run_sales_refresh_once() -> int:
+    """One rolling sales-only pass: re-scrape the last `AGGREGATOR_SALES_ROLLING_HOURS`
+    for every httpx channel, then promote + reconcile.
+
+    The frequent sibling of `run_daily_once`, without the finance sweep. It exists
+    because two things settle AFTER an order is first seen: a Talabat commission
+    that lands hours after completion, and a Deliveroo/Careem order whose details
+    fill in on a later pull. Re-scraping a short rolling window and re-upserting
+    catches those without waiting for the nightly pass — and the never-downgrade
+    upsert (`_PREFER_UNMASKED`) keeps a masked Keeta re-scrape from erasing a real
+    captured customer. `_touched_at` means only genuinely-changed rows advance
+    `updated_at`, so the promote/reconcile that follow re-process just those.
+
+    Shares the daily pass's `_SALES_LOCK`, so the frequent cadence and the nightly
+    run never scrape the same marketplace session at once (and a slow tick simply
+    no-ops the next one rather than stacking). Keeta is push-only — its pushed
+    orders are still re-promoted/reconciled here, but its fresher capture comes
+    from shortening the bootstrap worker's in-page pull cron, not this sweep.
+    """
+    if not is_enabled():
+        return 0
+    hours = settings.AGGREGATOR_SALES_ROLLING_HOURS
+    sales = await _sweep_all(RUN_MODE_SALES, _SALES_LOCK_KEY, lookback_hours=hours)
+    promoted = await sweep_promote_once()
+    if promoted:
+        logger.info("aggregator rolling refresh promoted %s MM order(s)", promoted)
+    reconciled = await sweep_reconcile_once()
+    if reconciled:
+        logger.info("aggregator rolling refresh reconciled %s row(s)", reconciled)
+    return sales
+
+
+async def run_sales_refresh_scheduler_forever() -> None:
+    """The rolling sales refresh, every `AGGREGATOR_SALES_REFRESH_MINUTES`.
+
+    A plain interval loop (sleep-first: the daily scheduler's boot catch-up already
+    covers a redeploy, and sleeping first keeps this off the boot stampede).
+    `<= 0` disables it. Cancellation-safe; one bad tick is logged and the loop
+    lives on, exactly like the daily scheduler.
+    """
+    interval = settings.AGGREGATOR_SALES_REFRESH_MINUTES
+    if interval <= 0:
+        logger.info("aggregator rolling sales refresh disabled (interval <= 0)")
+        return
+    logger.info(
+        "aggregator rolling sales refresh started (every %dm, %dh window)",
+        interval,
+        settings.AGGREGATOR_SALES_ROLLING_HOURS,
+    )
+    while True:
+        try:
+            await asyncio.sleep(interval * 60)
+            if is_enabled():
+                await run_sales_refresh_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one bad tick must not stop them all
+            logger.exception("aggregator rolling sales refresh tick failed")
 
 
 #: Holds the in-flight manual-trigger task so the event loop's weak reference to

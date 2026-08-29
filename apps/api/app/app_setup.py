@@ -223,6 +223,17 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
                 background.append(
                     asyncio.create_task(aggregator_ingest.run_scheduler_forever())
                 )
+                # …and a more frequent sales-only refresh (every
+                # AGGREGATOR_SALES_REFRESH_MINUTES) over a short rolling window, so
+                # values that settle after an order is first seen — a Talabat
+                # commission landing hours later — are picked up within the hour
+                # rather than at the next nightly pass. Shares the daily pass's
+                # sales lock, so the two never scrape the same session at once.
+                background.append(
+                    asyncio.create_task(
+                        aggregator_ingest.run_sales_refresh_scheduler_forever()
+                    )
+                )
 
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
