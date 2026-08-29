@@ -9,17 +9,22 @@ were taken from the live console:
   company/brand/merchant tree with each merchant's area, which is how a Careem
   outlet id is tied to one of our branches (Barsha 1067984, Silicon Oasis/DSO
   1069463, Al Majaz/Sharjah 1087801 — the last `statusId=3`, i.e. shut).
-- Sales: `GET /v1/orders/list` and the per-outlet
-  `/v1/careem/{city}/company/{c}/brand/{b}/outlet/{o}/partner-orders-minimal`.
+- Sales: the per-outlet
+  `/v1/careem/{city}/company/{c}/brand/{b}/outlet/{o}/partner-orders-minimal`
+  lists the ids in the window (id/status/date/total only), then
+  `GET /v2/admin/orders/{id}?all_localizations=true` — the console's order popup —
+  fills each with items, modifiers, category, the captain (name + mobile), the
+  customer dropoff address and the full delivery status timeline. (The minimal
+  feed alone is why Careem once looked "thin"; the detail endpoint is not.)
 - Payouts: `POST /v1/billing/payoutRequests/list` with a date window.
 - Balances: `POST /v1/billing/billingAccounts/earnings` (a balance snapshot).
 - Invoices: `POST /v1/billing/billingReports/list` (reportType=INVOICE) lists the
   monthly Tax Invoices, and `GET /v1/billing/billingReports/{id}/download?
   billableId&billableType&tenant=FOOD` hands back a `{"fileUrl": <pre-signed S3>}`
-  for the PDF. Careem has no PER-ORDER settlement (the order feed carries no
-  fees — the minimal endpoint returns id/status/date/total only, no items,
-  modifiers, customer or captain), so the fees live only on that monthly Tax
-  Invoice, which `fetch_statements` archives as the VAT document.
+  for the PDF. Careem has no PER-ORDER settlement — the order detail carries the
+  goods and the captain but not the merchant's commission — so the fees live only
+  on that monthly Tax Invoice, which `fetch_statements` archives as the VAT
+  document.
 
 The billing calls need the account's `billableId`/`billableType` triple, which
 comes from the scope tree, so `fetch_finance` resolves scope first.
@@ -46,15 +51,20 @@ from app.models.aggregator import CHANNEL_CAREEM
 from app.services.aggregators.normalized import (
     PayoutsResult,
     SalesResult,
+    StandardModifier,
     StandardOrder,
     StandardOrderItem,
     StandardPayout,
     StandardStatement,
+    StandardStatusEvent,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.aggregators.statement_docs import store_statement_invoice
-from app.services.providers.aggregator_base import BaseAggregatorClient
+from app.services.providers.aggregator_base import (
+    AggregatorAuthError,
+    BaseAggregatorClient,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +91,131 @@ _INVOICE_LOOKBACK_DAYS = 62
 #: Timeout for fetching the pre-signed S3 invoice PDF (a plain download, not the
 #: Careem console).
 _S3_TIMEOUT = 30.0
+#: The rich per-order detail endpoint — the console's order popup. Unlike
+#: `partner-orders-minimal` (id/status/date/total only) this carries items,
+#: modifiers, the captain, the dropoff address and the delivery status timeline.
+_ORDER_DETAIL = f"{_API}/v2/admin/orders"
+#: Cap on per-order detail fetches in one sales pass, so a runaway window cannot
+#: hammer the console. A daily pass is a few dozen orders; a wide backfill is
+#: bounded and records the shortfall as a truncation note.
+_MAX_DETAIL_FETCHES = 400
+
+
+def _localized_en(value: Any) -> str | None:
+    """The English string from a Careem `{ar, en}` localisation object."""
+    if isinstance(value, dict):
+        text = value.get("en") or value.get("default")
+        return str(text) if text else None
+    return None
+
+
+def _careem_address(detail: dict[str, Any]) -> dict[str, Any] | None:
+    """The customer's dropoff address, structured. Careem withholds the customer's
+    name/phone (only a `user_id`), but the delivery address is exposed."""
+    drop = detail.get("dropoff_address")
+    if not isinstance(drop, dict):
+        return None
+    loc = drop.get("location") if isinstance(drop.get("location"), dict) else {}
+    out = {
+        "area": drop.get("area"),
+        "building": drop.get("building"),
+        "street": drop.get("street"),
+        "number": drop.get("number"),
+        "city": drop.get("city"),
+        "nickname": drop.get("nickname"),
+        "lat": loc.get("lat"),
+        "lng": loc.get("lng"),
+    }
+    out = {k: v for k, v in out.items() if v not in (None, "")}
+    return out or None
+
+
+def _items_from_detail(external: str, items_raw: Any) -> list[StandardOrderItem]:
+    """Per-line items + modifiers from the detail payload. The product name is on
+    `menu_item.item`; each `groups[].options[]` is a chosen option (the priced
+    variant or an add-on), carried as a `StandardModifier` and summed to the line
+    price (Careem puts the price on the option, not the base item)."""
+    items: list[StandardOrderItem] = []
+    for idx, it in enumerate(items_raw or []):
+        if not isinstance(it, dict):
+            continue
+        menu = it.get("menu_item") if isinstance(it.get("menu_item"), dict) else {}
+        name = (
+            _first(menu, "item")
+            or _localized_en(menu.get("item_localized"))
+            or _first(it, "name", "item_name", "title")
+        )
+        count = _num(_first(it, "count", "quantity", "qty")) or Decimal("1")
+        modifiers: list[StandardModifier] = []
+        line_total = Decimal("0")
+        has_price = False
+        for group in it.get("groups") or []:
+            if not isinstance(group, dict):
+                continue
+            for opt in group.get("options") or []:
+                if not isinstance(opt, dict):
+                    continue
+                oname = _first(opt, "name") or _localized_en(opt.get("name_localized"))
+                oprice = _num(_first(opt.get("price") or {}, "total", "original"))
+                ocount = _num(_first(opt, "count", "count_per_item")) or Decimal("1")
+                if oname:
+                    modifiers.append(
+                        StandardModifier(
+                            name=str(oname), quantity=ocount, unit_price=oprice
+                        )
+                    )
+                if oprice is not None:
+                    line_total += oprice * (ocount or Decimal("1"))
+                    has_price = True
+        gross = line_total if has_price else None
+        unit = (gross / count) if (gross is not None and count) else None
+        items.append(
+            StandardOrderItem(
+                source_key=f"{external}:{idx}",
+                item_name=str(name) if name else None,
+                category_name=_first(it, "category_name"),
+                quantity=count,
+                unit_price=unit,
+                gross_sales=gross,
+                amount_is_known=gross is not None,
+                modifiers=modifiers,
+            )
+        )
+    return items
+
+
+def _status_events_from_detail(detail: dict[str, Any]) -> list[StandardStatusEvent]:
+    """The order's lifecycle: the order-level timestamps plus the captain's
+    delivery `status_log` (DRIVER_ASSIGNED → DRIVER_HERE → TRIP_STARTED →
+    TRIP_ENDED). Careem timestamps are tz-aware, kept as-is."""
+    events: list[StandardStatusEvent] = []
+    seq = 0
+    for field, word in (
+        ("pending_at", "pending"),
+        ("accepted_at", "accepted"),
+        ("delivered_at", "delivered"),
+        ("cancelled_at", "cancelled"),
+    ):
+        at = _parse_dt(detail.get(field))
+        if at is not None:
+            seq += 1
+            events.append(StandardStatusEvent(status=word, at=at, sequence=seq))
+    delivery = (
+        detail.get("delivery") if isinstance(detail.get("delivery"), dict) else {}
+    )
+    for entry in delivery.get("status_log") or []:
+        if not isinstance(entry, dict):
+            continue
+        at = _parse_dt(_first(entry, "created_at", "createdAt"))
+        status = _first(entry, "status")
+        if status and at is not None:
+            seq += 1
+            events.append(
+                StandardStatusEvent(
+                    status=str(status).lower(), at=at, sequence=seq, raw=entry
+                )
+            )
+    return events
 
 
 def _num(value: Any) -> Decimal | None:
@@ -196,9 +331,17 @@ class CareemClient(BaseAggregatorClient):
     async def fetch_sales(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> SalesResult:
+        """Two-step: `partner-orders-minimal` lists the ids in the window, then the
+        `v2/admin/orders/{id}` detail (the console's order popup) fills each one
+        with its items, modifiers, captain, dropoff address and status timeline —
+        none of which the minimal feed carries. Detail is best-effort per order: a
+        failed detail falls back to the minimal row so the order is never lost."""
         outlets = await self.discover_outlets(session)
         city_id = self._city_id(session)
         orders: list[StandardOrder] = []
+        seen: set[str] = set()
+        detail_failures = 0
+        capped = False
         for outlet in outlets:
             if not outlet["active"]:
                 continue
@@ -215,18 +358,106 @@ class CareemClient(BaseAggregatorClient):
                 },
             )
             for row in _first(payload, "orders", "data") or []:
-                order = self._order_from(row, outlet["external_outlet_id"])
-                if order is None:
+                minimal = self._order_from(row, outlet["external_outlet_id"])
+                if minimal is None:
                     continue
-                # Careem's `partner-orders-minimal` ignores the startDate/endDate
-                # params and returns a rolling recent window, so honour the
-                # requested range ourselves — by the order's Dubai business date,
-                # the same basis the ingest's window uses. Without this a targeted
-                # historical rerun would pull whatever careem currently returns.
-                bdate = _dubai_date(order.placed_at)
-                if bdate is None or since.date() <= bdate <= until.date():
-                    orders.append(order)
-        return SalesResult(orders=orders)
+                # `partner-orders-minimal` ignores startDate/endDate (rolling
+                # window) AND returns every outlet's orders on each outlet call, so
+                # honour the requested range by Dubai business date and dedupe.
+                bdate = _dubai_date(minimal.placed_at)
+                if not (bdate is None or since.date() <= bdate <= until.date()):
+                    continue
+                if minimal.external_order_id in seen:
+                    continue
+                seen.add(minimal.external_order_id)
+
+                if len(seen) > _MAX_DETAIL_FETCHES:
+                    capped = True
+                    orders.append(minimal)
+                    continue
+                detail = None
+                try:
+                    detail = await self._fetch_detail(
+                        session, minimal.external_order_id
+                    )
+                except AggregatorAuthError:
+                    raise  # a dead session must stop the pass, not be swallowed
+                except Exception:  # noqa: BLE001 — one bad detail must not lose the run
+                    logger.exception(
+                        "careem order %s detail failed", minimal.external_order_id
+                    )
+                    detail_failures += 1
+                orders.append(
+                    self._order_from_detail(detail, minimal)
+                    if detail is not None
+                    else minimal
+                )
+        notes = []
+        if detail_failures:
+            notes.append(f"{detail_failures} order detail(s) unavailable")
+        if capped:
+            notes.append(f"detail fetch capped at {_MAX_DETAIL_FETCHES}")
+        return SalesResult(orders=orders, truncation_note="; ".join(notes) or None)
+
+    async def _fetch_detail(
+        self, session: LoadedSession, order_id: str
+    ) -> dict[str, Any] | None:
+        """The rich order detail (`v2/admin/orders/{id}`), or None if it has no
+        body. Auth failures propagate; other errors are the caller's to handle."""
+        payload = await self.request_json(
+            session, "GET", f"{_ORDER_DETAIL}/{order_id}?all_localizations=true"
+        )
+        if not isinstance(payload, dict):
+            return None
+        root = payload.get("data", payload)
+        return root if isinstance(root, dict) else None
+
+    def _order_from_detail(
+        self, detail: dict[str, Any], minimal: StandardOrder
+    ) -> StandardOrder:
+        """Build the full order from the detail payload, keeping the minimal row's
+        outlet/date resolution as the fallback."""
+        external = str(_first(detail, "id") or minimal.external_order_id)
+        placed_at = _parse_dt(_first(detail, "created_at", "createdAt")) or (
+            minimal.placed_at
+        )
+        bdate = _dubai_date(placed_at)
+        price = detail.get("price") if isinstance(detail.get("price"), dict) else {}
+        gross = _num(_first(detail, "total_price", "charge_amount")) or _num(
+            _first(price, "total", "sub_total", "original")
+        )
+        merchant = (
+            detail.get("merchant") if isinstance(detail.get("merchant"), dict) else {}
+        )
+        delivery = (
+            detail.get("delivery") if isinstance(detail.get("delivery"), dict) else {}
+        )
+        captain = (
+            delivery.get("captain") if isinstance(delivery.get("captain"), dict) else {}
+        )
+        currency = _currency_code(_first(merchant.get("currency") or {}, "code"))
+        return StandardOrder(
+            external_order_id=external,
+            external_outlet_id=str(
+                _first(merchant, "id") or minimal.external_outlet_id
+            ),
+            business_date=bdate.isoformat() if bdate else minimal.business_date,
+            placed_at=placed_at,
+            accepted_at=_parse_dt(detail.get("accepted_at")),
+            delivered_at=_parse_dt(detail.get("delivered_at")),
+            cancelled_at=_parse_dt(detail.get("cancelled_at")),
+            status=_first(detail, "status", "state") or minimal.status,
+            currency=currency or minimal.currency or "AED",
+            customer_address=_careem_address(detail),
+            driver_name=_first(captain, "name") or None,
+            driver_phone=_first(captain, "mobile", "phone") or None,
+            driver_status=_first(delivery, "status") or None,
+            status_events=_status_events_from_detail(detail),
+            gross_sales=gross if gross is not None else minimal.gross_sales,
+            vat_amount=_num(_first(price, "tax")),
+            items=_items_from_detail(external, detail.get("items")),
+            raw=detail,
+        )
 
     def _order_from(self, row: dict[str, Any], outlet_id: str) -> StandardOrder | None:
         external = _first(row, "id", "orderId", "order_id", "reference")

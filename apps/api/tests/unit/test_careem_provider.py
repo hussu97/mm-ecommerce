@@ -1,20 +1,141 @@
-"""Careem provider — the monthly Tax-Invoice archival.
+"""Careem provider — order detail (v2/admin/orders) + the monthly Tax-Invoice.
 
-Careem's partner API is thin: the order feed carries no items/modifiers/customer/
-captain or per-order fees, so the fees live only on the monthly Tax Invoice PDF.
-`fetch_statements` enumerates those invoices (`billingReports/list`), resolves each
-one's pre-signed S3 URL (`billingReports/{id}/download`), fetches the PDF and
-archives it. These endpoints/shapes were confirmed against the live console; this
-pins the orchestration (enumerate → download → archive → stamp) with them mocked.
+The `partner-orders-minimal` feed is id/status/date/total only, but the console's
+order popup (`GET /v2/admin/orders/{id}`) carries items, modifiers, the captain,
+the customer dropoff address and the delivery status timeline; `_order_from_detail`
+maps it. Per-order fees are still absent (Careem bills the merchant monthly), so
+`fetch_statements` enumerates the monthly Tax Invoices (`billingReports/list`),
+resolves each pre-signed S3 URL (`billingReports/{id}/download`) and archives the
+PDF. All endpoints/shapes were confirmed against the live console; the parsers are
+pinned here against faithful payload slices.
 """
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 
+from app.services.aggregators.normalized import StandardOrder
 from app.services.aggregators.statement_docs import StoredStatementInvoice
 from app.services.providers import careem_provider
 from app.services.providers.careem_provider import CareemClient
+
+# A faithful slice of a real v2/admin/orders/{id} detail payload.
+_DETAIL = {
+    "id": 168934434,
+    "status": "delivered",
+    "created_at": "2026-08-28T15:36:52+00:00",
+    "accepted_at": "2026-08-28T15:37:00+00:00",
+    "delivered_at": "2026-08-28T15:56:48+00:00",
+    "cancelled_at": None,
+    "pending_at": "2026-08-28T15:36:55+00:00",
+    "merchant": {"id": 1067984, "currency": {"code": "AED"}},
+    "price": {"total": 55, "sub_total": 55, "tax": 0},
+    "dropoff_address": {
+        "area": "Jumeirah Village Circle (JVC)",
+        "building": "Oakley Square Residences",
+        "number": "B-312 - Floor No 3",
+        "city": "Dubai",
+        "nickname": "Jordan’s Home",
+        "street": None,
+        "location": {"lat": 25.0594, "lng": 55.2119},
+    },
+    "delivery": {
+        "status": "TRIP_ENDED",
+        "captain": {"id": 2442962, "mobile": "+971549931225", "name": "Taimoor Akram"},
+        "status_log": [
+            {"status": "DRIVER_ASSIGNED", "created_at": "2026-08-28T15:37:14+00:00"},
+            {"status": "DRIVER_HERE", "created_at": "2026-08-28T15:40:57+00:00"},
+            {"status": "TRIP_STARTED", "created_at": "2026-08-28T15:42:18+00:00"},
+            {"status": "TRIP_ENDED", "created_at": "2026-08-28T15:56:47+00:00"},
+        ],
+    },
+    "items": [
+        {
+            "category_name": "Brownies",
+            "count": 1,
+            "menu_item": {
+                "item": "Lindor Brownies",
+                "item_localized": {"en": "Lindor Brownies"},
+            },
+            "groups": [
+                {
+                    "name": "Your Choice of Quantity",
+                    "options": [
+                        {
+                            "name": "3 Pieces",
+                            "count": 1,
+                            "price": {"original": 55, "total": 55},
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_order_from_detail_extracts_items_modifiers_driver_address_timeline():
+    client = CareemClient()
+    minimal = StandardOrder(
+        external_order_id="168934434",
+        external_outlet_id="1067984",
+        placed_at=None,
+        status="delivered",
+        currency="AED",
+        gross_sales=Decimal("55"),
+    )
+    order = client._order_from_detail(_DETAIL, minimal)
+
+    # order-level
+    assert order.external_order_id == "168934434"
+    assert order.gross_sales == Decimal("55")
+    assert order.business_date == "2026-08-28"  # Dubai date of 15:36 UTC
+    assert order.placed_at is not None and order.placed_at.tzinfo is not None
+    assert order.accepted_at is not None and order.delivered_at is not None
+    # customer address (Careem gives no name/phone, but the dropoff address)
+    assert order.customer_address["area"].startswith("Jumeirah Village")
+    assert order.customer_address["building"] == "Oakley Square Residences"
+    assert order.customer_name is None
+    # captain / delivery agent
+    assert order.driver_name == "Taimoor Akram"
+    assert order.driver_phone == "+971549931225"
+    assert order.driver_status == "TRIP_ENDED"
+    # items + modifiers
+    assert len(order.items) == 1
+    line = order.items[0]
+    assert line.item_name == "Lindor Brownies"
+    assert line.category_name == "Brownies"
+    assert line.quantity == Decimal("1")
+    assert line.gross_sales == Decimal("55")
+    assert [m.name for m in line.modifiers] == ["3 Pieces"]
+    assert line.modifiers[0].unit_price == Decimal("55")
+    # status timeline: order lifecycle + captain movement, tz-aware, ordered
+    words = [e.status for e in order.status_events]
+    assert "pending" in words and "accepted" in words and "delivered" in words
+    assert "driver_assigned" in words and "trip_ended" in words
+    assert all(e.at.tzinfo is not None for e in order.status_events)
+    assert [e.sequence for e in order.status_events] == list(
+        range(1, len(order.status_events) + 1)
+    )
+
+
+def test_order_from_detail_falls_back_to_minimal_outlet_when_detail_thin():
+    client = CareemClient()
+    minimal = StandardOrder(
+        external_order_id="999",
+        external_outlet_id="1069463",
+        business_date="2026-08-27",
+        status="delivered",
+        currency="AED",
+        gross_sales=Decimal("40"),
+    )
+    order = client._order_from_detail({"id": 999}, minimal)
+    assert order.external_outlet_id == "1069463"  # from minimal
+    assert order.business_date == "2026-08-27"
+    assert order.items == []
+    assert order.driver_name is None
+
 
 _REPORTS = {
     "reports": [
