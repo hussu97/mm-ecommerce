@@ -47,23 +47,26 @@ const CHANNEL_OPTIONS = [
 const MATCH_STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'matched', label: 'Matched' },
-  { value: 'unmatched_agg', label: 'Unmatched (aggregator)' },
+  { value: 'unmatched_agg', label: 'Unmatched (no POS order)' },
   { value: 'unmatched_mm', label: 'Unmatched (MM)' },
-  { value: 'no_maker_side', label: 'No maker side' },
+  { value: 'no_maker_side', label: 'Aggregator-only branch' },
 ];
 
 const MATCH_LABELS: Record<ReconMatchStatus, string> = {
   matched: 'Matched',
-  unmatched_agg: 'Unmatched agg',
+  unmatched_agg: 'No POS order',
   unmatched_mm: 'Unmatched MM',
-  no_maker_side: 'No maker side',
+  // Not an error: this order's branch is aggregator-only (no in-house POS/maker
+  // order to check against), so the aggregator's own figures ARE the record. It
+  // is still promoted to a standalone MM order, linked in the Order column.
+  no_maker_side: 'Aggregator-only',
 };
 
 const MATCH_VARIANTS: Record<ReconMatchStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
   matched: 'success',
   unmatched_agg: 'warning',
   unmatched_mm: 'warning',
-  no_maker_side: 'danger',
+  no_maker_side: 'neutral',
 };
 
 /** Prettify a channel code for a card title without a lookup table. */
@@ -203,7 +206,13 @@ export default function ReconciliationPage() {
         <div>
           <div className="font-medium">{r.external_order_id ?? '—'}</div>
           <div className="font-mono text-xs text-gray-500">
-            {r.mm_order_id ? `MM ${r.mm_order_id}` : 'no MM order'}
+            {r.mm_order_id ? (
+              `MM ${r.mm_order_id}`
+            ) : (
+              // Only a GrubOps-branch order with no matching POS order genuinely
+              // lacks one; an aggregator-only order now carries its standalone.
+              <span className="text-amber-600">no POS order</span>
+            )}
           </div>
         </div>
       ),
@@ -404,9 +413,13 @@ function summaryCards(
       tone: t.unmatched_agg > 0 ? 'warning' : 'default',
     },
     {
-      label: 'No maker side',
+      // Expected, not a fault: orders on aggregator-only branches, where there is
+      // no in-house POS order to check against. Neutral tone — reddening it made
+      // the steady state of three of our four aggregator branches look broken.
+      label: 'Aggregator-only',
       value: String(t.no_maker_side),
-      tone: t.no_maker_side > 0 ? 'danger' : 'default',
+      tone: 'default',
+      sub: 'no POS side to check',
     },
     {
       label: 'Commission var.',

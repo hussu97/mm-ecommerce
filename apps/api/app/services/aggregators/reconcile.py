@@ -247,7 +247,20 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
         "external_order_id": agg.external_order_id,
         "branch_id": agg.branch_id,
         "aggregator_order_id": agg.id,
-        "mm_order_id": mm_order.id if mm_order else None,
+        # The MM order this row points at. For a matched GrubOps order it is the
+        # maker order we compared against. For an aggregator-only branch
+        # (`no_maker_side`) there is nothing to compare against, but the order was
+        # still promoted to a STANDALONE MM order — reference it so the screen
+        # links through instead of falsely reading "no MM order". For a GrubOps
+        # branch with no maker order found (`unmatched_agg`) it stays NULL, which
+        # is the honest state the `no_mm_order` flag reports.
+        "mm_order_id": (
+            mm_order.id
+            if mm_order
+            else agg.mm_order_id
+            if match_status == MATCH_NO_MAKER_SIDE
+            else None
+        ),
         "match_status": match_status,
         "item_discrepancy": item_discrepancy,
         "item_flag": item_flag,
@@ -301,6 +314,15 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
             or_(
                 recon.id.is_(None),
                 AggregatorOrder.updated_at > recon.reconciled_at,
+                # …and when promotion has (re)linked the MM order SINCE the last
+                # reconcile. Promotion advances `promoted_at`, not `updated_at`
+                # (which is the honest per-scrape change signal), so an order first
+                # reconciled before its standalone MM order was filed would keep a
+                # NULL `mm_order_id` on its recon row forever — the "no MM order" a
+                # promoted aggregator-only order showed for. Re-selecting on
+                # promoted_at copies the fresh link in. Converges: reconcile stamps
+                # reconciled_at = now (> promoted_at), so the next pass skips it.
+                AggregatorOrder.promoted_at > recon.reconciled_at,
             ),
         )
     )
