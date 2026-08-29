@@ -192,6 +192,14 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: them eventually not.
     payment_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    #: What the marketplace charged for a cancellation on an aggregator order —
+    #: Noon's "cancellation fee", Talabat's "customer compensation". A fee the
+    #: shop bears that is neither commission nor payment processing, kept on its
+    #: own column so it nets the order correctly and the admin can show it apart
+    #: from the marketplace's cut. Null on website orders and on any aggregator
+    #: order the marketplace did not charge one (null ≠ zero, as above).
+    cancellation_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
+
     #: How much of `total` has been sent back to the card.
     #:
     #: Not a boolean, because a partial refund is the normal case: the shop

@@ -54,6 +54,7 @@ from app.models.aggregator import (
     AggregatorBranchMap,
     AggregatorOrder,
     AggregatorOrderItem,
+    AggregatorOrderStatusEvent,
     AggregatorPayout,
     AggregatorSession,
     AggregatorStatement,
@@ -185,6 +186,10 @@ _PRESERVE_IF_NULL = (
     "statement_id",
     "customer_name",
     "customer_phone",
+    "customer_address",
+    "driver_name",
+    "driver_phone",
+    "driver_status",
     "accepted_at",
     "delivered_at",
     "cancelled_at",
@@ -263,6 +268,14 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "currency": order.currency,
         "customer_name": order.customer_name,
         "customer_phone": order.customer_phone,
+        "customer_address": (
+            _json_safe(order.customer_address)
+            if order.customer_address is not None
+            else None
+        ),
+        "driver_name": order.driver_name,
+        "driver_phone": order.driver_phone,
+        "driver_status": order.driver_status,
         "gross_sales": order.gross_sales,
         "net_sales": order.net_sales,
         "commission_amount": order.commission_amount,
@@ -321,6 +334,31 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
             .values(**item_values)
             .on_conflict_do_update(
                 constraint="uq_aggregator_order_item", set_=item_update
+            )
+        )
+
+    for ev in order.status_events:
+        ev_values = {
+            "channel": channel,
+            "external_order_id": order.external_order_id,
+            "status": ev.status,
+            "at": _aware_business(ev.at),
+            "sequence": ev.sequence,
+            "raw": _json_safe(ev.raw) if ev.raw is not None else None,
+        }
+        # `status` is part of the natural key — an order revisiting a status is
+        # the same step, upserted, not a new row. `at`/`sequence` still refresh.
+        ev_update = {
+            k: v
+            for k, v in ev_values.items()
+            if k not in ("channel", "external_order_id", "status")
+        }
+        ev_update["updated_at"] = _touched_at(AggregatorOrderStatusEvent, ev_update)
+        await db.execute(
+            pg_insert(AggregatorOrderStatusEvent)
+            .values(**ev_values)
+            .on_conflict_do_update(
+                constraint="uq_aggregator_order_status_event", set_=ev_update
             )
         )
 

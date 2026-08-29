@@ -12389,6 +12389,8 @@ export interface components {
         OrderEconomicsResponse: {
             /** Aggregator Fee */
             aggregator_fee: number | null;
+            /** Cancellation Fee */
+            cancellation_fee: number | null;
             /** Charged */
             charged: number;
             /** Cost Cover */

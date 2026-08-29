@@ -467,6 +467,23 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     customer_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The marketplace's delivery address for the order, as it exposes it —
+    #: structured (`{line, area, city, building, ...}`) when the portal gives
+    #: parts, else `{"text": "..."}`. JSONB to mirror `orders.shipping_address_
+    #: snapshot`, which promotion copies this into. Null where the channel masks
+    #: it (Keeta redacts the address once an order is delivered) or never gives one.
+    customer_address: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    #: The marketplace's own rider for this order — a name and a mobile — captured
+    #: at the provider edge, the same little the GrubOps ingest surfaces on
+    #: `orders.aggregator_driver_*`. Promotion copies these onto the MM order. Null
+    #: until the marketplace assigns a rider, and where the payload masks them.
+    driver_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    driver_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The marketplace's own delivery-job status word, unconstrained by design
+    #: (provider vocabulary, canon rule 6). Null on non-delivered channels.
+    driver_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     gross_sales: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     net_sales: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -562,6 +579,63 @@ class AggregatorOrderItem(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<AggregatorOrderItem {self.channel} {self.item_name}>"
+
+
+class AggregatorOrderStatusEvent(Base, UUIDMixin, TimestampMixin):
+    """One order arriving at one marketplace status, at the marketplace's time.
+
+    The channel-side twin of `order_status_events`: where that table records the
+    MM order walking OUR lifecycle ladder, this records the marketplace's own,
+    richer trace (Keeta's `merchantOrderTraces`, Careem/Deliveroo/Talabat
+    timelines) — "order placed", "finding courier", "rider near pickup",
+    "delivered" — words we do not map onto our enum and timestamps that are the
+    marketplace's, not ours. Captured at the provider edge on the frequent sales
+    cadence, so it exists before (and independently of) promotion; promotion can
+    then surface it on the promoted order's admin timeline.
+
+    Keyed on `(channel, external_order_id, status)` so a re-scrape upserts the
+    same step rather than duplicating it. `status` is provider-verbatim and
+    unconstrained by design (canon rule 6). `at` is tz-aware (Dubai wall-clock
+    resolved via `ingest._aware_business`, never a naive value into timestamptz).
+    """
+
+    __tablename__ = "aggregator_order_status_event"
+
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    external_order_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: The marketplace's own status word for this step, verbatim.
+    status: Mapped[str] = mapped_column(String(60), nullable=False)
+    #: When the marketplace says the step happened (tz-aware).
+    at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Ordinal within the trace when the portal exposes one, so equal/overlapping
+    #: timestamps still render in the marketplace's order. Null when absent.
+    sequence: Mapped[int | None] = mapped_column(nullable=True)
+    raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "channel",
+            "external_order_id",
+            "status",
+            name="uq_aggregator_order_status_event",
+        ),
+        CheckConstraint(
+            f"channel IN ({_CHANNELS_SQL})",
+            name="ck_aggregator_order_status_event_channel",
+        ),
+        Index(
+            "ix_aggregator_order_status_event_order",
+            "channel",
+            "external_order_id",
+            "at",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AggregatorOrderStatusEvent {self.channel} "
+            f"{self.external_order_id} {self.status}>"
+        )
 
 
 class AggregatorStatement(Base, UUIDMixin, TimestampMixin):

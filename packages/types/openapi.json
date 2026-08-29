@@ -15062,6 +15062,17 @@
             ],
             "title": "Aggregator Fee"
           },
+          "cancellation_fee": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Fee"
+          },
           "charged": {
             "title": "Charged",
             "type": "number"
@@ -15158,6 +15169,7 @@
           "processing_fee",
           "processing_fee_is_estimated",
           "refunded",
+          "cancellation_fee",
           "net",
           "margin_on_charged",
           "margin_on_items",

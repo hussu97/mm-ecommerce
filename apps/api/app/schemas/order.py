@@ -419,6 +419,9 @@ class OrderEconomicsResponse(BaseModel):
     #: until the charge settles.
     processing_fee_is_estimated: bool
     refunded: float
+    #: The marketplace's cancellation / customer-compensation charge on an
+    #: aggregator order. Null on website/counter orders and where none was charged.
+    cancellation_fee: float | None
     net: float
     #: Net as a share of everything the customer handed over, and of the goods
     #: alone. Null when the base is zero — a full-discount order has no

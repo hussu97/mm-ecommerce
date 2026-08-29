@@ -60,6 +60,23 @@ class StandardOrderItem:
 
 
 @dataclass(frozen=True)
+class StandardStatusEvent:
+    """One step in a marketplace's own order trace, at the marketplace's time.
+
+    The provider-verbatim timeline (Keeta's `merchantOrderTraces`, the Careem/
+    Deliveroo/Talabat order timelines). `status` is the marketplace's word, kept
+    as-is; `at` is a marketplace instant (naive Dubai wall-clock is fine — the
+    ingest funnels it through `_aware_business`). `sequence` orders steps that
+    share a timestamp.
+    """
+
+    status: str
+    at: datetime | None = None
+    sequence: int | None = None
+    raw: dict | None = None
+
+
+@dataclass(frozen=True)
 class StandardOrder:
     """One order as a marketplace's ledger holds it — the sales truth."""
 
@@ -81,6 +98,19 @@ class StandardOrder:
     currency: str | None = None
     customer_name: str | None = None
     customer_phone: str | None = None
+    #: The marketplace's delivery address, structured when the portal gives parts
+    #: (`{"line": ..., "area": ..., "city": ...}`) else `{"text": "..."}`. Feeds
+    #: `aggregator_order.customer_address`, which promotion copies into
+    #: `orders.shipping_address_snapshot`. None where the channel masks/omits it.
+    customer_address: dict | None = None
+    #: The marketplace's own rider for this order, when exposed. Feed
+    #: `aggregator_order.driver_*`; promotion copies onto `orders.aggregator_driver_*`.
+    driver_name: str | None = None
+    driver_phone: str | None = None
+    driver_status: str | None = None
+    #: The marketplace's own status trace (see `StandardStatusEvent`). Empty when
+    #: the channel exposes only a single current status.
+    status_events: list[StandardStatusEvent] = field(default_factory=list)
     gross_sales: Decimal | None = None
     net_sales: Decimal | None = None
     commission_amount: Decimal | None = None

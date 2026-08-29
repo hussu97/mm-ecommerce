@@ -42,6 +42,11 @@ def _agg(**over):
         promoted_at=None,
         customer_name=None,
         customer_phone=None,
+        customer_address=None,
+        driver_name=None,
+        driver_phone=None,
+        driver_status=None,
+        cancellation_fee=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -84,7 +89,14 @@ async def test_refresh_order_backfills_missing_customer(monkeypatch):
     monkeypatch.setattr(promote, "_drive_status", _noop)
 
     agg = _agg(customer_name="Aisha", customer_phone="+971500000000")
-    order = SimpleNamespace(customer_name=None, customer_phone=None)
+    order = SimpleNamespace(
+        customer_name=None,
+        customer_phone=None,
+        shipping_address_snapshot=None,
+        aggregator_driver_name=None,
+        aggregator_driver_phone=None,
+        aggregator_driver_status=None,
+    )
     await promote._refresh_order(_FakeDB(), order, agg)
     assert order.customer_name == "Aisha"
     assert order.customer_phone == "+971500000000"
@@ -100,7 +112,14 @@ async def test_refresh_order_never_overwrites_an_existing_customer(monkeypatch):
     monkeypatch.setattr(promote, "_drive_status", _noop)
 
     agg = _agg(customer_name="Scraped Name")
-    order = SimpleNamespace(customer_name="GrubOps Name", customer_phone="+971")
+    order = SimpleNamespace(
+        customer_name="GrubOps Name",
+        customer_phone="+971",
+        shipping_address_snapshot={"text": "existing"},
+        aggregator_driver_name="GrubOps Rider",
+        aggregator_driver_phone="+9715",
+        aggregator_driver_status="ASSIGNED",
+    )
     await promote._refresh_order(_FakeDB(), order, agg)
     assert order.customer_name == "GrubOps Name"  # not overwritten
 
@@ -629,6 +648,11 @@ def _agg_with_customer(**over):
         promoted_at=None,
         customer_name=None,
         customer_phone=None,
+        customer_address=None,
+        driver_name=None,
+        driver_phone=None,
+        driver_status=None,
+        cancellation_fee=None,
     )
     base.update(over)
     return SimpleNamespace(**base)

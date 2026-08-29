@@ -299,6 +299,7 @@ async def stamp(
     *,
     actual_commission: Decimal | None = None,
     actual_payment_fee: Decimal | None = None,
+    actual_cancellation_fee: Decimal | None = None,
 ) -> OrderFees:
     """
     Write both fees onto the order, at the moment its total is final.
@@ -329,5 +330,11 @@ async def stamp(
     order.payment_fee = (
         actual_payment_fee if actual_payment_fee is not None else fees.payment_fee
     )
+    # The marketplace's cancellation / customer-compensation charge, when the
+    # settled aggregator order carried one. There is no modelled counterpart —
+    # it is purely a reported actual — so a null leaves the column untouched
+    # rather than zeroing it (null ≠ "charged nothing").
+    if actual_cancellation_fee is not None:
+        order.cancellation_fee = actual_cancellation_fee
     await db.flush()
     return fees

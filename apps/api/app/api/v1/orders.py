@@ -615,6 +615,11 @@ async def get_order_economics(
         processing_fee=float(result.processing_fee),
         processing_fee_is_estimated=result.processing_fee_is_estimated,
         refunded=float(result.refunded),
+        cancellation_fee=(
+            float(result.cancellation_fee)
+            if result.cancellation_fee is not None
+            else None
+        ),
         net=float(result.net),
         margin_on_charged=(
             float(result.margin_on_charged)

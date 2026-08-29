@@ -24,6 +24,7 @@ def _economics(
     refunded="0.00",
     before_discount="85.00",
     aggregator=None,
+    cancellation=None,
     expects_cost_of_sale=True,
 ) -> OrderEconomics:
     return OrderEconomics(
@@ -35,6 +36,7 @@ def _economics(
         processing_fee=Decimal(fee),
         processing_fee_is_estimated=True,
         refunded=Decimal(refunded),
+        cancellation_fee=Decimal(cancellation) if cancellation is not None else None,
         expects_cost_of_sale=expects_cost_of_sale,
     )
 
@@ -160,6 +162,29 @@ def test_the_commission_comes_off_the_net_like_a_van_would():
     Talabat order on the screen showed a net that was a quarter too high.
     """
     e = _economics(charged="100.00", courier=None, fee="0.00", aggregator="26.25")
+    assert e.net == Decimal("73.75")
+
+
+def test_a_cancellation_fee_comes_off_the_net_too():
+    """
+    The marketplace's cancellation / customer-compensation charge is a cost the
+    shop bears — neither commission nor processing — so it nets the order down
+    like the commission does, on its own line.
+    """
+    e = _economics(
+        charged="100.00",
+        courier=None,
+        fee="0.00",
+        aggregator="26.25",
+        cancellation="4.00",
+    )
+    assert e.net == Decimal("69.75")
+
+
+def test_no_cancellation_fee_leaves_the_net_untouched():
+    """A null cancellation fee (the usual case) subtracts nothing."""
+    e = _economics(charged="100.00", courier=None, fee="0.00", aggregator="26.25")
+    assert e.cancellation_fee is None
     assert e.net == Decimal("73.75")
 
 

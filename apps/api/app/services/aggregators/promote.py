@@ -218,6 +218,7 @@ def _actual_fee_overrides(agg: AggregatorOrder) -> dict:
     return {
         "actual_commission": agg.commission_amount,
         "actual_payment_fee": agg.payment_fee,
+        "actual_cancellation_fee": agg.cancellation_fee,
     }
 
 
@@ -467,6 +468,15 @@ async def _build_order(
         email="",
         customer_name=agg.customer_name or None,
         customer_phone=agg.customer_phone or None,
+        # The marketplace's delivery address, into the same JSONB column a website
+        # order snapshots its address into, so the admin renders both the same way.
+        shipping_address_snapshot=agg.customer_address or None,
+        # The marketplace's own rider, into the same columns the GrubOps ingest
+        # fills on a Barsha/Sharjah order — so a DSO/Karama promote-owned order
+        # shows a driver on the packed screen too.
+        aggregator_driver_name=agg.driver_name or None,
+        aggregator_driver_phone=agg.driver_phone or None,
+        aggregator_driver_status=agg.driver_status or None,
         locale="en",
         delivery_method="delivery",
         order_type="delivery",
@@ -544,6 +554,16 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
         order.customer_name = agg.customer_name
     if not order.customer_phone and agg.customer_phone:
         order.customer_phone = agg.customer_phone
+    if not order.shipping_address_snapshot and agg.customer_address:
+        order.shipping_address_snapshot = agg.customer_address
+    # DA info: refresh from the scrape (fill-only against a GrubOps-sourced order,
+    # which carries its own rider from GrubTech and must not be overwritten).
+    if not order.aggregator_driver_name and agg.driver_name:
+        order.aggregator_driver_name = agg.driver_name
+    if not order.aggregator_driver_phone and agg.driver_phone:
+        order.aggregator_driver_phone = agg.driver_phone
+    if not order.aggregator_driver_status and agg.driver_status:
+        order.aggregator_driver_status = agg.driver_status
     # Correct the created_at of an order first filed before this rule (or one this
     # pass converged onto) to the marketplace placed_at, so historical rows line
     # up with the aggregator timeline too. Only when the scrape has a timestamp.
