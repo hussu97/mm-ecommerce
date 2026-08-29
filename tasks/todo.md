@@ -138,3 +138,28 @@ Fix — re-normalise from stored `raw` instead of skipping:
 - [x] Tests: `order_from_raw` round-trips a Keeta payload to the correct instant;
       `_renormalize_stored` re-ingests each stored row; `_push_order_parser` maps
       Keeta only. ruff/format/openapi-check clean; 82 ingestion tests pass.
+
+## Follow-up 3 — robustness: Talabat GraphQL auth-error classification
+
+Backfill of Aug 27–28 surfaced Careem + Talabat failures on expired sessions (401).
+- **Careem** hits a real HTTP 401 → the base already raises `AggregatorAuthError`
+  ("session no longer authenticates"). Correctly classified; it just needs a
+  re-login (bootstrap). No code change.
+- **Talabat** buries its `vp-report-builder` auth failure inside a GraphQL **200**
+  body (`errors`: 401 Unauthorized / TOKEN_EXPIRED), so the base's HTTP-status check
+  never saw it — `_graphql` raised the generic `AggregatorUnavailableError`, so the
+  sales sweep neither flagged the session for re-login nor read clearly. Only the
+  finance path (a real 401) detected the dead session.
+
+Fix (Talabat only):
+- [x] `_graphql_errors_are_auth()` — scans a GraphQL `errors` payload for
+      token-expiry / unauthorized / unauthenticated markers (no bare "401", which a
+      store id could carry, so a real VALIDATION_ERROR still reads as unavailable).
+- [x] `_graphql` raises `AggregatorAuthError` for those, so the sweep flips the
+      session to `needs_bootstrap` and the run row reads "session token expired —
+      needs a re-login", consistent with the finance path and with Careem.
+- [x] Tests for the classifier and `_graphql` auth-vs-unavailable behaviour.
+
+Note: this improves *detection* — it can't re-authenticate a dead session. Both
+Careem and Talabat still need a headed re-login (bootstrap worker) to recover; the
+fix makes the failure actionable and correctly routes it into that flow.

@@ -327,6 +327,28 @@ def _first(row: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+#: Markers that mean a Talabat GraphQL `errors` array is really a dead session,
+#: not a transient upstream hiccup. The gateway answers 200 and buries the auth
+#: failure of a downstream service (`vp-report-builder`) in the errors — an expired
+#: bearer surfaces as a 401 SUBREQUEST_HTTP_ERROR or a TOKEN_EXPIRED malformed
+#: response — so the HTTP status the base inspects never sees it. Matched against
+#: the serialised errors, lower-cased; kept auth-specific (no bare "401", which a
+#: store id could carry) so a real VALIDATION_ERROR still reads as unavailable and
+#: retries rather than forcing a re-login.
+_GRAPHQL_AUTH_MARKERS = (
+    "token_expired",
+    "token expired",
+    "unauthorized",
+    "unauthenticated",
+)
+
+
+def _graphql_errors_are_auth(errors: Any) -> bool:
+    """Whether a GraphQL `errors` payload signals an expired/invalid session."""
+    blob = str(errors).lower()
+    return any(marker in blob for marker in _GRAPHQL_AUTH_MARKERS)
+
+
 def _parse_dt(value: Any) -> datetime | None:
     """The CSV's `Order received at` (`YYYY-MM-DD HH:MM[:SS]`) as a datetime."""
     if not value or not isinstance(value, str):
@@ -692,9 +714,19 @@ class TalabatClient(BaseAggregatorClient):
             },
         )
         if isinstance(payload, dict) and payload.get("errors"):
+            errors = payload["errors"]
+            # A 200 whose errors carry an expired/invalid token is a dead session,
+            # not a transient upstream error — raise the auth failure so the sweep
+            # flips the session to `needs_bootstrap` (a re-login) and the run row
+            # reads "session expired", instead of retrying a session that can only
+            # be revived by a browser bootstrap.
+            if _graphql_errors_are_auth(errors):
+                raise AggregatorAuthError(
+                    f"{self.channel} GraphQL {operation_name}: session token "
+                    "expired — needs a re-login"
+                )
             raise AggregatorUnavailableError(
-                f"{self.channel} GraphQL {operation_name} returned errors: "
-                f"{payload['errors']}"
+                f"{self.channel} GraphQL {operation_name} returned errors: {errors}"
             )
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, dict):
