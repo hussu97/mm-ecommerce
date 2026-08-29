@@ -940,6 +940,9 @@ it here and redeploying.
 | `AGGREGATOR_RUN_HOUR_DXB` | `23` | Hour (Asia/Dubai) of the once-daily pass that mirrors sales + finance and reconciles every aggregator. Wall-clock anchored with a boot catch-up so a redeploy never skips a run |
 | `AGGREGATOR_LOOKBACK_DAYS` | `1` | The sales lookback window for the daily pass. 1 day for now; widen as we scale |
 | `AGGREGATOR_PROMOTE_LOOKBACK_DAYS` | `30` | How far back promotion reaches — separate from the sales lookback. Statements settle days-to-weeks late and a statement line only links to its MM order once promoted, so promotion must cover the settlement window or the payout→statement→line→order→mm chain never closes |
+| `AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS` | `12` | On a GrubOps branch, promotion defers rather than filing a standalone (which would duplicate the GrubOps order) for this many hours; past the grace it files one as recovery |
+| `AGGREGATOR_REAUTH_WAIT_SECONDS` | `360` | Trigger-based re-auth: an ingest pass that hits a dead/expired session flags it and waits this long for the worker's reauth daemon to bring it back, then retries. 0 disables the wait |
+| `AGGREGATOR_REAUTH_POLL_SECONDS` | `5.0` | How often the waiting ingest pass re-checks whether the session is live again |
 | `AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS` | `14` | Noon publishes wallet statements ~weekly; its finance discovery widens the 1-day lookback to at least one publish cycle |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
