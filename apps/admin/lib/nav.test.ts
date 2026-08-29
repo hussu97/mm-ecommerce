@@ -40,9 +40,11 @@ describe('activeNavHref', () => {
   });
 
   it('lets a more-specific marketplace entry override the owned area', () => {
-    // Logins has its own sidebar entry, so its longer covering prefix wins over
-    // Reconciliation's `/aggregators` match.
+    // Logins, Invoices and Fees have their own sidebar entries, so their longer
+    // covering prefix wins over Reconciliation's `/aggregators` match.
     expect(activeNavHref('/aggregators/logins')).toBe('/aggregators/logins');
+    expect(activeNavHref('/aggregators/invoices')).toBe('/aggregators/invoices');
+    expect(activeNavHref('/aggregators/fees')).toBe('/aggregators/fees');
   });
 
   it('lights a section up from one of its detail pages', () => {

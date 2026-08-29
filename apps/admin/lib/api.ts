@@ -34,6 +34,9 @@ type BranchMapRow = Schemas['AggregatorBranchMapOut'];
 type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 type AggregatorAccount = Schemas['AggregatorAccountPublic'];
 type AggregatorAccountInput = Schemas['AggregatorAccountPush'];
+type StatementList = Schemas['AggregatorStatementList'];
+type InvoiceUrl = Schemas['AggregatorInvoiceUrl'];
+type FeesSummary = Schemas['AggregatorFeesSummaryOut'];
 
 // The unified external-system item map (GrubOps + every aggregator) — one table,
 // one generic API. Names straight from the generated contract (rule 8).
@@ -680,6 +683,32 @@ export const reconciliationApi = {
   /** Per-channel roll-up and a grand total, for the stat cards. */
   summary: (params?: { channel?: string; branch_id?: string }) =>
     api.get<ReconSummary>(`/aggregators/reconciliation/summary${buildQs(params)}`),
+};
+
+// ─── Aggregator settlement invoices + fees/VAT ────────────────────────────────
+export const aggregatorInvoicesApi = {
+  /** The settlement statements for the Invoices screen — newest period first,
+   *  filtered by channel, period-end date range, and whether a document exists. */
+  list: (params: {
+    channel?: string;
+    date_from?: string;
+    date_to?: string;
+    has_invoice?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => api.get<StatementList>(`/aggregators/statements${buildQs(params)}`),
+  /** A short-lived signed URL to download one statement's archived invoice. The
+   *  caller opens `url` in a new tab; it expires in an hour. */
+  invoiceUrl: (statementId: string) =>
+    api.get<InvoiceUrl>(`/aggregators/statements/${statementId}/invoice`),
+};
+
+// ─── Aggregator fees & VAT roll-up ────────────────────────────────────────────
+export const aggregatorFeesApi = {
+  /** Per-channel commission / VAT / gross / net over a date range, with a
+   *  combined total — the high-level financial view. */
+  summary: (params?: { channel?: string; date_from?: string; date_to?: string }) =>
+    api.get<FeesSummary>(`/aggregators/fees/summary${buildQs(params)}`),
 };
 
 // ─── Aggregator ingest runs (the Runs table) ──────────────────────────────────

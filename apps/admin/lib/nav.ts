@@ -50,6 +50,8 @@ export const NAV: Array<
   { section: 'Marketplaces' },
   { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance', match: '/aggregators' },
+  { href: '/aggregators/invoices', label: 'Invoices', icon: 'receipt_long' },
+  { href: '/aggregators/fees', label: 'Fees & VAT', icon: 'percent' },
   { href: '/aggregators/logins', label: 'Logins', icon: 'login' },
 
   // The physical side: shops, tills, stock, and the config behind them.

@@ -22,6 +22,8 @@ import { cn } from '@/lib/utils';
 // in the drawer.
 const TABS = [
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
+  { href: '/aggregators/invoices', label: 'Invoices' },
+  { href: '/aggregators/fees', label: 'Fees & VAT' },
   { href: '/aggregators/runs', label: 'Runs' },
   { href: '/aggregators/mappings', label: 'Branch Map' },
   { href: '/aggregators/item-mappings', label: 'Item Mappings' },
