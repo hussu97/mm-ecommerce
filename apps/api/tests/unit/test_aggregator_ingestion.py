@@ -1360,3 +1360,72 @@ async def test_trigger_503_when_ingest_disabled(monkeypatch):
     monkeypatch.setattr(ingest, "trigger_daily_in_background", lambda: False)
     with pytest.raises(ServiceUnavailableError):
         await trigger_sync_run(None)
+
+
+# ── push-only (Keeta) backfill via re-normalising stored raw ──────────────────
+def test_push_order_parser_maps_keeta_only():
+    from app.models.aggregator import CHANNEL_KEETA, CHANNEL_TALABAT
+
+    assert ingest._push_order_parser(CHANNEL_KEETA) is not None
+    assert ingest._push_order_parser(CHANNEL_TALABAT) is None
+
+
+def test_keeta_order_from_raw_roundtrips_placed_at_to_correct_instant():
+    """The public re-parse seam turns a saved payload back into a StandardOrder;
+    its naive Dubai placed_at, normalised, is the real UTC instant — proving a
+    Keeta backfill from `raw` corrects the +4h shift the same way a live pull does."""
+    from app.services.providers import keeta_provider
+
+    raw = {"orderId": "K-27", "orderTime": "2026-08-27T23:16:00+04:00"}
+    order = keeta_provider.provider.order_from_raw(raw)
+    assert order is not None
+    assert order.external_order_id == "K-27"
+    # Provider still yields naive Dubai wall-clock (unchanged contract)…
+    assert order.placed_at == datetime(2026, 8, 27, 23, 16, 0)
+    # …and the ingest normaliser turns that into the correct instant (19:16 UTC).
+    aware = ingest._aware_business(order.placed_at)
+    assert aware.utcoffset() == timedelta(hours=4)
+    assert aware.astimezone(timezone.utc).hour == 19
+
+
+async def test_renormalize_stored_reingests_each_row_from_raw(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.models.aggregator import CHANNEL_KEETA
+    from app.services.aggregators.normalized import StandardOrder
+
+    agg1 = SimpleNamespace(external_order_id="K1", raw={"id": "K1"})
+    agg2 = SimpleNamespace(external_order_id="K2", raw={"id": "K2"})
+
+    db = MagicMock()
+    db.scalars = AsyncMock(return_value=SimpleNamespace(all=lambda: [agg1, agg2]))
+
+    # Deterministic parser so the test doesn't depend on Keeta's key vocabulary.
+    monkeypatch.setattr(
+        ingest,
+        "_push_order_parser",
+        lambda ch: lambda raw: StandardOrder(external_order_id=raw["id"]),
+    )
+    captured = []
+
+    async def fake_upsert(_db, channel, order):
+        captured.append((channel, order.external_order_id))
+
+    monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
+
+    n = await ingest._renormalize_stored(
+        db, CHANNEL_KEETA, date(2026, 8, 27), date(2026, 8, 28)
+    )
+    assert n == 2
+    assert captured == [(CHANNEL_KEETA, "K1"), (CHANNEL_KEETA, "K2")]
+
+
+async def test_renormalize_stored_noop_for_scraped_channel():
+    from app.models.aggregator import CHANNEL_TALABAT
+
+    # A scraped channel has no push parser, so nothing is re-ingested — it returns
+    # before ever touching the db (so a bare sentinel stands in for the session).
+    n = await ingest._renormalize_stored(
+        object(), CHANNEL_TALABAT, date(2026, 8, 27), date(2026, 8, 28)
+    )
+    assert n == 0

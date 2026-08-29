@@ -998,6 +998,12 @@ class KeetaClient(BaseAggregatorClient):
             orders.append(order)
         return orders
 
+    def order_from_raw(self, row: dict[str, Any]) -> StandardOrder | None:
+        """Re-parse one saved order payload (`aggregator_order.raw`) back into a
+        `StandardOrder` — the public seam a backfill uses to re-ingest Keeta from
+        stored rows when the live portal can't be re-scraped."""
+        return self._order_from(row)
+
     def _order_from(self, row: dict[str, Any]) -> StandardOrder | None:
         order_id = _first_text(row, _ORDER_ID_KEYS)
         if not order_id:

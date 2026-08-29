@@ -976,8 +976,9 @@ async def run_range(
     invoices) and the promotion split (new / existing / not-promoted, with %s) —
     plus any per-mode error, so the admin Runs table can show exactly what each
     trigger did. Idempotent: safe to re-run the same range, and to overlap the
-    nightly sweep. Push-only channels (Keeta) are recorded as skipped — rerun
-    those via the bootstrap worker.
+    nightly sweep. Push-only channels (Keeta) can't be re-scraped, so their orders
+    are re-ingested from the payloads saved on `aggregator_order.raw` instead —
+    enough to re-apply the current normalisation and re-promote, without a re-push.
     """
     _register_providers()
     from app.models.aggregator import AGGREGATOR_CHANNELS
@@ -1009,6 +1010,64 @@ async def run_range(
     return results
 
 
+def _push_order_parser(channel: str):
+    """The single-order parser for a push-only channel's stored `raw`, or None.
+
+    A push channel never registers an httpx provider, so `PROVIDERS` can't reach it;
+    this maps it to the provider method that turns one saved order payload back into
+    a `StandardOrder`, so a backfill can re-ingest from `aggregator_order.raw`."""
+    if channel == CHANNEL_KEETA:
+        from app.services.providers import keeta_provider
+
+        return keeta_provider.provider.order_from_raw
+    return None
+
+
+async def _renormalize_stored(
+    db: AsyncSession, channel: str, from_date: date, to_date: date
+) -> int:
+    """Re-ingest a push-only channel's stored orders from their saved `raw` payloads.
+
+    Keeta is pushed in by the bootstrap worker and can't be re-scraped from here, but
+    every order it pushed kept its original marketplace payload on
+    `aggregator_order.raw`. Re-parsing that payload and re-upserting re-applies the
+    current normalisation — the `placed_at` timezone fix among it — to already-stored
+    rows, which is the only way to correct them without a re-push. Idempotent: the raw
+    is the immutable source, so re-running lands the same corrected value. Scoped to
+    the Dubai business-date range (which was always derived correctly); a row with no
+    `raw` is skipped. Returns the number of rows rewritten."""
+    parse = _push_order_parser(channel)
+    if parse is None:
+        return 0
+    lo, hi = from_date.isoformat(), to_date.isoformat()
+    rows = (
+        await db.scalars(
+            select(AggregatorOrder).where(
+                AggregatorOrder.channel == channel,
+                AggregatorOrder.business_date >= lo,
+                AggregatorOrder.business_date <= hi,
+                AggregatorOrder.raw.is_not(None),
+            )
+        )
+    ).all()
+    count = 0
+    for agg in rows:
+        try:
+            order = parse(agg.raw)
+        except Exception:  # noqa: BLE001 — one bad payload must not stop the rest
+            logger.exception(
+                "aggregator %s renormalize: order %s failed to parse",
+                channel,
+                agg.external_order_id,
+            )
+            continue
+        if order is None:
+            continue
+        await upsert_order(db, channel, order)
+        count += 1
+    return count
+
+
 async def _run_range_channel(
     db: AsyncSession,
     channel: str,
@@ -1032,42 +1091,50 @@ async def _run_range_channel(
     errors: list[str] = []
 
     provider = PROVIDERS.get(channel)
-    if provider is None:
-        # Push-only channel (Keeta): the httpx sweep can't reach it.
-        run.status = RUN_FAILED
-        run.error = "push-only channel — rerun sales/finance via the bootstrap worker"
-        run.finished_at = utcnow()
-        stats["skipped"] = "push_only"
-        stats.update(await _range_stats(db, channel, from_date, to_date))
-        run.stats = stats
-        return {"channel": channel, "status": run.status, "stats": stats}
-
-    session = await _session_for(db, channel, provider)
-    if session is None:
-        run.status = RUN_FAILED
-        run.error = "session not live — needs a headed re-login"
-        run.finished_at = utcnow()
-        stats["skipped"] = "session_not_live"
-        run.stats = stats
-        return {"channel": channel, "status": run.status, "stats": stats}
-
-    since, until = _dubai_range_window(from_date, to_date)
-    for mode in modes:
+    push_only = provider is None
+    if push_only:
+        # Push-only channel (Keeta): the httpx sweep can't reach it, but every order
+        # it pushed kept its marketplace payload on `aggregator_order.raw`. Re-run
+        # those payloads through the same parse+upsert so a backfill still re-applies
+        # the current normalisation — notably the placed_at tz fix — to already-stored
+        # rows without a re-push. The promote/reconcile below then corrects the MM
+        # orders exactly as it does for the scraped channels.
         try:
-            written, trunc, detail = await _fetch_and_persist(
-                db, channel, provider, mode, session, since=since, until=until
-            )
-            stats["modes"][mode] = {"written": written, **detail}
-            if trunc:
-                stats["modes"][mode]["truncation"] = trunc
-        except AggregatorAuthError as exc:
-            errors.append(f"{mode}: session dead: {exc}")
-            await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
-        except AggregatorUnavailableError as exc:
-            errors.append(f"{mode}: unavailable: {exc}")
-        except Exception as exc:  # noqa: BLE001 — one mode must not kill the run row
-            errors.append(f"{mode}: {exc}")
-            logger.exception("aggregator %s range %s failed", channel, mode)
+            written = await _renormalize_stored(db, channel, from_date, to_date)
+            stats["modes"][RUN_MODE_SALES] = {
+                "written": written,
+                "source": "stored_raw",
+            }
+        except Exception as exc:  # noqa: BLE001 — one channel must not kill the run row
+            errors.append(f"renormalize: {exc}")
+            logger.exception("aggregator %s range renormalize failed", channel)
+    else:
+        session = await _session_for(db, channel, provider)
+        if session is None:
+            run.status = RUN_FAILED
+            run.error = "session not live — needs a headed re-login"
+            run.finished_at = utcnow()
+            stats["skipped"] = "session_not_live"
+            run.stats = stats
+            return {"channel": channel, "status": run.status, "stats": stats}
+
+        since, until = _dubai_range_window(from_date, to_date)
+        for mode in modes:
+            try:
+                written, trunc, detail = await _fetch_and_persist(
+                    db, channel, provider, mode, session, since=since, until=until
+                )
+                stats["modes"][mode] = {"written": written, **detail}
+                if trunc:
+                    stats["modes"][mode]["truncation"] = trunc
+            except AggregatorAuthError as exc:
+                errors.append(f"{mode}: session dead: {exc}")
+                await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
+            except AggregatorUnavailableError as exc:
+                errors.append(f"{mode}: unavailable: {exc}")
+            except Exception as exc:  # noqa: BLE001 — one mode must not kill the run row
+                errors.append(f"{mode}: {exc}")
+                logger.exception("aggregator %s range %s failed", channel, mode)
 
     if promote:
         try:
@@ -1090,7 +1157,10 @@ async def _run_range_channel(
         run.error = "; ".join(errors)[:2000]
     else:
         run.status = RUN_COMPLETED
-        await session_store.record_success(db, channel)
+        # A push-only channel has no scrape session to credit — the success it
+        # would stamp belongs to the bootstrap worker's login, not this re-parse.
+        if not push_only:
+            await session_store.record_success(db, channel)
     run.stats = stats
     return {"channel": channel, "status": run.status, "stats": stats}
 
