@@ -27,7 +27,9 @@ app = typer.Typer(help="Aggregator session bootstrap/warmer worker.")
 _CHANNELS = tuple(CHANNEL_PROBES)
 
 
-def _run_for(channels: list[str], *, hydrate_first: bool) -> None:
+def _run_for(
+    channels: list[str], *, hydrate_first: bool, auto_relogin: bool = False
+) -> None:
     if hydrate_first:
         try:
             asyncio.run(hydrate_then_warm())
@@ -41,12 +43,60 @@ def _run_for(channels: list[str], *, hydrate_first: bool) -> None:
             continue
         try:
             asyncio.run(warm_channel(channel))
-        except NeedsHumanLogin as exc:
+        except (NeedsHumanLogin, NotLoggedInError) as exc:
+            # A warm can't rescue a session the stored state no longer
+            # authenticates — that is exactly `needs_bootstrap`. Rather than wait
+            # for a human, drive the SAME stored login the `login --auto` command
+            # does (email/password, plus the Graph-mailbox OTP for Noon/Talabat)
+            # and push the fresh session. Only a login that genuinely can't finish
+            # unattended (a captcha/passkey, or no connected mailbox for the OTP)
+            # falls through to the operator.
+            if auto_relogin and _try_auto_relogin(channel):
+                continue
             logger.error("%s needs a headed login: %s", channel, exc)
-        except NotLoggedInError as exc:
-            logger.error("%s needs a fresh login: %s", channel, exc)
         except Exception:  # noqa: BLE001 — one channel must not stop the rest
             logger.exception("%s capture failed", channel)
+
+
+def _try_auto_relogin(channel: str) -> bool:
+    """Drive the stored login for a dead session and push the result.
+
+    Returns whether a fresh session was captured. Reuses `login_with_account`, so
+    it handles Deliveroo's email/password and Noon/Talabat's email + Graph OTP;
+    anything that still needs a human (captcha, passkey, no mailbox) raises
+    `NeedsHumanLogin`, which we swallow so the channel stays flagged for a headed
+    `login` instead of crashing the cron."""
+    try:
+        account = _load_account(channel, require_password=(channel != "noon"))
+    except typer.BadParameter as exc:
+        logger.warning("%s auto re-login skipped — %s", channel, exc)
+        return False
+    try:
+        result = asyncio.run(
+            login_with_account(
+                channel,
+                email=account.email,
+                password=account.password,
+                mailbox=account.mailbox or None,
+            )
+        )
+    except NeedsHumanLogin as exc:
+        logger.warning(
+            "%s auto re-login needs a human (%s) — left flagged for a headed login",
+            channel,
+            exc,
+        )
+        return False
+    except Exception:  # noqa: BLE001 — one channel's re-login must not stop the rest
+        logger.exception("%s auto re-login failed", channel)
+        return False
+    try:
+        asyncio.run(push_probe(channel, result))
+    except Exception:  # noqa: BLE001 — captured locally; a later warm will push it
+        logger.exception("%s auto re-login captured but the API push failed", channel)
+        return False
+    logger.info("%s auto re-login succeeded — session refreshed", channel)
+    return True
 
 
 @app.command("login")
@@ -93,9 +143,7 @@ def login(
         raise typer.Exit(code=1) from exc
 
 
-def _load_account(
-    channel: str, *, require_password: bool = True
-) -> PortalAccount:
+def _load_account(channel: str, *, require_password: bool = True) -> PortalAccount:
     try:
         account = asyncio.run(pull_account(channel))
     except Exception as exc:  # noqa: BLE001
@@ -225,12 +273,16 @@ def _wait_for_auth_code(redirect_uri: str, *, timeout: float = 300.0) -> str:
     server = HTTPServer((host, port), Handler)
     server.timeout = 1.0
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and "code" not in holder and "error" not in holder:
+    while (
+        time.monotonic() < deadline and "code" not in holder and "error" not in holder
+    ):
         server.handle_request()
     server.server_close()
     if holder.get("code"):
         return holder["code"]
-    raise typer.BadParameter(holder.get("error") or "timed out waiting for Microsoft sign-in")
+    raise typer.BadParameter(
+        holder.get("error") or "timed out waiting for Microsoft sign-in"
+    )
 
 
 def _prompt_for_auth_code() -> str:
@@ -361,12 +413,28 @@ def capture_and_push(
 @app.command("warm-sessions")
 def warm_sessions(
     channel: str = typer.Option(None, help="Channel to warm; omit for all"),
+    auto_relogin: bool = typer.Option(
+        True,
+        "--auto-relogin/--no-auto-relogin",
+        help="Drive the stored login (incl. Graph OTP) for a dead session, "
+        "instead of leaving it for a human.",
+    ),
 ) -> None:
     """Hydrate from the API, refresh anti-bot cookies/tokens, push back.
 
-    This is the VM cron entrypoint. It never drives an OTP login.
+    This is the VM cron entrypoint. A live session is just warmed; a session the
+    API has flagged `needs_bootstrap` (its stored state no longer authenticates)
+    is automatically re-logged-in from the stored credentials — the same
+    `login --auto` flow, including the Graph-mailbox OTP — so recovery no longer
+    waits for a person. Pass `--no-auto-relogin` for the old warm-only behaviour;
+    a login that truly needs a human (captcha/passkey, or no connected mailbox)
+    still falls through to a headed `login`.
     """
-    _run_for([channel] if channel else list(_CHANNELS), hydrate_first=True)
+    _run_for(
+        [channel] if channel else list(_CHANNELS),
+        hydrate_first=True,
+        auto_relogin=auto_relogin,
+    )
 
 
 @app.command("bootstrap")

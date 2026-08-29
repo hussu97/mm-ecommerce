@@ -148,6 +148,9 @@ class TestOrderFromOms:
         o = _CLIENT._order_from_oms(_OMS_ORDER_SINGLE_MOD)
         assert o is not None
         assert o.external_order_id == "FG4LNN5NPGYI0JA"
+        # The short customer code (GrubTech's `externalId`) is captured alongside
+        # the long orderNr, so a Barsha/Sharjah order converges with its GrubOps twin.
+        assert o.display_ref == "2253"
         assert o.external_outlet_id == "MLTNGM1GBF"
         assert o.status == "delivered"
         assert o.currency == "AED"

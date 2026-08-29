@@ -88,13 +88,25 @@ async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
     )
 
 
-async def _find_mm_order(db: AsyncSession, channel: str, external_order_id: str):
-    """The MM order this aggregator order became, matched on channel + number."""
+async def _find_mm_order(
+    db: AsyncSession,
+    channel: str,
+    external_order_id: str,
+    display_ref: str | None = None,
+):
+    """The MM order this aggregator order became, matched on channel + number.
+
+    GrubTech records the marketplace's SHORT customer code as its `externalId`
+    (Noon's "2253"), while the scrape keys on the long `orderNr`. So the map is
+    matched on either id the two sides might carry — the long `external_order_id`
+    or the short `display_ref` — both under the channel label, which keeps the
+    lookup channel-scoped."""
     label = CHANNEL_GRUBOPS_LABEL.get(channel)
+    refs = [r for r in (external_order_id, display_ref) if r]
     map_row = await db.scalar(
         select(GrubOpsOrderMap).where(
             GrubOpsOrderMap.source_channel == label,
-            GrubOpsOrderMap.external_id == external_order_id,
+            GrubOpsOrderMap.external_id.in_(refs),
             GrubOpsOrderMap.mm_order_id.is_not(None),
         )
     )
@@ -168,7 +180,9 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
 
     mm_order = None
     if has_grubops:
-        mm_order = await _find_mm_order(db, agg.channel, agg.external_order_id)
+        mm_order = await _find_mm_order(
+            db, agg.channel, agg.external_order_id, agg.display_ref
+        )
         match_status = MATCH_MATCHED if mm_order is not None else MATCH_UNMATCHED_AGG
     else:
         match_status = MATCH_NO_MAKER_SIDE

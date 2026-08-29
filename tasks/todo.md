@@ -138,3 +138,73 @@ Fix — re-normalise from stored `raw` instead of skipping:
 - [x] Tests: `order_from_raw` round-trips a Keeta payload to the correct instant;
       `_renormalize_stored` re-ingests each stored row; `_push_order_parser` maps
       Keeta only. ruff/format/openapi-check clean; 82 ingestion tests pass.
+
+## Follow-up 3 — robustness: Talabat GraphQL auth-error classification
+
+Backfill of Aug 27–28 surfaced Careem + Talabat failures on expired sessions (401).
+- **Careem** hits a real HTTP 401 → the base already raises `AggregatorAuthError`
+  ("session no longer authenticates"). Correctly classified; it just needs a
+  re-login (bootstrap). No code change.
+- **Talabat** buries its `vp-report-builder` auth failure inside a GraphQL **200**
+  body (`errors`: 401 Unauthorized / TOKEN_EXPIRED), so the base's HTTP-status check
+  never saw it — `_graphql` raised the generic `AggregatorUnavailableError`, so the
+  sales sweep neither flagged the session for re-login nor read clearly. Only the
+  finance path (a real 401) detected the dead session.
+
+Fix (Talabat only):
+- [x] `_graphql_errors_are_auth()` — scans a GraphQL `errors` payload for
+      token-expiry / unauthorized / unauthenticated markers (no bare "401", which a
+      store id could carry, so a real VALIDATION_ERROR still reads as unavailable).
+- [x] `_graphql` raises `AggregatorAuthError` for those, so the sweep flips the
+      session to `needs_bootstrap` and the run row reads "session token expired —
+      needs a re-login", consistent with the finance path and with Careem.
+- [x] Tests for the classifier and `_graphql` auth-vs-unavailable behaviour.
+
+Note: this improves *detection* — it can't re-authenticate a dead session. Both
+Careem and Talabat still need a headed re-login (bootstrap worker) to recover; the
+fix makes the failure actionable and correctly routes it into that flow.
+
+## Follow-up 4 — Noon duplicate (convergence), warmer auto-relogin, Talabat re-apply
+
+Three items bundled (PR after #42, which merged Keeta-only again).
+
+### Re-applied
+- [x] Talabat GraphQL token-expiry → AggregatorAuthError (didn't reach main via #42).
+
+### #2 — Noon GrubOps↔promote duplicate (convergence)
+Root cause: for Noon the two write paths key `orders.external_reference` on
+DIFFERENT ids — GrubOps ingest uses GrubTech's `externalId` (the short customer
+code, e.g. "2253"), promote uses Noon's long `orderNr`. So convergence missed and
+the order was filed twice. Noon's OMS payload carries the short code as `orderRef`
+right next to `orderNr` — the shared key.
+- [x] `aggregator_order.display_ref` column (migration 162) + model + StandardOrder.
+- [x] Noon provider captures `orderRef` → `display_ref` (OMS + merge).
+- [x] `upsert_order` persists it (+ `_PRESERVE_IF_NULL`).
+- [x] Convergence matches the short code too, EXACT + SCOPED so it can't false-merge:
+      `_find_convergence_order` adds `external_reference == display_ref` scoped to
+      the same branch + Dubai business day (read off `created_at`, since the
+      GrubOps-made order has no `business_date`); `reconcile._find_mm_order` matches
+      either id under the channel label; the GrubOps adopt block matches
+      `aggregator_display_code` scoped to branch + placed day (reverse direction);
+      `_build_order` sets `aggregator_display_code` from the short code.
+- [x] Tests: Noon captures orderRef; convergence/`_find_mm_order` SQL keys on both
+      ids; no short-code clause without display_ref.
+
+VALIDATION (user runs on prod — self-hosted DB, not reachable from here): confirm
+`aggregator_order.raw->>'orderRef'` == `grubops_order_map.external_id` for Noon.
+The fix is safe pre-validation: exact scoped matches, no-op if the ids don't relate.
+
+CLEANUP (user runs on prod): delete the aggregator-promote duplicate row
+`AGG-20260829-038` (SQL provided in chat: remove the MM order + items/taxes + POS
+order, restore any drawn stock, null the aggregator_order → mm link).
+
+### #1 — warmer auto-relogin (apps/aggregator-bootstrap)
+Re-login is the external worker's job; its cron only warmed live sessions and left
+a dead one for a human. `needs_bootstrap` never triggered a re-login.
+- [x] `warm-sessions` now defaults `--auto-relogin`: a warm that hits a dead session
+      escalates to the stored `login --auto` (email/password + Graph-mailbox OTP),
+      reusing `login_with_account`; only a login needing a human (captcha/passkey,
+      no mailbox) falls through. Cron comment updated.
+- [x] Tests for the escalation + the login/push + human-needed + no-account paths.
+Note: untested against a live headed browser (can't run Chromium+Xvfb here); logic
+reuses existing, proven login/push functions.

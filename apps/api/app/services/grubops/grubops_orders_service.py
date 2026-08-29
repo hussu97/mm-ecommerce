@@ -33,7 +33,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, cast, func, select
+from sqlalchemy import Integer, and_, cast, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.orm import selectinload
 
@@ -675,11 +675,31 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     # stock), so this rare handover leaves the shelf as the promotion left it rather
     # than reconciling it here.
     if order_map.external_id:
+        # A promotion may have gap-filled under the marketplace's LONG id
+        # (Noon's `orderNr`) while GrubTech quotes only the SHORT `externalId`
+        # ("2253"). Promotion mirrors that short code onto `aggregator_display_code`,
+        # so also adopt a gap-fill found there — scoped to this branch + placed day
+        # (the short code is a per-branch-per-day sequence) so it never adopts an
+        # unrelated order carrying the same code on another day.
+        placed = _placed_at(info)
+        placed_day = (
+            placed.astimezone(ZoneInfo(_TZ)).date().isoformat() if placed else None
+        )
+        match = [Order.external_reference == order_map.external_id]
+        if placed_day:
+            match.append(
+                and_(
+                    Order.aggregator_display_code == order_map.external_id,
+                    Order.branch_id == branch_id,
+                    func.to_char(func.timezone(_TZ, Order.created_at), "YYYY-MM-DD")
+                    == placed_day,
+                )
+            )
         adopted = await db.scalar(
             select(Order)
             .where(
                 Order.source == OrderSourceEnum.AGGREGATOR.value,
-                Order.external_reference == order_map.external_id,
+                or_(*match),
             )
             .options(selectinload(Order.items))
         )

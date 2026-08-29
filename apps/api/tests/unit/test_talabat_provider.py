@@ -849,3 +849,96 @@ def test_global_entity_id_ignores_blank_token():
     client = TalabatClient()
     session = _session_with_tokens({"global_entity_id": "   "})
     assert client._global_entity_id(session) == _GLOBAL_ENTITY_ID
+
+
+# ── GraphQL auth-error classification (session-death vs transient) ─────────────
+_AUTH_ERRORS = [
+    {
+        "message": "HTTP fetch failed from 'vp-report-builder': 401: Unauthorized",
+        "path": [],
+        "extensions": {
+            "code": "SUBREQUEST_HTTP_ERROR",
+            "service": "vp-report-builder",
+            "reason": "401: Unauthorized",
+            "http": {"status": 401},
+        },
+    },
+    {
+        "message": (
+            "service 'vp-report-builder' response was malformed: "
+            '{"code":"TOKEN_EXPIRED","message":"token expired","state":"ERROR"}'
+        ),
+        "path": [],
+        "extensions": {
+            "code": "SUBREQUEST_MALFORMED_RESPONSE",
+            "service": "vp-report-builder",
+        },
+    },
+]
+
+_VALIDATION_ERRORS = [
+    {"message": "from must be before to", "extensions": {"code": "VALIDATION_ERROR"}}
+]
+
+
+def test_graphql_errors_are_auth_flags_token_expiry_and_401():
+    from app.services.providers.talabat_provider import _graphql_errors_are_auth
+
+    assert _graphql_errors_are_auth(_AUTH_ERRORS) is True
+    # A genuine application error must not be mistaken for a dead session.
+    assert _graphql_errors_are_auth(_VALIDATION_ERRORS) is False
+    # A store id that merely contains "401" must not trip the classifier.
+    assert _graphql_errors_are_auth([{"message": "store 40123 not found"}]) is False
+
+
+@pytest.mark.asyncio
+async def test_graphql_token_expired_raises_auth_error():
+    """A 200 whose errors carry an expired token is a dead session, so the sweep
+    re-logs in rather than retrying — AggregatorAuthError, not Unavailable."""
+    from app.services.providers.aggregator_base import AggregatorAuthError
+
+    client = TalabatClient()
+    session = MagicMock()
+    with (
+        patch.object(client, "_global_entity_id", return_value="TB_AE"),
+        patch.object(client, "_access_token", return_value="stale-token"),
+        patch.object(
+            client,
+            "request_json",
+            new=AsyncMock(return_value={"errors": _AUTH_ERRORS}),
+        ),
+    ):
+        with pytest.raises(AggregatorAuthError):
+            await client._graphql(
+                session,
+                endpoint="https://fake/graphql",
+                query="query EstimateExportSize {}",
+                variables={},
+                operation_name="EstimateExportSize",
+            )
+
+
+@pytest.mark.asyncio
+async def test_graphql_validation_error_stays_unavailable():
+    """A real application error is transient/actionable, not a session death."""
+    from app.services.providers.aggregator_base import AggregatorUnavailableError
+
+    client = TalabatClient()
+    session = MagicMock()
+    with (
+        patch.object(client, "_global_entity_id", return_value="TB_AE"),
+        patch.object(client, "_access_token", return_value="ok-token"),
+        patch.object(
+            client,
+            "request_json",
+            new=AsyncMock(return_value={"errors": _VALIDATION_ERRORS}),
+        ),
+    ):
+        with pytest.raises(AggregatorUnavailableError):
+            await client._graphql(
+                session,
+                endpoint="https://fake/graphql",
+                query="query EstimateExportSize {}",
+                variables={},
+                operation_name="EstimateExportSize",
+            )
