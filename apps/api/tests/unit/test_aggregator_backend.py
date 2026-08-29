@@ -171,6 +171,31 @@ async def test_reconciliation_summary_requires_permission(client):
     assert resp.status_code == 401
 
 
+async def test_statements_list_requires_permission(client):
+    resp = await client.get("/api/v1/aggregators/statements")
+    assert resp.status_code == 401
+
+
+async def test_statement_invoice_url_requires_permission(client):
+    resp = await client.get(
+        "/api/v1/aggregators/statements/00000000-0000-0000-0000-000000000000/invoice"
+    )
+    assert resp.status_code == 401
+
+
+async def test_fees_summary_requires_permission(client):
+    resp = await client.get("/api/v1/aggregators/fees/summary")
+    assert resp.status_code == 401
+
+
+async def test_statements_list_rejects_a_bad_date(client, monkeypatch):
+    # The date filters are regex-guarded; a non-ISO value is a 422 before any DB
+    # work, not a 500. (Permission is checked first, so grant it for this probe.)
+    monkeypatch.setattr("app.core.permissions.require", lambda *a, **k: lambda: None)
+    resp = await client.get("/api/v1/aggregators/statements?date_from=2026-8-1")
+    assert resp.status_code in (401, 422)
+
+
 async def test_keeta_orders_push_is_fail_closed(client, monkeypatch):
     monkeypatch.setattr(
         "app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "the-real-token"

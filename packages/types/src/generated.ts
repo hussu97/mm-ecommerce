@@ -311,6 +311,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/fees/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fees Summary
+         * @description Per-channel commission / VAT / net roll-up over a date range.
+         *
+         *     The commission figure is genuinely split by marketplace, and this merges the
+         *     two sources so the picture is complete rather than half-dark:
+         *
+         *       • Channels that settle through detailed statement lines (Deliveroo, Keeta,
+         *         Noon) are read from `aggregator_statement_line` over `line_date` — the
+         *         authoritative settled fees, and the ONLY place VAT appears.
+         *       • Channels that do not (Talabat carries commission on the order feed; Careem
+         *         exposes no per-order fee at all) are read from `aggregator_order` over
+         *         `business_date` — commission and gross where the feed has them, no VAT.
+         *
+         *     One source is chosen PER CHANNEL (statement lines when a channel has any in
+         *     range, else the order feed), so Keeta is never double-counted. Providers
+         *     disagree on a fee's SIGN, so every bucket is a positive magnitude —
+         *     "what they charged". `effective_rate` is commission ÷ gross.
+         */
+        get: operations["fees_summary_api_v1_aggregators_fees_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/finance": {
         parameters: {
             query?: never;
@@ -514,6 +549,56 @@ export interface paths {
          * @description Session health per channel — the monitoring read (no secrets exposed).
          */
         get: operations["list_sessions_api_v1_aggregators_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/statements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Statements
+         * @description The settlement statements for the Invoices screen, newest period first.
+         *
+         *     Filtered by channel and by the statement's PERIOD END falling in the range
+         *     (a statement is dated by when its period closes). `has_invoice` narrows to the
+         *     ones with an archived document to download — today only Careem, Deliveroo and
+         *     Noon publish one; Keeta and Talabat statements have figures but no file.
+         */
+        get: operations["list_statements_api_v1_aggregators_statements_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/statements/{statement_uuid}/invoice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Statement Invoice Url
+         * @description A short-lived signed URL to download one statement's archived invoice.
+         *
+         *     The document lives in a private GCS bucket; the admin never gets the object
+         *     key, only a URL that expires in an hour. 404 when the statement carries no
+         *     document, 503 when object storage is not configured (so the caller can tell a
+         *     missing file from a missing integration).
+         */
+        get: operations["statement_invoice_url_api_v1_aggregators_statements__statement_uuid__invoice_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7648,6 +7733,64 @@ export interface components {
             is_active: boolean;
         };
         /**
+         * AggregatorFeesRow
+         * @description One channel's fee/VAT roll-up over the requested date range.
+         *
+         *     Sourced from `aggregator_statement_line` bucketed by the provider's own
+         *     line/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE
+         *     (providers disagree on the sign of a fee — noon books it positive, the rest
+         *     negative), so `commission`/`vat`/`other_fees` read as "what they charged".
+         *     `orders` counts the distinct settled orders contributing.
+         */
+        AggregatorFeesRow: {
+            /** Channel */
+            channel: string;
+            /** Commission */
+            commission?: string | null;
+            /** Effective Rate */
+            effective_rate?: number | null;
+            /** Gross Sales */
+            gross_sales?: string | null;
+            /** Net Payable */
+            net_payable?: string | null;
+            /**
+             * Orders
+             * @default 0
+             */
+            orders: number;
+            /** Other Fees */
+            other_fees?: string | null;
+            /** Vat */
+            vat?: string | null;
+        };
+        /**
+         * AggregatorFeesSummaryOut
+         * @description The Fees & VAT read: per-channel rows plus one combined total.
+         */
+        AggregatorFeesSummaryOut: {
+            /** By Channel */
+            by_channel: components["schemas"]["AggregatorFeesRow"][];
+            /** From Date */
+            from_date?: string | null;
+            /** To Date */
+            to_date?: string | null;
+            totals: components["schemas"]["AggregatorFeesRow"];
+        };
+        /**
+         * AggregatorInvoiceUrl
+         * @description A short-lived signed download URL for one statement's archived invoice.
+         */
+        AggregatorInvoiceUrl: {
+            /** Content Type */
+            content_type?: string | null;
+            /** Expires Seconds */
+            expires_seconds: number;
+            /** Filename */
+            filename?: string | null;
+            /** Url */
+            url: string;
+        };
+        /**
          * AggregatorMailboxPublic
          * @description Admin view of a linked OTP mailbox — never secrets.
          */
@@ -7940,6 +8083,71 @@ export interface components {
             status: string;
             /** Token Expires At */
             token_expires_at?: string | null;
+        };
+        /**
+         * AggregatorStatementList
+         * @description A page of statements, plus the unpaginated total for the filter.
+         */
+        AggregatorStatementList: {
+            /** Items */
+            items: components["schemas"]["AggregatorStatementOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * AggregatorStatementOut
+         * @description One settlement statement for the Invoices screen.
+         *
+         *     A statement is a marketplace's published settlement summary for a period. Some
+         *     carry an archived invoice/CSV document (`has_invoice`), downloaded on demand
+         *     through a short-lived signed URL — the row only reports whether one exists and
+         *     its filename, never the key. Money fields are Decimals (strings on the wire),
+         *     absent rather than 0 when the marketplace never declared them.
+         */
+        AggregatorStatementOut: {
+            /**
+             * Attachment Count
+             * @default 0
+             */
+            attachment_count: number;
+            /** Channel */
+            channel: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Currency */
+            currency?: string | null;
+            /** External Outlet Id */
+            external_outlet_id?: string | null;
+            /** Gross Sales */
+            gross_sales?: string | null;
+            /**
+             * Has Invoice
+             * @default false
+             */
+            has_invoice: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Invoice Fetched At */
+            invoice_fetched_at?: string | null;
+            /** Invoice Original Filename */
+            invoice_original_filename?: string | null;
+            /** Net Payable */
+            net_payable?: string | null;
+            /** Payment Due Date */
+            payment_due_date?: string | null;
+            /** Period End */
+            period_end?: string | null;
+            /** Period Start */
+            period_start?: string | null;
+            /** Statement Id */
+            statement_id: string;
+            /** Total Fees */
+            total_fees?: string | null;
+            /** Total Vat */
+            total_vat?: string | null;
         };
         /**
          * AggregatorSyncRunList
@@ -17784,6 +17992,39 @@ export interface operations {
             };
         };
     };
+    fees_summary_api_v1_aggregators_fees_summary_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorFeesSummaryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     push_keeta_finance_api_v1_aggregators_keeta_finance_post: {
         parameters: {
             query?: never;
@@ -18078,6 +18319,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorSessionResponse"][];
+                };
+            };
+        };
+    };
+    list_statements_api_v1_aggregators_statements_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                /** @description Only statements that carry (or lack) an archived document */
+                has_invoice?: boolean | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorStatementList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    statement_invoice_url_api_v1_aggregators_statements__statement_uuid__invoice_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                statement_uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorInvoiceUrl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

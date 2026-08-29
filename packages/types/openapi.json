@@ -890,6 +890,180 @@
         "title": "AggregatorBranchMapOut",
         "type": "object"
       },
+      "AggregatorFeesRow": {
+        "description": "One channel's fee/VAT roll-up over the requested date range.\n\nSourced from `aggregator_statement_line` bucketed by the provider's own\nline/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE\n(providers disagree on the sign of a fee \u2014 noon books it positive, the rest\nnegative), so `commission`/`vat`/`other_fees` read as \"what they charged\".\n`orders` counts the distinct settled orders contributing.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "commission": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission"
+          },
+          "effective_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Rate"
+          },
+          "gross_sales": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Sales"
+          },
+          "net_payable": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Payable"
+          },
+          "orders": {
+            "default": 0,
+            "title": "Orders",
+            "type": "integer"
+          },
+          "other_fees": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Other Fees"
+          },
+          "vat": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "AggregatorFeesRow",
+        "type": "object"
+      },
+      "AggregatorFeesSummaryOut": {
+        "description": "The Fees & VAT read: per-channel rows plus one combined total.",
+        "properties": {
+          "by_channel": {
+            "items": {
+              "$ref": "#/components/schemas/AggregatorFeesRow"
+            },
+            "title": "By Channel",
+            "type": "array"
+          },
+          "from_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Date"
+          },
+          "to_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Date"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AggregatorFeesRow"
+          }
+        },
+        "required": [
+          "by_channel",
+          "totals"
+        ],
+        "title": "AggregatorFeesSummaryOut",
+        "type": "object"
+      },
+      "AggregatorInvoiceUrl": {
+        "description": "A short-lived signed download URL for one statement's archived invoice.",
+        "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "expires_seconds": {
+            "title": "Expires Seconds",
+            "type": "integer"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_seconds"
+        ],
+        "title": "AggregatorInvoiceUrl",
+        "type": "object"
+      },
       "AggregatorMailboxPublic": {
         "description": "Admin view of a linked OTP mailbox \u2014 never secrets.",
         "properties": {
@@ -1624,6 +1798,201 @@
           "status"
         ],
         "title": "AggregatorSessionResponse",
+        "type": "object"
+      },
+      "AggregatorStatementList": {
+        "description": "A page of statements, plus the unpaginated total for the filter.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AggregatorStatementOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AggregatorStatementList",
+        "type": "object"
+      },
+      "AggregatorStatementOut": {
+        "description": "One settlement statement for the Invoices screen.\n\nA statement is a marketplace's published settlement summary for a period. Some\ncarry an archived invoice/CSV document (`has_invoice`), downloaded on demand\nthrough a short-lived signed URL \u2014 the row only reports whether one exists and\nits filename, never the key. Money fields are Decimals (strings on the wire),\nabsent rather than 0 when the marketplace never declared them.",
+        "properties": {
+          "attachment_count": {
+            "default": 0,
+            "title": "Attachment Count",
+            "type": "integer"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "external_outlet_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Outlet Id"
+          },
+          "gross_sales": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Sales"
+          },
+          "has_invoice": {
+            "default": false,
+            "title": "Has Invoice",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_fetched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Fetched At"
+          },
+          "invoice_original_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Original Filename"
+          },
+          "net_payable": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Payable"
+          },
+          "payment_due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Due Date"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "statement_id": {
+            "title": "Statement Id",
+            "type": "string"
+          },
+          "total_fees": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Fees"
+          },
+          "total_vat": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Vat"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "statement_id"
+        ],
+        "title": "AggregatorStatementOut",
         "type": "object"
       },
       "AggregatorSyncRunList": {
@@ -30462,6 +30831,95 @@
         ]
       }
     },
+    "/api/v1/aggregators/fees/summary": {
+      "get": {
+        "description": "Per-channel commission / VAT / net roll-up over a date range.\n\nThe commission figure is genuinely split by marketplace, and this merges the\ntwo sources so the picture is complete rather than half-dark:\n\n  \u2022 Channels that settle through detailed statement lines (Deliveroo, Keeta,\n    Noon) are read from `aggregator_statement_line` over `line_date` \u2014 the\n    authoritative settled fees, and the ONLY place VAT appears.\n  \u2022 Channels that do not (Talabat carries commission on the order feed; Careem\n    exposes no per-order fee at all) are read from `aggregator_order` over\n    `business_date` \u2014 commission and gross where the feed has them, no VAT.\n\nOne source is chosen PER CHANNEL (statement lines when a channel has any in\nrange, else the order feed), so Keeta is never double-counted. Providers\ndisagree on a fee's SIGN, so every bucket is a positive magnitude \u2014\n\"what they charged\". `effective_rate` is commission \u00f7 gross.",
+        "operationId": "fees_summary_api_v1_aggregators_fees_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorFeesSummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Fees Summary",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
     "/api/v1/aggregators/keeta/finance": {
       "post": {
         "description": "Ingest a batch of in-page-fetched Keeta finance payloads.\n\nKeeta's finance data is fetched in-page by the bootstrap worker (where the\nportal's JS signs the request) and pushed here. Each payload is parsed by\n`keeta_provider.parse_finance` into statements and payouts and upserted.\nWhen the payload is only download-task metadata (figures live in PDF invoices),\nthe parse returns empty lists with a truncation note \u2014 the response still\nreturns 200 with zero counts and includes the note so the worker can log it.",
@@ -31119,6 +31577,185 @@
           }
         ],
         "summary": "List Sessions",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/statements": {
+      "get": {
+        "description": "The settlement statements for the Invoices screen, newest period first.\n\nFiltered by channel and by the statement's PERIOD END falling in the range\n(a statement is dated by when its period closes). `has_invoice` narrows to the\nones with an archived document to download \u2014 today only Careem, Deliveroo and\nNoon publish one; Keeta and Talabat statements have figures but no file.",
+        "operationId": "list_statements_api_v1_aggregators_statements_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "description": "Only statements that carry (or lack) an archived document",
+            "in": "query",
+            "name": "has_invoice",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only statements that carry (or lack) an archived document",
+              "title": "Has Invoice"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorStatementList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Statements",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/statements/{statement_uuid}/invoice": {
+      "get": {
+        "description": "A short-lived signed URL to download one statement's archived invoice.\n\nThe document lives in a private GCS bucket; the admin never gets the object\nkey, only a URL that expires in an hour. 404 when the statement carries no\ndocument, 503 when object storage is not configured (so the caller can tell a\nmissing file from a missing integration).",
+        "operationId": "statement_invoice_url_api_v1_aggregators_statements__statement_uuid__invoice_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "statement_uuid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Statement Uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorInvoiceUrl"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Statement Invoice Url",
         "tags": [
           "Aggregators"
         ]

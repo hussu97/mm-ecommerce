@@ -19,7 +19,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -37,8 +37,11 @@ from app.models.aggregator import (
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
     AggregatorBranchMap,
+    AggregatorOrder,
     AggregatorReconciliation,
     AggregatorSession,
+    AggregatorStatement,
+    AggregatorStatementLine,
     AggregatorSyncRun,
 )
 from app.models.branch import Branch
@@ -47,6 +50,9 @@ from app.schemas.aggregator import (
     AggregatorAccountPush,
     AggregatorBranchMapIn,
     AggregatorBranchMapOut,
+    AggregatorFeesRow,
+    AggregatorFeesSummaryOut,
+    AggregatorInvoiceUrl,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
     AggregatorRunTriggerIn,
@@ -54,6 +60,8 @@ from app.schemas.aggregator import (
     AggregatorSessionHealthOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
+    AggregatorStatementList,
+    AggregatorStatementOut,
     AggregatorSyncRunList,
     AggregatorSyncRunOut,
     AggregatorWorkerAccount,
@@ -75,6 +83,7 @@ from app.services.aggregators import (
     mapping,
     session_store,
     settlement_reconcile,
+    statement_docs,
 )
 
 router = APIRouter()
@@ -560,6 +569,265 @@ async def reconciliation_summary(
         avg_rate_effective=totals_row.avg_rate_effective,
     )
     return ReconSummaryOut(by_channel=by_channel, totals=totals)
+
+
+_DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
+
+
+@router.get(
+    "/statements",
+    response_model=AggregatorStatementList,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def list_statements(
+    channel: str | None = Query(None),
+    date_from: str | None = Query(None, pattern=_DATE_RE),
+    date_to: str | None = Query(None, pattern=_DATE_RE),
+    has_invoice: bool | None = Query(
+        None, description="Only statements that carry (or lack) an archived document"
+    ),
+    limit: int = Query(50, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> AggregatorStatementList:
+    """The settlement statements for the Invoices screen, newest period first.
+
+    Filtered by channel and by the statement's PERIOD END falling in the range
+    (a statement is dated by when its period closes). `has_invoice` narrows to the
+    ones with an archived document to download — today only Careem, Deliveroo and
+    Noon publish one; Keeta and Talabat statements have figures but no file.
+    """
+    s = AggregatorStatement
+    stmt = select(s)
+    if channel:
+        stmt = stmt.where(s.channel == channel)
+    # period_end is String(10) ISO; lexicographic order == chronological.
+    if date_from:
+        stmt = stmt.where(s.period_end >= date_from)
+    if date_to:
+        stmt = stmt.where(s.period_end <= date_to)
+    if has_invoice is True:
+        stmt = stmt.where(s.invoice_object_key.isnot(None))
+    elif has_invoice is False:
+        stmt = stmt.where(s.invoice_object_key.is_(None))
+
+    total = (
+        await db.execute(select(func.count()).select_from(stmt.subquery()))
+    ).scalar_one()
+
+    rows = (
+        await db.execute(
+            stmt.order_by(s.period_end.desc().nullslast(), s.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars()
+
+    items = [
+        AggregatorStatementOut(
+            id=row.id,
+            channel=row.channel,
+            statement_id=row.statement_id,
+            period_start=row.period_start,
+            period_end=row.period_end,
+            payment_due_date=row.payment_due_date,
+            currency=row.currency,
+            gross_sales=row.gross_sales,
+            total_fees=row.total_fees,
+            total_vat=row.total_vat,
+            net_payable=row.net_payable,
+            external_outlet_id=row.external_outlet_id,
+            has_invoice=row.invoice_object_key is not None,
+            invoice_original_filename=row.invoice_original_filename,
+            invoice_fetched_at=row.invoice_fetched_at,
+            attachment_count=len(row.invoice_attachments or []),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+    return AggregatorStatementList(items=items, total=total)
+
+
+@router.get(
+    "/statements/{statement_uuid}/invoice",
+    response_model=AggregatorInvoiceUrl,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def statement_invoice_url(
+    statement_uuid: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> AggregatorInvoiceUrl:
+    """A short-lived signed URL to download one statement's archived invoice.
+
+    The document lives in a private GCS bucket; the admin never gets the object
+    key, only a URL that expires in an hour. 404 when the statement carries no
+    document, 503 when object storage is not configured (so the caller can tell a
+    missing file from a missing integration).
+    """
+    row = await db.get(AggregatorStatement, statement_uuid)
+    if row is None:
+        raise NotFoundError("statement not found")
+    if not row.invoice_object_key:
+        raise NotFoundError("this statement has no archived invoice")
+    expires = 3600
+    url = statement_docs.presigned_get_url(
+        row.invoice_object_key, expires_seconds=expires
+    )
+    if url is None:
+        raise ServiceUnavailableError("invoice storage is not configured")
+    return AggregatorInvoiceUrl(
+        url=url,
+        filename=row.invoice_original_filename,
+        content_type=row.invoice_content_type,
+        expires_seconds=expires,
+    )
+
+
+@router.get(
+    "/fees/summary",
+    response_model=AggregatorFeesSummaryOut,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def fees_summary(
+    channel: str | None = Query(None),
+    date_from: str | None = Query(None, pattern=_DATE_RE),
+    date_to: str | None = Query(None, pattern=_DATE_RE),
+    db: AsyncSession = Depends(get_db),
+) -> AggregatorFeesSummaryOut:
+    """Per-channel commission / VAT / net roll-up over a date range.
+
+    The commission figure is genuinely split by marketplace, and this merges the
+    two sources so the picture is complete rather than half-dark:
+
+      • Channels that settle through detailed statement lines (Deliveroo, Keeta,
+        Noon) are read from `aggregator_statement_line` over `line_date` — the
+        authoritative settled fees, and the ONLY place VAT appears.
+      • Channels that do not (Talabat carries commission on the order feed; Careem
+        exposes no per-order fee at all) are read from `aggregator_order` over
+        `business_date` — commission and gross where the feed has them, no VAT.
+
+    One source is chosen PER CHANNEL (statement lines when a channel has any in
+    range, else the order feed), so Keeta is never double-counted. Providers
+    disagree on a fee's SIGN, so every bucket is a positive magnitude —
+    "what they charged". `effective_rate` is commission ÷ gross.
+    """
+    statement_rows = await _fees_from_statement_lines(db, channel, date_from, date_to)
+    order_rows = await _fees_from_orders(db, channel, date_from, date_to)
+
+    # Statement lines win where present (settled + carry VAT); the order feed fills
+    # the channels that never reach a statement line (Talabat, Careem).
+    chosen: dict[str, AggregatorFeesRow] = dict(order_rows)
+    chosen.update(statement_rows)
+
+    by_channel = [chosen[ch] for ch in sorted(chosen)]
+    totals = _fees_total(by_channel)
+    return AggregatorFeesSummaryOut(
+        from_date=date_from, to_date=date_to, by_channel=by_channel, totals=totals
+    )
+
+
+async def _fees_from_statement_lines(
+    db: AsyncSession, channel: str | None, date_from: str | None, date_to: str | None
+) -> dict[str, AggregatorFeesRow]:
+    """Fee/VAT roll-up per channel from the settled statement lines (has VAT)."""
+    ln = AggregatorStatementLine
+    lt = func.lower(func.coalesce(ln.line_type, ""))
+    fc = func.lower(func.coalesce(ln.fee_category, ""))
+    # Provider-verbatim words → buckets. VAT is tested first so a "commission_vat"
+    # line lands in VAT, not commission.
+    is_vat = or_(lt == "vat", fc.like("%vat%"))
+    is_commission = and_(fc == "commission", ~is_vat)
+    is_gross = or_(fc == "gross_sales", lt.in_(["gross_sales", "sales", "sale"]))
+    is_net = or_(fc == "net_payable", lt.in_(["net_payable", "payout", "settlement"]))
+    amt = func.abs(ln.amount)
+
+    def _sum(cond):
+        return func.coalesce(func.sum(amt).filter(cond), 0)
+
+    stmt = select(
+        ln.channel.label("channel"),
+        _sum(is_gross).label("gross_sales"),
+        _sum(is_commission).label("commission"),
+        _sum(is_vat).label("vat"),
+        _sum(and_(~is_gross, ~is_net, ~is_commission, ~is_vat)).label("other_fees"),
+        _sum(is_net).label("net_payable"),
+        func.count(distinct(ln.external_order_id)).label("orders"),
+    ).group_by(ln.channel)
+    if channel:
+        stmt = stmt.where(ln.channel == channel)
+    if date_from:
+        stmt = stmt.where(ln.line_date >= date_from)
+    if date_to:
+        stmt = stmt.where(ln.line_date <= date_to)
+    return {r.channel: _fees_row(r.channel, r) for r in (await db.execute(stmt)).all()}
+
+
+async def _fees_from_orders(
+    db: AsyncSession, channel: str | None, date_from: str | None, date_to: str | None
+) -> dict[str, AggregatorFeesRow]:
+    """Fee roll-up per channel from the order feed — for channels with no statement
+    lines (Talabat's commission, Careem's gross). No VAT here (the feed has none)."""
+    o = AggregatorOrder
+    stmt = select(
+        o.channel.label("channel"),
+        func.coalesce(func.sum(func.abs(o.gross_sales)), 0).label("gross_sales"),
+        func.coalesce(func.sum(func.abs(o.commission_amount)), 0).label("commission"),
+        func.coalesce(func.sum(func.abs(o.payment_fee)), 0).label("other_fees"),
+        func.coalesce(func.sum(func.abs(o.net_payable)), 0).label("net_payable"),
+        func.count().label("orders"),
+    ).group_by(o.channel)
+    if channel:
+        stmt = stmt.where(o.channel == channel)
+    if date_from:
+        stmt = stmt.where(o.business_date >= date_from)
+    if date_to:
+        stmt = stmt.where(o.business_date <= date_to)
+    return {
+        r.channel: _fees_row(r.channel, r, vat=None)
+        for r in (await db.execute(stmt)).all()
+    }
+
+
+def _fees_row(channel: str, r, *, vat: object = ...) -> AggregatorFeesRow:
+    """One fees roll-up row, with the effective commission rate computed in Python.
+    `vat` defaults to the row's own `vat` column; pass None for the order feed,
+    which has no VAT column."""
+    gross = Decimal(r.gross_sales or 0)
+    commission = Decimal(r.commission or 0)
+    rate = float(commission / gross) if gross else None
+    return AggregatorFeesRow(
+        channel=channel,
+        gross_sales=r.gross_sales,
+        commission=r.commission,
+        vat=r.vat if vat is ... else vat,
+        other_fees=r.other_fees,
+        net_payable=r.net_payable,
+        orders=r.orders or 0,
+        effective_rate=rate,
+    )
+
+
+def _fees_total(rows: list[AggregatorFeesRow]) -> AggregatorFeesRow:
+    """Combine the chosen per-channel rows into one total (no double-counting —
+    one source was already picked per channel)."""
+
+    def _s(attr):
+        vals = [getattr(r, attr) for r in rows if getattr(r, attr) is not None]
+        return sum((Decimal(str(v)) for v in vals), Decimal(0)) if vals else None
+
+    gross = _s("gross_sales")
+    commission = _s("commission")
+    rate = float(commission / gross) if gross and commission is not None else None
+    return AggregatorFeesRow(
+        channel="all",
+        gross_sales=gross,
+        commission=commission,
+        vat=_s("vat"),
+        other_fees=_s("other_fees"),
+        net_payable=_s("net_payable"),
+        orders=sum(r.orders for r in rows),
+        effective_rate=rate,
+    )
 
 
 def _run_out(run: AggregatorSyncRun) -> AggregatorSyncRunOut:

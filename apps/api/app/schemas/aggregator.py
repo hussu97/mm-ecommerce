@@ -490,3 +490,80 @@ class SettlementReconOut(BaseModel):
     to_date: str | None = None
     statements: list[SettlementStatementRecon]
     payouts: list[SettlementPayoutRollup]
+
+
+# ── Invoices (settlement documents) + fees/VAT summary ────────────────────────
+class AggregatorStatementOut(BaseModel):
+    """One settlement statement for the Invoices screen.
+
+    A statement is a marketplace's published settlement summary for a period. Some
+    carry an archived invoice/CSV document (`has_invoice`), downloaded on demand
+    through a short-lived signed URL — the row only reports whether one exists and
+    its filename, never the key. Money fields are Decimals (strings on the wire),
+    absent rather than 0 when the marketplace never declared them.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    channel: str
+    statement_id: str
+    period_start: str | None = None
+    period_end: str | None = None
+    payment_due_date: str | None = None
+    currency: str | None = None
+    gross_sales: Decimal | None = None
+    total_fees: Decimal | None = None
+    total_vat: Decimal | None = None
+    net_payable: Decimal | None = None
+    external_outlet_id: str | None = None
+    has_invoice: bool = False
+    invoice_original_filename: str | None = None
+    invoice_fetched_at: datetime | None = None
+    attachment_count: int = 0
+    created_at: datetime | None = None
+
+
+class AggregatorStatementList(BaseModel):
+    """A page of statements, plus the unpaginated total for the filter."""
+
+    items: list[AggregatorStatementOut]
+    total: int
+
+
+class AggregatorInvoiceUrl(BaseModel):
+    """A short-lived signed download URL for one statement's archived invoice."""
+
+    url: str
+    filename: str | None = None
+    content_type: str | None = None
+    expires_seconds: int
+
+
+class AggregatorFeesRow(BaseModel):
+    """One channel's fee/VAT roll-up over the requested date range.
+
+    Sourced from `aggregator_statement_line` bucketed by the provider's own
+    line/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE
+    (providers disagree on the sign of a fee — noon books it positive, the rest
+    negative), so `commission`/`vat`/`other_fees` read as "what they charged".
+    `orders` counts the distinct settled orders contributing.
+    """
+
+    channel: str
+    gross_sales: Decimal | None = None
+    commission: Decimal | None = None
+    vat: Decimal | None = None
+    other_fees: Decimal | None = None
+    net_payable: Decimal | None = None
+    orders: int = 0
+    effective_rate: float | None = None
+
+
+class AggregatorFeesSummaryOut(BaseModel):
+    """The Fees & VAT read: per-channel rows plus one combined total."""
+
+    from_date: str | None = None
+    to_date: str | None = None
+    by_channel: list[AggregatorFeesRow]
+    totals: AggregatorFeesRow
