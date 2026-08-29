@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 
-import { Badge, Button, LoadError, Pagination, Select, Spinner } from '@/components/ui';
+import { Badge, Button, Input, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
@@ -77,6 +77,11 @@ export default function AggregatorRunsPage() {
   const [mode, setMode] = useState('');
   const [status, setStatus] = useState('');
   const [triggering, setTriggering] = useState(false);
+  // Optional backfill window for "Run now". Both empty ⇒ the recent daily pass;
+  // both set ⇒ a backfill over that Dubai business-date range (how you re-pull
+  // and correct past days). One set alone is rejected before we call the API.
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   // Server-side filtering: a filter change is a new fetcher identity, which the
   // hook treats as "filters changed" and resets to page 1 + refetches.
@@ -106,9 +111,18 @@ export default function AggregatorRunsPage() {
   // channel opens one. Refresh now to catch the first running row, then again a
   // moment later once more have landed.
   const onTrigger = async () => {
+    if (Boolean(fromDate) !== Boolean(toDate)) {
+      toast.error('Set both dates to backfill a range, or clear both for a recent run');
+      return;
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      toast.error('The start date must not be after the end date');
+      return;
+    }
     setTriggering(true);
     try {
-      const res = await aggregatorRunsApi.trigger();
+      const body = fromDate && toDate ? { from_date: fromDate, to_date: toDate } : undefined;
+      const res = await aggregatorRunsApi.trigger(body);
       toast.success(res.detail);
       await refetch();
       setTimeout(() => void refetch(), 2500);
@@ -205,15 +219,41 @@ export default function AggregatorRunsPage() {
     <div className="space-y-6">
       <AggregatorTabs />
 
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Runs</h1>
           <p className="text-xs text-gray-400 font-body mt-0.5">
             {total} run{total === 1 ? '' : 's'} · the ingest trail for every scrape
           </p>
         </div>
-        <Button onClick={onTrigger} loading={triggering}>Run now</Button>
+        <div className="flex items-end gap-2">
+          <div className="w-40">
+            <Input
+              type="date"
+              label="From"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={e => setFromDate(e.target.value)}
+            />
+          </div>
+          <div className="w-40">
+            <Input
+              type="date"
+              label="To"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={e => setToDate(e.target.value)}
+            />
+          </div>
+          <Button onClick={onTrigger} loading={triggering}>
+            {fromDate && toDate ? 'Backfill range' : 'Run now'}
+          </Button>
+        </div>
       </div>
+      <p className="text-xs text-gray-400 font-body -mt-4">
+        Leave the dates empty for a recent pass, or set both to re-pull a past range
+        (this re-derives each order&apos;s created-at from the marketplace&apos;s placed-at).
+      </p>
 
       <div className="flex flex-wrap gap-3">
         <div className="w-44">

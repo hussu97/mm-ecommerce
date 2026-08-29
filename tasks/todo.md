@@ -68,3 +68,33 @@ admin `tsc` + eslint clean; CI-pinned `ruff check`/`ruff format --check` clean.
 
 No new env vars/secrets, analytics events, or UI-translation keys — W9/W10 and the
 i18n migration rule don't apply.
+
+## Follow-up — date-range trigger + fixing the Aug 27–28 rows
+
+Asks: (1) "Run now" should take a user-specified date range; (2) existing Aug 27–28
+scraped orders have the wrong dates — fix them; (3) would a re-run auto-update them?
+
+Answer to (3): **yes, but only for a run that covers those business dates.** The
+default daily pass re-scrapes just the last day, so it never re-touches Aug 27–28.
+A *range* backfill re-scrapes them → the now-normalised `placed_at` changes the
+stored value → `updated_at` advances → `promote_channel` (whose window is the wide
+settlement lookback, so it reaches back that far) re-promotes → `_refresh_order`
+resets `created_at`. So the range trigger is both the feature and the fix.
+
+- [x] `trigger_range_in_background(from, to, channels)` in `ingest.py` (shares the
+      tracked-task launcher with the daily trigger); wires to the existing
+      `run_range` backfill (scrape → promote → reconcile).
+- [x] `POST /aggregators/runs/trigger` now takes an optional body
+      (`AggregatorRunTriggerIn`: `from_date`/`to_date`/`channels`). No dates → the
+      recent daily pass; both → a range backfill. Validates both-or-neither,
+      from ≤ to, ≤ 92-day span, known channels (all `BadRequestError`).
+- [x] Admin Runs page: From/To date inputs next to the button (label flips to
+      "Backfill range"), with a one-line explainer; client-side both-or-neither +
+      order guards before the call.
+- [x] `@mm/types` regenerated; 7 new endpoint tests (dispatch + every validation
+      branch) added; ruff/format/tsc/eslint/openapi-check all clean.
+
+Caveat surfaced to the user: Keeta is push-only — `run_range` records it skipped,
+so Keeta rows can't be re-pulled from the console (they'd need a bootstrap re-push).
+The user described these as "scrape side", i.e. the httpx channels, which the range
+run fully covers.

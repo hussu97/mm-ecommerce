@@ -29,6 +29,7 @@ type ReconList = Schemas['AggregatorReconciliationList'];
 type ReconSummary = Schemas['ReconSummaryOut'];
 type SyncRunList = Schemas['AggregatorSyncRunList'];
 type RunTriggerResult = Schemas['AggregatorRunTriggerOut'];
+type RunTriggerInput = Schemas['AggregatorRunTriggerIn'];
 type BranchMapRow = Schemas['AggregatorBranchMapOut'];
 type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 type AggregatorAccount = Schemas['AggregatorAccountPublic'];
@@ -691,9 +692,12 @@ export const aggregatorRunsApi = {
     limit?: number;
     offset?: number;
   }) => api.get<SyncRunList>(`/aggregators/runs${buildQs(params)}`),
-  /** Kick off a full aggregator pass now (the "Run now" button). Returns as soon
-   *  as it starts; the run rows land in the list as each channel finishes. */
-  trigger: () => api.post<RunTriggerResult>('/aggregators/runs/trigger'),
+  /** Kick off an aggregator pass now (the "Run now" button). With no dates it runs
+   *  the recent daily pass; with both it backfills that Dubai business-date range
+   *  (e.g. to re-pull and correct past days). Returns as soon as it starts; the run
+   *  rows land in the list as each channel finishes. */
+  trigger: (body?: RunTriggerInput) =>
+    api.post<RunTriggerResult>('/aggregators/runs/trigger', body),
 };
 
 // ─── Aggregator outlet↔branch mappings ────────────────────────────────────────

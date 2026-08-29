@@ -1338,6 +1338,51 @@
         "title": "AggregatorReconciliationOut",
         "type": "object"
       },
+      "AggregatorRunTriggerIn": {
+        "description": "What \"Run now\" asks for. Omit the dates for the standard recent pass; give\nboth to backfill an explicit Dubai business-date range (inclusive) \u2014 e.g. to\nre-pull days scraped before a fix landed. `channels` narrows the range run to a\nsubset (default: every channel); it is ignored for a dateless recent pass, which\nalways covers all of them.",
+        "properties": {
+          "channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels"
+          },
+          "from_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Date"
+          },
+          "to_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Date"
+          }
+        },
+        "title": "AggregatorRunTriggerIn",
+        "type": "object"
+      },
       "AggregatorRunTriggerOut": {
         "description": "The answer to a manual \"Run now\" \u2014 did the pass start, and a line to show.\n\nThe pass runs in the background (it takes minutes), so this only reports that\nit was accepted; the Runs table shows the outcome as each channel's row lands.\n`started` is False when the ingest is disabled or unconfigured.",
         "properties": {
@@ -30857,8 +30902,25 @@
     },
     "/api/v1/aggregators/runs/trigger": {
       "post": {
-        "description": "Kick off a full aggregator pass now \u2014 the \"Run now\" button on the Runs table.\n\nRuns the same daily pass the nightly scheduler does (sales \u2192 finance \u2192 promote\n\u2192 reconcile, every channel), so it needs no arguments. It fires in the\nbackground and answers immediately \u2014 a full pass takes minutes, and the caller\nwatches it land as each channel's run row appears in the table rather than\nholding the request open. Clicking while a pass is already in flight is safe:\nthe sweeps serialise on advisory locks and no-op if one is held. Gated on the\nsame permission as the Runs table itself.",
+        "description": "Kick off an aggregator pass now \u2014 the \"Run now\" button on the Runs table.\n\nWith no dates it runs the same recent pass the nightly scheduler does (sales \u2192\nfinance \u2192 promote \u2192 reconcile, every channel). With `from_date`/`to_date` it\nbackfills that explicit Dubai business-date range instead \u2014 the way to re-pull\npast days, e.g. to correct orders scraped before a fix landed: the re-pull\nre-derives each order's `created_at` from the corrected placed-at. Either way it\nfires in the background and answers at once \u2014 a pass takes minutes, and the\ncaller watches it land as each channel's run row appears rather than holding the\nrequest open. Clicking while a pass is in flight is safe: the sweeps serialise on\nadvisory locks and no-op if one is held. Gated on the same permission as the Runs\ntable itself.",
         "operationId": "trigger_sync_run_api_v1_aggregators_runs_trigger_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AggregatorRunTriggerIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -30869,6 +30931,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
