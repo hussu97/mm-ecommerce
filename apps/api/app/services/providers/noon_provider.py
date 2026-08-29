@@ -974,14 +974,23 @@ class NoonClient(BaseAggregatorClient):
                     parent = by_id[stmt_ref]
                     idx = statements.index(parent)
                     # Generate + archive a statement DOCUMENT from the settled
-                    # per-order rows. noon exposes no downloadable statement file
-                    # of its own (audited 2026-08: no API endpoint responds, the
-                    # console SPA route is opaque), so rather than leave finance
-                    # with no VAT document we render noon's own per-order
-                    # settlement data — every fee, VAT and net line — to a CSV and
-                    # archive THAT to object storage. A real, retrievable
-                    # settlement document for the period; best-effort, so an
-                    # archive failure never loses the summary or the lines.
+                    # per-order rows: render noon's own per-order settlement data —
+                    # every fee, VAT and net line — to a CSV and archive it as the
+                    # period's VAT document. Best-effort, so an archive failure
+                    # never loses the summary or the lines.
+                    #
+                    # The console DOES expose an official Tax Invoice, found
+                    # 2026-08-29 (the earlier "no endpoint responds" audit was
+                    # wrong): the Payments → Statement tab's per-statement
+                    # fee breakdown is `GET /_food-restaurant/finance/statement/
+                    # overview/{referenceNr}` (feeName / priceExclVat / vatRate /
+                    # vatAmount / priceInclVat per fee — the exact lines on the
+                    # invoice), and the PDF itself is `GET …/finance/invoice/
+                    # details/{referenceNr}/{token}`. Not wired here yet: the PDF
+                    # path needs a per-statement Fernet token whose client-side
+                    # source is not yet pinned, and noon's anti-bot cookie has to
+                    # be warm for the RMS host to answer over httpx at all. Until
+                    # both are settled, the rendered CSV stays the archived doc.
                     archive = self._archive_statement_csv(
                         stmt_ref, raw_by_stmt.get(stmt_ref, [])
                     )
