@@ -1233,3 +1233,29 @@ async def test_ingest_deliveroo_finance_payloads_skips_bad_payload():
 
     assert statements == 1
     assert lines == 0
+
+
+# ── placed_at timezone normalisation (the +4h "created after the sync" bug) ────
+def test_aware_business_stamps_naive_dubai_wall_clock():
+    """A naive marketplace timestamp (Talabat CSV, Keeta/Noon page JSON) is Dubai
+    wall-clock. Stamp it with Dubai so its UTC instant is right — a naive value
+    would land in the timestamptz column as UTC and read back +4h in the future."""
+    naive = datetime(2026, 8, 26, 23, 16, 0)  # 23:16 Dubai
+    out = ingest._aware_business(naive)
+    assert out is not None
+    assert out.tzinfo is not None
+    assert out.utcoffset() == timedelta(hours=4)
+    # Same wall clock, and the correct instant: 23:16 Dubai == 19:16 UTC, not 23:16Z.
+    assert out.replace(tzinfo=None) == naive
+    assert out.astimezone(timezone.utc).hour == 19
+
+
+def test_aware_business_leaves_aware_values_untouched():
+    """Careem's REST offsets and Deliveroo's Z-suffixed ISO already arrive aware;
+    the normaliser must not shift them."""
+    aware = datetime(2026, 8, 26, 13, 0, 0, tzinfo=timezone.utc)
+    assert ingest._aware_business(aware) is aware
+
+
+def test_aware_business_passes_none_through():
+    assert ingest._aware_business(None) is None

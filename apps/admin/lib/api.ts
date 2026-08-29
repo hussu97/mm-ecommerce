@@ -28,6 +28,7 @@ import type {
 type ReconList = Schemas['AggregatorReconciliationList'];
 type ReconSummary = Schemas['ReconSummaryOut'];
 type SyncRunList = Schemas['AggregatorSyncRunList'];
+type RunTriggerResult = Schemas['AggregatorRunTriggerOut'];
 type BranchMapRow = Schemas['AggregatorBranchMapOut'];
 type BranchMapInput = Schemas['AggregatorBranchMapIn'];
 type AggregatorAccount = Schemas['AggregatorAccountPublic'];
@@ -690,6 +691,9 @@ export const aggregatorRunsApi = {
     limit?: number;
     offset?: number;
   }) => api.get<SyncRunList>(`/aggregators/runs${buildQs(params)}`),
+  /** Kick off a full aggregator pass now (the "Run now" button). Returns as soon
+   *  as it starts; the run rows land in the list as each channel finishes. */
+  trigger: () => api.post<RunTriggerResult>('/aggregators/runs/trigger'),
 };
 
 // ─── Aggregator outlet↔branch mappings ────────────────────────────────────────

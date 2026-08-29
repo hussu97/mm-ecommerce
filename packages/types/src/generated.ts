@@ -451,6 +451,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/runs/trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Sync Run
+         * @description Kick off a full aggregator pass now — the "Run now" button on the Runs table.
+         *
+         *     Runs the same daily pass the nightly scheduler does (sales → finance → promote
+         *     → reconcile, every channel), so it needs no arguments. It fires in the
+         *     background and answers immediately — a full pass takes minutes, and the caller
+         *     watches it land as each channel's run row appears in the table rather than
+         *     holding the request open. Clicking while a pass is already in flight is safe:
+         *     the sweeps serialise on advisory locks and no-op if one is held. Gated on the
+         *     same permission as the Runs table itself.
+         */
+        post: operations["trigger_sync_run_api_v1_aggregators_runs_trigger_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/session": {
         parameters: {
             query?: never;
@@ -7790,6 +7818,20 @@ export interface components {
             total_agg?: string | null;
             /** Total Mm */
             total_mm?: string | null;
+        };
+        /**
+         * AggregatorRunTriggerOut
+         * @description The answer to a manual "Run now" — did the pass start, and a line to show.
+         *
+         *     The pass runs in the background (it takes minutes), so this only reports that
+         *     it was accepted; the Runs table shows the outcome as each channel's row lands.
+         *     `started` is False when the ingest is disabled or unconfigured.
+         */
+        AggregatorRunTriggerOut: {
+            /** Detail */
+            detail: string;
+            /** Started */
+            started: boolean;
         };
         /**
          * AggregatorSessionPush
@@ -17898,6 +17940,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_sync_run_api_v1_aggregators_runs_trigger_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorRunTriggerOut"];
                 };
             };
         };

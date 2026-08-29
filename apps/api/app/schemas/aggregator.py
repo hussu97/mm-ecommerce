@@ -342,6 +342,17 @@ class AggregatorSyncRunList(BaseModel):
     total: int
 
 
+class AggregatorRunTriggerOut(BaseModel):
+    """The answer to a manual "Run now" — did the pass start, and a line to show.
+
+    The pass runs in the background (it takes minutes), so this only reports that
+    it was accepted; the Runs table shows the outcome as each channel's row lands.
+    `started` is False when the ingest is disabled or unconfigured."""
+
+    started: bool
+    detail: str
+
+
 class ReconSummaryRow(BaseModel):
     """The reconciliation tallies for one channel (or the `all` total row).
 

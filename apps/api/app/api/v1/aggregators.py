@@ -49,6 +49,7 @@ from app.schemas.aggregator import (
     AggregatorBranchMapOut,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
+    AggregatorRunTriggerOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
     AggregatorSyncRunList,
@@ -623,6 +624,32 @@ async def list_sync_runs(
     )
     runs = (await db.execute(stmt)).scalars().all()
     return AggregatorSyncRunList(items=[_run_out(r) for r in runs], total=total)
+
+
+@router.post(
+    "/runs/trigger",
+    response_model=AggregatorRunTriggerOut,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def trigger_sync_run() -> AggregatorRunTriggerOut:
+    """Kick off a full aggregator pass now — the "Run now" button on the Runs table.
+
+    Runs the same daily pass the nightly scheduler does (sales → finance → promote
+    → reconcile, every channel), so it needs no arguments. It fires in the
+    background and answers immediately — a full pass takes minutes, and the caller
+    watches it land as each channel's run row appears in the table rather than
+    holding the request open. Clicking while a pass is already in flight is safe:
+    the sweeps serialise on advisory locks and no-op if one is held. Gated on the
+    same permission as the Runs table itself."""
+    started = ingest.trigger_daily_in_background()
+    if not started:
+        raise ServiceUnavailableError(
+            "The aggregator ingest is disabled or not configured on this deployment."
+        )
+    return AggregatorRunTriggerOut(
+        started=True,
+        detail="Run started — the table will fill in as each channel finishes.",
+    )
 
 
 @router.get(

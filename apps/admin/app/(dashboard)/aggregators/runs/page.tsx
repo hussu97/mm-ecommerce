@@ -2,10 +2,11 @@
 
 import { useCallback, useState } from 'react';
 
-import { Badge, LoadError, Pagination, Select, Spinner } from '@/components/ui';
+import { Badge, Button, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
+import { useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
-import { aggregatorRunsApi } from '@/lib/api';
+import { aggregatorRunsApi, ApiError } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
 import type { Schemas } from '@mm/types';
 
@@ -71,9 +72,11 @@ function pct(n: number | null | undefined): string {
 }
 
 export default function AggregatorRunsPage() {
+  const toast = useToast();
   const [channel, setChannel] = useState('');
   const [mode, setMode] = useState('');
   const [status, setStatus] = useState('');
+  const [triggering, setTriggering] = useState(false);
 
   // Server-side filtering: a filter change is a new fetcher identity, which the
   // hook treats as "filters changed" and resets to page 1 + refetches.
@@ -98,6 +101,23 @@ export default function AggregatorRunsPage() {
   const {
     items: rows, total, pages, page, perPage, setPage, setPerPage, loading, loadError, refetch,
   } = useApiList<RunRow>({ paginate: 'server', fetch: fetchRows });
+
+  // The pass runs in the background and answers at once; its rows appear as each
+  // channel opens one. Refresh now to catch the first running row, then again a
+  // moment later once more have landed.
+  const onTrigger = async () => {
+    setTriggering(true);
+    try {
+      const res = await aggregatorRunsApi.trigger();
+      toast.success(res.detail);
+      await refetch();
+      setTimeout(() => void refetch(), 2500);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Could not start a run');
+    } finally {
+      setTriggering(false);
+    }
+  };
 
   const columns: DataColumn<RunRow>[] = [
     {
@@ -185,11 +205,14 @@ export default function AggregatorRunsPage() {
     <div className="space-y-6">
       <AggregatorTabs />
 
-      <div>
-        <h1 className="font-display text-2xl text-gray-800">Runs</h1>
-        <p className="text-xs text-gray-400 font-body mt-0.5">
-          {total} run{total === 1 ? '' : 's'} · the ingest trail for every scrape
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl text-gray-800">Runs</h1>
+          <p className="text-xs text-gray-400 font-body mt-0.5">
+            {total} run{total === 1 ? '' : 's'} · the ingest trail for every scrape
+          </p>
+        </div>
+        <Button onClick={onTrigger} loading={triggering}>Run now</Button>
       </div>
 
       <div className="flex flex-wrap gap-3">

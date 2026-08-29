@@ -1338,6 +1338,25 @@
         "title": "AggregatorReconciliationOut",
         "type": "object"
       },
+      "AggregatorRunTriggerOut": {
+        "description": "The answer to a manual \"Run now\" \u2014 did the pass start, and a line to show.\n\nThe pass runs in the background (it takes minutes), so this only reports that\nit was accepted; the Runs table shows the outcome as each channel's row lands.\n`started` is False when the ingest is disabled or unconfigured.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "started": {
+            "title": "Started",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "started",
+          "detail"
+        ],
+        "title": "AggregatorRunTriggerOut",
+        "type": "object"
+      },
       "AggregatorSessionPush": {
         "description": "A freshly captured marketplace session, pushed in for the ingest to replay.\n\nThe worker that runs the browser sends the bundle here; the API seals it\nand stores it. The cookies carry the load-bearing anti-bot cookie,\n`header_profile` the exact request fingerprint, `storage_state` the\nPlaywright blob a restarted worker hydrates.",
         "properties": {
@@ -30831,6 +30850,33 @@
           }
         ],
         "summary": "List Sync Runs",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/runs/trigger": {
+      "post": {
+        "description": "Kick off a full aggregator pass now \u2014 the \"Run now\" button on the Runs table.\n\nRuns the same daily pass the nightly scheduler does (sales \u2192 finance \u2192 promote\n\u2192 reconcile, every channel), so it needs no arguments. It fires in the\nbackground and answers immediately \u2014 a full pass takes minutes, and the caller\nwatches it land as each channel's run row appears in the table rather than\nholding the request open. Clicking while a pass is already in flight is safe:\nthe sweeps serialise on advisory locks and no-op if one is held. Gated on the\nsame permission as the Runs table itself.",
+        "operationId": "trigger_sync_run_api_v1_aggregators_runs_trigger_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorRunTriggerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Trigger Sync Run",
         "tags": [
           "Aggregators"
         ]
