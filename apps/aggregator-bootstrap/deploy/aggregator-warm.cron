@@ -17,8 +17,18 @@
 # (e2-small/2 GB comfortably, e2-medium/4 GB with headroom). Size the VM up before
 # leaning on the anti-bot warms.
 #
-# 1) Keeta order pull (22:00). Keeta is mtgsig-signed in-page, pulled here and
-#    pushed back.
+# 1) Keeta order pull (every 3 hours). Keeta is mtgsig-signed in-page, pulled here
+#    and pushed back — it is the ONLY channel the API's httpx sweep cannot reach,
+#    so its freshness is set here, not by the API's rolling sales refresh. Pulled
+#    3-hourly rather than once at night for two reasons: to promote the day's Keeta
+#    orders while the day is still moving, and — the load-bearing one — to capture
+#    each order's customer name/phone/address BEFORE Keeta masks them to `***` a
+#    few hours after the order. A later pull that finds them already masked cannot
+#    undo this: the ingest's `_PREFER_UNMASKED` upsert keeps the real value a
+#    fresh pull captured and refuses to overwrite it with a mask. Every 3h (not
+#    hourly) keeps the headed-Chrome minutes modest and never lands on the 22:15
+#    warm. Was a single 22:00 pull, which routinely saw a whole evening of orders
+#    already redacted.
 # 2) Anti-bot cookie warm (22:15) for the TLS-impersonation httpx channels —
 #    Talabat (PerimeterX _px3/pxcts) and Noon (Akamai bm_sv/_abck). Their
 #    load-bearing cookie DECAYS: the API's httpx sweep replays it but never
@@ -54,6 +64,6 @@
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
-0 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
+0 */3 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
 15 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat careem; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
 */2 * * * * root /usr/bin/flock -w 100 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions' 2>&1 | /usr/bin/logger -t aggregator-reauth
