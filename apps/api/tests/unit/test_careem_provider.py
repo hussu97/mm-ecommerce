@@ -54,9 +54,11 @@ _DETAIL = {
         {
             "category_name": "Brownies",
             "count": 1,
+            "price": {"total": 55, "total_with_options": 55, "original": 55},
             "menu_item": {
                 "item": "Lindor Brownies",
                 "item_localized": {"en": "Lindor Brownies"},
+                "price": {"total": 55},
             },
             "groups": [
                 {
@@ -73,6 +75,62 @@ _DETAIL = {
         }
     ],
 }
+
+# A box whose contents are FREE options — the price is on the box, and the
+# customer was charged 57.75 (55 menu + Careem's CPlus markup). gross must be the
+# 55 menu value, and the item line 55 (not the 0 sum of the free options).
+_DETAIL_BOX = {
+    "id": 169056257,
+    "status": "confirmed",
+    "created_at": "2026-08-29T17:30:00+00:00",
+    "merchant": {"id": 1067984, "currency": {"code": "AED"}},
+    "total_price": 57.75,
+    "charge_amount": 57.75,
+    "price": {"total": 55, "sub_total": 55, "original": 55, "tax": 0},
+    "items": [
+        {
+            "category_name": "Boxes",
+            "count": 1,
+            "price": {"total": 55, "total_with_options": 55, "original": 55},
+            "menu_item": {
+                "item": "Mix Brownies and Cookies Box of 3",
+                "price": {"total": 55},
+            },
+            "groups": [
+                {
+                    "name": "Box Contents",
+                    "options": [
+                        {"name": "Ferrero Brownie", "count": 1, "price": {"total": 0}},
+                        {"name": "Snickers Brownie", "count": 1, "price": {"total": 0}},
+                        {
+                            "name": "Cheesecake Brownie",
+                            "count": 1,
+                            "price": {"total": 0},
+                        },
+                    ],
+                }
+            ],
+        }
+    ],
+}
+
+
+def test_order_gross_is_the_menu_value_not_the_charged_amount():
+    """The customer was charged 57.75 (Careem's CPlus markup on top of the 55 menu
+    subtotal), but the shop's sale is 55, and the box line is 55 (not the 0 sum of
+    its free contents)."""
+    client = CareemClient()
+    minimal = StandardOrder(external_order_id="169056257", external_outlet_id="1067984")
+    order = client._order_from_detail(_DETAIL_BOX, minimal)
+    assert order.gross_sales == Decimal("55")  # not 57.75
+    line = order.items[0]
+    assert line.item_name == "Mix Brownies and Cookies Box of 3"
+    assert line.gross_sales == Decimal("55")  # box price, not the 0 options sum
+    assert [m.name for m in line.modifiers] == [
+        "Ferrero Brownie",
+        "Snickers Brownie",
+        "Cheesecake Brownie",
+    ]
 
 
 def test_order_from_detail_extracts_items_modifiers_driver_address_timeline():

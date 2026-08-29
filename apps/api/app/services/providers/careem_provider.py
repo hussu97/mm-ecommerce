@@ -146,9 +146,19 @@ def _items_from_detail(external: str, items_raw: Any) -> list[StandardOrderItem]
             or _first(it, "name", "item_name", "title")
         )
         count = _num(_first(it, "count", "quantity", "qty")) or Decimal("1")
+        # The line price is `item.price.total_with_options` (the item + its priced
+        # options) — NOT the sum of the option prices, which are 0 for a box whose
+        # contents are free (the box itself carries the price). Fall back to the
+        # menu item's price when the line has no own price.
+        item_price = it.get("price") if isinstance(it.get("price"), dict) else {}
+        menu_price = menu.get("price") if isinstance(menu.get("price"), dict) else {}
+        gross = _num(
+            _first(item_price, "total_with_options", "total", "original")
+        ) or _num(_first(menu_price, "total", "original"))
+        unit = (gross / count) if (gross is not None and count) else None
+        # Options are still captured as modifiers (the box contents / add-ons),
+        # with their own prices (often 0), for the itemised record.
         modifiers: list[StandardModifier] = []
-        line_total = Decimal("0")
-        has_price = False
         for group in it.get("groups") or []:
             if not isinstance(group, dict):
                 continue
@@ -164,11 +174,6 @@ def _items_from_detail(external: str, items_raw: Any) -> list[StandardOrderItem]
                             name=str(oname), quantity=ocount, unit_price=oprice
                         )
                     )
-                if oprice is not None:
-                    line_total += oprice * (ocount or Decimal("1"))
-                    has_price = True
-        gross = line_total if has_price else None
-        unit = (gross / count) if (gross is not None and count) else None
         items.append(
             StandardOrderItem(
                 source_key=f"{external}:{idx}",
@@ -423,9 +428,15 @@ class CareemClient(BaseAggregatorClient):
         )
         bdate = _dubai_date(placed_at)
         price = detail.get("price") if isinstance(detail.get("price"), dict) else {}
-        gross = _num(_first(detail, "total_price", "charge_amount")) or _num(
-            _first(price, "total", "sub_total", "original")
-        )
+        # The shop's sale is the MENU value (`price.sub_total`/`total`/`original`),
+        # NOT `total_price`/`charge_amount` — those are what the customer was
+        # charged, which includes Careem's own CPlus markup on top of the menu
+        # price (e.g. 57.75 charged on a 55 menu subtotal) and is not the shop's
+        # revenue. Tax is 0 for this (non-tax-registered) merchant, so sub_total is
+        # the goods value.
+        gross = _num(_first(price, "sub_total", "total", "original"))
+        if gross is None:
+            gross = minimal.gross_sales
         merchant = (
             detail.get("merchant") if isinstance(detail.get("merchant"), dict) else {}
         )
