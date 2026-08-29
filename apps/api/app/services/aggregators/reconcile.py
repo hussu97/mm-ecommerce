@@ -323,6 +323,17 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
                 # promoted_at copies the fresh link in. Converges: reconcile stamps
                 # reconciled_at = now (> promoted_at), so the next pass skips it.
                 AggregatorOrder.promoted_at > recon.reconciled_at,
+                # Self-heal the rows the two clauses above cannot reach: an order
+                # promoted BEFORE its last reconcile (so promoted_at < reconciled_at)
+                # and never re-scraped since keeps whatever link that older pass
+                # stored — NULL, for an aggregator-only order reconciled under the
+                # logic that did not carry the standalone across. Re-select while the
+                # order is linked but the recon row is not; converges the moment the
+                # link is copied in (mm_order_id stops being NULL).
+                and_(
+                    recon.mm_order_id.is_(None),
+                    AggregatorOrder.mm_order_id.isnot(None),
+                ),
             ),
         )
     )

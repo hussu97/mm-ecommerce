@@ -149,6 +149,9 @@ class PromotionCreate(ScheduleFields):
     reward_value: Decimal = Field(Decimal("0"), ge=0)
     trigger_product_ids: list[uuid.UUID] = Field(default_factory=list)
     reward_product_ids: list[uuid.UUID] = Field(default_factory=list)
+    #: Categories an auto-apply order discount is confined to; empty = the whole
+    #: order. Discounts only the lines whose product is in one of these categories.
+    category_ids: list[uuid.UUID] = Field(default_factory=list)
     branch_ids: list[uuid.UUID] = Field(default_factory=list)
     order_types: list[OrderTypeLiteral] = Field(default_factory=list)
     #: Channels this promotion may fire on; empty = every channel. A
@@ -183,6 +186,7 @@ class PromotionUpdate(BaseModel):
     reward_value: Decimal | None = Field(None, ge=0)
     trigger_product_ids: list[uuid.UUID] | None = None
     reward_product_ids: list[uuid.UUID] | None = None
+    category_ids: list[uuid.UUID] | None = None
     branch_ids: list[uuid.UUID] | None = None
     order_types: list[OrderTypeLiteral] | None = None
     sources: list[SourceLiteral] | None = None
@@ -229,6 +233,7 @@ class PromotionResponse(ORMModel):
     reward_value: Decimal
     trigger_product_ids: list[uuid.UUID]
     reward_product_ids: list[uuid.UUID]
+    category_ids: list[uuid.UUID]
     branch_ids: list[uuid.UUID]
     order_types: list[str]
     sources: list[str]

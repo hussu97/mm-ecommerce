@@ -21202,6 +21202,14 @@
             "title": "Branch Ids",
             "type": "array"
           },
+          "category_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Category Ids",
+            "type": "array"
+          },
           "customer_tag_ids": {
             "items": {
               "format": "uuid",
@@ -21451,6 +21459,14 @@
             "title": "Branch Ids",
             "type": "array"
           },
+          "category_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Category Ids",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -21617,6 +21633,7 @@
           "reward_value",
           "trigger_product_ids",
           "reward_product_ids",
+          "category_ids",
           "branch_ids",
           "order_types",
           "sources",
@@ -21669,6 +21686,21 @@
               }
             ],
             "title": "Branch Ids"
+          },
+          "category_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Ids"
           },
           "from_date": {
             "anyOf": [

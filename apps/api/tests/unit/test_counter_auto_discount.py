@@ -39,6 +39,7 @@ def _promo(**overrides) -> Promotion:
         reward_value=Decimal("15"),
         trigger_product_ids=[],
         reward_product_ids=[],
+        category_ids=[],
         branch_ids=[],
         order_types=[],
         sources=["cashier"],
@@ -65,8 +66,17 @@ def _promo(**overrides) -> Promotion:
     return Promotion(**fields)
 
 
-def _item(price: str, qty: int = 1, *, returned: int = 0, status: str = "active"):
+def _item(
+    price: str,
+    qty: int = 1,
+    *,
+    returned: int = 0,
+    status: str = "active",
+    product_id=None,
+):
     return SimpleNamespace(
+        id=uuid.uuid4(),
+        product_id=product_id if product_id is not None else uuid.uuid4(),
         base_price=Decimal(price),
         options_price=Decimal("0"),
         quantity=qty,
@@ -88,10 +98,18 @@ def _order(*, source="cashier", items=None, discounts=None, order_type="pickup")
     )
 
 
-def _db(promos: list[Promotion]):
-    """A db whose only job is to hand back the candidate promotions."""
+def _db(promos: list[Promotion], products: list[tuple] | None = None):
+    """A db that hands back the candidate promotions, and — for the
+    category-scoped path — the `(product_id, category_id)` rows the service
+    looks up to decide which lines a promotion covers.
+
+    One result object serves both queries because they read it differently:
+    `_candidates` calls `.scalars().all()` (promotions), the product lookup
+    calls `.all()` (id/category tuples), so neither sees the other's data.
+    """
     result = MagicMock()
     result.scalars.return_value.all.return_value = promos
+    result.all.return_value = products or []
     db = SimpleNamespace()
     db.execute = AsyncMock(return_value=result)
     db.flush = AsyncMock()
@@ -219,6 +237,88 @@ class TestIdempotenceAndTeardown:
         order.pos_status = "closed"
         await auto_promotion_service.sync_auto_discounts(_db([_promo()]), order)
         assert _auto_discounts(order) == [], "a closed check must not be re-discounted"
+
+
+class TestCategoryScope:
+    """
+    A promotion with `category_ids` discounts only the lines whose product is in
+    one of those categories — as one per-item row each — and leaves the rest of
+    the check alone.
+    """
+
+    async def test_only_matching_category_lines_get_a_per_item_discount(self):
+        cookies = uuid.uuid4()
+        cakes = uuid.uuid4()
+        cookie = _item("40")  # in cookies → discounted
+        cake = _item("100")  # in cakes → untouched
+        order = _order(items=[cookie, cake])
+        promo = _promo(category_ids=[cookies])
+        db = _db(
+            [promo],
+            products=[(cookie.product_id, cookies), (cake.product_id, cakes)],
+        )
+
+        await auto_promotion_service.sync_auto_discounts(db, order)
+
+        added = _auto_discounts(order)
+        assert len(added) == 1, "only the cookie line should be discounted"
+        d = added[0]
+        assert d.order_item_id == cookie.id, "the discount is scoped to the line"
+        assert d.is_percentage is True
+        assert d.value == Decimal("0.15")
+
+    async def test_every_matching_line_gets_its_own_row(self):
+        cookies = uuid.uuid4()
+        a = _item("40")
+        b = _item("30")
+        order = _order(items=[a, b])
+        promo = _promo(category_ids=[cookies])
+        db = _db([promo], products=[(a.product_id, cookies), (b.product_id, cookies)])
+
+        await auto_promotion_service.sync_auto_discounts(db, order)
+
+        scoped = {d.order_item_id for d in _auto_discounts(order)}
+        assert scoped == {a.id, b.id}, "each matching line owns one discount"
+
+    async def test_no_matching_lines_means_no_discount(self):
+        cookies = uuid.uuid4()
+        cake = _item("100")
+        order = _order(items=[cake])
+        promo = _promo(category_ids=[cookies])
+        db = _db([promo], products=[(cake.product_id, uuid.uuid4())])
+
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        assert _auto_discounts(order) == []
+
+    async def test_running_twice_keeps_one_row_per_line(self):
+        cookies = uuid.uuid4()
+        cookie = _item("40")
+        order = _order(items=[cookie])
+        promo = _promo(category_ids=[cookies])
+        db = _db([promo], products=[(cookie.product_id, cookies)])
+
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        assert len(_auto_discounts(order)) == 1, "the second pass duplicated a row"
+
+    async def test_narrowing_from_whole_order_clears_the_order_level_row(self):
+        cookies = uuid.uuid4()
+        cookie = _item("40")
+        order = _order(items=[cookie])
+
+        # First: a whole-order promotion (no categories) → one order-level row.
+        await auto_promotion_service.sync_auto_discounts(_db([_promo()]), order)
+        assert _auto_discounts(order)[0].order_item_id is None
+
+        # Then the same promotion gains a category scope → the order-level row is
+        # replaced by a per-item one on the matching line.
+        promo = _promo(category_ids=[cookies])
+        db = _db([promo], products=[(cookie.product_id, cookies)])
+        await auto_promotion_service.sync_auto_discounts(db, order)
+
+        added = _auto_discounts(order)
+        assert len(added) == 1
+        assert added[0].order_item_id == cookie.id
 
 
 class TestThroughRecalculate:

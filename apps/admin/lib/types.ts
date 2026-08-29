@@ -460,6 +460,8 @@ export interface Promotion {
     | 'free_product';
   /** A percent for a percentage reward (15 == 15%), an AED amount for a fixed one. */
   reward_value: number;
+  /** Categories an auto-apply order discount is confined to; empty = whole order. */
+  category_ids: string[];
   branch_ids: string[];
   order_types: string[];
   /** Order channels this may fire on (`OrderSourceEnum`); empty = every channel. */

@@ -3,9 +3,16 @@ Auto-applied promotions — the discounts the register puts on by itself.
 
 A `Promotion` with `auto_apply = True` is not a rule the cashier invokes; it is a
 standing discount the pricing engine adds to every qualifying check on its own.
-The one the shop runs is "every counter order is 15% off", but the mechanism is
-general: any order-level promotion (`percentage_off_order` / `fixed_off_order`)
-fired on a `spend` trigger, scoped by channel/branch/type/schedule.
+The one the shop runs is "every counter order is 15% off cookies, brownies and
+cookie melts", but the mechanism is general: any order-level promotion
+(`percentage_off_order` / `fixed_off_order`) fired on a `spend` trigger, scoped
+by channel/branch/type/schedule.
+
+A promotion with `category_ids` is confined to those categories: the discount is
+written as one per-item `OrderDiscount` per matching line (so 15% comes off each
+cookie and brownie and nothing else), which `recalculate` prices as line
+discounts. Without `category_ids` it stays a single order-level discount spread
+across the whole check, the original behaviour.
 
 `sync_auto_discounts` is the whole of it, and it is called from
 `pos_order_service.recalculate` — the single writer of money — so it re-runs
@@ -35,12 +42,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.marketing import Promotion, PromotionRewardEnum, PromotionTriggerEnum
-from app.models.order import Order, OrderItemStatusEnum
+from app.models.order import Order, OrderItem, OrderItemStatusEnum
 from app.models.pos_order import (
     DiscountSourceEnum,
     OrderDiscount,
     PosOrderStatusEnum,
 )
+from app.models.product import Product
 from app.services.pos import business_day_service
 
 #: The rewards an auto-apply promotion may carry. Both reduce to one order-level
@@ -59,10 +67,16 @@ _OPEN_STATUSES = {
 
 
 def _is_auto_managed(discount) -> bool:
-    """An order-level discount this service owns — a promotion it applied."""
+    """A discount this service owns — a promotion it applied.
+
+    Covers both shapes it can leave behind: the single order-level row a
+    whole-order promotion adds, and the per-item rows a category-scoped one adds
+    (one per matching line, `order_item_id` set). A promotion row is always this
+    service's — nothing else writes `source == promotion` on an order — so the
+    reconciler can safely add, update or clear any of them.
+    """
     return (
-        discount.order_item_id is None
-        and discount.source == DiscountSourceEnum.PROMOTION.value
+        discount.source == DiscountSourceEnum.PROMOTION.value
         and discount.reference_id is not None
     )
 
@@ -80,6 +94,23 @@ def _has_manual_order_discount(order: Order) -> bool:
     )
 
 
+def _billable_items(order: Order) -> list[OrderItem]:
+    """The lines that actually cost money — not voided, with units left to bill.
+
+    The same set `recalculate` prices and `_spend_basis` sums, so a per-item
+    discount is offered on exactly the lines a whole-order one would have covered.
+    """
+    live: list[OrderItem] = []
+    for item in order.items:
+        status = item.status or OrderItemStatusEnum.ACTIVE.value
+        if status == OrderItemStatusEnum.VOID.value:
+            continue
+        if max(item.quantity - (item.returned_quantity or 0), 0) <= 0:
+            continue
+        live.append(item)
+    return live
+
+
 def _spend_basis(order: Order) -> Decimal:
     """
     What the check is worth before any discount — the figure a `spend` trigger
@@ -87,13 +118,8 @@ def _spend_basis(order: Order) -> Decimal:
     how `recalculate` decides what is billable.
     """
     total = Decimal("0")
-    for item in order.items:
-        status = item.status or OrderItemStatusEnum.ACTIVE.value
-        if status == OrderItemStatusEnum.VOID.value:
-            continue
+    for item in _billable_items(order):
         billable = max(item.quantity - (item.returned_quantity or 0), 0)
-        if billable <= 0:
-            continue
         unit = Decimal(str(item.base_price)) + Decimal(str(item.options_price))
         total += unit * billable
     return total
@@ -187,35 +213,132 @@ async def sync_auto_discounts(db: AsyncSession, order: Order) -> None:
     is_percentage = chosen.reward == PromotionRewardEnum.PERCENTAGE_OFF_ORDER.value
     # `reward_value` is a percent for a percentage reward (15 == 15%); the
     # pricing engine wants a fraction. A fixed reward is already an AED amount.
+    # The same `value` drives both shapes: a per-item percentage row takes it
+    # off each matching line, an order-level one off the whole check.
     value = (
         Decimal(str(chosen.reward_value)) / Decimal("100")
         if is_percentage
         else Decimal(str(chosen.reward_value))
     )
 
-    # Keep one managed row and update it in place; drop any duplicates. Updating
-    # rather than delete+add keeps the discount's id stable across re-prices.
-    keep = managed[0] if managed else None
-    for extra in managed[1:]:
+    if chosen.category_ids:
+        await _apply_per_category(db, order, chosen, is_percentage, value, managed)
+    else:
+        _apply_order_level(order, chosen, is_percentage, value, managed)
+
+    await db.flush()
+
+
+def _sync_managed_row(
+    row: OrderDiscount, chosen: Promotion, is_percentage: bool, value: Decimal
+) -> None:
+    """Point an existing managed row at the chosen promotion, in place.
+
+    Updating rather than delete+add keeps the discount's id stable across the
+    re-prices `recalculate` runs on every mutation.
+    """
+    row.name = chosen.name
+    row.reference_id = chosen.id
+    row.is_percentage = is_percentage
+    row.value = value
+
+
+def _new_managed_row(
+    chosen: Promotion,
+    is_percentage: bool,
+    value: Decimal,
+    *,
+    order_item_id=None,
+) -> OrderDiscount:
+    return OrderDiscount(
+        order_item_id=order_item_id,
+        source=DiscountSourceEnum.PROMOTION.value,
+        name=chosen.name,
+        reference_id=chosen.id,
+        is_percentage=is_percentage,
+        value=value,
+        amount=Decimal("0"),  # filled by recalculate
+        applied_by_id=None,  # nobody applied it; the engine did
+    )
+
+
+def _apply_order_level(
+    order: Order,
+    chosen: Promotion,
+    is_percentage: bool,
+    value: Decimal,
+    managed: list[OrderDiscount],
+) -> None:
+    """The whole-order discount: exactly one row, `order_item_id` NULL.
+
+    Also the migration path off a category-scoped config — any per-item managed
+    rows left behind are cleared so only the single order-level one remains.
+    """
+    order_level = [d for d in managed if d.order_item_id is None]
+    for stale in managed:
+        if stale.order_item_id is not None:
+            order.order_discounts.remove(stale)
+
+    keep = order_level[0] if order_level else None
+    for extra in order_level[1:]:
         order.order_discounts.remove(extra)
 
     if keep is None:
-        order.order_discounts.append(
-            OrderDiscount(
-                order_item_id=None,
-                source=DiscountSourceEnum.PROMOTION.value,
-                name=chosen.name,
-                reference_id=chosen.id,
-                is_percentage=is_percentage,
-                value=value,
-                amount=Decimal("0"),  # filled by recalculate
-                applied_by_id=None,  # nobody applied it; the engine did
-            )
-        )
+        order.order_discounts.append(_new_managed_row(chosen, is_percentage, value))
     else:
-        keep.name = chosen.name
-        keep.reference_id = chosen.id
-        keep.is_percentage = is_percentage
-        keep.value = value
+        _sync_managed_row(keep, chosen, is_percentage, value)
 
-    await db.flush()
+
+async def _apply_per_category(
+    db: AsyncSession,
+    order: Order,
+    chosen: Promotion,
+    is_percentage: bool,
+    value: Decimal,
+    managed: list[OrderDiscount],
+) -> None:
+    """Discount only the lines whose product sits in the chosen categories.
+
+    One managed `OrderDiscount` per matching line (`order_item_id` set), which
+    `recalculate` prices as a per-line discount — so 15% comes off each cookie,
+    brownie and cookie-melt line and nothing else. Reconciles to exactly that
+    set: rows for lines that no longer match (or an order-level row from a
+    previous whole-order config) are cleared, missing ones are added.
+    """
+    categories = set(chosen.category_ids)
+    live = _billable_items(order)
+    product_ids = {item.product_id for item in live if item.product_id is not None}
+
+    category_by_product: dict = {}
+    if product_ids:
+        rows = (
+            await db.execute(
+                select(Product.id, Product.category_id).where(
+                    Product.id.in_(product_ids)
+                )
+            )
+        ).all()
+        category_by_product = {pid: cid for pid, cid in rows}
+
+    matching_item_ids = {
+        item.id
+        for item in live
+        if item.product_id is not None
+        and category_by_product.get(item.product_id) in categories
+    }
+
+    # Reconcile the rows we already own against the lines that should have one.
+    seen: set = set()
+    for row in managed:
+        if row.order_item_id in matching_item_ids and row.order_item_id not in seen:
+            _sync_managed_row(row, chosen, is_percentage, value)
+            seen.add(row.order_item_id)
+        else:
+            # A line that no longer qualifies, a duplicate, or the order-level
+            # row from a previous whole-order configuration.
+            order.order_discounts.remove(row)
+
+    for item_id in matching_item_ids - seen:
+        order.order_discounts.append(
+            _new_managed_row(chosen, is_percentage, value, order_item_id=item_id)
+        )

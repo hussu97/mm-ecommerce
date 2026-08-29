@@ -14465,6 +14465,8 @@ export interface components {
             auto_apply: boolean;
             /** Branch Ids */
             branch_ids?: string[];
+            /** Category Ids */
+            category_ids?: string[];
             /** Customer Tag Ids */
             customer_tag_ids?: string[];
             /** From Date */
@@ -14583,6 +14585,8 @@ export interface components {
             auto_apply: boolean;
             /** Branch Ids */
             branch_ids: string[];
+            /** Category Ids */
+            category_ids: string[];
             /**
              * Created At
              * Format: date-time
@@ -14655,6 +14659,8 @@ export interface components {
             auto_apply?: boolean | null;
             /** Branch Ids */
             branch_ids?: string[] | null;
+            /** Category Ids */
+            category_ids?: string[] | null;
             /** From Date */
             from_date?: string | null;
             /** From Time */

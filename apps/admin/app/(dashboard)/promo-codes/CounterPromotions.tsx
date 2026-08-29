@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useState } from 'react';
-import { promotionsApi, ApiError } from '@/lib/api';
-import type { Promotion } from '@/lib/types';
-import { Button, Input, Badge, Spinner, LoadError } from '@/components/ui';
+import { useCallback, useEffect, useState } from 'react';
+import { promotionsApi, categoriesApi, ApiError } from '@/lib/api';
+import type { Promotion, Category } from '@/lib/types';
+import { Button, Input, Select, Badge, Spinner, LoadError } from '@/components/ui';
 import { useApiList } from '@/hooks/useApiList';
 import { useToast } from '@/components/ui/feedback';
 
@@ -19,17 +19,29 @@ function scopeLabel(sources: string[]): string {
 /**
  * One auto-applied promotion, editable in place.
  *
- * The register applies these on its own, so the two figures worth changing from
- * the console are how much comes off and the spend it needs — plus the on/off
- * switch. Everything structural (which channel, which reward) is set once, in
- * the migration that seeds the offer, and left alone here.
+ * The register applies these on its own, so the figures worth changing from the
+ * console are how much comes off, the spend it needs, the on/off switch — and
+ * which categories it is confined to. Everything else structural (which channel,
+ * which reward) is set once in the migration that seeds the offer.
  */
-function PromotionRow({ promo, onSaved }: { promo: Promotion; onSaved: () => void }) {
+function PromotionRow({
+  promo,
+  categories,
+  onSaved,
+}: {
+  promo: Promotion;
+  categories: Category[];
+  onSaved: () => void;
+}) {
   const toast = useToast();
   const isPercent = promo.reward === 'percentage_off_order';
   const [value, setValue] = useState(String(promo.reward_value));
   const [minSpend, setMinSpend] = useState(promo.trigger_value ? String(promo.trigger_value) : '');
+  const [categoryIds, setCategoryIds] = useState<string[]>(promo.category_ids ?? []);
   const [saving, setSaving] = useState(false);
+
+  const nameOf = (id: string) => categories.find(c => c.id === id)?.name ?? 'Unknown category';
+  const unselected = categories.filter(c => c.is_active && !categoryIds.includes(c.id));
 
   async function save() {
     setSaving(true);
@@ -54,6 +66,23 @@ function PromotionRow({ promo, onSaved }: { promo: Promotion; onSaved: () => voi
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not change the status.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Categories save on each add/remove, so curating the set is one click and it
+  // sticks — no separate Save to forget. Optimistic, reverting on failure.
+  async function saveCategories(next: string[]) {
+    const previous = categoryIds;
+    setCategoryIds(next);
+    setSaving(true);
+    try {
+      await promotionsApi.update(promo.id, { category_ids: next });
+      onSaved();
+    } catch (err) {
+      setCategoryIds(previous);
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the categories.');
     } finally {
       setSaving(false);
     }
@@ -106,14 +135,75 @@ function PromotionRow({ promo, onSaved }: { promo: Promotion; onSaved: () => voi
           <Button loading={saving} onClick={save}>Save</Button>
         </div>
       </div>
+
+      {/* Which categories the discount is confined to. Empty = the whole order. */}
+      <div className="mt-4 pt-3 border-t border-gray-100">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <span className="block text-xs font-medium uppercase tracking-wider text-gray-600">
+            Applies to categories
+          </span>
+          {categoryIds.length > 0 && (
+            <button
+              type="button"
+              className="text-[11px] text-gray-400 hover:text-gray-600 font-body disabled:opacity-50"
+              disabled={saving}
+              onClick={() => saveCategories([])}
+            >
+              Clear (whole order)
+            </button>
+          )}
+        </div>
+
+        {categoryIds.length === 0 ? (
+          <p className="text-[11px] text-gray-400 font-body mb-2">
+            No limit — the discount applies to the whole order. Add a category to
+            confine it to those products only.
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {categoryIds.map(id => (
+              <span
+                key={id}
+                className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 text-xs font-body bg-gray-100 text-gray-700 rounded-sm"
+              >
+                {nameOf(id)}
+                <button
+                  type="button"
+                  aria-label={`Remove ${nameOf(id)}`}
+                  className="text-gray-400 hover:text-gray-700 disabled:opacity-50 leading-none text-sm"
+                  disabled={saving}
+                  onClick={() => saveCategories(categoryIds.filter(c => c !== id))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {unselected.length > 0 && (
+          <Select
+            aria-label="Add a category"
+            placeholder="Add a category…"
+            value=""
+            disabled={saving}
+            className="sm:max-w-xs"
+            options={unselected.map(c => ({ value: c.id, label: c.name }))}
+            onChange={e => {
+              if (e.target.value) saveCategories([...categoryIds, e.target.value]);
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
 /**
  * The auto-applied promotions block on the Promotions page — chiefly the
- * standing "every counter order is 15% off". Coupons a customer types live in
- * the table below; these are the discounts the shop applies by itself.
+ * standing "every counter order is 15% off cookies, brownies and cookie melts".
+ * Coupons a customer types live in the table below; these are the discounts the
+ * shop applies by itself.
  */
 export function CounterPromotions() {
   const fetchPromos = useCallback(() => promotionsApi.list(), []);
@@ -121,6 +211,11 @@ export function CounterPromotions() {
     paginate: 'client',
     fetch: fetchPromos,
   });
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  useEffect(() => {
+    categoriesApi.list().then(setCategories).catch(() => setCategories([]));
+  }, []);
 
   const autoApplied = items.filter(p => p.auto_apply && ORDER_REWARDS.has(p.reward));
 
@@ -144,7 +239,7 @@ export function CounterPromotions() {
       ) : (
         <div className="space-y-3">
           {autoApplied.map(promo => (
-            <PromotionRow key={promo.id} promo={promo} onSaved={refetch} />
+            <PromotionRow key={promo.id} promo={promo} categories={categories} onSaved={refetch} />
           ))}
         </div>
       )}

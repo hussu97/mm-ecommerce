@@ -192,6 +192,16 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     reward_product_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )
+    #: Categories an auto-apply order discount is confined to; empty = the whole
+    #: order. When set, `auto_promotion_service` discounts only the lines whose
+    #: product sits in one of these categories, as per-item `OrderDiscount` rows,
+    #: rather than spreading one discount across the check — so "15% off counter
+    #: orders" can be narrowed to "15% off cookies, brownies and cookie melts"
+    #: without touching the rest of the basket. Read only for order-level auto
+    #: rewards; ignored elsewhere, the same way `trigger_product_ids` is.
+    category_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
+    )
     branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )
