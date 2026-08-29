@@ -239,7 +239,12 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
         if item_flag:
             flags.append("item_mismatch")
 
-    if match_status == MATCH_UNMATCHED_AGG:
+    # The `no_mm_order` flag means what it says: there is no MM order at all. On a
+    # GrubOps branch with no maker match we still often have a recovery STANDALONE
+    # (promotion filed one past the adopt grace), so the flag fires only when there
+    # is genuinely nothing to point at — otherwise `match_status` alone carries the
+    # "unmatched to a GrubOps order" story, without contradicting a populated link.
+    if match_status == MATCH_UNMATCHED_AGG and agg.mm_order_id is None:
         flags.append("no_mm_order")
 
     values = {
@@ -247,20 +252,14 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
         "external_order_id": agg.external_order_id,
         "branch_id": agg.branch_id,
         "aggregator_order_id": agg.id,
-        # The MM order this row points at. For a matched GrubOps order it is the
-        # maker order we compared against. For an aggregator-only branch
-        # (`no_maker_side`) there is nothing to compare against, but the order was
-        # still promoted to a STANDALONE MM order — reference it so the screen
-        # links through instead of falsely reading "no MM order". For a GrubOps
-        # branch with no maker order found (`unmatched_agg`) it stays NULL, which
-        # is the honest state the `no_mm_order` flag reports.
-        "mm_order_id": (
-            mm_order.id
-            if mm_order
-            else agg.mm_order_id
-            if match_status == MATCH_NO_MAKER_SIDE
-            else None
-        ),
+        # The MM order this row points at: the matched GrubOps maker order when
+        # there is one, otherwise the order's OWN promoted MM order (the standalone
+        # filed for an aggregator-only branch, or the recovery standalone on a
+        # GrubOps branch GrubOps never ingested). Only a genuinely un-promoted order
+        # (promotion still deferring) stays NULL — the honest "no MM order" the flag
+        # above reports. `match_status` still tells the reconciliation story
+        # separately, so a populated link never contradicts an unmatched verdict.
+        "mm_order_id": mm_order.id if mm_order else agg.mm_order_id,
         "match_status": match_status,
         "item_discrepancy": item_discrepancy,
         "item_flag": item_flag,
