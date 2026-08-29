@@ -27,6 +27,7 @@ def _agg(**over):
         id=uuid.uuid4(),
         channel="keeta",
         external_order_id="EXT1",
+        display_ref=None,
         branch_id=uuid.uuid4(),
         gross_sales=Decimal("40.00"),
         vat_amount=None,
@@ -240,7 +241,7 @@ async def test_grubops_owned_order_is_not_re_attached_to_pos(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext):
+    async def fake_find_mm(db, channel, ext, display_ref=None):
         return grubops_order
 
     async def fake_stamp(db, order, **kwargs):
@@ -294,7 +295,7 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext):
+    async def fake_find_mm(db, channel, ext, display_ref=None):
         return grubops_order
 
     async def fake_build(db, agg, label, *, draw_stock=True):
@@ -330,7 +331,7 @@ async def test_grubops_branch_gap_is_filled(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext):
+    async def fake_find_mm(db, channel, ext, display_ref=None):
         return None  # GrubOps never produced it
 
     async def fake_find_conv(db, ext):
@@ -613,6 +614,7 @@ def _agg_with_customer(**over):
         id=uuid.uuid4(),
         channel="keeta",
         external_order_id="EXT2",
+        display_ref=None,
         branch_id=uuid.uuid4(),
         gross_sales=Decimal("30.00"),
         vat_amount=None,
@@ -668,3 +670,50 @@ def test_rung_at_uses_accepted_at_for_packed_rung():
     accepted = datetime(2026, 8, 27, 9, 5, tzinfo=timezone.utc)
     agg = _agg_with_customer(accepted_at=accepted)
     assert promote._rung_at(agg, OrderStatusEnum.PACKED) == accepted
+
+
+# ── convergence keys on the short customer code too (GrubOps↔promote dedup) ────
+class _RecordingDB:
+    """Captures the compiled SQL of the one `scalar` the finders issue."""
+
+    def __init__(self):
+        self.sql = ""
+
+    async def scalar(self, stmt):
+        self.sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        return None
+
+
+async def test_convergence_matches_long_id_and_scoped_short_code():
+    db = _RecordingDB()
+    agg = _agg(
+        external_order_id="FG4LNN5NPGYI0JA",
+        display_ref="2253",
+        branch_id=uuid.uuid4(),
+        business_date="2026-08-28",
+    )
+    await promote._find_convergence_order(db, agg)
+    # Long id always; short code only when scoped to branch + Dubai business day.
+    assert "FG4LNN5NPGYI0JA" in db.sql
+    assert "2253" in db.sql
+    assert "2026-08-28" in db.sql
+    assert "Asia/Dubai" in db.sql
+
+
+async def test_convergence_without_display_ref_keys_on_long_id_only():
+    db = _RecordingDB()
+    agg = _agg(external_order_id="EXTONLY", display_ref=None)
+    await promote._find_convergence_order(db, agg)
+    assert "EXTONLY" in db.sql
+    # No short-code branch, so no Dubai-day scoping clause is emitted.
+    assert "Asia/Dubai" not in db.sql
+
+
+async def test_find_mm_order_matches_either_id_under_the_channel_label():
+    from app.services.aggregators import reconcile
+
+    db = _RecordingDB()
+    await reconcile._find_mm_order(db, "noon", "FG4LNN5NPGYI0JA", "2253")
+    assert "Noon Food" in db.sql
+    assert "FG4LNN5NPGYI0JA" in db.sql
+    assert "2253" in db.sql

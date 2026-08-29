@@ -64,6 +64,11 @@ class StandardOrder:
     """One order as a marketplace's ledger holds it — the sales truth."""
 
     external_order_id: str
+    #: The marketplace's short customer-facing code when it is exposed SEPARATELY
+    #: from `external_order_id` (Noon's `orderRef` next to the long `orderNr`).
+    #: Feeds `aggregator_order.display_ref`, the shared key with GrubTech's
+    #: `externalId`. Leave None where the one id already is the short code.
+    display_ref: str | None = None
     #: The marketplace's own outlet id, resolved to a branch by the ingest via
     #: `aggregator_branch_map`.
     external_outlet_id: str | None = None

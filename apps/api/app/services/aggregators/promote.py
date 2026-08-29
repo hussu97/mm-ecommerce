@@ -48,7 +48,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, cast, func, or_, select
+from sqlalchemy import Integer, and_, cast, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -144,19 +144,41 @@ async def _order_number(db: AsyncSession) -> str:
 
 
 async def _find_convergence_order(
-    db: AsyncSession, external_reference: str
+    db: AsyncSession, agg: AggregatorOrder
 ) -> Order | None:
-    """The MM order already filed for this marketplace reference, if any.
+    """The MM order already filed for this marketplace order, if any.
 
-    Keyed on `(source, external_reference)` — the existing
-    `uq_orders_source_external_reference` partial unique key — not on the channel
-    label, so promotion and the GrubOps ingest resolve to the same row even if
-    they spell `aggregator_channel` slightly differently.
+    Primary key is the long marketplace id (`external_reference`), globally unique
+    — the existing `uq_orders_source_external_reference` partial unique key — so
+    promotion and the GrubOps ingest resolve to the same row regardless of how each
+    spells `aggregator_channel`.
+
+    A channel that also carries a short customer code (`display_ref` — Noon's
+    `orderRef`, which GrubTech mirrors as its `externalId`) matches on that too, so
+    a Barsha/Sharjah order GrubOps filed under the short code and a promotion that
+    knows only the long `orderNr` still converge. That match is SCOPED to the same
+    branch and business day, because the short code is only a per-branch-per-day
+    sequence number and would otherwise collide with the same code on another day
+    or channel — so this never merges two genuinely different orders. The day is
+    read off `created_at` (the marketplace placed-at, which BOTH paths stamp) in
+    Dubai time, because the GrubOps-made order carries no `business_date` column.
     """
+    conds = [Order.external_reference == agg.external_order_id]
+    if agg.display_ref and agg.branch_id is not None and agg.business_date:
+        created_dubai_day = func.to_char(
+            func.timezone("Asia/Dubai", Order.created_at), "YYYY-MM-DD"
+        )
+        conds.append(
+            and_(
+                Order.external_reference == agg.display_ref,
+                Order.branch_id == agg.branch_id,
+                created_dubai_day == agg.business_date,
+            )
+        )
     return await db.scalar(
         select(Order).where(
             Order.source == OrderSourceEnum.AGGREGATOR.value,
-            Order.external_reference == external_reference,
+            or_(*conds),
         )
     )
 
@@ -452,7 +474,10 @@ async def _build_order(
         source=OrderSourceEnum.AGGREGATOR.value,
         aggregator_channel=label,
         external_reference=agg.external_order_id,
-        aggregator_display_code=_display_code(agg.external_order_id),
+        # Prefer the marketplace's own short code (Noon's `orderRef`) so the ticket
+        # and the GrubOps-adopt lookup both see the value GrubTech quotes, not the
+        # last-four of a long machine id.
+        aggregator_display_code=_display_code(agg.display_ref or agg.external_order_id),
         branch_id=agg.branch_id,
         business_date=agg.business_date,
         payment_method="cod",
@@ -575,7 +600,7 @@ async def promote_order(
     # blinded by the overlay.
     if await reconcile._branch_has_grubops(db, agg.branch_id):
         grubops_order = await reconcile._find_mm_order(
-            db, agg.channel, agg.external_order_id
+            db, agg.channel, agg.external_order_id, agg.display_ref
         )
         if grubops_order is not None:
             agg.mm_order_id = grubops_order.id
@@ -587,7 +612,7 @@ async def promote_order(
                 await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
             return grubops_order
 
-    existing = await _find_convergence_order(db, agg.external_order_id)
+    existing = await _find_convergence_order(db, agg)
     if existing is None:
         order = await _build_order(db, agg, label, draw_stock=draw_stock)
     else:

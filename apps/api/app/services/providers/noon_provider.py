@@ -311,6 +311,8 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
     """
     return StandardOrder(
         external_order_id=rms.external_order_id,
+        # The short customer code lives on the OMS order; RMS rarely carries it.
+        display_ref=oms.display_ref or rms.display_ref,
         external_outlet_id=rms.external_outlet_id or oms.external_outlet_id,
         business_date=rms.business_date or oms.business_date,
         placed_at=oms.placed_at or rms.placed_at,
@@ -562,6 +564,10 @@ class NoonClient(BaseAggregatorClient):
             customer_info = {}
         return StandardOrder(
             external_order_id=order_id,
+            # The short customer code the merchant/rider quote (and the value
+            # GrubTech mirrors as its `externalId`) — kept next to the long
+            # `orderNr` so a Barsha/Sharjah order converges with its GrubOps twin.
+            display_ref=_str_or_none(_first(order, "orderRef", "order_ref")),
             external_outlet_id=_str_or_none(
                 outlet_info.get("outletCode") if isinstance(outlet_info, dict) else None
             ),

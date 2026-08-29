@@ -31,9 +31,14 @@
 #    bound to the right IP/ASN. Deliveroo/Careem self-heal in the API sweep
 #    (email/password via prepare_session) and are not warmed here.
 #
-# A dead anti-bot session needs a `login --channel X` (headed OTP/captcha) — which
-# now runs on this VM under Xvfb too, no separate laptop required. The API health
-# log surfaces a dead channel. Do not add a second UTC cron — one Dubai timeline.
+# A dead anti-bot session (the API flagged it `needs_bootstrap`) is now RE-LOGGED-IN
+# automatically: `warm-sessions` defaults to `--auto-relogin`, so when a warm finds
+# the stored state no longer authenticates it drives the stored login — Deliveroo's
+# email/password, Noon/Talabat's email + Graph-mailbox OTP — and pushes the fresh
+# session, all HEADED under this same Xvfb. Only a login that still needs a human
+# (a captcha/passkey, or no connected mailbox for the OTP) falls through to a manual
+# `login --channel X` (also runnable on this VM). The API health log still surfaces
+# a channel that stays dead. Do not add a second UTC cron — one Dubai timeline.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai

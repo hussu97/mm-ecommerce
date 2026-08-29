@@ -436,6 +436,12 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     #: key the reconciliation joins on, always as `(channel, external_order_id)`
     #: because a bare number is reused across channels.
     external_order_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: The marketplace's short customer-facing code when it exposes one SEPARATELY
+    #: from `external_order_id` (Noon's `orderRef` "2253" alongside the long
+    #: `orderNr`). GrubTech surfaces this same short code as its `externalId`, so
+    #: it is the shared key that lets promotion and the GrubOps ingest converge on
+    #: one MM order. Null where the one id already IS the short code (most channels).
+    display_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     branch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("branches.id", ondelete="SET NULL"),

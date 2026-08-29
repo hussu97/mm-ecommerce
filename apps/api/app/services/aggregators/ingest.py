@@ -171,6 +171,7 @@ async def _mm_order_for_external(
 #: (including a zero, which means "charged nothing") still updates. This is what
 #: the old comment here promised but the unconditional overwrite did not deliver.
 _PRESERVE_IF_NULL = (
+    "display_ref",
     "branch_id",
     "gross_sales",
     "net_sales",
@@ -251,6 +252,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
     values = {
         "channel": channel,
         "external_order_id": order.external_order_id,
+        "display_ref": order.display_ref,
         "branch_id": branch_id,
         "business_date": order.business_date,
         "placed_at": _aware_business(order.placed_at),
