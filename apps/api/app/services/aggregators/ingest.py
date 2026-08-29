@@ -32,7 +32,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import String, and_, case, cast, func, not_, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -184,16 +184,42 @@ _PRESERVE_IF_NULL = (
     "refund_amount",
     "net_payable",
     "statement_id",
-    "customer_name",
-    "customer_phone",
-    "customer_address",
-    "driver_name",
-    "driver_phone",
+    # customer_name/phone/address + driver_name/phone are handled by
+    # _PREFER_UNMASKED (which also COALESCEs); driver_status is a plain word.
     "driver_status",
     "accepted_at",
     "delivered_at",
     "cancelled_at",
 )
+
+#: Columns a marketplace REDACTS over time — Keeta shows the real customer
+#: name/phone/address on a fresh order and masks them to `***` a few hours later.
+#: A rolling re-scrape must UPDATE changed values (a late-settling commission) but
+#: must never DOWNGRADE a real captured value to a masked one. For these columns
+#: the upsert keeps the stored value when the incoming one is masked (`*` anywhere)
+#: and the stored one is not — otherwise it COALESCE-updates like the rest.
+_PREFER_UNMASKED = (
+    "customer_name",
+    "customer_phone",
+    "customer_address",
+    "driver_name",
+    "driver_phone",
+)
+
+
+def _prefer_unmasked_update(column: Any, proposed: Any) -> Any:
+    """Update expression for a redactable column: keep the stored value when the
+    incoming one is masked (contains `*`) and the stored one is real; else the
+    usual COALESCE (a NULL never erases, a real value updates). Compared on the
+    text form so a JSONB address (`{"address": "***"}`) is covered too."""
+    proposed_txt = cast(proposed, String)
+    existing_txt = cast(column, String)
+    incoming_masked = proposed_txt.like("%*%")
+    stored_is_real = and_(column.isnot(None), not_(existing_txt.like("%*%")))
+    return case(
+        (and_(incoming_masked, stored_is_real), column),
+        else_=func.coalesce(proposed, column),
+    )
 
 
 def _touched_at(model: Any, update: dict[str, Any]) -> Any:
@@ -294,11 +320,13 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         if k in ("channel", "external_order_id"):
             continue
         proposed = getattr(insert_stmt.excluded, k)
-        update[k] = (
-            func.coalesce(proposed, getattr(AggregatorOrder, k))
-            if k in _PRESERVE_IF_NULL
-            else proposed
-        )
+        column = getattr(AggregatorOrder, k)
+        if k in _PREFER_UNMASKED:
+            update[k] = _prefer_unmasked_update(column, proposed)
+        elif k in _PRESERVE_IF_NULL:
+            update[k] = func.coalesce(proposed, column)
+        else:
+            update[k] = proposed
     update["updated_at"] = _touched_at(AggregatorOrder, update)
     stmt = insert_stmt.on_conflict_do_update(
         constraint="uq_aggregator_order",
