@@ -490,7 +490,12 @@ async def _build_order(
         aggregator_display_code=_display_code(agg.display_ref or agg.external_order_id),
         branch_id=agg.branch_id,
         business_date=agg.business_date,
-        payment_method="cod",
+        # Marketplace orders are prepaid through the app — card, not cash. The
+        # scrape carries no per-order cash/card flag (only the GrubOps push does,
+        # via `aggregator_payment_type`), so a scrape-promoted order defaults to
+        # card, the overwhelmingly common case. MM never touched the card either
+        # way, so this is a reporting label, not a refund route.
+        payment_method="card",
         # The MM order's `created_at` is the moment the order was placed on the
         # MARKETPLACE, not the moment promotion happened to file it here — so order
         # history and any "created" sort/report line up with the aggregator's own

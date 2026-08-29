@@ -114,3 +114,66 @@ class TestPaymentIdempotency:
         assert db.execute.call_count == 0, (
             "no key was sent, so no idempotency lookup should have happened"
         )
+
+
+class TestPaymentMethodStamp:
+    """A recorded tender is written onto the order, so a counter sale never reads
+    "unknown" — the bug where `payment_method` lived only on the payment rows."""
+
+    def _card(self):
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            type="card",
+            deleted_at=None,
+            is_active=True,
+        )
+
+    async def test_a_card_payment_stamps_the_order(self):
+        order = _order(uuid.uuid4())
+        order.payment_method = ""
+        db = _db_returning(None)
+        method = self._card()
+        db.get = AsyncMock(return_value=method)
+
+        await pos_order_service.record_payment(
+            db,
+            order=order,
+            user=SimpleNamespace(id=uuid.uuid4()),
+            payment_method_id=method.id,
+            amount=Decimal("100.00"),
+        )
+        assert order.payment_method == "card"
+
+    async def test_a_second_tender_of_another_type_marks_mixed(self):
+        order = _order(uuid.uuid4())
+        order.payment_method = "cash"  # a cash tender already recorded
+        db = _db_returning(None)
+        method = self._card()
+        db.get = AsyncMock(return_value=method)
+
+        await pos_order_service.record_payment(
+            db,
+            order=order,
+            user=SimpleNamespace(id=uuid.uuid4()),
+            payment_method_id=method.id,
+            amount=Decimal("40.00"),
+        )
+        assert order.payment_method == "mixed"
+
+    async def test_a_refund_does_not_change_the_tender(self):
+        order = _order(uuid.uuid4())
+        order.payment_method = "card"
+        order.payments = [SimpleNamespace(amount=Decimal("100.00"), is_refund=False)]
+        db = _db_returning(None)
+        method = self._card()
+        db.get = AsyncMock(return_value=method)
+
+        await pos_order_service.record_payment(
+            db,
+            order=order,
+            user=SimpleNamespace(id=uuid.uuid4()),
+            payment_method_id=method.id,
+            amount=Decimal("20.00"),
+            is_refund=True,
+        )
+        assert order.payment_method == "card"

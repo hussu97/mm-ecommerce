@@ -1296,6 +1296,17 @@ async def record_payment(
     )
     db.add(payment)
 
+    # Stamp the order's tender so the console and reports read true — a counter
+    # order used to leave `payment_method` empty ("unknown") even though the
+    # cashier picked a method, because it lived only on the OrderPayment rows. A
+    # real (non-refund) payment sets it to the method's type; a second payment of a
+    # different type marks the sale `mixed` rather than overwriting the first.
+    if not is_refund:
+        if order.payment_method and order.payment_method not in ("", method.type):
+            order.payment_method = "mixed"
+        else:
+            order.payment_method = method.type
+
     # Cash movements must hit the drawer ledger, or the till will not reconcile.
     # What stays in the drawer is `amount`: the customer hands over `tendered`
     # and takes `change` back, and tendered - change == amount by construction.

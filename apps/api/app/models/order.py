@@ -297,12 +297,13 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: `orderHeader.paymentStatus` at ingest. Null on everything that is not an
     #: aggregator order, and on aggregator orders taken before this was captured.
     #:
-    #: Distinct from `payment_method`, which stays `cod` on every aggregator
-    #: order on purpose — MM never touched the card, so nothing here may look
-    #: refundable to the register. This column answers a different question: did
-    #: a card processor take a cut? Careem's 2% payment fee applies only when
-    #: this is `prepaid`, the same "no card, no card fee" rule a counter sale
-    #: gets.
+    #: Distinct from `payment_method`. `payment_method` now carries the customer's
+    #: actual tender — `card` for a prepaid marketplace order (the default) and
+    #: `cod` for a `postpaid` one — for the console and reports to read true; MM
+    #: still never touched the card, so that label is reporting, not a refund route.
+    #: This column answers a narrower question the fee logic needs: did a card
+    #: processor take a cut? Careem's 2% payment fee applies only when this is
+    #: `prepaid`, the same "no card, no card fee" rule a counter cash sale gets.
     aggregator_payment_type: Mapped[str | None] = mapped_column(
         String(12), nullable=True
     )

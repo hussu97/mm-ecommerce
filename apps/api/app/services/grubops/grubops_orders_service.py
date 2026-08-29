@@ -747,15 +747,17 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         aggregator_display_code=_driver_code(header, order_map.external_id, info),
         external_reference=order_map.external_id,
         branch_id=branch_id,
-        # Payment lives with the aggregator; MM books none. `cod` for a cash
-        # (POSTPAID) order, and for a prepaid one still not `card` — MM never
-        # took the card, so nothing here may look refundable to the register.
-        payment_method="cod",
-        # ...but *record* which it was, because a marketplace's payment fee can
-        # turn on it (Careem waives its 2% on cash). `paymentStatus` is the
-        # reliable discriminator — `POSTPAID` is cash, `PREPAID` is card;
-        # `paymentMethod == 'CASH'` says the same thing on the channels that
-        # send it. Anything else stays null and reads as card downstream.
+        # What the customer actually paid with, so the console and reports read
+        # true. `paymentStatus` is the reliable discriminator — `POSTPAID` is cash,
+        # `PREPAID` is card; `paymentMethod == 'CASH'` says the same on the channels
+        # that send it. An unknown reads as card (the common case), which is why a
+        # marketplace order defaults to card here rather than the old flat `cod`.
+        # MM never touched the card either way, so this is a reporting label, not a
+        # refund route to the register.
+        payment_method="cod" if _payment_type(header) == "postpaid" else "card",
+        # Recorded verbatim too, because a marketplace's payment fee can turn on it
+        # (Careem waives its 2% on cash). Null stays null here and reads as card
+        # downstream in the fee logic.
         aggregator_payment_type=_payment_type(header),
         # Loyalty membership (Careem Plus, Talabat Pro) is not in the payload —
         # left unknown, which the fee logic treats as "not a member". See the
