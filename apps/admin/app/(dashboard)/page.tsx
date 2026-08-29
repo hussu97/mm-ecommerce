@@ -26,7 +26,7 @@ const STATUS_BADGE: Record<string, 'warning' | 'info' | 'success' | 'danger' | '
 
 type Growth = number | undefined;
 
-function GrowthPill({ value }: { value: Growth }) {
+function GrowthPill({ value, title }: { value: Growth; title: string }) {
   if (value === undefined || value === 0) return null;
   const up = value > 0;
   return (
@@ -35,7 +35,7 @@ function GrowthPill({ value }: { value: Growth }) {
         'inline-flex items-center gap-0.5 text-[11px] font-body',
         up ? 'text-green-600' : 'text-red-500',
       )}
-      title="vs the same time yesterday"
+      title={title}
     >
       <span className="material-icons text-[13px]">{up ? 'arrow_upward' : 'arrow_downward'}</span>
       {Math.abs(value)}%
@@ -49,6 +49,7 @@ function MetricCard({
   icon,
   href,
   growth,
+  growthTitle,
   loading,
 }: {
   label: string;
@@ -56,6 +57,7 @@ function MetricCard({
   icon: string;
   href: string;
   growth?: Growth;
+  growthTitle: string;
   loading?: boolean;
 }) {
   return (
@@ -67,12 +69,17 @@ function MetricCard({
         <span className="material-icons text-secondary text-xl group-hover:text-primary transition-colors">
           {icon}
         </span>
-        {!loading && <GrowthPill value={growth} />}
+        {!loading && <GrowthPill value={growth} title={growthTitle} />}
       </div>
       <div className="font-display text-2xl text-gray-800 mb-1">{loading ? '—' : value}</div>
       <div className="text-[11px] font-body uppercase tracking-widest text-gray-400">{label}</div>
     </Link>
   );
+}
+
+/** The raw status enum value behind a title-cased breakdown label. */
+function statusKey(label: string): string {
+  return label.toLowerCase().replace(/ /g, '_');
 }
 
 function AttentionTile({
@@ -159,59 +166,98 @@ function BreakdownBars({ rows, empty }: { rows: DashboardBreakdownRow[]; empty: 
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardToday | null>(null);
-  const [recentOrders, setRecentOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
 
+  // Filters. Empty dates ⇒ the live current day; both set ⇒ that range. `statuses`
+  // narrows every figure to the picked order statuses. `search` finds orders by MM
+  // number, marketplace ref, or customer.
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  const isRange = Boolean(fromDate && toDate);
+  const isLive = !fromDate && !toDate;
+  const searching = debouncedSearch.length > 0;
+
+  // Debounce the search box so a keystroke is not a request.
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+
   const load = useCallback(async () => {
-    const [today, orders] = await Promise.allSettled([
-      dashboardApi.today(),
-      ordersApi.listAll({ per_page: 8 }),
+    // A one-sided date range is ignored (treated as live) until both ends are set.
+    const rangeReady = Boolean(fromDate) === Boolean(toDate);
+    const [today, ordersRes] = await Promise.allSettled([
+      dashboardApi.today({
+        date_from: rangeReady ? fromDate || undefined : undefined,
+        date_to: rangeReady ? toDate || undefined : undefined,
+        statuses: statuses.length ? statuses : undefined,
+      }),
+      ordersApi.listAll({ per_page: 8, search: debouncedSearch || undefined }),
     ]);
 
     if (today.status === 'fulfilled') {
       setData(today.value);
       setFailed(false);
-    } else if (!data) {
+    } else {
       setFailed(true);
     }
-    if (orders.status === 'fulfilled') setRecentOrders(orders.value.items);
+    if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value.items);
 
     setRefreshedAt(new Date().toISOString());
     setLoading(false);
-  }, [data]);
+  }, [fromDate, toDate, statuses, debouncedSearch]);
 
+  // Re-run whenever a filter changes. The 60s live refresh runs only for the
+  // current-day view — a historical range does not move, so polling it is noise.
   useEffect(() => {
-    load();
-    const id = setInterval(load, REFRESH_MS);
+    void load();
+    if (!isLive) return;
+    const id = setInterval(() => void load(), REFRESH_MS);
     return () => clearInterval(id);
-    // load is intentionally excluded — it closes over `data` only to decide the
-    // first-load error, and re-subscribing the interval on every fetch is worse
-    // than the stale closure.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load, isLive]);
+
+  const toggleStatus = (key: string) =>
+    setStatuses(prev => (prev.includes(key) ? prev.filter(s => s !== key) : [...prev, key]));
 
   const s = data?.summary;
   const ops = data?.ops;
+  const growthTitle = isRange ? 'vs the preceding period' : 'vs the same time yesterday';
+  const rangeLabel = isRange
+    ? data?.business_date_to && data.business_date !== data.business_date_to
+      ? `${data.business_date} → ${data.business_date_to}`
+      : data?.business_date
+    : null;
 
   return (
     <div>
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Dashboard</h1>
           <p className="text-xs text-gray-400 font-body mt-0.5">
-            {new Date().toLocaleDateString('en-AE', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric',
-            })}
-            {data && <span className="text-gray-300"> · trading day {data.business_date}</span>}
+            {isRange && rangeLabel ? (
+              <span>Showing {rangeLabel}</span>
+            ) : (
+              <>
+                {new Date().toLocaleDateString('en-AE', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                })}
+                {data && <span className="text-gray-300"> · trading day {data.business_date}</span>}
+              </>
+            )}
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={() => void load()}
           className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-body uppercase tracking-widest text-gray-500 hover:text-primary transition-colors min-h-11 md:min-h-0"
           title="Refresh"
         >
@@ -220,28 +266,98 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      {failed && (
-        <div className="mb-6">
-          <LoadError message="Could not load today's figures." onRetry={load} />
+      {/* Range + search controls. Clearing the dates returns to the live day. */}
+      <div className="mb-6 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">From</label>
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={e => setFromDate(e.target.value)}
+            className="px-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">To</label>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={e => setToDate(e.target.value)}
+            className="px-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
+          />
+        </div>
+        {!isLive && (
+          <button
+            onClick={() => {
+              setFromDate('');
+              setToDate('');
+            }}
+            className="h-10 px-3 text-xs font-body uppercase tracking-wider text-gray-500 border border-gray-300 hover:bg-gray-50 transition-colors"
+          >
+            Live today
+          </button>
+        )}
+        <div className="flex-1 min-w-[220px]">
+          <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">Search</label>
+          <div className="relative">
+            <span className="material-icons absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-[18px]">search</span>
+            <input
+              type="search"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="MM number, marketplace ref, customer name or email"
+              className="w-full pl-9 pr-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+      </div>
+
+      {statuses.length > 0 && (
+        <div className="mb-6 flex items-center gap-2 text-xs font-body text-gray-500">
+          <span className="uppercase tracking-widest text-gray-400">Filtered to</span>
+          {statuses.map(k => (
+            <button
+              key={k}
+              onClick={() => toggleStatus(k)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary border border-primary/30"
+              title="Remove this status"
+            >
+              {k.replace(/_/g, ' ')}
+              <span className="material-icons text-[13px]">close</span>
+            </button>
+          ))}
+          <button onClick={() => setStatuses([])} className="text-gray-400 hover:text-primary underline">
+            clear
+          </button>
         </div>
       )}
 
-      {/* Today's headline figures — every order, aggregated server-side */}
+      {failed && (
+        <div className="mb-6">
+          <LoadError message="Could not load the figures." onRetry={() => void load()} />
+        </div>
+      )}
+
+      {/* Headline figures — every order in the window, aggregated server-side */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <MetricCard
-          label="Revenue Today"
+          label={isRange ? 'Revenue' : 'Revenue Today'}
           value={formatCurrency(s?.revenue ?? 0)}
           icon="payments"
           href="/orders"
           growth={s?.revenue_growth}
+          growthTitle={growthTitle}
           loading={loading}
         />
         <MetricCard
-          label="Orders Today"
+          label={isRange ? 'Orders' : 'Orders Today'}
           value={String(s?.orders ?? 0)}
           icon="receipt_long"
           href="/orders"
           growth={s?.orders_growth}
+          growthTitle={growthTitle}
           loading={loading}
         />
         <MetricCard
@@ -249,6 +365,7 @@ export default function DashboardPage() {
           value={String(s?.delivered ?? 0)}
           icon="check_circle"
           href="/orders"
+          growthTitle={growthTitle}
           loading={loading}
         />
         <MetricCard
@@ -256,6 +373,7 @@ export default function DashboardPage() {
           value={formatCurrency(s?.avg_order_value ?? 0)}
           icon="trending_up"
           href="/analytics"
+          growthTitle={growthTitle}
           loading={loading}
         />
       </div>
@@ -292,18 +410,29 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Today's pipeline — every status the day's orders are sitting in */}
+      {/* Orders by status — click a status to narrow every figure above to it */}
       {data && data.by_status.length > 0 && (
-        <Section title="Today's Orders by Status">
+        <Section title="Orders by Status">
           <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
-            {data.by_status.map((row) => (
-              <div key={row.label} className="flex items-center gap-2 border border-gray-100 px-3 py-1.5">
-                <Badge variant={STATUS_BADGE[row.label.toLowerCase().replace(/ /g, '_')] ?? 'neutral'}>
-                  {row.label}
-                </Badge>
-                <span className="font-display text-sm text-gray-800">{row.orders}</span>
-              </div>
-            ))}
+            {data.by_status.map((row) => {
+              const key = statusKey(row.label);
+              const on = statuses.includes(key);
+              return (
+                <button
+                  key={row.label}
+                  onClick={() => toggleStatus(key)}
+                  aria-pressed={on}
+                  title={on ? 'Remove from filter' : 'Filter to this status'}
+                  className={cn(
+                    'flex items-center gap-2 border px-3 py-1.5 transition-colors',
+                    on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
+                  )}
+                >
+                  <Badge variant={STATUS_BADGE[key] ?? 'neutral'}>{row.label}</Badge>
+                  <span className="font-display text-sm text-gray-800">{row.orders}</span>
+                </button>
+              );
+            })}
           </div>
         </Section>
       )}
@@ -330,10 +459,12 @@ export default function DashboardPage() {
         </div>
       </Section>
 
-      {/* Recent Orders */}
+      {/* Recent orders — or the search results when the box has a query */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">Recent Orders</h2>
+          <h2 className="text-xs font-body uppercase tracking-widest text-gray-500">
+            {searching ? `Search results for “${debouncedSearch}”` : 'Recent Orders'}
+          </h2>
           <Link href="/orders" className="inline-flex items-center min-h-11 md:min-h-0 text-xs text-primary hover:underline font-body">
             View all
           </Link>
@@ -345,13 +476,15 @@ export default function DashboardPage() {
               <div key={i} className="h-12 bg-gray-100 animate-pulse" />
             ))}
           </div>
-        ) : recentOrders.length === 0 ? (
+        ) : orders.length === 0 ? (
           <div className="text-center py-10 bg-white border border-gray-200">
-            <p className="text-sm text-gray-400 font-body">No orders yet</p>
+            <p className="text-sm text-gray-400 font-body">
+              {searching ? 'No orders match that search' : 'No orders yet'}
+            </p>
           </div>
         ) : (
           <div className="bg-white border border-gray-200 divide-y divide-gray-100">
-            {recentOrders.map((order) => (
+            {orders.map((order) => (
               <Link
                 key={order.id}
                 href={`/orders/${order.order_number}`}

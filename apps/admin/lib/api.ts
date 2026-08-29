@@ -527,11 +527,13 @@ type DateParams = { start_date?: string; end_date?: string; group_by?: string };
 
 export const dashboardApi = {
   /**
-   * The current trading day at a glance — every order across every channel,
-   * aggregated and rounded server-side. No params: it always means "today,
-   * where the shop is".
+   * The trading day — or any date range — at a glance, every order across every
+   * channel, aggregated and rounded server-side. No params: the live current day.
+   * A `date_from`/`date_to` pair: that range. An optional `statuses` list narrows
+   * every figure and the mix to those order statuses.
    */
-  today: () => api.get<DashboardToday>(`/dashboard/today`),
+  today: (params?: { date_from?: string; date_to?: string; statuses?: string[] }) =>
+    api.get<DashboardToday>(`/dashboard/today${buildQs(params)}`),
 };
 
 export const analyticsApi = {

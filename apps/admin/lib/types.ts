@@ -544,6 +544,8 @@ export interface DashboardOps {
 
 export interface DashboardToday {
   business_date: string;
+  /** The range end (ISO date), or null for the live single-day view. */
+  business_date_to: string | null;
   timezone: string;
   generated_at: string;
   summary: DashboardSummary;
