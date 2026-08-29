@@ -24,6 +24,7 @@ from app.services.providers.talabat_provider import (
     _extract_item_modifiers,
     _parse_items_text,
     _split_balanced,
+    _status_events_from_row,
 )
 
 # ── 1. _split_balanced ────────────────────────────────────────────────────────
@@ -227,6 +228,179 @@ def test_items_from_row_source_keys_are_sequential():
     row = {"Order Items": "1 Burger\n2 Fries\n1 Soda"}
     items = TalabatClient._items_from_row(row, "ORD-008", None)
     assert [i.source_key for i in items] == ["ORD-008:1", "ORD-008:2", "ORD-008:3"]
+
+
+# ── 4b. status_events + cancellation_fee (timeline + fee mapping) ─────────────
+
+
+def _csv_from_rows(rows: list[dict]) -> str:
+    """Serialise dict rows to a CSV string, unioning their keys as the header."""
+    import csv
+
+    fieldnames: list[str] = []
+    for r in rows:
+        for k in r:
+            if k not in fieldnames:
+                fieldnames.append(k)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(r)
+    return buf.getvalue()
+
+
+def test_status_events_from_row_full_delivered_timeline():
+    row = {
+        "Order received at": "2026-08-28 18:00",
+        "Accepted at": "2026-08-28 18:02",
+        "Ready to pick up at": "2026-08-28 18:15",
+        "Rider near pickup at": "2026-08-28 18:18",
+        "In delivery at": "2026-08-28 18:20",
+        "Delivered at": "2026-08-28 18:40",
+        "Cancelled at": "",
+    }
+    events = _status_events_from_row(row)
+    # The cancelled cell is empty → six events, in lifecycle order.
+    assert [e.status for e in events] == [
+        "received",
+        "accepted",
+        "ready",
+        "rider_near_pickup",
+        "in_delivery",
+        "delivered",
+    ]
+    # sequence reflects the fixed lifecycle order, not the sparse subset.
+    assert [e.sequence for e in events] == [0, 1, 2, 3, 4, 5]
+    received = events[0]
+    assert received.at == datetime(2026, 8, 28, 18, 0)
+    delivered = events[-1]
+    assert delivered.at == datetime(2026, 8, 28, 18, 40)
+
+
+def test_status_events_from_row_partial_and_cancelled():
+    # An order that was received, accepted, then cancelled (never delivered).
+    row = {
+        "Order received at": "2026-08-28 18:00",
+        "Accepted at": "2026-08-28 18:02",
+        "Ready to pick up at": "",
+        "Cancelled at": "2026-08-28 18:05",
+    }
+    events = _status_events_from_row(row)
+    assert [e.status for e in events] == ["received", "accepted", "cancelled"]
+    # "cancelled" keeps its lifecycle position (index 6 in the mapping).
+    assert [e.sequence for e in events] == [0, 1, 6]
+    assert events[-1].at == datetime(2026, 8, 28, 18, 5)
+
+
+def test_status_events_from_row_absent_columns_emit_nothing():
+    assert _status_events_from_row({"Order ID": "X", "Subtotal": "10.00"}) == []
+
+
+def test_orders_from_csv_delivered_order_has_full_status_events():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-1001",
+                "Store ID": "711571",
+                "Order status": "Delivered",
+                "Subtotal": "50.00",
+                "Order Items": "1 Chicken Burger",
+                "Commission": "5.00",
+                "Online Payment Fee": "1.00",
+                "Avoidable cancellation fee": "0.00",
+                "Order received at": "2026-08-28 18:00",
+                "Accepted at": "2026-08-28 18:02",
+                "Ready to pick up at": "2026-08-28 18:15",
+                "Rider near pickup at": "2026-08-28 18:18",
+                "In delivery at": "2026-08-28 18:20",
+                "Delivered at": "2026-08-28 18:40",
+                "Cancelled at": "",
+            }
+        ]
+    )
+    orders = client._orders_from_csv(csv_text)
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.external_order_id == "TB-1001"
+    assert order.status == "Delivered"
+    assert [e.status for e in order.status_events] == [
+        "received",
+        "accepted",
+        "ready",
+        "rider_near_pickup",
+        "in_delivery",
+        "delivered",
+    ]
+    assert order.status_events[0].at == datetime(2026, 8, 28, 18, 0)
+    assert order.status_events[-1].at == datetime(2026, 8, 28, 18, 40)
+    assert order.commission_amount == Decimal("5.00")
+    assert order.payment_fee == Decimal("1.00")
+    # A present "0.00" is a real zero, not unknown.
+    assert order.cancellation_fee == Decimal("0.00")
+
+
+def test_orders_from_csv_cancelled_order_sets_cancellation_fee():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-2002",
+                "Store ID": "728173",
+                "Order status": "Cancelled",
+                "Subtotal": "40.00",
+                "Order Items": "1 Fries",
+                "Commission": "4.00",
+                "Online Payment Fee": "0.80",
+                "Avoidable cancellation fee": "12.50",
+                "Order received at": "2026-08-28 19:00",
+                "Accepted at": "2026-08-28 19:01",
+                "Ready to pick up at": "",
+                "Rider near pickup at": "",
+                "In delivery at": "",
+                "Delivered at": "",
+                "Cancelled at": "2026-08-28 19:04",
+            }
+        ]
+    )
+    orders = client._orders_from_csv(csv_text)
+    assert len(orders) == 1
+    order = orders[0]
+    assert order.status == "Cancelled"
+    assert order.cancellation_fee == Decimal("12.50")
+    # Timeline stops at accepted, then jumps to cancelled — no delivery steps.
+    assert [e.status for e in order.status_events] == [
+        "received",
+        "accepted",
+        "cancelled",
+    ]
+    assert order.status_events[-1].at == datetime(2026, 8, 28, 19, 4)
+    # payment_fee still maps from Online Payment Fee.
+    assert order.payment_fee == Decimal("0.80")
+
+
+def test_orders_from_csv_absent_cancellation_fee_column_is_none():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-3003",
+                "Store ID": "793319",
+                "Order status": "Delivered",
+                "Subtotal": "20.00",
+                "Order Items": "1 Soda",
+                "Order received at": "2026-08-28 20:00",
+                "Delivered at": "2026-08-28 20:20",
+            }
+        ]
+    )
+    orders = client._orders_from_csv(csv_text)
+    assert len(orders) == 1
+    order = orders[0]
+    # No cancellation-fee column at all → unknown (None), never coerced to 0.
+    assert order.cancellation_fee is None
+    assert [e.status for e in order.status_events] == ["received", "delivered"]
 
 
 # ── 5. TalabatClient._parse_bundle_bytes ──────────────────────────────────────

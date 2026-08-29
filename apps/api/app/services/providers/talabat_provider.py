@@ -65,6 +65,7 @@ from app.services.aggregators.normalized import (
     StandardPayout,
     StandardStatement,
     StandardStatementLine,
+    StandardStatusEvent,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
@@ -362,6 +363,46 @@ def _parse_dt(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+#: The export's status-timeline columns, in the order an order moves through
+#: them, paired with the normalized status word each maps to. `_orders_from_csv`
+#: walks this to build `StandardOrder.status_events`: a cell with a value emits
+#: one event (dated by `_parse_dt`), sequenced by its position here. An empty or
+#: absent cell is a step that has not happened, so it emits nothing.
+_TIMELINE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Order received at", "received"),
+    ("Accepted at", "accepted"),
+    ("Ready to pick up at", "ready"),
+    ("Rider near pickup at", "rider_near_pickup"),
+    ("In delivery at", "in_delivery"),
+    ("Delivered at", "delivered"),
+    ("Cancelled at", "cancelled"),
+)
+
+
+def _status_events_from_row(row: dict[str, Any]) -> list[StandardStatusEvent]:
+    """The order's status trace, built from the export's timeline columns.
+
+    One `StandardStatusEvent` per timeline column that carries a value, in the
+    fixed lifecycle order of `_TIMELINE_COLUMNS` (so `sequence` reflects that
+    order, not the sparse subset actually present). The cell is parsed to a
+    naive Dubai datetime; a column that is empty or absent is skipped, so a
+    still-open order carries only the steps it has reached.
+    """
+    events: list[StandardStatusEvent] = []
+    for sequence, (column, status) in enumerate(_TIMELINE_COLUMNS):
+        cell = row.get(column)
+        if cell is None or (isinstance(cell, str) and not cell.strip()):
+            continue
+        events.append(
+            StandardStatusEvent(
+                status=status,
+                at=_parse_dt(cell),
+                sequence=sequence,
+            )
+        )
+    return events
 
 
 def _parse_date(value: Any) -> date | None:
@@ -908,6 +949,7 @@ class TalabatClient(BaseAggregatorClient):
                     business_date=placed_at.date().isoformat() if placed_at else None,
                     placed_at=placed_at,
                     status=status,
+                    status_events=_status_events_from_row(row),
                     currency="AED",
                     gross_sales=subtotal,
                     net_sales=subtotal,

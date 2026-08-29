@@ -371,6 +371,155 @@ def test_parse_orders_structured_modifiers_from_groups():
     assert item.modifiers_text is not None
 
 
+# ── 2c. status history (merchantOrderTraces) + customer address ──────────────
+# The trace list and recipientInfo below are transcribed from the real
+# orders_sample.json order data.list[0]: three lifecycle steps (10 submitted →
+# 20 pending → 30 confirmed) at real epoch-ms opTimes, deliberately given
+# newest-first (as the portal returns them) so the ascending re-order is tested;
+# and the real recipientInfo with the full Business Bay address string, an empty
+# buildingNumber (dropped) and a trailing-space unitNumber (trimmed).
+_ORDER_WITH_TRACES = {
+    "code": 0,
+    "data": {
+        "list": [
+            {
+                "baseOrder": {
+                    "orderViewIdStr": "5047843723786410",
+                    "status": 30,
+                    "ctime": 1787821408351,
+                    "currency": "AED",
+                },
+                "merchantOrder": {
+                    "shopId": 1644336388,
+                    "status": 30,
+                    "unconfirmedStatusTime": 1787821419753,
+                    "confirmedStatusTime": 1787821524298,
+                    "merchantOrderTraces": [
+                        {"merchantOrderStatus": 30, "opTime": 1787821524298},
+                        {"merchantOrderStatus": 20, "opTime": 1787821419761},
+                        {"merchantOrderStatus": 10, "opTime": 1787821408348},
+                    ],
+                },
+                "products": [
+                    {"name": "Nutella Cookie Melt", "count": 1, "price": 4000}
+                ],
+                "recipientInfo": {
+                    "name": "J4P773781744",
+                    "phone": "521461759",
+                    "interCode": "971",
+                    "addressName": (
+                        "U Bora Towers - Commercial Tower, Marasi Drive, "
+                        "Business Bay, Dubai, United Arab Emirates"
+                    ),
+                    "addressLocation": (
+                        "U Bora Towers - Commercial Tower, Marasi Drive, "
+                        "Business Bay, Dubai, United Arab Emirates"
+                    ),
+                    "houseNumber": "36 , Multibank",
+                    "unitNumber": "36 ",
+                    "buildingNumber": "",
+                },
+            }
+        ]
+    },
+}
+
+
+def test_status_events_built_from_traces_in_optime_order():
+    order = keeta.parse_orders(_ORDER_WITH_TRACES)[0]
+    events = order.status_events
+    # Three trace steps, one per status, re-ordered oldest → newest by opTime.
+    assert [e.status for e in events] == ["submitted", "pending", "confirmed"]
+    assert [e.sequence for e in events] == [1, 2, 3]
+    # opTimes are epoch ms resolved to NAIVE Dubai wall-clock, strictly ascending.
+    ats = [e.at for e in events]
+    assert all(isinstance(at, _dt) for at in ats)
+    assert all(at.tzinfo is None for at in ats)
+    assert ats[0] < ats[1] < ats[2]
+    # 1787821408348 ms → 2026-08-08 in Dubai (UTC+4).
+    assert ats[0].year == 2026
+    # The source trace dict is retained for audit.
+    assert events[0].raw["merchantOrderStatus"] == 10
+
+
+def test_customer_address_from_recipient_info():
+    order = keeta.parse_orders(_ORDER_WITH_TRACES)[0]
+    addr = order.customer_address
+    assert addr is not None
+    assert "Business Bay" in addr["address"]
+    assert addr["house"] == "36 , Multibank"
+    # Trailing space trimmed; empty buildingNumber dropped entirely.
+    assert addr["unit"] == "36"
+    assert "building" not in addr
+    # Existing customer fields are untouched.
+    assert order.customer_name == "J4P773781744"
+    assert order.customer_phone == "+971521461759"
+
+
+def test_status_events_absent_traces_gives_empty_list():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-NT", "status": 40},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 4000},
+                    "products": [{"name": "Cookie", "count": 1, "price": 4000}],
+                }
+            ]
+        },
+    }
+    order = keeta.parse_orders(payload)[0]
+    assert order.status_events == []
+
+
+def test_customer_address_none_when_recipient_absent():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-NA", "status": 40},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 4000},
+                    "products": [{"name": "Cookie", "count": 1, "price": 4000}],
+                }
+            ]
+        },
+    }
+    assert keeta.parse_orders(payload)[0].customer_address is None
+
+
+import pathlib as _pathlib_sample  # noqa: E402
+
+_REAL_SAMPLE_PATH = _pathlib_sample.Path(
+    "/Users/hussainabbasi/Documents/GitHub/mm-apps/mm-ecommerce/"
+    "apps/aggregator-bootstrap/.aggregator-sessions/keeta-audit/orders_sample.json"
+)
+
+
+@pytest.mark.skipif(
+    not _REAL_SAMPLE_PATH.exists(), reason="real orders_sample.json not present"
+)
+def test_real_sample_status_events_and_address():
+    import json as _json
+
+    payload = _json.loads(_REAL_SAMPLE_PATH.read_text())
+    orders = keeta.parse_orders(payload)
+    assert orders, "sample should parse at least one order"
+    target = orders[0]
+    statuses = [e.status for e in target.status_events]
+    # The sample's live order records 10 → 20 → 30 (submitted/pending/confirmed).
+    assert "submitted" in statuses
+    assert "pending" in statuses
+    assert "confirmed" in statuses
+    # Strictly ascending, sequenced 1..n.
+    assert [e.sequence for e in target.status_events] == list(
+        range(1, len(target.status_events) + 1)
+    )
+    assert target.customer_address is not None
+    assert "address" in target.customer_address
+
+
 # ── 3. parse_finance ─────────────────────────────────────────────────────────
 
 _FINANCE_PAYLOAD_WITH_ROWS = {

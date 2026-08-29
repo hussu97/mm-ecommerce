@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.services.aggregators.normalized import StandardStatusEvent
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.aggregator_base import (
     AggregatorAuthError,
@@ -104,6 +105,71 @@ _OMS_ORDER_MULTI_MOD = {
     },
 }
 
+# A fully-populated OMS order: customer address, delivery agent, and the
+# estimated status timeline — the enrichment the OMS panel exposes and the RMS
+# statement drops.
+_OMS_ORDER_ENRICHED = {
+    "orderNr": "FG4LNNENRICH01A",
+    "orderRef": "3120",
+    "currencyCode": "AED",
+    "orderStatusCode": "delivered",
+    "outletStatusCode": "picked_up",
+    "logisticsStatusCode": "on_the_way",
+    "orderSubtotal": 72.0,
+    "orderOutletSubtotal": 72.0,
+    "orderRestaurantToInvoice": 72.0,
+    "createdAt": "2026-04-22T18:05:00",
+    "omsVisibleAt": "2026-04-22T18:05:10",
+    "estimatedAcceptedAt": "2026-04-22T18:06:30",
+    "estimatedDaAssignedAt": "2026-04-22T18:08:00",
+    "estimatedDaReachedRestaurantAt": "2026-04-22T18:20:00",
+    "estimatedReadyAt": "2026-04-22T18:22:00",
+    "estimatedOutletPickedUpAt": "2026-04-22T18:25:00",
+    "estimatedPickedUpAt": "2026-04-22T18:26:00",
+    "estimatedDeliveryAt": "2026-04-22T18:45:00",
+    "outletInfo": {"outletCode": "MLTNGM1GBF"},
+    "customerInfo": {
+        "name": "Layla H.",
+        "phone": "+971500000000",
+        "addressArea": "Al Barsha",
+        "addressCity": "Dubai",
+        "addressStreet": "Street 12, Villa 4",
+        "addressLat": 25.1122,
+        "addressLng": 55.1998,
+    },
+    "daName": "Rider Ahmed",
+    "daPhone": "+971555555555",
+    "daInfo": "Bike",
+    "daPlateNo": "D-12345",
+    "daVehicleType": "motorcycle",
+    "items": [],
+    "menuInfo": {"categories": [], "items": [], "modifiers": []},
+}
+
+# An OMS order with the rider unassigned (noon's UNKNOWN placeholder) and only a
+# partial timeline.
+_OMS_ORDER_UNASSIGNED = {
+    "orderNr": "FG4LNNUNASSN1A",
+    "currencyCode": "AED",
+    "orderStatusCode": "accepted",
+    "outletStatusCode": "preparing",
+    "logisticsStatusCode": "UNKNOWN",
+    "orderSubtotal": 20.0,
+    "createdAt": "2026-04-22T12:00:00",
+    "estimatedAcceptedAt": "2026-04-22T12:01:30",
+    "outletInfo": {"outletCode": "MLTNGM1GBF"},
+    "customerInfo": {
+        "name": "Sara",
+        "phone": "+971511111111",
+        "addressLat": 25.2,
+        "addressLng": 55.3,
+    },
+    "daName": "UNKNOWN",
+    "daPhone": "UNKNOWN",
+    "items": [],
+    "menuInfo": {"categories": [], "items": [], "modifiers": []},
+}
+
 _OMS_ORDER_NO_ITEMS = {
     "orderNr": "FG4LNNVI4TB1B1A",
     "currencyCode": "AED",
@@ -187,6 +253,118 @@ class TestOrderFromOms:
         o = _CLIENT._order_from_oms(_OMS_ORDER_NO_ITEMS)
         assert o is not None
         assert o.items == []
+
+
+# ── OMS enrichment: customer address, delivery agent, status timeline ─────────
+
+
+class TestCustomerAddressFromOms:
+    def test_builds_address_from_customer_info(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        assert o is not None
+        assert o.customer_address == {
+            "area": "Al Barsha",
+            "city": "Dubai",
+            "street": "Street 12, Villa 4",
+            "lat": 25.1122,
+            "lng": 55.1998,
+        }
+
+    def test_geocode_only_address_keeps_coordinates(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_UNASSIGNED)
+        assert o.customer_address == {"lat": 25.2, "lng": 55.3}
+
+    def test_none_when_no_customer_info(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_NO_ITEMS)
+        assert o.customer_address is None
+
+
+class TestDeliveryAgentFromOms:
+    def test_sets_driver_name_and_phone(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        assert o.driver_name == "Rider Ahmed"
+        assert o.driver_phone == "+971555555555"
+
+    def test_driver_status_from_logistics_code(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        assert o.driver_status == "on_the_way"
+
+    def test_driver_status_falls_back_to_outlet_status(self):
+        order = {**_OMS_ORDER_ENRICHED}
+        order.pop("logisticsStatusCode")
+        o = _CLIENT._order_from_oms(order)
+        assert o.driver_status == "picked_up"
+
+    def test_unknown_placeholder_is_none(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_UNASSIGNED)
+        assert o.driver_name is None
+        assert o.driver_phone is None
+        # logisticsStatusCode is "UNKNOWN" → falls back to outletStatusCode
+        assert o.driver_status == "preparing"
+
+
+class TestStatusEventsFromOms:
+    def test_full_timeline_in_sequence(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        statuses = [(e.status, e.sequence) for e in o.status_events]
+        assert statuses == [
+            ("placed", 1),
+            ("accepted", 2),
+            ("driver_assigned", 3),
+            ("driver_at_restaurant", 4),
+            ("ready", 5),
+            ("picked_up", 6),
+            ("delivered", 7),
+        ]
+
+    def test_events_carry_their_estimated_datetimes(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        by_status = {e.status: e.at for e in o.status_events}
+        assert by_status["placed"] == datetime(2026, 4, 22, 18, 5, 0)
+        assert by_status["accepted"] == datetime(2026, 4, 22, 18, 6, 30)
+        assert by_status["delivered"] == datetime(2026, 4, 22, 18, 45, 0)
+
+    def test_status_deduped_first_timestamp_wins(self):
+        """createdAt/omsVisibleAt both mean 'placed' — only one event, from createdAt."""
+        o = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        placed = [e for e in o.status_events if e.status == "placed"]
+        assert len(placed) == 1
+        assert placed[0].at == datetime(
+            2026, 4, 22, 18, 5, 0
+        )  # createdAt, not omsVisibleAt
+
+    def test_placed_falls_back_to_oms_visible_at(self):
+        order = {**_OMS_ORDER_ENRICHED}
+        order.pop("createdAt")
+        o = _CLIENT._order_from_oms(order)
+        placed = [e for e in o.status_events if e.status == "placed"]
+        assert len(placed) == 1
+        assert placed[0].at == datetime(2026, 4, 22, 18, 5, 10)  # omsVisibleAt
+
+    def test_missing_steps_are_omitted_and_sequence_stays_contiguous(self):
+        o = _CLIENT._order_from_oms(_OMS_ORDER_UNASSIGNED)
+        assert [(e.status, e.sequence) for e in o.status_events] == [
+            ("placed", 1),
+            ("accepted", 2),
+        ]
+
+    def test_no_timeline_yields_empty_list(self):
+        order = {"orderNr": "FG4LNNNOTIME1A", "currencyCode": "AED", "items": []}
+        o = _CLIENT._order_from_oms(order)
+        assert o.status_events == []
+
+
+class TestEnrichmentSurvivesMerge:
+    def test_merge_carries_oms_address_driver_and_events(self):
+        oms = _CLIENT._order_from_oms(_OMS_ORDER_ENRICHED)
+        rms = _CLIENT._order_from(_RMS_ROW)
+        merged = _merge_oms_into_rms(oms, rms)
+        assert merged.customer_address == oms.customer_address
+        assert merged.driver_name == "Rider Ahmed"
+        assert merged.driver_phone == "+971555555555"
+        assert merged.driver_status == "on_the_way"
+        assert merged.status_events == oms.status_events
+        assert isinstance(merged.status_events[0], StandardStatusEvent)
 
 
 # ── OMS item + modifier parsing ───────────────────────────────────────────────

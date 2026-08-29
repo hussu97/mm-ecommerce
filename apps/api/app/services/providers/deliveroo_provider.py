@@ -55,6 +55,7 @@ from app.services.aggregators.normalized import (
     StandardPayout,
     StandardStatement,
     StandardStatementLine,
+    StandardStatusEvent,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
@@ -302,6 +303,27 @@ async def _outlet_ids_from_map(db: AsyncSession) -> list[str]:
         )
     )
     return [str(x) for x in rows if x]
+
+
+#: Deliveroo's order-detail `timeline`, in lifecycle order, paired with the
+#: normalized status word each key maps to. `_merge_order_detail` walks this to
+#: build `StandardOrder.status_events`: a key whose timestamp is present emits one
+#: tz-aware event, sequenced by its position here; an absent/null timestamp is a
+#: step that has not happened yet, so it emits nothing. Deliveroo exposes the
+#: richest per-order lifecycle of any channel, so it is captured in full (the
+#: terminal delivered/cancelled step is appended separately, timed by its own
+#: `delivered_at` / `cancelled_at`).
+_TIMELINE_STEPS: tuple[tuple[str, str], ...] = (
+    ("placed_at", "placed"),
+    ("accepted_at", "accepted"),
+    ("confirmed_at", "confirmed"),
+    ("prepare_for", "prepare_for"),
+    ("delivery_picked_up_at", "picked_up"),
+)
+
+#: Terminal status words that close the lifecycle; the appended terminal event
+#: uses the order's own `status` word, so only these emit a final step.
+_TERMINAL_STATUSES = frozenset({"delivered", "cancelled", "canceled", "rejected"})
 
 
 class DeliverooClient(BaseAggregatorClient):
@@ -627,11 +649,17 @@ class DeliverooClient(BaseAggregatorClient):
     def _merge_order_detail(
         self, order: StandardOrder, detail: dict[str, Any], restaurant_id: str
     ) -> StandardOrder:
+        # Lines come from the per-order detail (`GET /api/orders/{order_id}`):
+        # `detail.items = [{name, quantity, modifiers, unit_price:{fractional},
+        # total_price:{fractional}, category_name}]`. A cancelled order still
+        # lists its items here, so every order with a detail keeps its lines;
+        # only an order whose detail lookup was gated (detail is None) has none.
         items: list[StandardOrderItem] = []
         for index, item in enumerate(_as_list(detail, "items", "order_items"), start=1):
             if not isinstance(item, dict):
                 continue
             name = (item.get("name") or item.get("item_name") or "").strip()
+            category = (item.get("category_name") or item.get("category") or "").strip()
             qty = item.get("quantity")
             unit = _fils(item.get("unit_price") or item.get("price"))
             total = _fils(
@@ -650,6 +678,7 @@ class DeliverooClient(BaseAggregatorClient):
                     source_key=f"{order.external_order_id}:{index}",
                     grain=GRAIN_LINE,
                     item_name=name or None,
+                    category_name=category or None,
                     quantity=Decimal(str(qty)) if qty is not None else None,
                     unit_price=unit,
                     gross_sales=total,
@@ -692,6 +721,29 @@ class DeliverooClient(BaseAggregatorClient):
                 "cancellationAt",
             )
         )
+
+        # Status history — the full lifecycle from `detail.timeline`, one tz-aware
+        # event per step whose timestamp is present (see `_TIMELINE_STEPS`), plus
+        # the terminal delivered/cancelled step timed by its own timestamp. ISO
+        # values here are tz-aware (+04:00); `_parse_dt` keeps them aware.
+        status_events: list[StandardStatusEvent] = []
+        for sequence, (key, word) in enumerate(_TIMELINE_STEPS):
+            at = _parse_dt(detail_timeline.get(key))
+            if at is None:
+                continue
+            status_events.append(
+                StandardStatusEvent(status=word, at=at, sequence=sequence)
+            )
+        terminal_word = str(detail.get("status") or order.status or "").strip().lower()
+        terminal_at = delivered_at or cancelled_at
+        if terminal_word in _TERMINAL_STATUSES and terminal_at is not None:
+            status_events.append(
+                StandardStatusEvent(
+                    status=terminal_word,
+                    at=terminal_at,
+                    sequence=len(_TIMELINE_STEPS),
+                )
+            )
 
         # Customer — name and phone when the detail exposes them.
         customer = detail.get("customer")
@@ -742,6 +794,7 @@ class DeliverooClient(BaseAggregatorClient):
             currency=order.currency,
             customer_name=customer_name or order.customer_name,
             customer_phone=customer_phone or order.customer_phone,
+            status_events=status_events or order.status_events,
             gross_sales=order.gross_sales
             or _fils(detail.get("amount") or detail.get("total")),
             net_sales=order.net_sales

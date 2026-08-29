@@ -65,6 +65,7 @@ from app.services.aggregators.normalized import (
     StandardPayout,
     StandardStatement,
     StandardStatementLine,
+    StandardStatusEvent,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
@@ -738,6 +739,75 @@ def _customer_phone(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _customer_address(row: dict[str, Any]) -> dict | None:
+    """The delivery address from `recipientInfo`, structured with what is present.
+
+    `addressName`/`addressLocation` carry the full delivery-address string; the
+    house/unit/building numbers are the finer parts. Empty and masked-away parts
+    are dropped (Keeta masks the address once an order is delivered, so a live
+    order is rich and a settled one may carry only fragments — we store whatever
+    the portal still exposes). None when there is no `recipientInfo` at all, or
+    nothing readable inside it.
+    """
+    recipient = row.get("recipientInfo")
+    if not isinstance(recipient, dict):
+        return None
+    parts = {
+        "address": _first_text(recipient, ("addressName", "addressLocation")),
+        "building": _first_text(recipient, ("buildingNumber",)),
+        "unit": _first_text(recipient, ("unitNumber",)),
+        "house": _first_text(recipient, ("houseNumber",)),
+    }
+    present = {key: value for key, value in parts.items() if value}
+    return present or None
+
+
+def _status_events(row: dict[str, Any]) -> list[StandardStatusEvent]:
+    """Keeta's own order lifecycle from `merchantOrderTraces`, oldest step first.
+
+    Each trace is `{merchantOrderStatus: 10|20|30|40, opTime: <epoch ms>, ...}`;
+    `_decode_status` turns the code into a word and `_parse_datetime` turns the
+    ms into naive Dubai wall-clock. Steps are ordered by `opTime` ascending and
+    deduped on status (the earliest step per status wins), then numbered 1..n in
+    that order. A missing or non-list `merchantOrderTraces` yields `[]` — nothing
+    to trace is not a guessed trace. The `raw` of each event keeps the source
+    trace so the mapping stays auditable.
+    """
+    traces = _get_value(row, "merchantOrderTraces")
+    if not isinstance(traces, list):
+        return []
+    parsed: list[tuple[float, str, datetime | None, dict[str, Any]]] = []
+    for trace in traces:
+        if not isinstance(trace, dict):
+            continue
+        raw_status = _get_value(trace, "merchantOrderStatus")
+        status = _decode_status(str(raw_status) if raw_status is not None else None)
+        if not status:
+            continue
+        op_time = _get_value(trace, "opTime")
+        at = _parse_datetime(op_time)
+        if isinstance(op_time, bool) or not isinstance(op_time, (int, float)):
+            sort_key = float("inf")  # untimestamped steps sort last, stably
+        else:
+            sort_key = float(op_time)
+        parsed.append((sort_key, status, at, trace))
+    if not parsed:
+        return []
+    parsed.sort(key=lambda entry: entry[0])
+    events: list[StandardStatusEvent] = []
+    seen: set[str] = set()
+    for _sort_key, status, at, trace in parsed:
+        if status in seen:
+            continue
+        seen.add(status)
+        events.append(
+            StandardStatusEvent(
+                status=status, at=at, sequence=len(events) + 1, raw=trace
+            )
+        )
+    return events
+
+
 # ── Row extraction (the getOrders / finance envelope, flattened) ─────────────
 def _iter_row_candidates(payload: Any) -> list[dict[str, Any]]:
     """Every dict anywhere in the payload tree — the portal buries the order
@@ -1042,6 +1112,8 @@ class KeetaClient(BaseAggregatorClient):
             currency=_first_text(row, _CURRENCY_KEYS) or "AED",
             customer_name=_customer_name(row),
             customer_phone=_customer_phone(row),
+            customer_address=_customer_address(row),
+            status_events=_status_events(row),
             gross_sales=gross_sales,
             net_sales=net_sales,
             commission_amount=_abs_money(

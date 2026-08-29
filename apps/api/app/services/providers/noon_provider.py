@@ -73,6 +73,7 @@ from app.services.aggregators.normalized import (
     StandardPayout,
     StandardStatement,
     StandardStatementLine,
+    StandardStatusEvent,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
@@ -175,6 +176,35 @@ def _str_or_none(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _agent_str(value: Any) -> str | None:
+    """A delivery-agent string, or None. Like `_str_or_none`, but also treats
+    noon's `UNKNOWN` placeholder as absent — the OMS panel fills an unassigned
+    rider's `daName`/`daPhone`/status with that literal, and it is not a value."""
+    text = _str_or_none(value)
+    if text is None or text.upper() == "UNKNOWN":
+        return None
+    return text
+
+
+def _customer_address_from(info: dict[str, Any]) -> dict[str, Any] | None:
+    """The end-customer's delivery address from OMS `customerInfo`, as the
+    `{"area":..., "city":..., "street":..., "lat":..., "lng":...}` shape the
+    ingest stores. None/empty parts are dropped, so an order noon only geocoded
+    (lat/lng, no text) still carries its coordinates and a fully masked address
+    collapses to None rather than a dict of nulls."""
+    if not isinstance(info, dict):
+        return None
+    candidates = {
+        "area": _str_or_none(info.get("addressArea")),
+        "city": _str_or_none(info.get("addressCity")),
+        "street": _str_or_none(info.get("addressStreet")),
+        "lat": info.get("addressLat"),
+        "lng": info.get("addressLng"),
+    }
+    address = {k: v for k, v in candidates.items() if v not in (None, "")}
+    return address or None
 
 
 def _parse_date(value: Any) -> date | None:
@@ -323,6 +353,12 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
         currency=rms.currency or oms.currency,
         customer_name=oms.customer_name,
         customer_phone=oms.customer_phone,
+        # Address, rider and the status trace are OMS-only (RMS drops them).
+        customer_address=oms.customer_address,
+        driver_name=oms.driver_name,
+        driver_phone=oms.driver_phone,
+        driver_status=oms.driver_status,
+        status_events=oms.status_events,
         gross_sales=rms.gross_sales if rms.gross_sales is not None else oms.gross_sales,
         net_sales=rms.net_sales if rms.net_sales is not None else oms.net_sales,
         commission_amount=rms.commission_amount,
@@ -580,6 +616,17 @@ class NoonClient(BaseAggregatorClient):
             currency=_str_or_none(order.get("currencyCode")) or "AED",
             customer_name=_str_or_none(customer_info.get("name")),
             customer_phone=_str_or_none(customer_info.get("phone")),
+            # Address + rider live on the OMS order only (the RMS statement drops
+            # both), so this is the sole place noon exposes where the order went
+            # and who took it.
+            customer_address=_customer_address_from(customer_info),
+            driver_name=_agent_str(order.get("daName")),
+            driver_phone=_agent_str(order.get("daPhone")),
+            # The live logistics word, falling back to the outlet-side status when
+            # the logistics leg has not reported yet.
+            driver_status=_agent_str(order.get("logisticsStatusCode"))
+            or _agent_str(order.get("outletStatusCode")),
+            status_events=self._status_events_from(order),
             gross_sales=_num(
                 order.get("orderOutletSubtotal")
                 if order.get("orderOutletSubtotal") is not None
@@ -597,6 +644,48 @@ class NoonClient(BaseAggregatorClient):
             items=self._items_from_oms(order),
             raw=order,
         )
+
+    #: The OMS order timeline, in the order the steps occur. Each entry is
+    #: `(payload field, marketplace status word)`. Two fields can carry the same
+    #: word (`createdAt`/`omsVisibleAt` both mean "placed", `estimatedOutletPickedUpAt`
+    #: /`estimatedPickedUpAt` both "picked_up") — the first present timestamp wins
+    #: and the later one is dropped, so a status never appears twice.
+    _OMS_STATUS_STEPS: tuple[tuple[str, str], ...] = (
+        ("createdAt", "placed"),
+        ("omsVisibleAt", "placed"),
+        ("estimatedAcceptedAt", "accepted"),
+        ("estimatedDaAssignedAt", "driver_assigned"),
+        ("estimatedDaReachedRestaurantAt", "driver_at_restaurant"),
+        ("estimatedReadyAt", "ready"),
+        ("estimatedOutletPickedUpAt", "picked_up"),
+        ("estimatedPickedUpAt", "picked_up"),
+        ("estimatedDeliveryAt", "delivered"),
+    )
+
+    def _status_events_from(self, order: dict[str, Any]) -> list[StandardStatusEvent]:
+        """The order's marketplace timeline as StandardStatusEvents.
+
+        IMPORTANT: the `estimated*` timestamps are noon's ESTIMATES of when each
+        step happened, not exact transition instants — the OMS panel exposes no
+        true per-status audit trail — so `at` is approximate and `sequence` (not
+        `at`) is the authoritative ordering. A step is emitted only when its
+        timestamp is present, and each status word appears at most once (first
+        present timestamp wins), so a missing field simply omits that step rather
+        than shifting the sequence.
+        """
+        events: list[StandardStatusEvent] = []
+        seen: set[str] = set()
+        sequence = 0
+        for field_name, status in self._OMS_STATUS_STEPS:
+            if status in seen:
+                continue
+            at = _parse_datetime(order.get(field_name))
+            if at is None:
+                continue
+            seen.add(status)
+            sequence += 1
+            events.append(StandardStatusEvent(status=status, at=at, sequence=sequence))
+        return events
 
     def _items_from_oms(self, order: dict[str, Any]) -> list[StandardOrderItem]:
         """Extract and normalise OMS line items with expanded modifier quantities."""

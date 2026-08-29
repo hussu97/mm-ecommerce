@@ -12,9 +12,14 @@ were taken from the live console:
 - Sales: `GET /v1/orders/list` and the per-outlet
   `/v1/careem/{city}/company/{c}/brand/{b}/outlet/{o}/partner-orders-minimal`.
 - Payouts: `POST /v1/billing/payoutRequests/list` with a date window.
-- Balances: `POST /v1/billing/billingAccounts/earnings` (a balance snapshot, not
-  a per-order settlement — Careem exposes no per-period statement document, so
-  the real commission per order is read from the order itself, not a statement).
+- Balances: `POST /v1/billing/billingAccounts/earnings` (a balance snapshot).
+- Invoices: `POST /v1/billing/billingReports/list` (reportType=INVOICE) lists the
+  monthly Tax Invoices, and `GET /v1/billing/billingReports/{id}/download?
+  billableId&billableType&tenant=FOOD` hands back a `{"fileUrl": <pre-signed S3>}`
+  for the PDF. Careem has no PER-ORDER settlement (the order feed carries no
+  fees — the minimal endpoint returns id/status/date/total only, no items,
+  modifiers, customer or captain), so the fees live only on that monthly Tax
+  Invoice, which `fetch_statements` archives as the VAT document.
 
 The billing calls need the account's `billableId`/`billableType` triple, which
 comes from the scope tree, so `fetch_finance` resolves scope first.
@@ -29,10 +34,13 @@ windows sampled at build time.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
+
+import httpx
 
 from app.models.aggregator import CHANNEL_CAREEM
 from app.services.aggregators.normalized import (
@@ -41,9 +49,11 @@ from app.services.aggregators.normalized import (
     StandardOrder,
     StandardOrderItem,
     StandardPayout,
+    StandardStatement,
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
+from app.services.aggregators.statement_docs import store_statement_invoice
 from app.services.providers.aggregator_base import BaseAggregatorClient
 
 logger = logging.getLogger(__name__)
@@ -64,6 +74,13 @@ _DEFAULT_CITY_ID = "1"
 #: has quietly expired into a redirect) cannot spin the loop forever against the
 #: live console — mirrors talabat's `_MAX_FINANCE_PAGES` guard.
 _MAX_PAYOUT_PAGES = 200
+#: Careem publishes a month's Tax Invoice ~a week after the month ends, so the
+#: invoice discovery reaches back at least this far — a 1-day finance sweep would
+#: otherwise never see the just-published prior-month invoice.
+_INVOICE_LOOKBACK_DAYS = 62
+#: Timeout for fetching the pre-signed S3 invoice PDF (a plain download, not the
+#: Careem console).
+_S3_TIMEOUT = 30.0
 
 
 def _num(value: Any) -> Decimal | None:
@@ -260,11 +277,144 @@ class CareemClient(BaseAggregatorClient):
             raw=row,
         )
 
-    # ── finance (payouts only; Careem has no statement document) ────────────
+    # ── finance ─────────────────────────────────────────────────────────────
+    async def _invoice_reports(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> list[dict[str, Any]]:
+        """The monthly Tax-Invoice reports whose period falls in the window.
+
+        `billingReports/list` (reportType=INVOICE) is what the console's Finances
+        → Invoices tab calls; each row is one billable account's invoice for one
+        calendar month, `{id, referenceId, billableId, billableType, startDate,
+        endDate}`. Careem publishes an invoice ~a week AFTER the month it covers,
+        so the window is widened to at least `_INVOICE_LOOKBACK_DAYS` — a 1-day
+        finance sweep would otherwise always miss the just-published prior month.
+        """
+        outlets = await self.discover_outlets(session)
+        accounts = self._billing_accounts(outlets)
+        start = min(since, until - timedelta(days=_INVOICE_LOOKBACK_DAYS))
+        reports: list[dict[str, Any]] = []
+        page = 0
+        for _ in range(_MAX_PAYOUT_PAGES):
+            body = {
+                "tenant": _TENANT,
+                "billingAccounts": accounts,
+                "startDate": start.strftime("%Y-%m-%dT00:00:00"),
+                "endDate": until.strftime("%Y-%m-%dT23:59:59"),
+                "entryType": "FOOD_ORDER",
+                "reportType": "INVOICE",
+                "pageNumber": page,
+                "pageSize": _PAGE_SIZE,
+            }
+            data = await self.request_json(
+                session,
+                "POST",
+                f"{_API}/v1/billing/billingReports/list",
+                json_body=body,
+            )
+            rows = data.get("reports", []) or []
+            reports.extend(r for r in rows if str(r.get("status")) == "SUCCESS")
+            info = data.get("paginationInfo") or {}
+            total = info.get("totalRecords", 0)
+            page += 1
+            if not rows or page * _PAGE_SIZE >= total:
+                break
+        return reports
+
+    async def _download_invoice_pdf(
+        self, session: LoadedSession, report: dict[str, Any]
+    ) -> tuple[bytes, str] | None:
+        """Resolve a report's pre-signed PDF URL and fetch the bytes.
+
+        The download endpoint returns `{"fileUrl": "<S3 pre-signed URL>"}` (valid
+        ~7 days); the S3 URL itself is public (the signature is the auth), so it is
+        fetched with a plain client, not the Careem session.
+        """
+        rid = report.get("id")
+        billable_id = report.get("billableId")
+        billable_type = report.get("billableType")
+        if rid is None or billable_id is None or not billable_type:
+            return None
+        meta = await self.request_json(
+            session,
+            "GET",
+            f"{_API}/v1/billing/billingReports/{rid}/download",
+            params={
+                "billableId": str(billable_id),
+                "billableType": str(billable_type),
+                "tenant": _TENANT,
+            },
+        )
+        file_url = meta.get("fileUrl") if isinstance(meta, dict) else None
+        if not file_url:
+            return None
+        async with httpx.AsyncClient(timeout=_S3_TIMEOUT) as client:
+            resp = await client.get(file_url)
+        if resp.status_code != 200 or not resp.content:
+            return None
+        filename = file_url.split("?", 1)[0].rsplit("/", 1)[-1] or f"careem-{rid}.pdf"
+        return resp.content, filename
+
     async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
     ) -> StatementsResult:
-        return StatementsResult(statements=[])
+        """Careem's monthly Tax Invoices — the VAT documents finance claims against.
+
+        There is no per-order settlement statement (the order feed carries no
+        fees), but Careem issues one Tax Invoice PDF per billable account per
+        month with the platform / processing / CPlus fee breakdown. This
+        enumerates them and archives each PDF, keyed on its invoice number, so a
+        rerun re-links rather than duplicates. Best-effort per invoice: a download
+        that fails still yields the statement metadata (period + invoice number),
+        so the row exists and a later pass can attach the document.
+        """
+        try:
+            reports = await self._invoice_reports(session, since=since, until=until)
+        except Exception as exc:  # noqa: BLE001 — surface, don't crash the sweep
+            return StatementsResult(
+                statements=[], truncation_note=f"careem invoice list failed: {exc}"
+            )
+        statements: list[StandardStatement] = []
+        for report in reports:
+            ref = report.get("referenceId")
+            rid = report.get("id")
+            statement_id = str(ref or f"CAREEM_INVOICE_{rid}")
+            stmt = StandardStatement(
+                statement_id=statement_id,
+                period_start=_date_str(report.get("startDate")),
+                period_end=_date_str(report.get("endDate")),
+                currency="AED",
+                external_outlet_id=(
+                    str(report.get("billableId"))
+                    if report.get("billableId") is not None
+                    else None
+                ),
+                raw=report,
+            )
+            try:
+                pdf = await self._download_invoice_pdf(session, report)
+            except Exception:  # noqa: BLE001 — one bad download must not drop the row
+                pdf = None
+                logger.exception("careem invoice %s download failed", statement_id)
+            if pdf is not None:
+                body, filename = pdf
+                stored = store_statement_invoice(
+                    channel=self.channel,
+                    statement_id=statement_id,
+                    filename=filename,
+                    body=body,
+                    content_type="application/pdf",
+                )
+                if stored is not None:
+                    stmt = replace(
+                        stmt,
+                        invoice_object_key=stored.object_key,
+                        invoice_content_type=stored.content_type,
+                        invoice_original_filename=stored.original_filename,
+                        invoice_fetched_at=stored.fetched_at,
+                    )
+            statements.append(stmt)
+        return StatementsResult(statements=statements)
 
     async def fetch_payouts(
         self, session: LoadedSession, *, since: datetime, until: datetime

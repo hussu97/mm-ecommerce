@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import base64
 import textwrap
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -364,3 +364,158 @@ def test_no_customer_id_leaves_name_none():
     client = DeliverooClient()
     merged = client._merge_order_detail(_base_order(), {"customer": {}}, "rest-1")
     assert merged.customer_name is None
+
+
+# ── 6. realistic order detail: items + status history + customer ──────────────
+
+# The per-order detail shape confirmed on prod: `items` with fractional money and
+# nested modifier groups, a full `timeline`, a terminal `status`, and a customer
+# that is only a numeric consumer id.
+_REALISTIC_DETAIL = {
+    "order_number": "MM-8842",
+    "status": "delivered",
+    "short_drn": "DRN-77",
+    "rejection_reason": None,
+    "customer": {"id": 32419558},
+    "timeline": {
+        "placed_at": "2026-08-28T08:38:23+04:00",
+        "accepted_at": "2026-08-28T08:39:10+04:00",
+        "prepare_for": "2026-08-28T09:05:00+04:00",
+        "confirmed_at": "2026-08-28T08:40:02+04:00",
+        "delivery_picked_up_at": "2026-08-28T08:58:44+04:00",
+        "delivered_at": "2026-08-28T09:12:30+04:00",
+    },
+    "items": [
+        {
+            "name": "Pistachio Croissant",
+            "quantity": 2,
+            "category_name": "Viennoiserie",
+            "unit_price": {"fractional": 1800},
+            "total_price": {"fractional": 3600},
+            "modifiers": [
+                {
+                    "name": "Add-ons",
+                    "options": [
+                        {"name": "Extra pistachio", "quantity": 1, "price": "5.00"}
+                    ],
+                }
+            ],
+        },
+        {
+            "name": "Flat White",
+            "quantity": 1,
+            "category_name": "Coffee",
+            "unit_price": {"fractional": 2200},
+            "total_price": {"fractional": 2200},
+        },
+    ],
+}
+
+
+def test_merge_detail_parses_item_lines():
+    """Items parse: name, quantity, fractional/100 unit + total, and modifiers."""
+    client = DeliverooClient()
+    merged = client._merge_order_detail(_base_order(), _REALISTIC_DETAIL, "rest-1")
+
+    assert len(merged.items) == 2
+    croissant, coffee = merged.items
+
+    assert croissant.item_name == "Pistachio Croissant"
+    assert croissant.category_name == "Viennoiserie"
+    assert croissant.quantity == Decimal("2")
+    assert croissant.unit_price == Decimal("18.00")  # 1800 fils
+    assert croissant.gross_sales == Decimal("36.00")  # 3600 fils
+    assert croissant.net_sales == Decimal("36.00")
+    assert croissant.amount_is_known is True
+    # Nested modifier group flattened to its option.
+    assert [m.name for m in croissant.modifiers] == ["Extra pistachio"]
+    assert croissant.modifiers[0].quantity == Decimal("1")
+    assert croissant.modifiers_text  # raw dump retained
+
+    assert coffee.item_name == "Flat White"
+    assert coffee.quantity == Decimal("1")
+    assert coffee.unit_price == Decimal("22.00")
+    assert coffee.modifiers == []
+
+
+def test_merge_detail_builds_status_events_tz_aware():
+    """The timeline becomes an ordered, tz-aware status trace plus the terminal."""
+    client = DeliverooClient()
+    merged = client._merge_order_detail(_base_order(), _REALISTIC_DETAIL, "rest-1")
+
+    events = merged.status_events
+    # placed, accepted, confirmed, prepare_for, picked_up, delivered
+    assert [e.status for e in events] == [
+        "placed",
+        "accepted",
+        "confirmed",
+        "prepare_for",
+        "picked_up",
+        "delivered",
+    ]
+    # Sequence reflects lifecycle order (not chronology of the sparse subset).
+    assert [e.sequence for e in events] == [0, 1, 2, 3, 4, 5]
+    # Every event is tz-aware (Deliveroo returns +04:00 ISO; kept as-is).
+    for event in events:
+        assert event.at is not None
+        assert event.at.tzinfo is not None
+    placed = events[0]
+    assert placed.at == datetime(
+        2026, 8, 28, 8, 38, 23, tzinfo=timezone(timedelta(hours=4))
+    )
+
+
+def test_merge_detail_omits_absent_timeline_steps():
+    """A still-open order emits only the steps it has reached; no terminal event."""
+    client = DeliverooClient()
+    detail = {
+        "status": "confirmed",
+        "customer": {"id": 32419558},
+        "timeline": {
+            "placed_at": "2026-08-28T08:38:23+04:00",
+            "accepted_at": "2026-08-28T08:39:10+04:00",
+            "confirmed_at": "2026-08-28T08:40:02+04:00",
+            # no prepare_for / picked_up / delivered yet
+        },
+    }
+    merged = client._merge_order_detail(_base_order(), detail, "rest-1")
+    assert [e.status for e in merged.status_events] == [
+        "placed",
+        "accepted",
+        "confirmed",
+    ]
+
+
+def test_merge_detail_cancelled_terminal_event():
+    """A cancelled order still lists items and gets a `cancelled` terminal event."""
+    client = DeliverooClient()
+    detail = {
+        "status": "cancelled",
+        "customer": {"id": 999},
+        "timeline": {
+            "placed_at": "2026-08-28T08:38:23+04:00",
+            "cancelled_at": "2026-08-28T08:45:00+04:00",
+        },
+        "items": [
+            {
+                "name": "Cancelled Cake",
+                "quantity": 1,
+                "total_price": {"fractional": 5000},
+            }
+        ],
+    }
+    merged = client._merge_order_detail(_base_order(), detail, "rest-1")
+    assert len(merged.items) == 1  # items present even on a cancelled order
+    assert [e.status for e in merged.status_events] == ["placed", "cancelled"]
+    terminal = merged.status_events[-1]
+    assert terminal.at == datetime(
+        2026, 8, 28, 8, 45, 0, tzinfo=timezone(timedelta(hours=4))
+    )
+
+
+def test_merge_detail_realistic_customer_is_pseudonymous_id():
+    """The realistic detail keeps the pseudonymous consumer-id name."""
+    client = DeliverooClient()
+    merged = client._merge_order_detail(_base_order(), _REALISTIC_DETAIL, "rest-1")
+    assert merged.customer_name == "Deliveroo customer 32419558"
+    assert merged.customer_phone is None
