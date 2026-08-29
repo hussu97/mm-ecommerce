@@ -1475,10 +1475,13 @@ async def run_sales_refresh_once() -> int:
 async def run_sales_refresh_scheduler_forever() -> None:
     """The rolling sales refresh, every `AGGREGATOR_SALES_REFRESH_MINUTES`.
 
-    A plain interval loop (sleep-first: the daily scheduler's boot catch-up already
-    covers a redeploy, and sleeping first keeps this off the boot stampede).
-    `<= 0` disables it. Cancellation-safe; one bad tick is logged and the loop
-    lives on, exactly like the daily scheduler.
+    Wall-clock honest with a boot catch-up, NOT a bare sleep-first loop. A loop
+    that sleeps the interval BEFORE its first run resets that countdown on every
+    redeploy, so on a day with deploys more frequent than the interval the tick
+    would never fire at all. So on boot it consults the durable run trail: if no
+    SALES sweep has run within the interval, it refreshes once now, then falls into
+    the interval loop. `<= 0` disables it. Cancellation-safe; one bad tick is
+    logged and the loop lives on, exactly like the daily scheduler.
     """
     interval = settings.AGGREGATOR_SALES_REFRESH_MINUTES
     if interval <= 0:
@@ -1489,6 +1492,25 @@ async def run_sales_refresh_scheduler_forever() -> None:
         interval,
         settings.AGGREGATOR_SALES_ROLLING_HOURS,
     )
+    # Boot catch-up: run now when the last sales sweep (this refresh OR the daily
+    # pass — both refresh sales) is older than the interval, so a redeploy cannot
+    # push the next run a full interval into the future every time. Gated on the
+    # trail, so a burst of deploys does not re-scrape on every one — only when a
+    # refresh is genuinely due.
+    try:
+        if is_enabled():
+            last = await _last_sales_sweep_at()
+            if last is None or utcnow() - last >= timedelta(minutes=interval):
+                logger.info(
+                    "aggregator rolling sales refresh: last sweep older than the "
+                    "interval — catching up now"
+                )
+                await run_sales_refresh_once()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — a failed catch-up must not kill the loop
+        logger.exception("aggregator rolling sales refresh catch-up failed")
+
     while True:
         try:
             await asyncio.sleep(interval * 60)
@@ -1498,6 +1520,19 @@ async def run_sales_refresh_scheduler_forever() -> None:
             raise
         except Exception:  # noqa: BLE001 — one bad tick must not stop them all
             logger.exception("aggregator rolling sales refresh tick failed")
+
+
+async def _last_sales_sweep_at() -> datetime | None:
+    """The most recent SALES sweep's start time, from the durable `aggregator_sync_run`
+    trail. Read from the DB (not an in-memory timer) so the rolling refresh's boot
+    catch-up survives a redeploy — an in-memory timer resets to a full interval on
+    every restart, which is the very thing that starves a sleep-first loop."""
+    async with AsyncSessionFactory() as db:
+        return await db.scalar(
+            select(func.max(AggregatorSyncRun.started_at)).where(
+                AggregatorSyncRun.mode == RUN_MODE_SALES
+            )
+        )
 
 
 #: Holds the in-flight manual-trigger task so the event loop's weak reference to

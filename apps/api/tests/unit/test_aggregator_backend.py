@@ -7,6 +7,7 @@ fail-closed auth on the reconciliation reads.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -317,3 +318,57 @@ async def test_sales_refresh_scheduler_disabled_at_zero_interval(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SALES_REFRESH_MINUTES", 0)
     # Returns (does not hang); no sweep attempted.
     await ingest.run_sales_refresh_scheduler_forever()
+
+
+# ── rolling sales refresh survives frequent redeploys (boot catch-up) ──────────
+class TestSalesRefreshBootCatchup:
+    """A sleep-first loop resets its countdown on every redeploy, so on a busy
+    deploy day the hourly tick would never fire. The boot catch-up runs once when
+    the last SALES sweep is older than the interval — and NOT when it is recent."""
+
+    async def _run_once_and_capture(self, monkeypatch, last_sweep):
+        import asyncio as _asyncio
+
+        from app.services.aggregators import ingest
+
+        monkeypatch.setattr(ingest, "is_enabled", lambda: True)
+        monkeypatch.setattr(
+            "app.core.config.settings.AGGREGATOR_SALES_REFRESH_MINUTES", 60
+        )
+
+        async def fake_last():
+            return last_sweep
+
+        calls = {"n": 0}
+
+        async def fake_refresh():
+            calls["n"] += 1
+            return 0
+
+        async def stop_sleep(_secs):
+            raise _asyncio.CancelledError
+
+        monkeypatch.setattr(ingest, "_last_sales_sweep_at", fake_last)
+        monkeypatch.setattr(ingest, "run_sales_refresh_once", fake_refresh)
+        monkeypatch.setattr(ingest.asyncio, "sleep", stop_sleep)
+
+        with pytest.raises(_asyncio.CancelledError):
+            await ingest.run_sales_refresh_scheduler_forever()
+        return calls["n"]
+
+    async def test_catches_up_when_never_run(self, monkeypatch):
+        assert await self._run_once_and_capture(monkeypatch, None) == 1
+
+    async def test_catches_up_when_last_sweep_is_stale(self, monkeypatch):
+        from app.models.base import utcnow
+
+        stale = utcnow() - timedelta(hours=2)
+        assert await self._run_once_and_capture(monkeypatch, stale) == 1
+
+    async def test_skips_when_last_sweep_is_recent(self, monkeypatch):
+        from app.models.base import utcnow
+
+        recent = utcnow() - timedelta(minutes=5)
+        # No catch-up (recent), and the loop's first sleep is cancelled before its
+        # own run — so zero refreshes fired.
+        assert await self._run_once_and_capture(monkeypatch, recent) == 0
