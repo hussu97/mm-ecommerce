@@ -21,11 +21,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
+from app.core.exceptions import BadRequestError
 from app.core.money import money
 from app.core.permissions import require
 from app.models import (
@@ -71,27 +72,26 @@ _CHANNEL_LABELS = {
 }
 
 
-async def _day_bounds(db: AsyncSession) -> tuple[date, str, datetime, datetime]:
-    """
-    The current shop day as `(today, tz_name, start_utc, now_utc)`.
-
-    `start_utc` is local midnight where the shop is, expressed as the UTC instant
-    it actually happened at, so a `created_at >= start_utc` filter is exact at
-    the day boundary.
-    """
-    tz = await business_day_service.resolve_timezone(db)
-    today = business_day_service.shop_today(tz)
-    start_local = datetime(today.year, today.month, today.day, tzinfo=tz)
-    start_utc = start_local.astimezone(timezone.utc)
-    return today, str(tz), start_utc, utcnow()
-
-
 async def _count(db: AsyncSession, stmt) -> int:
     return int((await db.execute(stmt)).scalar_one())
 
 
+def _status_clause(statuses: list[str] | None):
+    """The status filter for the revenue figures.
+
+    With an explicit selection (the dashboard's status multi-select), the figures
+    narrow to exactly those statuses — including cancelled, if the operator picked
+    it, since they asked to see it. With no selection, the default excludes
+    cancellations from every revenue/mix figure (no money changed hands), which is
+    what the day's takings have always meant.
+    """
+    if statuses:
+        return Order.status.in_(statuses)
+    return _REVENUE_STATUSES
+
+
 async def _breakdown(
-    db: AsyncSession, column, *, start, end, labels=None
+    db: AsyncSession, column, *, start, end, labels=None, statuses=None
 ) -> list[BreakdownRow]:
     """Orders and revenue grouped by `column` over the window, revenue-eligible only."""
     rows = (
@@ -104,7 +104,7 @@ async def _breakdown(
             .where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                _REVENUE_STATUSES,
+                _status_clause(statuses),
             )
             .group_by(column)
             .order_by(func.count(Order.id).desc())
@@ -122,7 +122,9 @@ async def _breakdown(
     return out
 
 
-async def _window_totals(db: AsyncSession, *, start, end) -> tuple[int, float]:
+async def _window_totals(
+    db: AsyncSession, *, start, end, statuses=None
+) -> tuple[int, float]:
     """(orders, revenue) for revenue-eligible orders created in the window."""
     result = (
         await db.execute(
@@ -132,7 +134,7 @@ async def _window_totals(db: AsyncSession, *, start, end) -> tuple[int, float]:
             ).where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                _REVENUE_STATUSES,
+                _status_clause(statuses),
             )
         )
     ).one()
@@ -146,40 +148,111 @@ def _growth(current: float, prior: float) -> float:
     return round((current - prior) / prior * 100, 1)
 
 
+async def _range_bounds(
+    db: AsyncSession, date_from: str | None, date_to: str | None
+) -> tuple[date, str | None, str, datetime, datetime, datetime, datetime]:
+    """Resolve the window to aggregate over, and the prior window to grow against.
+
+    Returns `(from_date, to_date, tz_name, start, end, prior_start, prior_end)`.
+
+    With no dates it is the live trading day exactly as before — midnight-to-now,
+    grown against the same elapsed clock window yesterday, `to_date` None. With a
+    range it is [from 00:00, to 23:59:59.999999] in the shop's timezone, grown
+    against the immediately-preceding window of the same number of days.
+    """
+    tz = await business_day_service.resolve_timezone(db)
+    if not date_from and not date_to:
+        today = business_day_service.shop_today(tz)
+        start = datetime(today.year, today.month, today.day, tzinfo=tz).astimezone(
+            timezone.utc
+        )
+        now = utcnow()
+        return (
+            today,
+            None,
+            str(tz),
+            start,
+            now,
+            start - timedelta(days=1),
+            now - timedelta(days=1),
+        )
+
+    if not (date_from and date_to):
+        raise BadRequestError("Provide both date_from and date_to, or neither")
+    try:
+        d_from = date.fromisoformat(date_from)
+        d_to = date.fromisoformat(date_to)
+    except ValueError as exc:
+        raise BadRequestError("Dates must be ISO 8601 (YYYY-MM-DD)") from exc
+    if d_from > d_to:
+        raise BadRequestError("date_from must not be after date_to")
+
+    start = datetime(d_from.year, d_from.month, d_from.day, tzinfo=tz).astimezone(
+        timezone.utc
+    )
+    # End = the last instant of `to`'s local day (start of the day after, minus a
+    # microsecond) so the inclusive `created_at <= end` filters own the whole day.
+    end_local = datetime(d_to.year, d_to.month, d_to.day, tzinfo=tz) + timedelta(days=1)
+    end = end_local.astimezone(timezone.utc) - timedelta(microseconds=1)
+    span = timedelta(days=(d_to - d_from).days + 1)
+    return d_from, d_to.isoformat(), str(tz), start, end, start - span, end - span
+
+
 @router.get("/today", response_model=DashboardTodayResponse)
 async def dashboard_today(
+    date_from: str | None = Query(None, description="ISO date; with date_to, a range"),
+    date_to: str | None = Query(None, description="ISO date; with date_from, a range"),
+    statuses: list[str] | None = Query(
+        None, description="Narrow every figure to these order statuses (multi-select)"
+    ),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("dashboard.access")),
 ):
-    """The current trading day at a glance, over every order and every channel."""
-    today, tz_name, start, now = await _day_bounds(db)
-    business_date = today.isoformat()
+    """The trading day — or any date range — at a glance, over every channel.
 
-    # Headline figures, and the same elapsed window yesterday for a growth rate.
-    orders_today, revenue_today = await _window_totals(db, start=start, end=now)
-    y_start = start - timedelta(days=1)
-    y_end = now - timedelta(days=1)
-    orders_prev, revenue_prev = await _window_totals(db, start=y_start, end=y_end)
+    No dates → the live current day (unchanged). A `date_from`/`date_to` pair →
+    that range. An optional `statuses` selection narrows the headline figures and
+    the channel/fulfilment/payment mix to those statuses; `by_status` always
+    reports the full spread so it can drive the selector.
+    """
+    (
+        from_date,
+        to_date,
+        tz_name,
+        start,
+        end,
+        prior_start,
+        prior_end,
+    ) = await _range_bounds(db, date_from, date_to)
+    picked = statuses or None
+
+    orders_cur, revenue_cur = await _window_totals(
+        db, start=start, end=end, statuses=picked
+    )
+    orders_prev, revenue_prev = await _window_totals(
+        db, start=prior_start, end=prior_end, statuses=picked
+    )
 
     delivered = await _count(
         db,
         select(func.count(Order.id)).where(
             Order.created_at >= start,
-            Order.created_at <= now,
+            Order.created_at <= end,
             Order.status == OrderStatusEnum.DELIVERED,
         ),
     )
 
     summary = DashboardSummary(
-        orders=orders_today,
-        revenue=revenue_today,
-        avg_order_value=round(revenue_today / orders_today, 2) if orders_today else 0.0,
+        orders=orders_cur,
+        revenue=revenue_cur,
+        avg_order_value=round(revenue_cur / orders_cur, 2) if orders_cur else 0.0,
         delivered=delivered,
-        orders_growth=_growth(orders_today, orders_prev),
-        revenue_growth=_growth(revenue_today, revenue_prev),
+        orders_growth=_growth(orders_cur, orders_prev),
+        revenue_growth=_growth(revenue_cur, revenue_prev),
     )
 
-    # by_status is the one breakdown that keeps cancellations in view.
+    # by_status keeps the FULL spread (cancellations included) regardless of the
+    # status selection — it is the menu the operator picks that selection from.
     status_rows = (
         await db.execute(
             select(
@@ -187,7 +260,7 @@ async def dashboard_today(
                 func.count(Order.id),
                 func.coalesce(func.sum(Order.total), 0),
             )
-            .where(Order.created_at >= start, Order.created_at <= now)
+            .where(Order.created_at >= start, Order.created_at <= end)
             .group_by(Order.status)
             .order_by(func.count(Order.id).desc())
         )
@@ -202,32 +275,35 @@ async def dashboard_today(
     ]
 
     by_channel = await _breakdown(
-        db, Order.source, start=start, end=now, labels=_CHANNEL_LABELS
+        db, Order.source, start=start, end=end, labels=_CHANNEL_LABELS, statuses=picked
     )
     by_fulfillment = await _breakdown(
         db,
         Order.delivery_method,
         start=start,
-        end=now,
+        end=end,
         labels={
             DeliveryMethodEnum.DELIVERY.value: "Delivery",
             DeliveryMethodEnum.PICKUP.value: "Pickup",
         },
+        statuses=picked,
     )
     by_payment = await _breakdown(
         db,
         Order.payment_method,
         start=start,
-        end=now,
+        end=end,
         labels={"card": "Card", "cod": "Cash on delivery"},
+        statuses=picked,
     )
 
-    ops = await _operational_snapshot(db, start=start, end=now, today=today)
+    ops = await _operational_snapshot(db, start=start, end=end, today=from_date)
 
     return DashboardTodayResponse(
-        business_date=business_date,
+        business_date=from_date.isoformat(),
+        business_date_to=to_date,
         timezone=tz_name,
-        generated_at=now,
+        generated_at=utcnow(),
         summary=summary,
         by_status=by_status,
         by_channel=by_channel,

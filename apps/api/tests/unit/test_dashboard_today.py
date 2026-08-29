@@ -13,7 +13,7 @@ to be worth shipping, and both are guarded here:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -61,13 +61,68 @@ async def test_today_starts_at_local_midnight_not_utc(monkeypatch):
         mod.business_day_service, "shop_today", lambda tz=None: date(2026, 8, 25)
     )
 
-    today, tz_name, start_utc, now_utc = await mod._day_bounds(_DB([]))
+    # No dates → the live single day. prior window is the same clock span yesterday.
+    (
+        from_date,
+        to_date,
+        tz_name,
+        start,
+        end,
+        prior_start,
+        prior_end,
+    ) = await mod._range_bounds(_DB([]), None, None)
 
-    assert today == date(2026, 8, 25)
+    assert from_date == date(2026, 8, 25)
+    assert to_date is None
     assert tz_name == "Asia/Dubai"
     # 2026-08-25 00:00 Dubai == 2026-08-24 20:00 UTC.
-    assert start_utc == datetime(2026, 8, 24, 20, 0, tzinfo=timezone.utc)
-    assert now_utc.tzinfo is timezone.utc
+    assert start == datetime(2026, 8, 24, 20, 0, tzinfo=timezone.utc)
+    assert end.tzinfo is timezone.utc
+    # The growth baseline is exactly one day earlier, both ends.
+    assert prior_start == start - timedelta(days=1)
+    assert prior_end == end - timedelta(days=1)
+
+
+async def test_range_bounds_span_and_prior_window(monkeypatch):
+    """A [from, to] range spans full local days and grows against the equal window
+    immediately before it."""
+
+    async def _tz(_db):
+        return ZoneInfo("Asia/Dubai")
+
+    monkeypatch.setattr(mod.business_day_service, "resolve_timezone", _tz)
+
+    (
+        from_date,
+        to_date,
+        _tzn,
+        start,
+        end,
+        prior_start,
+        prior_end,
+    ) = await mod._range_bounds(_DB([]), "2026-08-01", "2026-08-07")
+    assert from_date == date(2026, 8, 1)
+    assert to_date == "2026-08-07"
+    # Opens at local midnight of the 1st (20:00 UTC on Jul 31)…
+    assert start == datetime(2026, 7, 31, 20, 0, tzinfo=timezone.utc)
+    # …and closes one microsecond before local midnight after the 7th.
+    assert end == datetime(2026, 8, 7, 20, 0, tzinfo=timezone.utc) - timedelta(
+        microseconds=1
+    )
+    # 7-day span → the prior 7 days, both ends shifted back by 7.
+    assert prior_start == start - timedelta(days=7)
+    assert prior_end == end - timedelta(days=7)
+
+
+async def test_range_bounds_rejects_a_half_range(monkeypatch):
+    async def _tz(_db):
+        return ZoneInfo("Asia/Dubai")
+
+    monkeypatch.setattr(mod.business_day_service, "resolve_timezone", _tz)
+    with pytest.raises(mod.BadRequestError):
+        await mod._range_bounds(_DB([]), "2026-08-01", None)
+    with pytest.raises(mod.BadRequestError):
+        await mod._range_bounds(_DB([]), "2026-08-07", "2026-08-01")
 
 
 # ── growth never divides by nothing ───────────────────────────────────────────

@@ -2121,7 +2121,12 @@ export interface paths {
         };
         /**
          * Dashboard Today
-         * @description The current trading day at a glance, over every order and every channel.
+         * @description The trading day — or any date range — at a glance, over every channel.
+         *
+         *     No dates → the live current day (unchanged). A `date_from`/`date_to` pair →
+         *     that range. An optional `statuses` selection narrows the headline figures and
+         *     the channel/fulfilment/payment mix to those statuses; `by_status` always
+         *     reports the full spread so it can drive the selector.
          */
         get: operations["dashboard_today_api_v1_dashboard_today_get"];
         put?: never;
@@ -10242,6 +10247,8 @@ export interface components {
         DashboardTodayResponse: {
             /** Business Date */
             business_date: string;
+            /** Business Date To */
+            business_date_to?: string | null;
             /** By Channel */
             by_channel: components["schemas"]["BreakdownRow"][];
             /** By Fulfillment */
@@ -21519,7 +21526,14 @@ export interface operations {
     };
     dashboard_today_api_v1_dashboard_today_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description ISO date; with date_to, a range */
+                date_from?: string | null;
+                /** @description ISO date; with date_from, a range */
+                date_to?: string | null;
+                /** @description Narrow every figure to these order statuses (multi-select) */
+                statuses?: string[] | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -21533,6 +21547,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DashboardTodayResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

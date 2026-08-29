@@ -8283,6 +8283,17 @@
             "title": "Business Date",
             "type": "string"
           },
+          "business_date_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Date To"
+          },
           "by_channel": {
             "items": {
               "$ref": "#/components/schemas/BreakdownRow"
@@ -37146,8 +37157,67 @@
     },
     "/api/v1/dashboard/today": {
       "get": {
-        "description": "The current trading day at a glance, over every order and every channel.",
+        "description": "The trading day \u2014 or any date range \u2014 at a glance, over every channel.\n\nNo dates \u2192 the live current day (unchanged). A `date_from`/`date_to` pair \u2192\nthat range. An optional `statuses` selection narrows the headline figures and\nthe channel/fulfilment/payment mix to those statuses; `by_status` always\nreports the full spread so it can drive the selector.",
         "operationId": "dashboard_today_api_v1_dashboard_today_get",
+        "parameters": [
+          {
+            "description": "ISO date; with date_to, a range",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; with date_to, a range",
+              "title": "Date From"
+            }
+          },
+          {
+            "description": "ISO date; with date_from, a range",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; with date_from, a range",
+              "title": "Date To"
+            }
+          },
+          {
+            "description": "Narrow every figure to these order statuses (multi-select)",
+            "in": "query",
+            "name": "statuses",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow every figure to these order statuses (multi-select)",
+              "title": "Statuses"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -37158,6 +37228,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

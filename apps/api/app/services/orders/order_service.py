@@ -1725,6 +1725,13 @@ async def get_all_admin(
             | search_text.contains(Order.email, search)
             | search_text.contains(Order.customer_name, search)
             | search_text.contains(Order.customer_phone, search)
+            # The marketplace's own references for an aggregator order: the long
+            # `external_reference` (the id the marketplace prints) and the short
+            # `aggregator_display_code` (the code on the ticket). Without these,
+            # pasting a Talabat/Careem order number found nothing, even though the
+            # order was right there.
+            | search_text.contains(Order.external_reference, search)
+            | search_text.contains(Order.aggregator_display_code, search)
         )
 
     count_result = await db.execute(

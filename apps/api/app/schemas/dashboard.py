@@ -63,8 +63,11 @@ class DashboardOps(BaseModel):
 
 
 class DashboardTodayResponse(BaseModel):
-    #: The shop's local calendar date the figures cover (ISO 8601).
+    #: The shop's local calendar date the figures cover (ISO 8601) — the range
+    #: start when a range was requested, else the single trading day.
     business_date: str
+    #: The range end (ISO 8601), or null for the live single-day view.
+    business_date_to: str | None = None
     timezone: str
     generated_at: datetime
     summary: DashboardSummary
