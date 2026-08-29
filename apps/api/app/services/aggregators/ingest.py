@@ -224,6 +224,27 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _aware_business(dt: datetime | None) -> datetime | None:
+    """A marketplace timestamp as a tz-aware instant, in the shop's clock.
+
+    Every marketplace we pull reports order times in Dubai business time, but the
+    providers disagree on the Python type: Careem's REST and Deliveroo's Z-suffixed
+    ISO arrive tz-AWARE, while Talabat's CSV, Keeta's page JSON and Noon's OMS hand
+    back a NAIVE Dubai wall-clock. `placed_at`/etc. land in `timestamptz` columns
+    (and `placed_at` becomes the promoted order's `created_at`), and a naive value
+    written there is read back as UTC — so a 23:16 Dubai order was stored as 23:16Z
+    and rendered as 03:16 the next morning, four hours in the future, which is why
+    an order looked "placed" hours after the sync that pulled it ran.
+
+    Stamp a naive value with Dubai so the stored instant is the real one; leave an
+    already-aware value exactly as the provider resolved it. One rule, one seam —
+    every sales order (httpx sweep and the Keeta push alike) funnels through here.
+    """
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=_DUBAI)
+
+
 async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> None:
     branch_id = await _branch_for(db, channel, order.external_outlet_id)
     values = {
@@ -231,10 +252,10 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "external_order_id": order.external_order_id,
         "branch_id": branch_id,
         "business_date": order.business_date,
-        "placed_at": order.placed_at,
-        "accepted_at": order.accepted_at,
-        "delivered_at": order.delivered_at,
-        "cancelled_at": order.cancelled_at,
+        "placed_at": _aware_business(order.placed_at),
+        "accepted_at": _aware_business(order.accepted_at),
+        "delivered_at": _aware_business(order.delivered_at),
+        "cancelled_at": _aware_business(order.cancelled_at),
         "status": order.status,
         "currency": order.currency,
         "customer_name": order.customer_name,
@@ -1194,6 +1215,54 @@ async def run_daily_once() -> tuple[int, int]:
     if reconciled:
         logger.info("aggregator reconciliation wrote %s row(s)", reconciled)
     return sales, finance
+
+
+#: Holds the in-flight manual-trigger task so the event loop's weak reference to
+#: it cannot let it be collected mid-sweep (convention #5's tracked-task rule, the
+#: way `indexnow_service._pending` does). Discarded on completion so it is not a
+#: leak. A full daily pass takes minutes and must not block the click that started
+#: it — and BackgroundTasks are dropped when the process is reaped after the
+#: response, which would leave the run half-done and nothing recording it.
+_manual_runs: set[asyncio.Task] = set()
+
+
+def trigger_daily_in_background() -> bool:
+    """Kick off one full daily pass now, off the request. Returns whether it started.
+
+    Fires `run_daily_once` on the running loop and returns immediately, so the
+    admin's "Run now" answers at once; the Runs table fills in as each channel's
+    `aggregator_sync_run` row opens and closes. Safe to click while the nightly
+    pass (or a previous click) is mid-flight: every sweep is guarded by its own
+    Postgres advisory lock and simply no-ops if one is already held, and every
+    write is an idempotent upsert, so a concurrent pass updates rather than
+    duplicates. No-op (returns False) when the ingest is disabled or unconfigured.
+    """
+    if not is_enabled():
+        return False
+    try:
+        task = asyncio.create_task(_run_daily_logged())
+    except RuntimeError:
+        # No running loop — a management command or a test. Nothing to fire.
+        logger.debug("aggregator manual trigger: no event loop, skipped")
+        return False
+    _manual_runs.add(task)
+    task.add_done_callback(_manual_runs.discard)
+    return True
+
+
+async def _run_daily_logged() -> None:
+    """`run_daily_once` with its own error boundary — an orphaned task that raises
+    would only warn to the loop, so log it properly and keep the failure off the
+    process's unhandled-exception path."""
+    try:
+        sales, finance = await run_daily_once()
+        logger.info(
+            "aggregator manual run finished: %s sales, %s finance written",
+            sales,
+            finance,
+        )
+    except Exception:  # noqa: BLE001 — background task, nothing above to catch it
+        logger.exception("aggregator manual run failed")
 
 
 def _start_of_today_dubai(now: datetime) -> datetime:
