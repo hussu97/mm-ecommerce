@@ -14,9 +14,15 @@ import { cn } from '@/lib/utils';
  * mirrors `TabBar` (the same underline, the same uppercase label) so the
  * screens read as one section with tabs rather than unrelated pages.
  */
+// The lateral nav for the whole inbound-marketplace area. Reconciliation leads
+// (it is the primary destination and the sidebar entry that owns this area);
+// Runs is the ingest trail; the mappings and logins are the config behind it
+// all. Only some of these are also sidebar entries — the rail carries the primary
+// destinations, these tabs carry everything, so you move sideways without hunting
+// in the drawer.
 const TABS = [
-  { href: '/aggregators/runs', label: 'Runs' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
+  { href: '/aggregators/runs', label: 'Runs' },
   { href: '/aggregators/mappings', label: 'Branch Map' },
   { href: '/aggregators/item-mappings', label: 'Item Mappings' },
   { href: '/aggregators/logins', label: 'Logins' },

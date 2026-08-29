@@ -13,7 +13,7 @@
 // ops, reporting, CMS, i18n and the whole aggregator relationship. Each group
 // below is one job, and no group is larger than eight.
 export const NAV: Array<
-  { href: string; label: string; icon: string } | { section: string }
+  { href: string; label: string; icon: string; match?: string } | { section: string }
 > = [
   { href: '/',              label: 'Dashboard',       icon: 'dashboard' },
 
@@ -37,15 +37,19 @@ export const NAV: Array<
   // incident, not the moment to go hunting three sections down.
   { href: '/payment-gateways', label: 'Payment Gateways', icon: 'credit_card' },
 
-  // The aggregator relationship, in one place: what we push to the
-  // marketplaces (GrubOps), what they paid us back (Reconciliation), which
-  // of our branches each outlet id maps to (Mappings), and how we sign in
-  // (Logins).
+  // The aggregator relationship. Two jobs, so two sidebar entries plus the
+  // session health we watch daily — everything else about the inbound side
+  // (the ingest run trail, the branch/item mappings we set once) is a tab of
+  // the Reconciliation area, reached laterally rather than cluttering the rail.
+  // This section had drifted to five entries that duplicated those tabs.
+  //   • GrubOps        — what we PUSH out: the menu/catalog sync.
+  //   • Reconciliation — what comes BACK: orders, the books, and (via its tabs)
+  //     runs, mappings and logins. `match` makes it the lit entry for every
+  //     `/aggregators/*` tab that has no more-specific entry of its own.
+  //   • Logins         — session liveness, checked often enough to keep on the rail.
   { section: 'Marketplaces' },
   { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
-  { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance' },
-  { href: '/aggregators/mappings', label: 'Branch Map', icon: 'link' },
-  { href: '/aggregators/item-mappings', label: 'Item Mappings', icon: 'category' },
+  { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance', match: '/aggregators' },
   { href: '/aggregators/logins', label: 'Logins', icon: 'login' },
 
   // The physical side: shops, tills, stock, and the config behind them.
@@ -87,7 +91,8 @@ export const NAV: Array<
 ];
 
 /**
- * The one nav entry a path belongs to: the **longest** href that covers it.
+ * The one nav entry a path belongs to: the entry whose **longest** covering
+ * prefix wins.
  *
  * A plain `pathname.startsWith(href)` per entry was fine for as long as no nav
  * href was a prefix of another, and a detail route has no entry of its own: a
@@ -96,15 +101,29 @@ export const NAV: Array<
  * more specific one has to win. A per-entry rule cannot express that; deciding
  * once, for the whole list, can.
  *
+ * An entry may also declare a `match` prefix it OWNS beyond its own href — the
+ * Reconciliation entry owns all of `/aggregators`, so a sibling tab like
+ * `/aggregators/runs` (which has no sidebar entry) still lights it, while a
+ * more-specific entry such as `/aggregators/invoices` overrides on its own page
+ * because its covering prefix is longer. The winner is decided on the longest
+ * covering prefix from EITHER the href or the match, and the entry's href is
+ * returned (that is what the layout compares against).
+ *
  * `/` is matched exactly, since it is a prefix of everything.
  */
 export function activeNavHref(pathname: string, nav: typeof NAV = NAV): string | null {
   let best: string | null = null;
+  let bestLen = -1;
   for (const entry of nav) {
     if ('section' in entry) continue;
-    const { href } = entry;
-    const covers = href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
-    if (covers && (best === null || href.length > best.length)) best = href;
+    const prefixes = entry.match ? [entry.href, entry.match] : [entry.href];
+    for (const p of prefixes) {
+      const covers = p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`);
+      if (covers && p.length > bestLen) {
+        best = entry.href;
+        bestLen = p.length;
+      }
+    }
   }
   return best;
 }
