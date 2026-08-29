@@ -17,7 +17,8 @@ import { cn } from '@/lib/utils';
 const TABS = [
   { href: '/aggregators/runs', label: 'Runs' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
-  { href: '/aggregators/mappings', label: 'Mappings' },
+  { href: '/aggregators/mappings', label: 'Branch Map' },
+  { href: '/aggregators/item-mappings', label: 'Item Mappings' },
   { href: '/aggregators/logins', label: 'Logins' },
 ];
 

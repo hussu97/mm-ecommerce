@@ -44,7 +44,8 @@ export const NAV: Array<
   { section: 'Marketplaces' },
   { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance' },
-  { href: '/aggregators/mappings', label: 'Mappings', icon: 'link' },
+  { href: '/aggregators/mappings', label: 'Branch Map', icon: 'link' },
+  { href: '/aggregators/item-mappings', label: 'Item Mappings', icon: 'category' },
   { href: '/aggregators/logins', label: 'Logins', icon: 'login' },
 
   // The physical side: shops, tills, stock, and the config behind them.
