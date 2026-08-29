@@ -1259,3 +1259,104 @@ def test_aware_business_leaves_aware_values_untouched():
 
 def test_aware_business_passes_none_through():
     assert ingest._aware_business(None) is None
+
+
+# ── manual run trigger: validation + daily/range dispatch ─────────────────────
+async def test_trigger_no_dates_runs_the_daily_pass(monkeypatch):
+    from app.api.v1.aggregators import trigger_sync_run
+
+    seen = {}
+    monkeypatch.setattr(
+        ingest, "trigger_daily_in_background", lambda: seen.setdefault("daily", 1) == 1
+    )
+    monkeypatch.setattr(
+        ingest,
+        "trigger_range_in_background",
+        lambda *a, **k: pytest.fail("range must not run without dates"),
+    )
+    out = await trigger_sync_run(None)
+    assert out.started is True
+    assert "daily" in seen
+
+
+async def test_trigger_with_both_dates_runs_a_range_backfill(monkeypatch):
+    from app.api.v1.aggregators import trigger_sync_run
+    from app.schemas.aggregator import AggregatorRunTriggerIn
+
+    captured = {}
+
+    def fake_range(from_date, to_date, channels):
+        captured["args"] = (from_date, to_date, channels)
+        return True
+
+    monkeypatch.setattr(ingest, "trigger_range_in_background", fake_range)
+    monkeypatch.setattr(
+        ingest,
+        "trigger_daily_in_background",
+        lambda: pytest.fail("daily must not run when a range is given"),
+    )
+    body = AggregatorRunTriggerIn(
+        from_date=date(2026, 8, 27), to_date=date(2026, 8, 28)
+    )
+    out = await trigger_sync_run(body)
+    assert out.started is True
+    assert captured["args"] == (date(2026, 8, 27), date(2026, 8, 28), None)
+
+
+async def test_trigger_requires_both_dates_or_neither():
+    from app.api.v1.aggregators import trigger_sync_run
+    from app.core.exceptions import BadRequestError
+    from app.schemas.aggregator import AggregatorRunTriggerIn
+
+    with pytest.raises(BadRequestError):
+        await trigger_sync_run(AggregatorRunTriggerIn(from_date=date(2026, 8, 27)))
+
+
+async def test_trigger_rejects_reversed_range():
+    from app.api.v1.aggregators import trigger_sync_run
+    from app.core.exceptions import BadRequestError
+    from app.schemas.aggregator import AggregatorRunTriggerIn
+
+    with pytest.raises(BadRequestError):
+        await trigger_sync_run(
+            AggregatorRunTriggerIn(
+                from_date=date(2026, 8, 28), to_date=date(2026, 8, 27)
+            )
+        )
+
+
+async def test_trigger_rejects_oversized_range():
+    from app.api.v1.aggregators import trigger_sync_run
+    from app.core.exceptions import BadRequestError
+    from app.schemas.aggregator import AggregatorRunTriggerIn
+
+    with pytest.raises(BadRequestError):
+        await trigger_sync_run(
+            AggregatorRunTriggerIn(
+                from_date=date(2026, 1, 1), to_date=date(2026, 12, 31)
+            )
+        )
+
+
+async def test_trigger_rejects_unknown_channel():
+    from app.api.v1.aggregators import trigger_sync_run
+    from app.core.exceptions import BadRequestError
+    from app.schemas.aggregator import AggregatorRunTriggerIn
+
+    with pytest.raises(BadRequestError):
+        await trigger_sync_run(
+            AggregatorRunTriggerIn(
+                from_date=date(2026, 8, 27),
+                to_date=date(2026, 8, 28),
+                channels=["nope"],
+            )
+        )
+
+
+async def test_trigger_503_when_ingest_disabled(monkeypatch):
+    from app.api.v1.aggregators import trigger_sync_run
+    from app.core.exceptions import ServiceUnavailableError
+
+    monkeypatch.setattr(ingest, "trigger_daily_in_background", lambda: False)
+    with pytest.raises(ServiceUnavailableError):
+        await trigger_sync_run(None)

@@ -462,15 +462,18 @@ export interface paths {
         put?: never;
         /**
          * Trigger Sync Run
-         * @description Kick off a full aggregator pass now — the "Run now" button on the Runs table.
+         * @description Kick off an aggregator pass now — the "Run now" button on the Runs table.
          *
-         *     Runs the same daily pass the nightly scheduler does (sales → finance → promote
-         *     → reconcile, every channel), so it needs no arguments. It fires in the
-         *     background and answers immediately — a full pass takes minutes, and the caller
-         *     watches it land as each channel's run row appears in the table rather than
-         *     holding the request open. Clicking while a pass is already in flight is safe:
-         *     the sweeps serialise on advisory locks and no-op if one is held. Gated on the
-         *     same permission as the Runs table itself.
+         *     With no dates it runs the same recent pass the nightly scheduler does (sales →
+         *     finance → promote → reconcile, every channel). With `from_date`/`to_date` it
+         *     backfills that explicit Dubai business-date range instead — the way to re-pull
+         *     past days, e.g. to correct orders scraped before a fix landed: the re-pull
+         *     re-derives each order's `created_at` from the corrected placed-at. Either way it
+         *     fires in the background and answers at once — a pass takes minutes, and the
+         *     caller watches it land as each channel's run row appears rather than holding the
+         *     request open. Clicking while a pass is in flight is safe: the sweeps serialise on
+         *     advisory locks and no-op if one is held. Gated on the same permission as the Runs
+         *     table itself.
          */
         post: operations["trigger_sync_run_api_v1_aggregators_runs_trigger_post"];
         delete?: never;
@@ -7818,6 +7821,22 @@ export interface components {
             total_agg?: string | null;
             /** Total Mm */
             total_mm?: string | null;
+        };
+        /**
+         * AggregatorRunTriggerIn
+         * @description What "Run now" asks for. Omit the dates for the standard recent pass; give
+         *     both to backfill an explicit Dubai business-date range (inclusive) — e.g. to
+         *     re-pull days scraped before a fix landed. `channels` narrows the range run to a
+         *     subset (default: every channel); it is ignored for a dateless recent pass, which
+         *     always covers all of them.
+         */
+        AggregatorRunTriggerIn: {
+            /** Channels */
+            channels?: string[] | null;
+            /** From Date */
+            from_date?: string | null;
+            /** To Date */
+            to_date?: string | null;
         };
         /**
          * AggregatorRunTriggerOut
@@ -17951,7 +17970,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AggregatorRunTriggerIn"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -17960,6 +17983,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorRunTriggerOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

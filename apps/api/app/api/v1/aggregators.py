@@ -49,6 +49,7 @@ from app.schemas.aggregator import (
     AggregatorBranchMapOut,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
+    AggregatorRunTriggerIn,
     AggregatorRunTriggerOut,
     AggregatorSessionPush,
     AggregatorSessionResponse,
@@ -626,30 +627,67 @@ async def list_sync_runs(
     return AggregatorSyncRunList(items=[_run_out(r) for r in runs], total=total)
 
 
+#: A single manual backfill spans at most a quarter — enough to re-pull a
+#: settlement window, short of a click that would re-scrape the whole year.
+_MAX_TRIGGER_RANGE_DAYS = 92
+
+
 @router.post(
     "/runs/trigger",
     response_model=AggregatorRunTriggerOut,
     dependencies=[Depends(require("reports.sales"))],
 )
-async def trigger_sync_run() -> AggregatorRunTriggerOut:
-    """Kick off a full aggregator pass now — the "Run now" button on the Runs table.
+async def trigger_sync_run(
+    body: AggregatorRunTriggerIn | None = None,
+) -> AggregatorRunTriggerOut:
+    """Kick off an aggregator pass now — the "Run now" button on the Runs table.
 
-    Runs the same daily pass the nightly scheduler does (sales → finance → promote
-    → reconcile, every channel), so it needs no arguments. It fires in the
-    background and answers immediately — a full pass takes minutes, and the caller
-    watches it land as each channel's run row appears in the table rather than
-    holding the request open. Clicking while a pass is already in flight is safe:
-    the sweeps serialise on advisory locks and no-op if one is held. Gated on the
-    same permission as the Runs table itself."""
-    started = ingest.trigger_daily_in_background()
+    With no dates it runs the same recent pass the nightly scheduler does (sales →
+    finance → promote → reconcile, every channel). With `from_date`/`to_date` it
+    backfills that explicit Dubai business-date range instead — the way to re-pull
+    past days, e.g. to correct orders scraped before a fix landed: the re-pull
+    re-derives each order's `created_at` from the corrected placed-at. Either way it
+    fires in the background and answers at once — a pass takes minutes, and the
+    caller watches it land as each channel's run row appears rather than holding the
+    request open. Clicking while a pass is in flight is safe: the sweeps serialise on
+    advisory locks and no-op if one is held. Gated on the same permission as the Runs
+    table itself."""
+    body = body or AggregatorRunTriggerIn()
+
+    if (body.from_date is None) != (body.to_date is None):
+        raise BadRequestError("Give both a start and an end date, or neither.")
+
+    channels = body.channels or None
+    if channels:
+        unknown = [c for c in channels if c not in AGGREGATOR_CHANNELS]
+        if unknown:
+            raise BadRequestError(f"Unknown channel(s): {', '.join(unknown)}.")
+
+    if body.from_date is not None and body.to_date is not None:
+        if body.from_date > body.to_date:
+            raise BadRequestError("The start date must not be after the end date.")
+        if (body.to_date - body.from_date).days + 1 > _MAX_TRIGGER_RANGE_DAYS:
+            raise BadRequestError(
+                f"A single run spans at most {_MAX_TRIGGER_RANGE_DAYS} days."
+            )
+        started = ingest.trigger_range_in_background(
+            body.from_date, body.to_date, channels
+        )
+        span = (
+            body.from_date.isoformat()
+            if body.from_date == body.to_date
+            else f"{body.from_date.isoformat()} → {body.to_date.isoformat()}"
+        )
+        detail = f"Backfill started for {span} — the table fills in as each channel finishes."
+    else:
+        started = ingest.trigger_daily_in_background()
+        detail = "Run started — the table will fill in as each channel finishes."
+
     if not started:
         raise ServiceUnavailableError(
             "The aggregator ingest is disabled or not configured on this deployment."
         )
-    return AggregatorRunTriggerOut(
-        started=True,
-        detail="Run started — the table will fill in as each channel finishes.",
-    )
+    return AggregatorRunTriggerOut(started=True, detail=detail)
 
 
 @router.get(

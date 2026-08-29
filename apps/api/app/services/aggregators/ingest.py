@@ -41,6 +41,7 @@ from app.core import advisory_lock
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.aggregator import (
+    AGGREGATOR_CHANNELS,
     CHANNEL_KEETA,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -1226,6 +1227,20 @@ async def run_daily_once() -> tuple[int, int]:
 _manual_runs: set[asyncio.Task] = set()
 
 
+def _launch_tracked(coro) -> bool:
+    """Fire a coroutine on the running loop, held until it finishes. Returns whether
+    it started — False when there is no loop (a management command or a test)."""
+    try:
+        task = asyncio.create_task(coro)
+    except RuntimeError:
+        logger.debug("aggregator manual trigger: no event loop, skipped")
+        coro.close()
+        return False
+    _manual_runs.add(task)
+    task.add_done_callback(_manual_runs.discard)
+    return True
+
+
 def trigger_daily_in_background() -> bool:
     """Kick off one full daily pass now, off the request. Returns whether it started.
 
@@ -1239,15 +1254,25 @@ def trigger_daily_in_background() -> bool:
     """
     if not is_enabled():
         return False
-    try:
-        task = asyncio.create_task(_run_daily_logged())
-    except RuntimeError:
-        # No running loop — a management command or a test. Nothing to fire.
-        logger.debug("aggregator manual trigger: no event loop, skipped")
+    return _launch_tracked(_run_daily_logged())
+
+
+def trigger_range_in_background(
+    from_date: date, to_date: date, channels: list[str] | None = None
+) -> bool:
+    """Kick off a backfill over an explicit Dubai business-date range, off the request.
+
+    The dated sibling of the daily trigger — for re-pulling specific past days (say,
+    to correct orders scraped before a fix landed). Runs `run_range` (a `backfill`
+    run per channel: scrape → promote → reconcile), which re-upserts each order and,
+    because that advances `updated_at`, drives promotion to bring already-filed
+    orders back in line — so an order's `created_at` is re-derived from the corrected
+    placed-at on the next pull. `channels` defaults to every scrape channel; Keeta is
+    push-only and `run_range` records it skipped. No-op (False) when disabled."""
+    if not is_enabled():
         return False
-    _manual_runs.add(task)
-    task.add_done_callback(_manual_runs.discard)
-    return True
+    chans = list(channels) if channels else list(AGGREGATOR_CHANNELS)
+    return _launch_tracked(_run_range_logged(chans, from_date, to_date))
 
 
 async def _run_daily_logged() -> None:
@@ -1263,6 +1288,22 @@ async def _run_daily_logged() -> None:
         )
     except Exception:  # noqa: BLE001 — background task, nothing above to catch it
         logger.exception("aggregator manual run failed")
+
+
+async def _run_range_logged(
+    channels: list[str], from_date: date, to_date: date
+) -> None:
+    """`run_range` with its own error boundary — see `_run_daily_logged`."""
+    try:
+        results = await run_range(channels, from_date, to_date)
+        logger.info(
+            "aggregator manual range run finished (%s → %s): %s",
+            from_date.isoformat(),
+            to_date.isoformat(),
+            {r["channel"]: r["status"] for r in results},
+        )
+    except Exception:  # noqa: BLE001 — background task, nothing above to catch it
+        logger.exception("aggregator manual range run failed")
 
 
 def _start_of_today_dubai(now: datetime) -> datetime:

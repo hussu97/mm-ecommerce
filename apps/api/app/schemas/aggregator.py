@@ -3,7 +3,7 @@ and what the reconciliation dashboard reads back."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -340,6 +340,18 @@ class AggregatorSyncRunList(BaseModel):
 
     items: list[AggregatorSyncRunOut]
     total: int
+
+
+class AggregatorRunTriggerIn(BaseModel):
+    """What "Run now" asks for. Omit the dates for the standard recent pass; give
+    both to backfill an explicit Dubai business-date range (inclusive) — e.g. to
+    re-pull days scraped before a fix landed. `channels` narrows the range run to a
+    subset (default: every channel); it is ignored for a dateless recent pass, which
+    always covers all of them."""
+
+    from_date: date | None = None
+    to_date: date | None = None
+    channels: list[str] | None = None
 
 
 class AggregatorRunTriggerOut(BaseModel):
