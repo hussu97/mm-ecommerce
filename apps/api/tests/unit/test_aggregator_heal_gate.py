@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -81,9 +82,12 @@ def test_cron_heal_python_parses_and_flags_not_live():
     ast.parse(code)
 
     def _run(payload) -> int:
+        # The gate now reads the needs-heal body from the HEAL_BODY env var (not
+        # stdin) — cron.d turns a bare `%` into a newline, which truncated the old
+        # `printf "%s" | python3` pipe, so the body is passed via env instead.
         result = subprocess.run(
             [sys.executable, "-c", code],
-            input=json.dumps(payload),
+            env={**os.environ, "HEAL_BODY": json.dumps(payload)},
             capture_output=True,
             text=True,
             check=False,
@@ -124,6 +128,21 @@ def test_cron_heal_python_parses_and_flags_not_live():
     assert _run(expired) == 1  # live status → no heal, despite expiry flags
     assert _run({"channels": dead}) == 0
     assert _run({"channels": live}) == 1
+
+
+def test_cron_heal_line_has_no_bare_percent():
+    """A bare `%` in a cron.d command is converted to a newline and everything after
+    it becomes the command's stdin — which silently truncated the old `printf "%s"`
+    heal gate at `printf "`, so the every-2-min heal ran nothing for hours while
+    looking scheduled. Every `%` on the heal line (if any) must be backslash-escaped."""
+    heal = next(
+        ln
+        for ln in CRON.read_text().splitlines()
+        if ln.startswith("*/2") and not ln.startswith("#")
+    )
+    assert re.search(r"(?<!\\)%", heal) is None, (
+        f"unescaped % in cron heal line (cron will truncate it): {heal}"
+    )
 
 
 def test_cron_antibot_warm_omits_careem():

@@ -235,9 +235,14 @@ Root causes + live-VM evidence: memory `aggregator-autonomous-401-root-causes.md
 Manual runs work; the hourly autonomous refresh 401s — an architecture problem
 (single shared flock + status-column coordination + reactive heal with ~7 failure modes).
 
-## Phase 0 — Acute stopgaps [W] (revertible) — DONE (commit)
-- [x] `docker-entrypoint.sh`: heal-sessions now runs under xvfb (heal can re-login anti-bot)
+## Phase 0 — Acute stopgaps [W] (revertible) — DONE (committed + on main + verified on VM)
+- [x] `docker-entrypoint.sh`: heal-sessions now runs under xvfb (heal can re-login anti-bot) — VERIFIED: manual heal recovered noon/talabat/careem/deliveroo headed
 - [x] `deploy/aggregator-warm.cron`: `timeout -k 30` around every `docker compose run` (reap hangs, free flock); single shared lock kept (1 Chrome = fits RAM)
+- [x] **CRITICAL: fixed unescaped `%` in the heal cron** — cron.d turns a bare `%` into a newline, truncating the old `printf "%s"` gate at `printf "` so the every-2-min heal ran NOTHING for hours (the real "warming cron runs but auth 401s" cause). Rewrote the gate to pass the body via `HEAL_BODY` env var (no `%`). VERIFIED live: heal tick now logs "all sessions live, skip". Regression test added.
+- [x] **Found + worked around the stale-bootstrap-image deploy bug**: `aggregator-worker` uses `pull_policy: missing`, so a rebuilt `:latest` never reaches the VM — Phase 0 entrypoint fix (and prior worker changes) never deployed. Manually pulled on VM; Phase 3 daemon (`up -d` + `pull`) fixes it permanently.
+
+### E2E validation on VM (2026-08-30 ~23:15 UTC)
+- All 5 channels live and sweeping: noon/talabat/keeta (autonomous 22:15 warm + keeta cron), careem + deliveroo (headed heal). Deliveroo sales = 4 orders, careem = 3 orders after headed re-login. Deliveroo sales confirmed to need headed cf_clearance (Phase 2 org fix + headed cookie = fixed).
 
 ## Phase 1 — Leader election [A] — DONE (commit)
 - [x] `ingest.py`: `_SCHEDULER_LEADER_LOCK_KEY` (…480A) + `run_aggregator_schedulers_forever()` (reuse advisory_lock.held lifetime hold; poll = `_LEADER_POLL_SECONDS` module constant, no new env var)
