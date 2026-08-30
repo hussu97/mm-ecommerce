@@ -104,6 +104,15 @@ find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" \
 echo "==> Backup complete."
 # A full ls of every retained dump is hundreds of log lines on this box and
 # nobody reads it. Count + newest is enough to see the job ran.
-newest=$(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null | head -1)
-count=$(find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" | wc -l | tr -d " ")
-echo "    ${count} local backups; newest: ${newest:-none}"
+#
+# The `|| true` is load-bearing under this script's `set -euo pipefail`: once a
+# SECOND backup exists, `head -1` closes the pipe after one line, `ls` is killed
+# by SIGPIPE (exit 141), `pipefail` makes the whole substitution non-zero, and
+# `set -e` then kills the script HERE — after a perfect backup and the "Backup
+# complete" line, but before the exit-0 below. The deploy runs
+# `backup-db.sh || { echo "backup failed"; exit 1; }`, so a good backup aborted
+# the whole migration. This is diagnostics; its exit status must never fail the
+# backup.
+newest=$(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null | head -1 || true)
+count=$(find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" 2>/dev/null | wc -l | tr -d " " || true)
+echo "    ${count:-?} local backups; newest: ${newest:-none}"
