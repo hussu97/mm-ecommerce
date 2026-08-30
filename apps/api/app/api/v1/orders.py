@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from pydantic import BaseModel
@@ -22,6 +22,7 @@ from app.core.exceptions import (
 )
 from app.core.limiter import limiter
 from app.core.permissions import require
+from app.models.aggregator import AggregatorOrder, AggregatorOrderStatusEvent
 from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
@@ -32,11 +33,14 @@ from app.models.user import User
 from app.schemas.courier import CourierBadge
 from app.schemas.fulfilment import FulfilmentResponse
 from app.schemas.order import (
+    OrderAdminDetails,
+    OrderBranchSummary,
     OrderCreate,
     OrderEconomicsResponse,
     OrderListResponse,
     OrderResponse,
     OrderStatusUpdate,
+    OrderTimelineEntry,
 )
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
 from app.services import audit_service, email_service
@@ -1197,3 +1201,95 @@ async def list_order_status_events(
         )
         for row in rows
     ]
+
+
+#: A far-future sentinel so a marketplace step with no timestamp sorts to the end
+#: (ordered among its peers by `sequence`) rather than jumping to the front.
+_FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
+
+
+@router.get("/{order_number}/details", response_model=OrderAdminDetails)
+async def order_admin_details(
+    order_number: str,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("orders.read")),
+):
+    """The admin order-details enrichment: the fulfilling branch, the marketplace
+    payment type, and one unified status timeline.
+
+    The timeline merges MM's own lifecycle (`order_status_events` — who moved it,
+    from where, with what note) and, for an aggregator order, the marketplace's
+    verbatim trace (`aggregator_order_status_event` — "finding courier", "rider
+    near pickup", …), linked reliably through the promoted order's
+    `aggregator_order.mm_order_id`, not a display-name guess. Everything is
+    admin-only and lives here rather than on the customer-facing `OrderResponse`.
+    A section the order has no data for simply comes back empty/null, so the same
+    page renders every order type and shows only what exists.
+    """
+    order = await _load_order(db, order_number)
+
+    branch = await db.get(Branch, order.branch_id) if order.branch_id else None
+
+    entries: list[OrderTimelineEntry] = [
+        OrderTimelineEntry(
+            origin="mm",
+            status=row.status,
+            at=row.at,
+            source=row.source,
+            actor_label=row.actor_label,
+            note=row.note,
+        )
+        for row in (
+            await db.execute(
+                select(OrderStatusEvent)
+                .where(OrderStatusEvent.order_id == order.id)
+                .order_by(OrderStatusEvent.at)
+            )
+        )
+        .scalars()
+        .all()
+    ]
+
+    # The marketplace trace, reached through the promoted aggregator order (the
+    # only reliable link — order.aggregator_channel is a display name, the event's
+    # channel is the code).
+    agg = await db.scalar(
+        select(AggregatorOrder).where(AggregatorOrder.mm_order_id == order.id)
+    )
+    if agg is not None:
+        trace = (
+            (
+                await db.execute(
+                    select(AggregatorOrderStatusEvent)
+                    .where(
+                        AggregatorOrderStatusEvent.channel == agg.channel,
+                        AggregatorOrderStatusEvent.external_order_id
+                        == agg.external_order_id,
+                    )
+                    .order_by(
+                        AggregatorOrderStatusEvent.at,
+                        AggregatorOrderStatusEvent.sequence,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        entries.extend(
+            OrderTimelineEntry(
+                origin="marketplace",
+                status=ev.status,
+                at=ev.at,
+                source=agg.channel,
+                sequence=ev.sequence,
+            )
+            for ev in trace
+        )
+
+    entries.sort(key=lambda e: (e.at or _FAR_FUTURE, e.sequence or 0))
+
+    return OrderAdminDetails(
+        branch=OrderBranchSummary.model_validate(branch) if branch else None,
+        aggregator_payment_type=order.aggregator_payment_type,
+        timeline=entries,
+    )

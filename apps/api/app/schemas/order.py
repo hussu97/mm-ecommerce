@@ -443,3 +443,47 @@ class OrderEconomicsResponse(BaseModel):
     #: labels its own column rather than hard-coding a number that would then
     #: exist in two places.
     direct_cost_threshold: float
+
+
+# ── Admin order-details enrichment (admin-only, off the shared OrderResponse) ──
+class OrderBranchSummary(BaseModel):
+    """The branch an order was fulfilled from, for the admin order-details page."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    reference: str
+    type: str | None = None
+    address: str | None = None
+    city: str | None = None
+    phone: str | None = None
+
+
+class OrderTimelineEntry(BaseModel):
+    """One step on the unified admin order timeline.
+
+    `origin` distinguishes MM's own lifecycle (`mm` — from `order_status_events`,
+    with who/where/note) from the marketplace's verbatim trace (`marketplace` —
+    from `aggregator_order_status_event`, the words the aggregator used). Both are
+    merged and sorted by `at` so the admin sees one story. Marketplace steps carry
+    a `sequence` tiebreaker for equal timestamps and no actor.
+    """
+
+    origin: str
+    status: str
+    at: datetime | None = None
+    source: str | None = None
+    actor_label: str | None = None
+    note: str | None = None
+    sequence: int | None = None
+
+
+class OrderAdminDetails(BaseModel):
+    """The admin-only enrichment for the order-details page: the branch, the
+    marketplace payment type, and the unified status timeline. Kept off the
+    customer-facing `OrderResponse` so widening it never leaks admin context."""
+
+    branch: OrderBranchSummary | None = None
+    aggregator_payment_type: str | None = None
+    timeline: list[OrderTimelineEntry]

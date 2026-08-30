@@ -14983,6 +14983,113 @@
         "title": "OpenOrderRequest",
         "type": "object"
       },
+      "OrderAdminDetails": {
+        "description": "The admin-only enrichment for the order-details page: the branch, the\nmarketplace payment type, and the unified status timeline. Kept off the\ncustomer-facing `OrderResponse` so widening it never leaks admin context.",
+        "properties": {
+          "aggregator_payment_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aggregator Payment Type"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderBranchSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/OrderTimelineEntry"
+            },
+            "title": "Timeline",
+            "type": "array"
+          }
+        },
+        "required": [
+          "timeline"
+        ],
+        "title": "OrderAdminDetails",
+        "type": "object"
+      },
+      "OrderBranchSummary": {
+        "description": "The branch an order was fulfilled from, for the admin order-details page.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "reference"
+        ],
+        "title": "OrderBranchSummary",
+        "type": "object"
+      },
       "OrderChargeResponse": {
         "properties": {
           "amount": {
@@ -16802,6 +16909,81 @@
           "amount"
         ],
         "title": "OrderTaxResponse",
+        "type": "object"
+      },
+      "OrderTimelineEntry": {
+        "description": "One step on the unified admin order timeline.\n\n`origin` distinguishes MM's own lifecycle (`mm` \u2014 from `order_status_events`,\nwith who/where/note) from the marketplace's verbatim trace (`marketplace` \u2014\nfrom `aggregator_order_status_event`, the words the aggregator used). Both are\nmerged and sorted by `at` so the admin sees one story. Marketplace steps carry\na `sequence` tiebreaker for equal timestamps and no actor.",
+        "properties": {
+          "actor_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Label"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "status"
+        ],
+        "title": "OrderTimelineEntry",
         "type": "object"
       },
       "OrdersPoint": {
@@ -45989,6 +46171,54 @@
           }
         ],
         "summary": "Refresh Order Delivery",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_number}/details": {
+      "get": {
+        "description": "The admin order-details enrichment: the fulfilling branch, the marketplace\npayment type, and one unified status timeline.\n\nThe timeline merges MM's own lifecycle (`order_status_events` \u2014 who moved it,\nfrom where, with what note) and, for an aggregator order, the marketplace's\nverbatim trace (`aggregator_order_status_event` \u2014 \"finding courier\", \"rider\nnear pickup\", \u2026), linked reliably through the promoted order's\n`aggregator_order.mm_order_id`, not a display-name guess. Everything is\nadmin-only and lives here rather than on the customer-facing `OrderResponse`.\nA section the order has no data for simply comes back empty/null, so the same\npage renders every order type and shows only what exists.",
+        "operationId": "order_admin_details_api_v1_orders__order_number__details_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderAdminDetails"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Order Admin Details",
         "tags": [
           "Orders"
         ]

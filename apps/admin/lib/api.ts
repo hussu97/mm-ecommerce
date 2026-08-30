@@ -37,6 +37,7 @@ type AggregatorAccountInput = Schemas['AggregatorAccountPush'];
 type StatementList = Schemas['AggregatorStatementList'];
 type InvoiceUrl = Schemas['AggregatorInvoiceUrl'];
 type FeesSummary = Schemas['AggregatorFeesSummaryOut'];
+type OrderAdminDetails = Schemas['OrderAdminDetails'];
 
 // The unified external-system item map (GrubOps + every aggregator) — one table,
 // one generic API. Names straight from the generated contract (rule 8).
@@ -359,6 +360,12 @@ export const ordersApi = {
   /** What the shop kept: courier cost, processing fee, net and the margins. */
   getEconomics: (orderNumber: string) =>
     api.get<OrderEconomics>(`/orders/${orderNumber}/economics`),
+  /** Admin-only enrichment for the details page: the fulfilling branch, the
+   *  marketplace payment type, and one unified status timeline (MM lifecycle +
+   *  the marketplace's own trace). Empty sections come back null/[] so the page
+   *  renders every order type and shows only what exists. */
+  details: (orderNumber: string) =>
+    api.get<OrderAdminDetails>(`/orders/${orderNumber}/details`),
   /** Book the courier again after a failed or abandoned dispatch. */
   dispatchDelivery: (orderNumber: string) =>
     api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/dispatch`),

@@ -13,6 +13,13 @@ import type {
   OrderEconomics,
   OrderStatus,
 } from '@/lib/types';
+import type { Schemas } from '@mm/types';
+
+// The admin order-details enrichment (branch + unified timeline + marketplace
+// payment type) comes from the generated contract (rule 8), not the hand-written
+// types, since it is new.
+type OrderAdminDetails = Schemas['OrderAdminDetails'];
+type TimelineEntry = Schemas['OrderTimelineEntry'];
 import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useConfirm, useToast } from '@/components/ui/feedback';
@@ -35,6 +42,20 @@ import { DeliveryPanel } from './components/DeliveryPanel';
 import { NetPayment } from './components/NetPayment';
 import { PROVIDER_LABEL } from './components/courier-labels';
 
+/**
+ * A status word made human. Ours arrive `snake_case` (`out_for_delivery`); a
+ * marketplace's are verbatim and may be `camelCase` or spaced. Split on both,
+ * then sentence-case — enough to read for any origin without a per-word table
+ * (the marketplace vocabulary is open by design).
+ */
+function humanizeStatus(status: string): string {
+  const spaced = status
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim();
+  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase() : status;
+}
+
 export default function OrderDetailPage() {
   const toast = useToast();
   const confirmDialog = useConfirm();
@@ -44,6 +65,10 @@ export default function OrderDetailPage() {
   // What the shop kept. Admin-only and its own request, so a screen that fails
   // to load it still shows the order — the economics are context, not the page.
   const [economics, setEconomics] = useState<OrderEconomics | null>(null);
+  // Admin-only enrichment: the fulfilling branch, the marketplace payment type,
+  // and the unified status timeline (MM lifecycle + the marketplace's own trace).
+  // Its own request, like economics — context, not the page.
+  const [details, setDetails] = useState<OrderAdminDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
@@ -108,6 +133,10 @@ export default function OrderDetailPage() {
   // Reloaded alongside the order rather than once: a refund, a re-dispatch or a
   // courier finally invoicing all move the net, and a stale figure here is
   // worse than none — somebody would price against it.
+  useEffect(() => {
+    ordersApi.details(orderNumber).then(setDetails).catch(() => setDetails(null));
+  }, [orderNumber]);
+
   useEffect(() => {
     ordersApi.getEconomics(orderNumber).then(setEconomics).catch(() => setEconomics(null));
   }, [orderNumber, order?.status, order?.refunded_amount, delivery?.cost_total]);
@@ -493,6 +522,44 @@ export default function OrderDetailPage() {
         </div>
       )}
 
+      {/* The full status timeline: MM's own lifecycle (who moved it, from where,
+          with what note) merged with the marketplace's verbatim trace ("finding
+          courier", "rider near pickup"). Only shown when there is a timeline to
+          show, so a counter order with a couple of steps and a Keeta order with a
+          dozen marketplace steps both render the same way. */}
+      {details && details.timeline.length > 0 && (
+        <div className="bg-white border border-gray-200 p-4 mb-4">
+          <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-3">
+            Status Timeline
+          </p>
+          <ol className="space-y-2.5">
+            {details.timeline.map((e: TimelineEntry, i: number) => (
+              <li key={`${e.origin}-${e.status}-${i}`} className="flex gap-3 text-sm">
+                <span className="text-xs text-gray-400 font-body w-36 shrink-0 tabular-nums pt-0.5">
+                  {e.at ? formatDateTime(e.at) : '—'}
+                </span>
+                <span
+                  className={cn(
+                    'mt-1.5 h-2 w-2 rounded-full shrink-0',
+                    e.origin === 'marketplace' ? 'bg-secondary' : 'bg-primary',
+                  )}
+                />
+                <div className="min-w-0">
+                  <span className="text-gray-800 font-medium">{humanizeStatus(e.status)}</span>
+                  <span className="ml-2 text-[10px] font-body uppercase tracking-wider text-gray-400">
+                    {e.origin === 'marketplace' ? `${e.source ?? 'marketplace'} · marketplace` : (e.source ?? 'system')}
+                  </span>
+                  {e.actor_label && (
+                    <span className="ml-1 text-xs text-gray-500">· {e.actor_label}</span>
+                  )}
+                  {e.note && <div className="text-xs text-gray-500 mt-0.5">{e.note}</div>}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
       {/* A marketplace order carries its channel, its short pickup code and the
           delivery fee the customer paid the aggregator. The shop still drives it
           through our own lifecycle from here: Packed calls the rider (via GrubOps
@@ -812,6 +879,28 @@ export default function OrderDetailPage() {
           </dl>
         </div>
       </div>
+
+      {/* Which branch fulfils this order — shown for every order type (branch is
+          always set), so an aggregator, counter or web order all say where they
+          were made. Only the fields the branch actually carries are rendered. */}
+      {details?.branch && (
+        <div className="bg-white border border-gray-200 p-4 mb-4">
+          <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-2">Branch</p>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="font-medium text-gray-800">{details.branch.name}</span>
+            <span className="text-xs font-mono text-gray-500">{details.branch.reference}</span>
+            {details.branch.type && (
+              <span className="text-xs text-gray-400 capitalize">{details.branch.type}</span>
+            )}
+          </div>
+          {(details.branch.address || details.branch.city) && (
+            <p className="text-sm text-gray-600 mt-1">
+              {[details.branch.address, details.branch.city].filter(Boolean).join(', ')}
+            </p>
+          )}
+          {details.branch.phone && <p className="text-sm text-gray-600">{details.branch.phone}</p>}
+        </div>
+      )}
 
       {delivery && (
         <DeliveryPanel

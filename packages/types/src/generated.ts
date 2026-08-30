@@ -4546,6 +4546,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/{order_number}/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Order Admin Details
+         * @description The admin order-details enrichment: the fulfilling branch, the marketplace
+         *     payment type, and one unified status timeline.
+         *
+         *     The timeline merges MM's own lifecycle (`order_status_events` — who moved it,
+         *     from where, with what note) and, for an aggregator order, the marketplace's
+         *     verbatim trace (`aggregator_order_status_event` — "finding courier", "rider
+         *     near pickup", …), linked reliably through the promoted order's
+         *     `aggregator_order.mm_order_id`, not a display-name guess. Everything is
+         *     admin-only and lives here rather than on the customer-facing `OrderResponse`.
+         *     A section the order has no data for simply comes back empty/null, so the same
+         *     page renders every order type and shows only what exists.
+         */
+        get: operations["order_admin_details_api_v1_orders__order_number__details_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/{order_number}/economics": {
         parameters: {
             query?: never;
@@ -12503,6 +12533,42 @@ export interface components {
             /** Till Id */
             till_id?: string | null;
         };
+        /**
+         * OrderAdminDetails
+         * @description The admin-only enrichment for the order-details page: the branch, the
+         *     marketplace payment type, and the unified status timeline. Kept off the
+         *     customer-facing `OrderResponse` so widening it never leaks admin context.
+         */
+        OrderAdminDetails: {
+            /** Aggregator Payment Type */
+            aggregator_payment_type?: string | null;
+            branch?: components["schemas"]["OrderBranchSummary"] | null;
+            /** Timeline */
+            timeline: components["schemas"]["OrderTimelineEntry"][];
+        };
+        /**
+         * OrderBranchSummary
+         * @description The branch an order was fulfilled from, for the admin order-details page.
+         */
+        OrderBranchSummary: {
+            /** Address */
+            address?: string | null;
+            /** City */
+            city?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone?: string | null;
+            /** Reference */
+            reference: string;
+            /** Type */
+            type?: string | null;
+        };
         /** OrderChargeResponse */
         OrderChargeResponse: {
             /** Amount */
@@ -13072,6 +13138,32 @@ export interface components {
             tax_id: string | null;
             /** Taxable Amount */
             taxable_amount: string;
+        };
+        /**
+         * OrderTimelineEntry
+         * @description One step on the unified admin order timeline.
+         *
+         *     `origin` distinguishes MM's own lifecycle (`mm` — from `order_status_events`,
+         *     with who/where/note) from the marketplace's verbatim trace (`marketplace` —
+         *     from `aggregator_order_status_event`, the words the aggregator used). Both are
+         *     merged and sorted by `at` so the admin sees one story. Marketplace steps carry
+         *     a `sequence` tiebreaker for equal timestamps and no actor.
+         */
+        OrderTimelineEntry: {
+            /** Actor Label */
+            actor_label?: string | null;
+            /** At */
+            at?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Origin */
+            origin: string;
+            /** Sequence */
+            sequence?: number | null;
+            /** Source */
+            source?: string | null;
+            /** Status */
+            status: string;
         };
         /** OrdersPoint */
         OrdersPoint: {
@@ -26604,6 +26696,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderDeliveryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    order_admin_details_api_v1_orders__order_number__details_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderAdminDetails"];
                 };
             };
             /** @description Validation Error */
