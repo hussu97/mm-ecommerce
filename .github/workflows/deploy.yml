@@ -32,6 +32,11 @@ jobs:
       # rebuild+push+pull on its own sources so a routine API deploy never
       # rebuilds or re-pulls it — that churn is what filled the 20GB VM disk.
       bootstrap: ${{ steps.filter.outputs.bootstrap == 'true' || github.event_name == 'workflow_dispatch' }}
+      # nginx's config is baked into its image. Rebuilding it drops TLS on
+      # 80/443 while the container is replaced, so a routine API deploy must
+      # not --build nginx — a reload of the bind-mounted upstreams file is
+      # enough. Same idea as the bootstrap image path filter.
+      nginx: ${{ steps.filter.outputs.nginx == 'true' || github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,10 +64,14 @@ jobs:
               - 'apps/aggregator-bootstrap/**'
               - 'nginx/**'
               - 'docker-compose*.yml'
+              - 'scripts/cutover-backend.sh'
+              - 'scripts/deploy.sh'
               - '.github/workflows/deploy.yml'
             bootstrap:
               - 'apps/aggregator-bootstrap/**'
               - '.github/workflows/deploy.yml'
+            nginx:
+              - 'nginx/**'
 
   # ── Test & deploy ────────────────────────────────────────────────────────────
   #
@@ -515,7 +524,7 @@ jobs:
             -o ConnectTimeout=30 \
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=20 \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "BOOTSTRAP_CHANGED='${{ needs.changes.outputs.bootstrap }}' stdbuf -oL -eL bash -s" <<'SCRIPT'
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "BOOTSTRAP_CHANGED='${{ needs.changes.outputs.bootstrap }}' NGINX_CHANGED='${{ needs.changes.outputs.nginx }}' stdbuf -oL -eL bash -s" <<'SCRIPT'
           set -eo pipefail
 
           cd /opt/melting-moments-cakes
@@ -523,6 +532,12 @@ jobs:
           echo "Pulling latest code (compose files, nginx config, etc.)..."
           git fetch origin main
           git reset --hard origin/main
+
+          # git reset restores the committed nginx/runtime/upstreams.conf, which
+          # always points at slot A. After a green cutover that would send the
+          # next nginx reload (or a rebuild below) at a stopped container.
+          echo "Restoring live nginx upstreams from .deploy-slot..."
+          bash scripts/cutover-backend.sh restore-upstreams < /dev/null
 
           # Reclaim superseded images BEFORE pulling, not after. The old cleanup
           # ran only at the end of a successful deploy, so a deploy that filled
@@ -602,9 +617,6 @@ jobs:
             sh -c 'for p in "cms:*" "i18n:*" "categories:*" "products:*" "blog:*" "redirects:*"; do redis-cli --scan --pattern "$p" | xargs -r redis-cli del; done' < /dev/null \
             || echo "WARNING: cache flush failed — content may be stale for up to 5 minutes"
 
-          echo "Restarting the APIs with the new image..."
-          docker compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans api pos-api
-
           # Install the aggregator warm cron from the repo so it survives every
           # deploy (the git reset above refreshed the file). The worker itself is
           # a profiled compose service — never started by `up`, only `run` one-shot
@@ -620,56 +632,29 @@ jobs:
             echo "WARNING: no passwordless sudo — install /etc/cron.d/aggregator-warm by hand"
           fi
 
-          echo "Waiting for API to be healthy..."
-          API_READY=false
-          for i in $(seq 1 30); do
-            # Redirecting stdin here as well for safety
-            if docker compose -f docker-compose.prod.yml exec -T api curl -sf -H "Host: api.meltingmomentscakes.com" http://localhost:8000/ping < /dev/null > /dev/null 2>&1; then
-              echo "API is up."
-              API_READY=true
-              break
-            fi
-            echo "  waiting... (${i}/30)"
-            sleep 5
-          done
-
-          if [ "$API_READY" != "true" ]; then
-            echo "ERROR: API failed to start. Container logs:"
-            docker compose -f docker-compose.prod.yml logs --tail=50 api
-            exit 1
-          fi
-
-          echo "Waiting for the register API to be healthy..."
-          POS_READY=false
-          for i in $(seq 1 30); do
-            if docker compose -f docker-compose.prod.yml exec -T pos-api curl -sf -H "Host: pos.meltingmomentscakes.com" http://localhost:8000/ping < /dev/null > /dev/null 2>&1; then
-              echo "Register API is up."
-              POS_READY=true
-              break
-            fi
-            echo "  waiting... (${i}/30)"
-            sleep 5
-          done
-
-          if [ "$POS_READY" != "true" ]; then
-            echo "ERROR: the register API failed to start. Container logs:"
-            docker compose -f docker-compose.prod.yml logs --tail=50 pos-api
-            exit 1
-          fi
-
           # Every docker command here needs `< /dev/null`. This whole script is
           # piped into `bash -s`, and docker reads stdin, so a command without
           # it swallows the rest of the script. That is not hypothetical: the
           # nginx reload below had no guard, so for months every deploy ended
           # silently at this point — "Deployment complete" has never once been
           # printed — while the job still reported success.
-          # --build, because nginx's config and entrypoint are baked into its
-          # image rather than mounted. Without it compose reuses whatever image
-          # already exists, so every change under nginx/ since the first build
-          # has been pulled onto the VM and then quietly ignored.
-          echo "Rebuilding and starting nginx..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps --build nginx < /dev/null
-          docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload < /dev/null
+          # Rebuild nginx only when nginx/ changed: its config and entrypoint
+          # are baked into the image, so --build is required for those, but a
+          # rebuild drops TLS while the container is replaced. API-only deploys
+          # retarget the bind-mounted upstreams file and reload. Do this BEFORE
+          # cutover so the new image already includes the runtime include, and
+          # so the first deploy of that include cannot reload an old nginx that
+          # still has `server api:8000` baked in and then stop `api`.
+          if [ "$NGINX_CHANGED" = "true" ]; then
+            echo "nginx/ changed — rebuilding nginx (TLS will blip)..."
+            docker compose -f docker-compose.prod.yml up -d --no-deps --build nginx < /dev/null
+            docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload < /dev/null
+          else
+            echo "nginx/ unchanged — skipping rebuild; cutover will reload upstreams."
+          fi
+
+          echo "Cutting over API then POS onto the new image (idle slot, nginx reload, drain)..."
+          bash scripts/cutover-backend.sh < /dev/null
 
           # The deploy only ever started api and nginx, so when the certbot
           # renewal loop died it stayed dead through every subsequent deploy
@@ -702,8 +687,8 @@ jobs:
           echo "Pruning superseded images..."
           docker image prune -f < /dev/null
 
-          # nginx is built on the VM (--build above) and its cache is never
-          # reclaimed otherwise — it had grown to 3.2GB.
+          # nginx is built on the VM when nginx/ changes (--build above) and
+          # its cache is never reclaimed otherwise — it had grown to 3.2GB.
           echo "Pruning stale build cache..."
           docker builder prune -f < /dev/null
 

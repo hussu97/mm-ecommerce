@@ -37,7 +37,7 @@ def _pos_settings() -> list[str]:
 
 def test_the_compose_file_is_readable():
     compose = yaml.safe_load(COMPOSE.read_text())
-    assert {"api", "pos-api"} <= set(compose["services"])
+    assert {"api", "api-green", "pos-api", "pos-api-green"} <= set(compose["services"])
 
 
 def test_the_storefront_api_can_refuse_device_tokens():
@@ -62,8 +62,62 @@ def test_the_register_gets_its_own_host_and_cors_lists():
 
 def test_the_register_runs_the_register_app():
     compose = yaml.safe_load(COMPOSE.read_text())
-    command = str(compose["services"]["pos-api"].get("command", ""))
-    assert "app.pos_main:app" in command, "otherwise it is a second storefront API"
+    for svc in ("pos-api", "pos-api-green"):
+        command = str(compose["services"][svc].get("command", ""))
+        assert "app.pos_main:app" in command, f"{svc} is a second storefront API"
+        assert "--timeout-graceful-shutdown 25" in command
+
+
+def test_storefront_slots_finish_in_flight_requests():
+    compose = yaml.safe_load(COMPOSE.read_text())
+    for svc in ("api", "api-green"):
+        command = str(compose["services"][svc].get("command", ""))
+        assert "app.main:app" in command
+        assert "--timeout-graceful-shutdown 25" in command
+        assert compose["services"][svc].get("stop_grace_period") == "30s"
+    for svc in ("pos-api", "pos-api-green"):
+        assert compose["services"][svc].get("stop_grace_period") == "30s"
+
+
+def test_nginx_bind_mounts_runtime_upstreams():
+    compose = yaml.safe_load(COMPOSE.read_text())
+    volumes = compose["services"]["nginx"].get("volumes") or []
+    assert any(
+        str(v).startswith("./nginx/runtime:/etc/nginx/runtime") for v in volumes
+    ), "cutover rewrites nginx/runtime/upstreams.conf on the host; nginx must see it"
+
+
+def test_nginx_does_not_require_api_slots_healthy():
+    """
+    After a cutover the idle colour is stopped. A health dependency on api or
+    pos-api would block nginx from coming back, which is TLS for the whole shop.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    deps = compose["services"]["nginx"].get("depends_on") or {}
+    if isinstance(deps, list):
+        names = set(deps)
+    else:
+        names = set(deps)
+    for svc in ("api", "api-green", "pos-api", "pos-api-green"):
+        assert svc not in names, (
+            f"nginx depends_on {svc}; a stopped idle slot would block it"
+        )
+    if isinstance(deps, dict):
+        for name, spec in deps.items():
+            cond = spec.get("condition") if isinstance(spec, dict) else None
+            assert cond != "service_healthy" or name not in {
+                "api",
+                "api-green",
+                "pos-api",
+                "pos-api-green",
+            }
+
+
+def test_postgres_max_connections_stays_at_thirty():
+    text = COMPOSE.read_text()
+    assert "-c max_connections=30" in text
+    assert "-c max_connections=50" not in text
+    assert "-c max_connections=100" not in text
 
 
 def test_every_pos_setting_reaches_a_container():

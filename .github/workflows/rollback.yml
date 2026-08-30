@@ -212,13 +212,9 @@ jobs:
 
           if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
             echo "Running alembic downgrade -1..."
-            timeout 300 docker compose -f docker-compose.prod.yml exec -T api alembic downgrade -1 \
+            timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic downgrade -1 < /dev/null \
               || { echo "ERROR: Migration downgrade failed or timed out after 5 minutes"; exit 1; }
           fi
-
-          echo "Checking out $TARGET_SHA (for compose files, nginx, etc.)..."
-          git fetch origin
-          git checkout "$TARGET_SHA"
 
           echo "Pulling pre-built image for $TARGET_SHA from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:"$TARGET_SHA"
@@ -227,37 +223,20 @@ jobs:
           docker tag ghcr.io/hussu97/mm-ecommerce-api:"$TARGET_SHA" \
                      ghcr.io/hussu97/mm-ecommerce-api:latest
 
-          echo "Restarting API with rolled-back image..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api pos-api
-
-          echo "Waiting for API to be healthy..."
-          API_READY=false
-          for i in $(seq 1 30); do
-            if docker compose -f docker-compose.prod.yml exec -T api curl -sf -H "Host: api.meltingmomentscakes.com" http://localhost:8000/ping > /dev/null 2>&1; then
-              echo "API is up."
-              API_READY=true
-              break
-            fi
-            echo "  waiting... ($i/30)"
-            sleep 5
-          done
-
-          if [ "$API_READY" != "true" ]; then
-            echo "ERROR: API failed to start after rollback. Container logs:"
-            docker compose -f docker-compose.prod.yml logs --tail=50 api
-            exit 1
-          fi
+          # Stay on the currently deployed compose (blue-green slots + cutover
+          # helper). Checking out $TARGET_SHA would drop api-green on any SHA
+          # from before this wiring, and --force-recreate is the outage this
+          # helper exists to avoid. Nginx config from an older SHA is not
+          # applied; roll that forward with a normal deploy if needed.
+          echo "Cutting over idle slots onto the rolled-back image..."
+          bash scripts/cutover-backend.sh < /dev/null
 
           echo "Running migrations for rolled-back version..."
-          timeout 300 docker compose -f docker-compose.prod.yml exec -T api alembic upgrade head \
+          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head < /dev/null \
             || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
 
-          echo "Ensuring nginx is up..."
-          docker compose -f docker-compose.prod.yml up -d --no-deps --build nginx
-          docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload
-
           echo "Rollback complete. Running: $TARGET_SHA"
-          docker compose -f docker-compose.prod.yml ps
+          docker compose -f docker-compose.prod.yml ps < /dev/null
           SCRIPT
 
       - name: Cleanup SSH key

@@ -28,8 +28,10 @@ docstring, and it is worth knowing before adding a route:
 - Tills keep trading while the website is deployed, restarted, or hammered by a
   campaign, because they are no longer the same process.
 
-A third hostname, `aggregator-api`, is nginx routing for marketplace webhooks;
-it is not a third application.
+This VM's nginx only serves `api.meltingmomentscakes.com` and
+`pos.meltingmomentscakes.com`. Marketplace ingestion is the same API (admin +
+`aggregator_*` tables + a profiled worker); there is no `aggregator-api`
+hostname on this box.
 
 ## Where a request goes
 

@@ -77,6 +77,11 @@ scripts/menu/*.html
 # Written by `vercel link`.
 .vercel
 
+# Live blue/green slot pointer written by scripts/cutover-backend.sh on the VM.
+.deploy-slot
+nginx/runtime/upstreams.conf.bak
+nginx/runtime/upstreams.conf.tmp
+
 # Every local env file, including the ones the rules further up miss
 # (`.env.production`, `.env.staging`).
 .env*

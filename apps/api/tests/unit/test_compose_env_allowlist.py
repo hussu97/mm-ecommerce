@@ -100,7 +100,14 @@ def test_the_compose_file_parses_the_way_docker_parses_it():
     """
     compose = _load_compose()
 
-    assert set(compose["services"]) >= {"api", "pos-api", "postgres", "nginx"}
+    assert set(compose["services"]) >= {
+        "api",
+        "api-green",
+        "pos-api",
+        "pos-api-green",
+        "postgres",
+        "nginx",
+    }
 
 
 def test_the_register_gets_the_payment_gateway_credentials_too():
@@ -265,6 +272,23 @@ def test_both_services_agree_on_courier_configuration():
     )
 
 
+def test_green_slots_copy_their_blue_environment():
+    """
+    api-green is a second process of the storefront, not a third configuration.
+    A variable that reaches `api` and not `api-green` is the silent-inert
+    outage again, this time only after the first cutover.
+    """
+    compose = _load_compose()
+    assert (
+        compose["services"]["api"]["environment"]
+        == compose["services"]["api-green"]["environment"]
+    )
+    assert (
+        compose["services"]["pos-api"]["environment"]
+        == compose["services"]["pos-api-green"]["environment"]
+    )
+
+
 def test_no_compose_default_is_a_value_its_setting_cannot_parse():
     """
     An empty default is not neutral.
@@ -284,7 +308,7 @@ def test_no_compose_default_is_a_value_its_setting_cannot_parse():
     compose = _load_compose()
     failures = []
 
-    for service in ("api", "pos-api"):
+    for service in ("api", "pos-api", "api-green", "pos-api-green"):
         env = compose["services"][service]["environment"]
         for key, expression in env.items():
             field = Settings.model_fields.get(key)

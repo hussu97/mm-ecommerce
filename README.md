@@ -342,11 +342,9 @@ Key tables: `users`, `categories`, `products`, `product_variants`, `carts`, `car
 
 ---
 
-## Aggregator Dashboard Auth
+## Aggregator ingestion
 
-The separate `mm-aggregator-automation` dashboard uses this API as the admin identity source. It calls `/api/v1/auth/login` and `/api/v1/auth/me`, then requires `is_admin=true` before showing aggregator data or platform settings.
-
-No customer storefront or ecommerce admin code path depends on the aggregator. The aggregator is only an auth consumer of the existing API contract.
+Marketplace ingestion lives in this repo: `aggregator_*` tables in `mm_ecommerce`, the admin Aggregators screens, and the headed `aggregator-worker` on the API VM. There is no separate aggregator dashboard or `aggregator-api` process on the VM — `mm-aggregator-automation` was decommissioned (GitHub repo / Vercel / DNS may still exist; they are not served from this box).
 
 ---
 
