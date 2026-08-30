@@ -65,7 +65,7 @@ from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
-from app.services.aggregators import reconcile
+from app.services.aggregators import aggregator_fulfilment, reconcile
 from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
@@ -665,6 +665,7 @@ async def promote_order(
             )
             if agg.commission_amount is not None or agg.payment_fee is not None:
                 await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
+            await _record_fulfilment(db, grubops_order)
             return grubops_order
         # No GrubOps order found on a GrubOps branch. GrubOps is the source of
         # truth here, so filing a standalone now is how the same order gets filed
@@ -712,7 +713,34 @@ async def promote_order(
     agg.promoted_at = utcnow()
     await db.flush()
     await _backfill_statement_lines(db, agg.channel, agg.external_order_id, order.id)
+    await _record_fulfilment(db, order)
     return order
+
+
+async def _record_fulfilment(db: AsyncSession, order: Order) -> None:
+    """Mirror the order's marketplace rider into the shared fulfilment tables
+    (`order_deliveries` + `order_drivers`), so the details page shows one
+    fulfilment section for every order type. Reads the order's own
+    `aggregator_driver_*` columns — populated by _build_order/_refresh_order on the
+    scrape path and by the GrubOps ingest on the matched path — so this one call
+    covers both promotion exits. Best-effort: a fulfilment write must never fail a
+    promotion (the money side is already done)."""
+    try:
+        await aggregator_fulfilment.record_aggregator_fulfilment(
+            db,
+            order,
+            channel=getattr(order, "aggregator_channel", None),
+            driver_name=getattr(order, "aggregator_driver_name", None),
+            driver_phone=getattr(order, "aggregator_driver_phone", None),
+            driver_status=getattr(order, "aggregator_driver_status", None),
+            cancel_reason=getattr(order, "aggregator_cancel_reason", None),
+            delivery_fee=getattr(order, "aggregator_delivery_fee", None),
+        )
+    except Exception:  # noqa: BLE001 — never fail a promotion on the fulfilment mirror
+        logger.exception(
+            "promote: could not mirror fulfilment for order %s",
+            getattr(order, "order_number", "?"),
+        )
 
 
 async def promote_channel(db: AsyncSession, channel: str) -> int:
