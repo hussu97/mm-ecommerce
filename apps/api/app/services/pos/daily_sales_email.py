@@ -307,6 +307,14 @@ async def build_detail(
             func.coalesce(Order.payment_fee, 0),
             func.coalesce(courier_cost, 0),
             func.coalesce(Order.refunded_amount, 0),
+            # The marketplace's OWN reference for this order, so a row can be
+            # tied back to what the aggregator portal shows. `external_reference`
+            # is the canonical id the marketplace assigns (Careem's order id,
+            # Deliveroo's UUID, Noon's ref, …); `aggregator_display_code` is the
+            # SHORT human code where it differs (Deliveroo's `5254`, Keeta's
+            # last-4). Appended (o[14], o[15]) so the earlier positions are stable.
+            Order.external_reference,
+            Order.aggregator_display_code,
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
@@ -463,6 +471,8 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
             [
                 "date",
                 "order #",
+                "aggregator ref",
+                "aggregator code",
                 "branch",
                 "channel",
                 "status",
@@ -478,10 +488,14 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
             [
                 # positional: 0 date,1 order#,2 branch,3 source,4 channel,5 status,
                 # 6 pos_status,7 customer,8 total,9 vat,10 commission,11 payfee,
-                # 12 courier,13 refund
+                # 12 courier,13 refund,14 external_reference,15 display_code
                 [
                     o[0],
                     o[1],
+                    # Aggregator refs only — a website/counter order has none to
+                    # reconcile against a marketplace portal.
+                    (o[14] or "") if o[3] == "aggregator" else "",
+                    (o[15] or "") if o[3] == "aggregator" else "",
                     o[2] or "",
                     _order_channel_label(o[3], o[4]),
                     (o[5] or o[6] or ""),

@@ -249,6 +249,8 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
                 D("1"),
                 D("0"),
                 D("0"),
+                "TLB-REF-9",  # external_reference (o[14])
+                "9",  # aggregator_display_code (o[15])
             ),
         ],
         statements=[
@@ -298,8 +300,10 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
         "Payouts",
     ]
     assert wb["Orders"].cell(row=2, column=2).value == "AGG-1"
-    assert wb["Orders"].cell(row=2, column=4).value == "Talabat"  # channel label
-    assert wb["Orders"].cell(row=2, column=13).value == 44.0  # net = 50-5-1
+    assert wb["Orders"].cell(row=2, column=3).value == "TLB-REF-9"  # aggregator ref
+    assert wb["Orders"].cell(row=2, column=4).value == "9"  # aggregator code
+    assert wb["Orders"].cell(row=2, column=6).value == "Talabat"  # channel label
+    assert wb["Orders"].cell(row=2, column=15).value == 44.0  # net = 50-5-1
     assert wb["Statements"].cell(row=2, column=2).value == "S1"
     assert wb["Statement Lines"].cell(row=2, column=8).value == 10.0
     assert wb["Payouts"].cell(row=2, column=4).value == 85.0
