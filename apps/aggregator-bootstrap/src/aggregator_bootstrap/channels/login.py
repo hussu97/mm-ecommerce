@@ -154,6 +154,16 @@ async def _talabat_is_authenticated_app(page) -> bool:
     )
 
 
+async def _talabat_debug_shot(page, tag: str) -> None:
+    """Best-effort screenshot to the sessions volume for post-mortem inspection."""
+    try:
+        path = f"{settings.STORAGE_STATE_DIR}/talabat-debug-{tag}.png"
+        await page.screenshot(path=path, full_page=True)
+        logger.info("talabat: debug screenshot -> %s", path)
+    except Exception:  # noqa: BLE001 — diagnostics must never break the flow
+        pass
+
+
 async def login_talabat(
     context,
     *,
@@ -174,11 +184,14 @@ async def login_talabat(
         page = await context.new_page()
     await page.goto(TALABAT_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
     await page.wait_for_timeout(3_000)
+    logger.info("talabat: login page loaded, url=%s", page.url)
     await _dismiss_talabat_cookie_banner(page)
 
     if await _talabat_is_authenticated_app(page):
+        logger.info("talabat: already authenticated on load")
         return
     if await _talabat_human_verification_present(page):
+        await _talabat_debug_shot(page, "px-gate")
         raise AntiBotChallengeError(
             "Talabat showed a 'press and hold' human-verification wall at the "
             "login gate; the worker will not attempt to bypass it."
@@ -192,6 +205,7 @@ async def login_talabat(
     except Exception as exc:  # noqa: BLE001
         if await _talabat_is_authenticated_app(page):
             return
+        await _talabat_debug_shot(page, "no-credential-inputs")
         raise LoginError(
             f"Talabat login page did not expose credential inputs at {page.url}"
         ) from exc
@@ -201,15 +215,20 @@ async def login_talabat(
     otp_since = datetime.now(UTC)
     await page.locator("button[type='submit']").click(timeout=5_000)
     await page.wait_for_timeout(4_000)
+    logger.info("talabat: submitted credentials, url=%s", page.url)
+    await _talabat_debug_shot(page, "after-submit")
 
     if not page.url.endswith("/2fa"):
         if await _talabat_human_verification_present(page):
+            await _talabat_debug_shot(page, "px-after-submit")
             raise AntiBotChallengeError(
                 "Talabat showed a human-verification wall after submitting "
                 "credentials; not bypassed."
             )
+        logger.info("talabat: no /2fa step after submit — treating as through")
         return  # no 2FA step — already through
 
+    logger.info("talabat: 2FA step reached, polling the Graph mailbox for the OTP")
     try:
         otp = await wait_for_otp(
             sender_filter=TALABAT_OTP_SENDER,
@@ -220,19 +239,30 @@ async def login_talabat(
             channel="talabat",
         )
     except OTPPollingError as exc:
+        await _talabat_debug_shot(page, "no-otp")
         raise LoginChallengeError(
             "Talabat requested a 2FA OTP but none could be read from the "
             "linked mailbox. Save this channel's Microsoft app on Admin → "
             "Logins, run mailbox-auth, or complete the login manually."
         ) from exc
+    logger.info("talabat: OTP retrieved (len=%d), typing", len(otp.strip()))
 
     inputs = page.locator("input[type='tel']")
-    if await inputs.count() != 6:
-        raise LoginError(f"Unexpected Talabat OTP input count: {await inputs.count()}")
+    count = await inputs.count()
+    if count != 6:
+        await _talabat_debug_shot(page, "otp-input-count")
+        raise LoginError(f"Unexpected Talabat OTP input count: {count}")
     await inputs.first.click()
     await page.keyboard.type(otp[:6])
-    await page.wait_for_url("**/dashboard", timeout=30_000)
+    try:
+        await page.wait_for_url("**/dashboard", timeout=30_000)
+    except Exception as exc:  # noqa: BLE001 — surface as a fatal login error
+        await _talabat_debug_shot(page, "no-dashboard")
+        raise LoginError(
+            f"Talabat did not reach the dashboard after the OTP (still at {page.url})"
+        ) from exc
     await page.wait_for_timeout(5_000)
+    logger.info("talabat: login complete, url=%s", page.url)
     if owned_page:
         return
     return page

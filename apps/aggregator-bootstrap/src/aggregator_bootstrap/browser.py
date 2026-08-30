@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 
 from .channels.login import (
     LOGIN_START_URLS,
+    LoginError,
     deliveroo_login_form_visible,
     fill_deliveroo_login,
     login_careem,
@@ -66,8 +67,18 @@ class NeedsHumanLogin(NotLoggedInError):
     """The session cannot be saved from here; run `login --channel` headed."""
 
 
-#: How long the headed login waits for the operator (OTP, captcha, passkey).
+#: How long the headed login waits for the OPERATOR (OTP, captcha, passkey) in
+#: the interactive path — a person may be away from the keyboard.
 _LOGIN_WAIT_SECONDS = 45 * 60
+
+#: How long the UNATTENDED auto-login (`login_with_account`, driven by
+#: heal-sessions) waits. Nobody is watching: the Graph OTP arrives within ~90s or
+#: not at all, so there is nothing to gain from the 45-minute human budget — and
+#: spinning that long holds the shared warm `flock`, starving every other
+#: channel's warm/heal (this is what a dead Talabat login did for 45 min at a
+#: time). A fatal login error (anti-bot wall, no OTP) aborts even sooner; this is
+#: only the ceiling for a login that is merely slow.
+_AUTO_LOGIN_WAIT_SECONDS = 6 * 60
 
 #: Let Cloudflare's JS challenge run with no CDP client attached.
 _UNATTACHED_SECONDS = 12
@@ -844,7 +855,9 @@ async def login_with_account(
         await asyncio.sleep(_UNATTACHED_SECONDS)
 
         started = time.monotonic()
-        deadline = started + _LOGIN_WAIT_SECONDS
+        # Unattended path: a short ceiling, not the 45-minute human budget — see
+        # `_AUTO_LOGIN_WAIT_SECONDS`. A fatal login error aborts sooner still.
+        deadline = started + _AUTO_LOGIN_WAIT_SECONDS
         attached = False
         browser = context = page = None
 
@@ -900,6 +913,17 @@ async def login_with_account(
                                 page=page,
                             )
                             filled = True
+                    except LoginError as exc:
+                        # A definitive login failure — an anti-bot "press and
+                        # hold" wall, or a 2FA OTP that never arrived. Retrying the
+                        # same headed attempt will not clear it, and spinning to
+                        # the deadline just holds the shared warm lock. Abort now
+                        # so the lock frees immediately; the channel stays
+                        # `needs_bootstrap` and the next heal tick (after its
+                        # backoff) tries again.
+                        raise NeedsHumanLogin(
+                            f"{channel} auto-login could not complete: {exc}"
+                        ) from exc
                     except Exception as exc:  # noqa: BLE001
                         logger.info("CDP attach retry: %s", exc)
                         await asyncio.sleep(2)

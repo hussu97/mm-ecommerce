@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import typer
 
@@ -18,6 +20,7 @@ from .browser import (
     login_with_account,
 )
 from .channels.probes import CHANNEL_PROBES
+from .config import settings
 from .hydrate import hydrate_from_api
 from .warm import hydrate_then_warm, push_probe, warm_channel
 
@@ -469,10 +472,74 @@ def _channel_needs_reauth(bundle: dict) -> str | None:
     return None
 
 
+# ── reauth backoff ──────────────────────────────────────────────────────────
+# A channel that stays dead (a human-only login: PerimeterX wall, a 2FA OTP that
+# never arrives) must NOT be re-driven on every 2-minute heal tick: each attempt
+# opens a headed Chrome and holds the shared warm `flock`, starving the channels
+# that could heal. So a failed reauth arms an exponential backoff, persisted to
+# the sessions volume (the heal runs as a fresh container each tick, so in-memory
+# state would not survive). A success — or the channel simply going healthy on its
+# own — clears it, so a transient death still heals on the very next tick.
+_REAUTH_BACKOFF_BASE_SECONDS = 5 * 60
+_REAUTH_BACKOFF_MAX_SECONDS = 60 * 60
+
+
+def _reauth_backoff_path(channel: str) -> Path:
+    return Path(settings.STORAGE_STATE_DIR) / f"{channel}.reauth_backoff.json"
+
+
+def _reauth_cooldown_remaining(channel: str) -> float:
+    """Seconds until `channel` may be re-driven, or 0 if it is eligible now."""
+    try:
+        data = json.loads(_reauth_backoff_path(channel).read_text(encoding="utf-8"))
+        return max(0.0, float(data.get("next_at", 0)) - time.time())
+    except (OSError, ValueError, TypeError):
+        return 0.0  # no/ën unreadable state → not in cooldown
+
+
+def _record_reauth_failure(channel: str) -> None:
+    """Arm/extend the backoff after a failed reauth (exponential, capped)."""
+    path = _reauth_backoff_path(channel)
+    failures = 0
+    try:
+        failures = int(json.loads(path.read_text(encoding="utf-8")).get("failures", 0))
+    except (OSError, ValueError, TypeError):
+        failures = 0
+    failures += 1
+    delay = min(
+        _REAUTH_BACKOFF_BASE_SECONDS * (2 ** (failures - 1)),
+        _REAUTH_BACKOFF_MAX_SECONDS,
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"failures": failures, "next_at": time.time() + delay}),
+            encoding="utf-8",
+        )
+    except OSError:  # pragma: no cover — a write failure just means no backoff
+        logger.warning("reauth: could not persist %s backoff", channel)
+    logger.warning(
+        "reauth: %s failed %d time(s) — backing off %d min before the next attempt",
+        channel,
+        failures,
+        int(delay // 60),
+    )
+
+
+def _clear_reauth_backoff(channel: str) -> None:
+    """Reset the backoff — the channel is healthy again."""
+    try:
+        _reauth_backoff_path(channel).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:  # pragma: no cover — best effort
+        pass
+
+
 def _heal_once(only: set[str] | None = None) -> int:
     """Re-login every channel the API reports dead/expired. Returns how many were
     healed. Cheap when all are healthy: one API call, and headed Chrome only for
-    a channel that actually needs it."""
+    a channel that actually needs it — and only one that is out of its backoff."""
     try:
         bundles = asyncio.run(push.pull_sessions())
     except Exception:  # noqa: BLE001 — a transient API blip must not kill the loop
@@ -485,10 +552,23 @@ def _heal_once(only: set[str] | None = None) -> int:
             continue
         reason = _channel_needs_reauth(bundle)
         if reason is None:
+            _clear_reauth_backoff(ch)  # healthy → forget any past failures
+            continue
+        remaining = _reauth_cooldown_remaining(ch)
+        if remaining > 0:
+            logger.info(
+                "reauth: %s is %s but in backoff — skipping for ~%d min",
+                ch,
+                reason,
+                int(remaining // 60) + 1,
+            )
             continue
         logger.warning("reauth: %s is %s — re-logging in", ch, reason)
         if _try_auto_relogin(ch):
+            _clear_reauth_backoff(ch)
             healed += 1
+        else:
+            _record_reauth_failure(ch)
     return healed
 
 

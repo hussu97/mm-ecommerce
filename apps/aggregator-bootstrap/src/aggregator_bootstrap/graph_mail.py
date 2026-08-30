@@ -11,6 +11,7 @@ mint short-lived Graph access tokens for `GET /me/messages`.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+
+logger = logging.getLogger("aggregator-bootstrap")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 AUTHORIZE_SCOPES = "Mail.Read offline_access"
@@ -50,7 +53,9 @@ class GraphApp:
                 "Save them on Admin → Aggregators → Logins for this channel."
             )
         tenant = str(box.get("tenant") or DEFAULT_TENANT).strip() or DEFAULT_TENANT
-        redirect = str(box.get("redirect_uri") or DEFAULT_REDIRECT).strip() or DEFAULT_REDIRECT
+        redirect = (
+            str(box.get("redirect_uri") or DEFAULT_REDIRECT).strip() or DEFAULT_REDIRECT
+        )
         return cls(
             client_id=client_id,
             client_secret=client_secret,
@@ -185,22 +190,45 @@ def fetch_latest_otp(
         rotated = None
     messages = list_recent_messages(access_token=access, top=max_messages)
     best: tuple[datetime, str] | None = None
+    # Diagnostic: an OTP login that silently fails is almost always a
+    # sender/subject filter that no longer matches the provider's mail, or mail
+    # that simply never arrived. Log the fresh candidates (those after `since`, so
+    # the mailbox's older history is not dumped) with what the filter decided, so
+    # a failed poll says WHY rather than just "timed out".
+    fresh = 0
     for message in messages:
         received = _received_at(message) or datetime.min.replace(tzinfo=UTC)
         if since is not None and received < since:
             continue
         subject = str(message.get("subject") or "")
         sender = _sender(message)
-        if not _message_matches(
+        matched = _message_matches(
             subject=subject,
             sender=sender,
             sender_filter=sender_filter,
             subject_filter=subject_filter,
-        ):
+        )
+        fresh += 1
+        logger.info(
+            "graph OTP candidate: from=%r subject=%r received=%s matched=%s",
+            sender,
+            subject[:70],
+            received.isoformat(),
+            matched,
+        )
+        if not matched:
             continue
         code = extract_otp_from_text(_message_text(message), otp_pattern=otp_pattern)
         if not code:
+            logger.info("graph OTP: matched mail but no code extracted from body")
             continue
         if best is None or received >= best[0]:
             best = (received, code)
+    if best is None and fresh == 0:
+        logger.info(
+            "graph OTP: no mail after %s (filters sender~=%r subject~=%r)",
+            since.isoformat() if since else None,
+            sender_filter,
+            subject_filter,
+        )
     return (best[1] if best else None, rotated)
