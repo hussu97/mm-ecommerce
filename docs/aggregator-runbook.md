@@ -71,8 +71,9 @@ profile; wait for it to finish (or `docker rm -f` its `*-run-*` container).
 
 ## 4. Warm cron (automatic)
 `/etc/cron.d/aggregator-warm` (installed by deploy) runs, Asia/Dubai:
-- 22:00 — Keeta order pull (in-page).
-- 22:15 — headed anti-bot warm for Noon + Talabat (rotates the decaying cookie).
+- every 3 hours (`0 */3`) — Keeta order pull (in-page), so names/phones are captured before Keeta masks them.
+- 22:15 — headed anti-bot warm for Noon + Talabat only (rotates the decaying cookie). Careem self-heals in the API sweep and is not warmed here.
+- every 2 minutes — curl `GET /api/v1/aggregators/worker/needs-heal`; only if a channel is not live, `docker compose run --rm aggregator-worker heal-sessions` (no Xvfb). All-live ticks log and skip the container.
 The API's daily pass (`AGGREGATOR_RUN_HOUR_DXB=23`) then sweeps sales+finance,
 promotes, and reconciles every channel.
 

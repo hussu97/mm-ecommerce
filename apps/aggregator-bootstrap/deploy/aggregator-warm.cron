@@ -3,13 +3,13 @@
 #
 # The worker runs real Chrome HEADED under a virtual display (Xvfb, via the image
 # entrypoint) because the anti-bot edges drop headless Chrome — see
-# docker-entrypoint.sh. Two staggered one-shot jobs; each warms one channel at a
-# time. They also share an `flock` (/tmp/mm-aggregator-warm.lock) so that even
-# if the Keeta pull overruns its 15-minute head start, the noon/talabat warm
-# WAITS rather than starting a second headed-Chrome container alongside it — at
-# most one Chrome runs at any instant, which is what keeps this within the VM's
-# RAM. VM clock is UTC; TZ=Asia/Dubai makes the hours Dubai wall-clock, one
-# timeline with the API's AGGREGATOR_RUN_HOUR_DXB=23 pass.
+# docker-entrypoint.sh. Two staggered one-shot warms plus a curl-gated heal; they
+# share an `flock` (/tmp/mm-aggregator-warm.lock) so that even if the Keeta pull
+# overruns its 15-minute head start, the noon/talabat warm WAITS rather than
+# starting a second headed-Chrome container alongside it — at most one Chrome
+# runs at any instant, which is what keeps this within the VM's RAM. VM clock is
+# UTC; TZ=Asia/Dubai makes the hours Dubai wall-clock, one timeline with the
+# API's AGGREGATOR_RUN_HOUR_DXB=23 pass.
 #
 # ⚠ RAM: a headed Chrome under Xvfb needs materially more memory than the old
 # headless pull. On the 1 GB e2-micro a single warm dipped free memory to
@@ -28,7 +28,7 @@
 #    fresh pull captured and refuses to overwrite it with a mask. Every 3h (not
 #    hourly) keeps the headed-Chrome minutes modest and never lands on the 22:15
 #    warm. Was a single 22:00 pull, which routinely saw a whole evening of orders
-#    already redacted.
+#    already redacted. flock -w 1200.
 # 2) Anti-bot cookie warm (22:15) for the TLS-impersonation httpx channels —
 #    Talabat (PerimeterX _px3/pxcts) and Noon (Akamai bm_sv/_abck). Their
 #    load-bearing cookie DECAYS: the API's httpx sweep replays it but never
@@ -39,7 +39,8 @@
 #    and pushed it `live` where every headless attempt stalled. Runs from the VM's
 #    Doha egress, the SAME egress the ingest replays from, so the cookie stays
 #    bound to the right IP/ASN. Deliveroo/Careem self-heal in the API sweep
-#    (email/password via prepare_session) and are not warmed here.
+#    (email/password via prepare_session) and are not warmed here — Careem must
+#    not appear in this for-loop. flock -w 1200.
 #
 # A dead anti-bot session (the API flagged it `needs_bootstrap`) is now RE-LOGGED-IN
 # automatically: `warm-sessions` defaults to `--auto-relogin`, so when a warm finds
@@ -49,21 +50,20 @@
 # (a captcha/passkey, or no connected mailbox for the OTP) falls through to a manual
 # `login --channel X` (also runnable on this VM). The API health log still surfaces
 # a channel that stays dead. Do not add a second UTC cron — one Dubai timeline.
-# 3) Trigger-based re-auth (every 2 min). `heal-sessions` asks the API which
-#    sessions are dead/expired (one cheap HTTP call — no browser) and re-logs in
-#    ONLY those, headed. So a session that dies mid-day is back within ~2 min plus
-#    the login time, instead of waiting for the 22:15 warm. This is the worker
-#    half of the API's trigger-based reauth: an ingest pass that needs a dead
-#    channel flags it `needs_bootstrap` and WAITS (AGGREGATOR_REAUTH_WAIT_SECONDS,
-#    360s) for this cron to bring it back, then retries. It SHARES the warm lock,
-#    so it can never run a second headed Chrome alongside the warm — a healthy
-#    tick releases the lock in the second it takes to make the API call, and only
-#    a tick that actually re-logs in holds Chrome (and the lock) for its ~90s.
-#    `-w 100` < 120s so a tick that cannot get the lock (a warm is running) is
-#    dropped rather than piling up behind the next one.
+# 3) Trigger-based re-auth (every 2 min). The host curls GET /worker/needs-heal
+#    with AGGREGATOR_SESSION_PUSH_TOKEN from /opt/melting-moments-cakes/.env (never
+#    printed) and only `docker compose run --rm aggregator-worker heal-sessions`
+#    when some channel status is not live. If all are live, it logs and exits
+#    without starting a container. heal-sessions itself does not wrap Xvfb (see
+#    docker-entrypoint.sh). Worker backoff files live in the container volume, not
+#    the API: a channel that is needs_bootstrap but in backoff will still start
+#    the worker — that is OK because heal will not use xvfb. It SHARES the warm
+#    lock (/tmp/mm-aggregator-warm.lock), so it can never run a second headed
+#    Chrome alongside the warm. `-w 100` < 120s so a tick that cannot get the lock
+#    (a warm is running) is dropped rather than piling up behind the next one.
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
 0 */3 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
-15 22 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat careem; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
-*/2 * * * * root /usr/bin/flock -w 100 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions' 2>&1 | /usr/bin/logger -t aggregator-reauth
+15 22 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
+*/2 * * * * root /usr/bin/flock -w 100 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && token=$(grep -E "^AGGREGATOR_SESSION_PUSH_TOKEN=" /opt/melting-moments-cakes/.env | head -n1 | cut -d= -f2- | tr -d "\r") && if body=$(curl -sS -H "Authorization: Bearer $token" https://api.meltingmomentscakes.com/api/v1/aggregators/worker/needs-heal) && printf "%s" "$body" | python3 -c "import json,sys; d=json.load(sys.stdin); items=d if isinstance(d,list) else (next(iter(d.values()),[]) if isinstance(d,dict) else []); sys.exit(0 if any((i.get(\"status\") or \"\")!=\"live\" or i.get(\"token_expired\") or i.get(\"cookie_expired\") for i in items) else 1)"; then /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions; else echo aggregator-reauth: all sessions live, skip; fi' 2>&1 | /usr/bin/logger -t aggregator-reauth

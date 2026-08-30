@@ -1,5 +1,9 @@
 #!/bin/sh
-# Run the worker under a virtual X display so real Chrome runs HEADED.
+# Run headed Chrome under a virtual X display when the command actually needs
+# a browser. HTTP-only commands (heal-sessions, hydrate, store-account,
+# mailbox-auth) skip Xvfb so a 2-minute heal tick that only checks the API
+# does not pay for a virtual X server — and so a curl-gated start that finds
+# the channel already in backoff does not open a display at all.
 #
 # The anti-bot edges the httpx channels sit behind — Noon (Akamai), Talabat
 # (PerimeterX), Deliveroo (Cloudflare) — drop or stall HEADLESS Chrome at the
@@ -13,5 +17,13 @@
 # the X server down when the command exits — no resident X server between the
 # one-shot cron runs. HEADLESS=false (set in the image env) makes the Playwright
 # launches actually use it.
-exec xvfb-run -a --server-args="-screen 0 1280x1024x24 -nolisten tcp" \
-    aggregator-bootstrap "$@"
+cmd="$1"
+case "$cmd" in
+    login|warm-sessions|bootstrap|capture-and-push|serve-reauth)
+        exec xvfb-run -a --server-args="-screen 0 1280x1024x24 -nolisten tcp" \
+            aggregator-bootstrap "$@"
+        ;;
+    *)
+        exec aggregator-bootstrap "$@"
+        ;;
+esac

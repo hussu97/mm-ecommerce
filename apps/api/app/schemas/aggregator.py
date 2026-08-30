@@ -51,6 +51,20 @@ class AggregatorWorkerSession(BaseModel):
     last_warmed_at: datetime | None = None
 
 
+class AggregatorWorkerHealChannel(BaseModel):
+    """Status-only row for the VM heal cron — never cookies, tokens, or blobs.
+
+    `token_expired` / `cookie_expired` are cheap column comparisons against now
+    (a NULL expiry is unknown, not expired). The cron starts a worker when
+    `status` is not `live` or either flag is true.
+    """
+
+    channel: str
+    status: str
+    token_expired: bool = False
+    cookie_expired: bool = False
+
+
 class AggregatorSessionResponse(BaseModel):
     """The stored session's health, echoed back to the worker."""
 

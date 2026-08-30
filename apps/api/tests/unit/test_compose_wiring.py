@@ -137,7 +137,10 @@ def test_api_healthcheck_start_period_covers_i18n_seed():
             f"{svc} start_period={period!r} is padded for the old N+1 seed"
         )
         interval = compose["services"][svc]["healthcheck"]["interval"]
-        assert interval in ("5s", "5"), interval
+        assert interval in ("10s", "10"), interval
+        timeout = compose["services"][svc]["healthcheck"]["timeout"]
+        assert timeout in ("5s", "5"), timeout
+        assert compose["services"][svc]["healthcheck"]["retries"] == 5
 
 
 def test_api_slots_do_not_re_pull_an_image_already_on_the_vm():
@@ -158,3 +161,44 @@ def test_every_pos_setting_reaches_a_container():
     wired = set(_environment("api")) | set(_environment("pos-api"))
     missing = [name for name in _pos_settings() if name not in wired]
     assert not missing, f"declared but never passed to a container: {missing}"
+
+
+def test_aggregator_worker_does_not_re_pull_on_every_cron():
+    """
+    Cron runs this 720×/day. pull_policy: always meant each tick GHCR-pulled
+    a ~4.7GB image. missing still pulls when the local tag is absent or was
+    retagged after a bootstrap image change.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    assert compose["services"]["aggregator-worker"].get("pull_policy") == "missing"
+
+
+def test_certbot_has_a_memory_cap():
+    """Uncapped against host RAM 1.93GiB; 64m is enough for renew + sleep."""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    memory = (
+        compose["services"]["certbot"]
+        .get("deploy", {})
+        .get("resources", {})
+        .get("limits", {})
+        .get("memory")
+    )
+    assert memory == "64m", memory
+
+
+def test_register_idle_postgres_pool_is_smaller_than_the_storefront():
+    """
+    Both apps share database.py; compose is what gives the till a smaller
+    idle pool so it does not keep 13 connections warm for a handful of
+    terminals.
+    """
+    api = _environment("api")
+    pos = _environment("pos-api")
+    assert api["DATABASE_POOL_SIZE"] == "${DATABASE_POOL_SIZE:-5}"
+    assert api["DATABASE_MAX_OVERFLOW"] == "${DATABASE_MAX_OVERFLOW:-8}"
+    assert str(pos["DATABASE_POOL_SIZE"]) == "2"
+    assert str(pos["DATABASE_MAX_OVERFLOW"]) == "3"
+    green_api = _environment("api-green")
+    green_pos = _environment("pos-api-green")
+    assert green_api["DATABASE_POOL_SIZE"] == api["DATABASE_POOL_SIZE"]
+    assert green_pos["DATABASE_POOL_SIZE"] == pos["DATABASE_POOL_SIZE"]

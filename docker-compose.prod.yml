@@ -4,6 +4,11 @@
 # anchor — never merge api's env into pos-api.
 x-api-environment: &api-environment
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  # Explicit: same 5/8 the engine used before these were settings. A GitHub
+  # secret can raise the storefront pool; the register's values are hardcoded
+  # on the pos-environment anchor so that cannot enlarge the till's idle pool.
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-8}
   REDIS_URL: redis://redis:6379/0
   APP_ENV: ${APP_ENV:-production}
   SECRET_KEY: ${SECRET_KEY}
@@ -203,6 +208,11 @@ x-api-environment: &api-environment
 
 x-pos-environment: &pos-environment
   DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  # Hardcoded, not ${DATABASE_POOL_SIZE:-2}: the VM .env writes 5/8 for the
+  # storefront, and interpolating the same names here would give the register
+  # that pool too. 2+3=5 max vs the storefront's 13.
+  DATABASE_POOL_SIZE: "2"
+  DATABASE_MAX_OVERFLOW: "3"
   REDIS_URL: redis://redis:6379/0
   APP_ENV: ${APP_ENV:-production}
   SECRET_KEY: ${SECRET_KEY}
@@ -375,20 +385,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      # Tuned for e2-micro: keep shared_buffers small to leave headroom for the app
+      # Tuned for e2-small: keep shared_buffers small to leave headroom for the app
       POSTGRES_INITDB_ARGS: ""
     # `max_connections` was 20, which left no room for a deploy; it is 30. Postgres
-    # reserves 3 slots for a superuser, so 27 are available to the app. The two API
-    # apps share one engine config (app/core/database.py): pool_size 5 (baseline) +
-    # max_overflow 8 (burst) = 13 max each. Baselines are 5 per container, so a
-    # rolling deploy that overlaps one extra API stays ~20 during overlap; the burst
-    # slots open on demand and the realistic peak (api ~13 + pos-api's handful +
-    # worker/psql/monitoring) fits under 27. max_overflow was raised (from 5) for
-    # burst headroom AFTER the 2026-08-30 pool-exhaustion incident, whose real cause
-    # was the aggregator sweep pinning connections idle across a 6-minute reauth
-    # wait (fixed in ingest), not too small a pool. Raising max_connections past 30
-    # needs the 320m cap raised too and a deliberate postgres recreate (the deploy
-    # only cuts over one idle API slot at a time) — do that with a VM resize, not on a 2GB box.
+    # reserves 3 slots for a superuser, so 27 are available to the app. Both APIs share
+    # app/core/database.py; compose then gives them different Settings: storefront
+    # pool_size 5 + max_overflow 8 = 13 max, register 2 + 3 = 5 max. A rolling
+    # deploy overlaps one extra slot of the colour being cut over; burst slots open
+    # on demand and the realistic peak (api ~13 + pos-api ≤5 + worker/psql/
+    # monitoring) fits under 27. max_overflow on the storefront was raised (from 5)
+    # for burst headroom AFTER the 2026-08-30 pool-exhaustion incident, whose real
+    # cause was the aggregator sweep pinning connections idle across a 6-minute
+    # reauth wait (fixed in ingest), not too small a pool. Raising max_connections
+    # past 30 needs the 320m cap raised too and a deliberate postgres recreate (the
+    # deploy only cuts over one idle API slot at a time) — do that with a VM
+    # resize, not on a 2GB box.
     #
     # Note for anyone editing the block below: it is a folded scalar, so a `#`
     # line inside it is not a comment — it becomes an argument to postgres.
@@ -443,13 +454,13 @@ services:
           memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
       # /ping is served only after lifespan (i18n seed on api). The seed used
       # to do one SELECT per key (~minutes on this VM); it is one table load
       # now. 60s covers import + seed; compose --wait still returns as soon
-      # as the probe passes.
+      # as the probe passes. 10s interval (was 5s for cutover wait).
       start_period: 60s
     depends_on:
       postgres:
@@ -483,13 +494,13 @@ services:
       resources:
         limits:
           # Deliberately tighter than the storefront API: this VM is an
-          # e2-micro and the register serves a handful of terminals, not the
+          # e2-small and the register serves a handful of terminals, not the
           # public. A cap Postgres can survive matters more than headroom the
           # till will never use.
           memory: 256m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 60s
@@ -527,7 +538,7 @@ services:
           memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 60s
@@ -560,7 +571,7 @@ services:
           memory: 256m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 60s
@@ -607,6 +618,10 @@ services:
     # April, nothing brought it back, and the certificate it renews expired on
     # 12 July — taking the whole HTTPS API down until it was noticed.
     restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 64m
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
@@ -621,9 +636,10 @@ services:
   # are mtgsig-signed in-page and cannot be replayed over httpx). Every other
   # channel, Deliveroo included, authenticates itself inside the API's daily sweep
   # and needs nothing here, so this is Keeta-only.
-  # `profiles: [worker]` keeps it OUT of the default `up`: this VM has under 1 GB
-  # of RAM, and a resident Chrome would OOM the box (that, not the IP, is why the
-  # README kept it off the app VM; email/password auth removed the IP concern).
+  # `profiles: [worker]` keeps it OUT of the default `up`: this VM is an
+  # e2-small (2 GB RAM), and a resident Chrome would OOM the box (that, not the
+  # IP, is why the README kept it off the app VM; email/password auth removed
+  # the IP concern).
   # A cron runs it one-shot once a day (`... run --rm aggregator-worker
   # warm-sessions --channel keeta`) — a plain cold start, not a keep-alive: it
   # hydrates Keeta's captured session, pulls the orders in-page and pushes them,
@@ -631,7 +647,10 @@ services:
   # headed run from a laptop.
   aggregator-worker:
     image: ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest
-    pull_policy: always
+    # deploy/cron must not GHCR-pull this 720×/day; first compose run after a
+    # bootstrap image change still pulls because the tag is missing or
+    # retagged locally.
+    pull_policy: missing
     profiles: ["worker"]
     # tini as PID 1. The entrypoint `exec xvfb-run …`, and xvfb-run run as PID 1
     # hangs on teardown (it backgrounds Xvfb and nothing reaps it), so the warm

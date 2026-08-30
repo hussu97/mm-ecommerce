@@ -65,6 +65,7 @@ from app.schemas.aggregator import (
     AggregatorSyncRunList,
     AggregatorSyncRunOut,
     AggregatorWorkerAccount,
+    AggregatorWorkerHealChannel,
     AggregatorWorkerSession,
     DeliverooFinancePush,
     DeliverooFinanceResult,
@@ -187,6 +188,23 @@ async def hydrate_sessions(
             "AGGREGATOR_CONFIG_ENCRYPTION_KEY is unset; cannot read a session"
         )
     return await session_store.list_worker_bundles(db)
+
+
+@router.get(
+    "/worker/needs-heal",
+    response_model=list[AggregatorWorkerHealChannel],
+)
+async def worker_needs_heal(
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Status-only session list for the VM heal cron.
+
+    Same push-token auth as GET `/worker/sessions`, but never decrypts a blob —
+    the cron only needs to know whether any channel is not live before it
+    starts a worker.
+    """
+    return await session_store.list_heal_channels(db)
 
 
 @router.put("/account", response_model=AggregatorAccountPublic)

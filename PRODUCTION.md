@@ -64,14 +64,14 @@ Internet
 └── storage.googleapis.com        → Google Cloud Storage (object storage)
 ```
 
-**GCP VM** (e2-micro, 1 vCPU shared, 1 GB RAM) runs:
+**GCP VM** (e2-small, 2 vCPU shared, 2 GB RAM) runs:
 - PostgreSQL 16
 - Redis 7 (response caching)
 - FastAPI (Uvicorn) — the storefront/admin API
 - FastAPI (Uvicorn) — the register API (`app.pos_main`), a narrower route table
 - Nginx (reverse proxy for `api.*` and `pos.*`)
 - Certbot (SSL for both)
-- 2 GB swapfile — an e2-micro has no headroom for a second app process
+- 2 GB swapfile — an e2-small has no headroom for a resident Chrome or a second API process overlapping a deploy
 
 **Vercel** hosts both Next.js apps — free Hobby plan, global CDN, automatic deployments on push to `main`.
 
@@ -83,7 +83,7 @@ Internet
 |---------|----------|------|-----------|
 | Web storefront (Next.js) | Vercel | Hobby (free) | $0 |
 | Admin panel (Next.js) | Vercel | Hobby (free, same account) | $0 |
-| Backend VM (e2-micro) | GCP Compute Engine | On-demand + sustained discount | ~$4 |
+| Backend VM (e2-small) | GCP Compute Engine | On-demand + sustained discount | ~$4 |
 | Boot disk (20 GB SSD) | GCP Persistent Disk | Standard SSD | ~$5 |
 | Database backups | GCP Cloud Storage | Standard, ~2 GB, 90-day lifecycle | ~$0.05 |
 | Boot-disk snapshots | GCP Compute | Daily, 14-day retention, incremental | ~$0.50 |
@@ -125,7 +125,7 @@ Internet
 gcloud compute instances create mm-backend \
   --project=melting-moments-cakes \
   --zone=me-central1-a \
-  --machine-type=e2-micro \
+  --machine-type=e2-small \
   --image-family=debian-12 \
   --image-project=debian-cloud \
   --boot-disk-size=20GB \
@@ -630,6 +630,8 @@ The `deploy.yml` workflow SSHes into the GCP VM on every push to `main`, writes 
 | `POSTGRES_PASSWORD` | strong password | Choose your own — must match `DATABASE_URL` |
 | `POSTGRES_DB` | `mm_ecommerce` | Choose your own — must match `DATABASE_URL` |
 | `DATABASE_URL` | `postgresql+asyncpg://<user>:<password>@postgres:5432/<db>` | Use `postgres` (container hostname), not `localhost` |
+| `DATABASE_POOL_SIZE` | `5` | SQLAlchemy baseline. Compose passes 5 to storefront `api` / `api-green` and **hardcodes 2** on `pos-api` / `pos-api-green` so a secret here cannot enlarge the register's idle pool |
+| `DATABASE_MAX_OVERFLOW` | `8` | Burst above the pool. Compose passes 8 to the storefront and **hardcodes 3** on the register |
 | `REDIS_URL` | `redis://redis:6379/0` | Use `redis` (container hostname), not `localhost` |
 
 #### Security
@@ -961,7 +963,7 @@ clock is UTC; without that line the job silently ran at 02:00 Dubai):
 warm-sessions --channel keeta`. A plain **cold start**, not a keep-alive — the
 container hydrates Keeta's captured session, pulls the orders in-page, pushes
 them, and exits, so headless Chrome is alive only for the ~30 s pull (the VM has
-under 1 GB RAM). 22:00 DXB lands the day's orders ~1 h before the API's
+2 GB RAM). 22:00 DXB lands the day's orders ~1 h before the API's
 `AGGREGATOR_RUN_HOUR_DXB=23` sales/finance/promote pass (same Dubai timeline —
 one cron for Keeta, API self-schedules an hour later). Check it: `sudo cat
 /etc/cron.d/aggregator-warm`, `journalctl -t aggregator-keeta-pull`, and
@@ -1410,4 +1412,4 @@ a long-lived container's json log grows without bound, which one had done to
 27 MB. That file applies to containers created *after* it is written, so a
 container that predates it keeps its uncapped log until recreated.
 
-**Scaling**: If the e2-micro becomes a bottleneck, upgrade in-place: `gcloud compute instances set-machine-type mm-backend --machine-type=e2-small --zone=me-central1-a` (requires VM stop/start).
+**Scaling**: Production is already an e2-small (2 GB). If that becomes a bottleneck, upgrade in-place: `gcloud compute instances set-machine-type mm-backend --machine-type=e2-medium --zone=me-central1-a` (requires VM stop/start). Raising Postgres `max_connections` past 30 belongs with that resize, not on the 2 GB box.

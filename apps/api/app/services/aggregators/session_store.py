@@ -383,6 +383,44 @@ async def mark_dead(
     await db.flush()
 
 
+def _expiry_passed(exp: datetime | None, now: datetime) -> bool:
+    """Whether a stored expiry column has elapsed. NULL is unknown, not expired."""
+    if exp is None:
+        return False
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    return exp <= now
+
+
+async def list_heal_channels(db: AsyncSession) -> list[dict]:
+    """Channel + status (+ expiry flags from columns). Never decrypts blobs.
+
+    The VM heal cron uses this to decide whether to start a worker at all.
+    Selecting only the status/expiry columns keeps the Fernet blobs off the
+    wire and out of this path — hydrate remains a separate, decrypting read.
+    """
+    rows = (
+        await db.execute(
+            select(
+                AggregatorSession.channel,
+                AggregatorSession.status,
+                AggregatorSession.token_expires_at,
+                AggregatorSession.cookie_expires_at,
+            ).order_by(AggregatorSession.channel)
+        )
+    ).all()
+    now = utcnow()
+    return [
+        {
+            "channel": channel,
+            "status": status,
+            "token_expired": _expiry_passed(token_exp, now),
+            "cookie_expired": _expiry_passed(cookie_exp, now),
+        }
+        for channel, status, token_exp, cookie_exp in rows
+    ]
+
+
 async def list_worker_bundles(db: AsyncSession) -> list[dict]:
     """Decrypted sessions for the worker to hydrate after a deploy/restart.
 

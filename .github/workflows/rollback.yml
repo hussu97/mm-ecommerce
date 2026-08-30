@@ -67,6 +67,8 @@ jobs:
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
+          DATABASE_POOL_SIZE=${{ secrets.DATABASE_POOL_SIZE || '5' }}
+          DATABASE_MAX_OVERFLOW=${{ secrets.DATABASE_MAX_OVERFLOW || '8' }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           SECRET_KEY=${{ secrets.SECRET_KEY }}
           ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}

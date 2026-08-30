@@ -465,6 +465,8 @@ jobs:
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB=${{ secrets.POSTGRES_DB }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
+          DATABASE_POOL_SIZE=${{ secrets.DATABASE_POOL_SIZE || '5' }}
+          DATABASE_MAX_OVERFLOW=${{ secrets.DATABASE_MAX_OVERFLOW || '8' }}
           REDIS_URL=${{ secrets.REDIS_URL }}
           SECRET_KEY=${{ secrets.SECRET_KEY }}
           ACCESS_TOKEN_EXPIRE_MINUTES=${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
@@ -631,10 +633,11 @@ jobs:
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
           # Do not pull the ~4.7GB Playwright image here. It is not on the
-          # request path; `aggregator-worker` has pull_policy: always, so the
-          # next cron tick fetches a new :latest. Pulling it inline added
-          # 4.5 minutes to API deploys that happened to change bootstrap
-          # sources (or, previously, deploy.yml).
+          # request path; aggregator-worker uses pull_policy: missing so
+          # deploy/cron do not GHCR-pull it 720×/day. A bootstrap image
+          # change still pulls on the next compose run (tag missing or
+          # retagged locally). Pulling it inline added 4.5 minutes to API
+          # deploys that happened to change bootstrap sources.
           if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
             echo "Bootstrap image pushed to GHCR — cron will pull it on the next tick."
           else

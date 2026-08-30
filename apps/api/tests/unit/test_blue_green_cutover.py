@@ -59,6 +59,13 @@ def test_nginx_includes_runtime_upstreams_and_has_no_inline_upstream():
     assert not re.search(r"^\s*upstream\s+\w+", text, re.M)
 
 
+def test_nginx_runs_one_worker_on_the_e2_small():
+    """This nginx only proxies api+pos; auto forked a worker per shared vCPU."""
+    text = NGINX_CONF.read_text()
+    assert re.search(r"^worker_processes\s+1\s*;", text, re.M)
+    assert not re.search(r"^worker_processes\s+auto\s*;", text, re.M)
+
+
 def test_deploy_yml_gates_nginx_rebuild_on_path_filter():
     text = DEPLOY_YML.read_text()
     assert "needs.changes.outputs.nginx" in text
@@ -171,6 +178,41 @@ def test_cutover_flock_is_writable_by_the_deploy_user():
     assert "/tmp/mm-aggregator-warm.lock" in cron
     assert "/var/lock/aggregator-warm.lock" not in script
     assert "/var/lock/aggregator-warm.lock" not in cron
+
+
+def test_aggregator_warm_cron_three_clocks_and_curl_gated_heal():
+    """Keeta 3h, 22:15 noon+talabat (no Careem), 2min curl-gated heal."""
+    cron = (
+        ROOT / "apps" / "aggregator-bootstrap" / "deploy" / "aggregator-warm.cron"
+    ).read_text()
+    jobs = [ln for ln in cron.splitlines() if ln and not ln.startswith("#")]
+    keeta = [ln for ln in jobs if ln.startswith("0 */3")]
+    antibot = [ln for ln in jobs if ln.startswith("15 22")]
+    heal = [ln for ln in jobs if ln.startswith("*/2")]
+    assert len(keeta) == 1, keeta
+    assert "warm-sessions --channel keeta" in keeta[0]
+    assert "-w 1200" in keeta[0]
+    assert "/tmp/mm-aggregator-warm.lock" in keeta[0]
+    assert len(antibot) == 1, antibot
+    assert "noon" in antibot[0]
+    assert "talabat" in antibot[0]
+    assert "careem" not in antibot[0]
+    assert "warm-sessions" in antibot[0]
+    assert "-w 1200" in antibot[0]
+    assert len(heal) == 1, heal
+    assert "/api/v1/aggregators/worker/needs-heal" in heal[0]
+    assert "curl" in heal[0]
+    assert "heal-sessions" in heal[0]
+    assert "-w 100" in heal[0]
+    assert "/tmp/mm-aggregator-warm.lock" in heal[0]
+    assert "/var/lock/aggregator-warm.lock" not in heal[0]
+    # Gated: compose run only inside the curl/python `if`, not unconditional.
+    assert "if " in heal[0]
+    assert "then" in heal[0]
+    # Token is grepped, never echoed.
+    assert "AGGREGATOR_SESSION_PUSH_TOKEN" in heal[0]
+    assert "echo $token" not in heal[0]
+    assert 'echo "$token"' not in heal[0]
 
 
 def test_deploy_yml_runs_tests_and_image_build_as_sibling_jobs():
