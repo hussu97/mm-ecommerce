@@ -112,8 +112,11 @@ async def login_deliveroo(
 # defeated.
 
 TALABAT_LOGIN_URL = "https://partner-app.talabat.com/login"
-TALABAT_OTP_SENDER = "no reply"
-TALABAT_OTP_SUBJECT = "partner portal"
+#: Fallbacks only — the mailbox recipe's own filters win (see login_talabat).
+#: The sender is hyphenated (`no-reply@…`); the old "no reply" with a space never
+#: substring-matched it, which is why the unattended OTP login silently failed.
+TALABAT_OTP_SENDER = "no-reply@partner-app.talabat.com"
+TALABAT_OTP_SUBJECT = "Partner Portal"
 
 
 async def _talabat_human_verification_present(page) -> bool:
@@ -229,10 +232,17 @@ async def login_talabat(
         return  # no 2FA step — already through
 
     logger.info("talabat: 2FA step reached, polling the Graph mailbox for the OTP")
+    # PREFER the mailbox recipe's own sender/subject filters, exactly like
+    # login_careem — the recipe holds the real, maintainable values
+    # (`no-reply@partner-app.talabat.com` / "Your code to access Partner Portal").
+    # The module constants were a stale fallback: "no reply" (a SPACE) never
+    # substring-matches "no-reply" (a HYPHEN), so the OTP mail was silently never
+    # matched and every unattended login timed out at the 2FA step.
+    box = mailbox or {}
     try:
         otp = await wait_for_otp(
-            sender_filter=TALABAT_OTP_SENDER,
-            subject_filter=TALABAT_OTP_SUBJECT,
+            sender_filter=str(box.get("sender_filter") or "") or TALABAT_OTP_SENDER,
+            subject_filter=str(box.get("subject_filter") or "") or TALABAT_OTP_SUBJECT,
             since=otp_since,
             timeout=90,
             mailbox=mailbox,
