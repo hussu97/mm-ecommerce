@@ -47,6 +47,12 @@ class _Conn:
             return self.grants
         return None
 
+    async def execute(self, stmt, params=None):
+        # The blocking acquire (`pg_advisory_lock`) returns void, so it is run via
+        # execute rather than scalar. It always "succeeds" (it waits in Postgres).
+        self.statements.append(str(stmt))
+        return None
+
     async def commit(self):
         self.commits += 1
 
@@ -134,6 +140,41 @@ async def test_losing_the_race_releases_nothing(monkeypatch):
         assert mine is False
 
     assert not any("pg_advisory_unlock" in s for s in engine.handed_out[0].statements)
+
+
+@pytest.mark.asyncio
+async def test_wait_blocks_for_the_lock_and_always_holds(monkeypatch):
+    """`wait=True` must ALWAYS acquire (blocking `pg_advisory_lock`, not the
+    try-lock) and yield True — for a caller that must run its critical section, not
+    skip it. Even a connection that would have refused a try-lock (`grants=False`)
+    holds under wait, because the blocking acquire waits in Postgres rather than
+    returning false."""
+    engine = _Engine(grants=False)
+    monkeypatch.setattr(advisory_lock, "engine", engine)
+
+    async with advisory_lock.held(KEY, name="test", wait=True) as mine:
+        assert mine is True
+
+    conn = engine.handed_out[0]
+    assert any("pg_advisory_lock" in s for s in conn.statements)
+    assert not any("pg_try_advisory_lock" in s for s in conn.statements)
+    # It still releases on the same connection on the way out.
+    assert any("pg_advisory_unlock" in s for s in conn.statements)
+
+
+def test_run_range_promote_and_reconcile_hold_the_sweep_locks():
+    """A manual range run must promote/reconcile under the SAME advisory locks the
+    scheduled sweeps hold, or it deadlocks against the keeta-push / hourly promote
+    on the shared `aggregator_order` rows (2026-08-30). Guards the shape."""
+    import inspect
+
+    from app.services.aggregators import ingest
+
+    source = inspect.getsource(ingest._run_range_channel)
+    assert "advisory_lock.held(" in source
+    assert "_PROMOTE_LOCK_KEY" in source
+    assert "_RECONCILE_LOCK_KEY" in source
+    assert "wait=True" in source
 
 
 # ── the callers ───────────────────────────────────────────────────────────────

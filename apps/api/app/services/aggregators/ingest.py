@@ -1348,16 +1348,29 @@ async def _run_range_channel(
                     logger.exception("aggregator %s range %s failed", channel, mode)
                     break
 
+    # Promote + reconcile under the SAME advisory locks the scheduled sweeps hold
+    # (`sweep_promote_once`/`sweep_reconcile_once`), so a manual range run and the
+    # keeta-push / hourly promote never update the same `aggregator_order` rows at
+    # once — that raced into a Postgres deadlock (2026-08-30). `wait=True`: a manual
+    # run MUST promote, not skip like the try-lock sweeps, so it blocks for the lock
+    # rather than no-opping. Lock order is range→promote→reconcile here and the
+    # sweeps take only their own, so there is no circular wait.
     if promote:
         try:
-            await promote_mod.promote_channel(db, channel)
+            async with advisory_lock.held(
+                _PROMOTE_LOCK_KEY, name="aggregator promote (range)", wait=True
+            ):
+                await promote_mod.promote_channel(db, channel)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"promote: {exc}")
             logger.exception("aggregator %s range promote failed", channel)
     if reconcile:
         try:
-            await link_statements_to_payouts(db, channel)
-            await reconcile_mod.reconcile_channel(db, channel)
+            async with advisory_lock.held(
+                _RECONCILE_LOCK_KEY, name="aggregator reconcile (range)", wait=True
+            ):
+                await link_statements_to_payouts(db, channel)
+                await reconcile_mod.reconcile_channel(db, channel)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"reconcile: {exc}")
             logger.exception("aggregator %s range reconcile failed", channel)

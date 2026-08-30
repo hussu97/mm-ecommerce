@@ -51,19 +51,30 @@ logger = logging.getLogger(__name__)
 __all__ = ["held"]
 
 _ACQUIRE = text("SELECT pg_try_advisory_lock(:key)")
+_ACQUIRE_WAIT = text("SELECT pg_advisory_lock(:key)")
 _RELEASE = text("SELECT pg_advisory_unlock(:key)")
 
 
 @asynccontextmanager
-async def held(key: int, *, name: str) -> AsyncIterator[bool]:
+async def held(key: int, *, name: str, wait: bool = False) -> AsyncIterator[bool]:
     """
     Yield whether this worker got the lock, and release it on the way out.
 
     `False` is an ordinary outcome, not a failure: it means another worker is
     already inside the sweep. Callers do nothing and wait for the next tick.
+
+    With `wait=True` the acquire BLOCKS (`pg_advisory_lock`) until the lock is
+    free instead of returning `False` — for a caller that must run its critical
+    section rather than skip it (a manual re-promote the user asked for), and to
+    serialise it with the try-lock holders so they don't deadlock on the same
+    rows. It then always yields `True`.
     """
     async with engine.connect() as conn:
-        got = bool(await conn.scalar(_ACQUIRE, {"key": key}))
+        if wait:
+            await conn.execute(_ACQUIRE_WAIT, {"key": key})
+            got = True
+        else:
+            got = bool(await conn.scalar(_ACQUIRE, {"key": key}))
         # Ends the transaction without giving the connection back — which is the
         # difference between `Connection` and `Session`, and the reason this
         # module exists.
