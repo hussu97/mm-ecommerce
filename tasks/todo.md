@@ -239,10 +239,10 @@ Manual runs work; the hourly autonomous refresh 401s — an architecture problem
 - [x] `docker-entrypoint.sh`: heal-sessions now runs under xvfb (heal can re-login anti-bot)
 - [x] `deploy/aggregator-warm.cron`: `timeout -k 30` around every `docker compose run` (reap hangs, free flock); single shared lock kept (1 Chrome = fits RAM)
 
-## Phase 1 — Leader election [A]
-- [ ] `ingest.py`: `_SCHEDULER_LEADER_LOCK_KEY` + `run_aggregator_schedulers_forever()` (reuse advisory_lock.held, lifetime hold)
-- [ ] `app_setup.py`: wire supervisor once; finally-cancel children (8s shutdown cap)
-- [ ] unit test (mock advisory_lock.held False→True)
+## Phase 1 — Leader election [A] — DONE (commit)
+- [x] `ingest.py`: `_SCHEDULER_LEADER_LOCK_KEY` (…480A) + `run_aggregator_schedulers_forever()` (reuse advisory_lock.held lifetime hold; poll = `_LEADER_POLL_SECONDS` module constant, no new env var)
+- [x] `app_setup.py`: wire the single supervisor; it finally-cancels its children (8s shutdown cap preserved)
+- [x] 3 unit tests (leader runs both loops / standby never ticks / standby→leader promotion)
 
 ## Phase 2 — Deliveroo mint fix [A]
 - [ ] remove `_DEFAULT_ORG_ID`/`_DEFAULT_RESTAURANT_IDS` + fallbacks; require account/branch-map, raise if absent

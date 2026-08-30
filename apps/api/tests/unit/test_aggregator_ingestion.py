@@ -121,6 +121,8 @@ def test_crypto_passes_none_through(encryption_key):
 
 
 # ── daily scheduler (wall-clock, catch-up, retry) ────────────────────────────
+import asyncio  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
 from zoneinfo import ZoneInfo  # noqa: E402
 
 from app.services.aggregators import ingest  # noqa: E402
@@ -205,6 +207,97 @@ async def _async_true():
 
 async def _async_false():
     return False
+
+
+# ── scheduler leader election (only one API slot ticks) ───────────────────────
+
+
+def _patch_child_loops(monkeypatch, started):
+    """Replace the two forever-loops with markers that run until cancelled."""
+
+    async def fake_daily():
+        started.append("daily")
+        await asyncio.Event().wait()
+
+    async def fake_rolling():
+        started.append("rolling")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(ingest, "run_scheduler_forever", fake_daily)
+    monkeypatch.setattr(ingest, "run_sales_refresh_scheduler_forever", fake_rolling)
+
+
+async def test_supervisor_runs_both_loops_when_it_wins_leadership(monkeypatch):
+    """The slot that acquires the leader lock starts BOTH schedulers."""
+    started: list[str] = []
+    _patch_child_loops(monkeypatch, started)
+
+    @asynccontextmanager
+    async def always_leader(key, *, name, wait=False):
+        yield True
+
+    monkeypatch.setattr(ingest.advisory_lock, "held", always_leader)
+
+    task = asyncio.create_task(ingest.run_aggregator_schedulers_forever())
+    await asyncio.sleep(0.05)  # let it acquire and spawn the children
+    assert set(started) == {"daily", "rolling"}
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_supervisor_stands_by_and_never_ticks_when_not_leader(monkeypatch):
+    """A slot that loses the lock runs NEITHER loop — it only polls. This is what
+    stops a stale blue/green slot from 401ing and re-flagging sessions."""
+    started: list[str] = []
+    _patch_child_loops(monkeypatch, started)
+
+    @asynccontextmanager
+    async def never_leader(key, *, name, wait=False):
+        yield False
+
+    monkeypatch.setattr(ingest.advisory_lock, "held", never_leader)
+
+    polls = {"n": 0}
+
+    async def stop_after_one_poll(_seconds):
+        polls["n"] += 1
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(ingest.asyncio, "sleep", stop_after_one_poll)
+
+    with pytest.raises(asyncio.CancelledError):
+        await ingest.run_aggregator_schedulers_forever()
+    assert started == []  # never started a scheduler
+    assert polls["n"] == 1  # it stood by and re-polled
+
+
+async def test_supervisor_promotes_from_standby_to_leader(monkeypatch):
+    """A standby that later wins the lock (the old leader died) starts the loops."""
+    started: list[str] = []
+    _patch_child_loops(monkeypatch, started)
+
+    real_sleep = asyncio.sleep  # capture before patching to avoid recursion
+    verdicts = iter([False, True])
+
+    @asynccontextmanager
+    async def standby_then_leader(key, *, name, wait=False):
+        yield next(verdicts, True)
+
+    async def quick_poll(_seconds):
+        await real_sleep(0)
+
+    monkeypatch.setattr(ingest.advisory_lock, "held", standby_then_leader)
+    monkeypatch.setattr(ingest.asyncio, "sleep", quick_poll)
+
+    task = asyncio.create_task(ingest.run_aggregator_schedulers_forever())
+    await real_sleep(0.05)
+    assert set(started) == {"daily", "rolling"}  # promoted and ticking
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 async def test_deliveroo_augments_session_from_db_not_the_stale_constant(monkeypatch):

@@ -213,25 +213,23 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # The aggregator ingest: once a day at AGGREGATOR_RUN_HOUR_DXB it
             # mirrors each marketplace's ledger (sales + statements/payouts) into
             # the aggregator_* tables over httpx, replaying a browser-captured
-            # session, and reconciles. One wall-clock scheduler with a boot
-            # catch-up, so a redeploy can never skip the daily run the way the old
-            # sleep-first tick loops did. Storefront only; each sweep holds its own
-            # advisory lock so a second copy no-ops.
+            # session, and reconciles; plus a rolling sales-only refresh every
+            # AGGREGATOR_SALES_REFRESH_MINUTES so values that settle after an order
+            # is first seen (a Talabat commission landing hours later) are picked up
+            # within the hour. Both schedulers are wall-clock anchored with a boot
+            # catch-up, so a redeploy can never skip a run. Storefront only.
+            #
+            # A single LEADER-ELECTED supervisor owns both loops: `api` and
+            # `api-green` both boot it, but only the slot holding the scheduler-leader
+            # advisory lock actually ticks — so a blue/green cutover (two slots up at
+            # once) never runs two schedulers, and a stale slot with wrong env cannot
+            # keep 401ing and re-flagging sessions in the background.
             if settings.AGGREGATOR_INGEST_ENABLED:
                 from app.services.aggregators import ingest as aggregator_ingest
 
                 background.append(
-                    asyncio.create_task(aggregator_ingest.run_scheduler_forever())
-                )
-                # …and a more frequent sales-only refresh (every
-                # AGGREGATOR_SALES_REFRESH_MINUTES) over a short rolling window, so
-                # values that settle after an order is first seen — a Talabat
-                # commission landing hours later — are picked up within the hour
-                # rather than at the next nightly pass. Shares the daily pass's
-                # sales lock, so the two never scrape the same session at once.
-                background.append(
                     asyncio.create_task(
-                        aggregator_ingest.run_sales_refresh_scheduler_forever()
+                        aggregator_ingest.run_aggregator_schedulers_forever()
                     )
                 )
 

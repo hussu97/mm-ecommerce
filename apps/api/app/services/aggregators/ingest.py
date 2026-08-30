@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from contextlib import suppress
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -97,6 +98,16 @@ __all__ = [
 _SALES_LOCK_KEY = 0x6D6D_4241_5443_4805
 _FINANCE_LOCK_KEY = 0x6D6D_4241_5443_4806
 
+#: "mmBATCH" + 10 (…480A). Leader election for the SCHEDULER LOOPS, not a single
+#: sweep. Both `api` and `api-green` boot the supervisor, but only the process
+#: holding this lock runs the daily + rolling-sales schedulers; the rest stand by
+#: and poll. Held for the life of the leader (a dedicated connection, see
+#: `advisory_lock`), so a blue/green cutover hands leadership over for free: the old
+#: slot's container dies, its connection drops, Postgres releases the lock, the
+#: standby takes it on its next poll. The per-sweep locks above still guard the
+#: work; this stops a stale slot from ticking (401ing and re-flagging) at all.
+_SCHEDULER_LEADER_LOCK_KEY = 0x6D6D_4241_5443_480A
+
 #: The shop's clock. The daily pass fires at `AGGREGATOR_RUN_HOUR_DXB` local time.
 _DUBAI = ZoneInfo("Asia/Dubai")
 
@@ -107,6 +118,12 @@ _DUBAI = ZoneInfo("Asia/Dubai")
 #: resilience policy, not an operational knob.
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 300
+
+#: How often a standby API slot re-polls for scheduler leadership. A resilience
+#: knob, not an operational dial (same rationale as the retry constants above), so
+#: it stays a module constant rather than an env var — a standby promotes within
+#: this many seconds of the leader dying on a blue/green cutover.
+_LEADER_POLL_SECONDS = 30
 
 #: The channels with a working httpx provider. Extended as each lands; a channel
 #: absent here is simply never swept, no special case.
@@ -2039,3 +2056,63 @@ async def run_scheduler_forever() -> None:
             raise
         except Exception:  # noqa: BLE001 — one bad day must not stop them all
             logger.exception("aggregator daily run failed")
+
+
+async def run_aggregator_schedulers_forever() -> None:
+    """Run the two aggregator schedulers on exactly ONE API slot at a time.
+
+    Both `api` and `api-green` boot this supervisor, but only the process that wins
+    `_SCHEDULER_LEADER_LOCK_KEY` runs `run_scheduler_forever` (daily) and
+    `run_sales_refresh_scheduler_forever` (rolling sales); the others stand by and
+    re-poll every `_LEADER_POLL_SECONDS`. A blue/green cutover hands
+    leadership over for free — when the old leader's container dies its connection
+    drops, Postgres releases the session lock, and a standby acquires it on its next
+    poll.
+
+    Before this, both slots ran the loops and only the per-sweep advisory locks
+    stopped double *work*; a stale slot with wrong env still ticked every interval,
+    hitting 401s and re-flagging sessions `needs_bootstrap`. This makes only the
+    leader tick at all.
+
+    Cancellation-safe: on shutdown the supervisor cancels its child loops and
+    re-raises, so the lifespan's bounded `wait_for` still applies.
+    """
+    poll = max(_LEADER_POLL_SECONDS, 1)
+    announced_standby = False
+    while True:
+        try:
+            async with advisory_lock.held(
+                _SCHEDULER_LEADER_LOCK_KEY, name="aggregator scheduler leader"
+            ) as leader:
+                if not leader:
+                    if not announced_standby:
+                        logger.info(
+                            "aggregator scheduler: another slot holds leadership — "
+                            "standing by (re-poll every %ss)",
+                            poll,
+                        )
+                        announced_standby = True
+                    await asyncio.sleep(poll)
+                    continue
+                announced_standby = False
+                logger.info("aggregator scheduler: leadership acquired on this slot")
+                children = [
+                    asyncio.create_task(run_scheduler_forever()),
+                    asyncio.create_task(run_sales_refresh_scheduler_forever()),
+                ]
+                try:
+                    # The child loops never return on their own; this blocks until
+                    # one raises (re-elect) or the supervisor is cancelled (shutdown).
+                    await asyncio.gather(*children)
+                finally:
+                    for child in children:
+                        child.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await asyncio.gather(*children, return_exceptions=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a contention/DB blip must not end leadership polling
+            logger.exception(
+                "aggregator scheduler supervisor error; re-polling for leadership"
+            )
+            await asyncio.sleep(poll)

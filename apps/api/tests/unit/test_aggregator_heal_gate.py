@@ -1,4 +1,12 @@
-"""VM heal-gate: entrypoint skips Xvfb for heal-sessions; needs-heal is status-only."""
+"""VM heal-gate: entrypoint wraps heal-sessions in Xvfb; needs-heal is status-only.
+
+heal-sessions MUST have a display: its auto-relogin spawns headed Chrome, which
+without an X server never opens its debug port, so the every-2-min heal could
+detect a dead anti-bot channel but never re-login it. (An earlier revision
+deliberately skipped Xvfb for heal to save the per-tick X cost — but that made
+autonomous re-login impossible, so heal is now wrapped like the other headed
+commands. The curl needs-heal gate still keeps healthy ticks from starting one.)
+"""
 
 from __future__ import annotations
 
@@ -27,7 +35,7 @@ def _noncomment(text: str) -> str:
     )
 
 
-def test_entrypoint_xvfb_wraps_headed_commands_only():
+def test_entrypoint_xvfb_wraps_headed_commands():
     text = _noncomment(ENTRYPOINT.read_text())
     assert "exec xvfb-run" in text
     assert 'exec aggregator-bootstrap "$@"' in text
@@ -37,22 +45,22 @@ def test_entrypoint_xvfb_wraps_headed_commands_only():
     assert "warm-sessions" in pattern
     assert "login" in pattern
     assert "bootstrap" in pattern
-    assert "heal-sessions" not in pattern
-    # Direct exec (no xvfb) is the default arm — heal-sessions lands there.
+    # heal-sessions is now a headed arm: its auto-relogin needs a display.
+    assert "heal-sessions" in pattern
+    # Exactly one xvfb arm and one direct-exec default arm.
     assert text.count("exec xvfb-run") == 1
     assert text.count('exec aggregator-bootstrap "$@"') == 1
 
 
-def test_entrypoint_heal_sessions_does_not_wrap_xvfb():
-    """heal-sessions is not a headed case arm, so it execs the CLI with no Xvfb."""
-    raw = ENTRYPOINT.read_text()
-    text = _noncomment(raw)
-    assert "heal-sessions" not in text
-    # Always-xvfb form is gone: xvfb-run is inside the headed case only.
+def test_entrypoint_heal_sessions_wraps_xvfb():
+    """heal-sessions sits in the Xvfb-wrapped case arm, not the direct-exec default,
+    so its headed auto-relogin has a display to open Chrome against."""
+    text = _noncomment(ENTRYPOINT.read_text())
     lines = [ln.strip() for ln in text.splitlines()]
     xvfb_idx = next(i for i, ln in enumerate(lines) if "xvfb-run" in ln)
-    # The xvfb exec sits under the headed `case` arm, after login|warm-sessions.
+    # The case pattern (with heal-sessions) precedes the xvfb exec it selects.
     before = "\n".join(lines[: xvfb_idx + 1])
+    assert "heal-sessions" in before
     assert "warm-sessions" in before
     assert "login" in before
 
