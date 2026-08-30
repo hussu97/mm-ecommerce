@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from aggregator_bootstrap.session_capture import (
     build_session,
     bundle_browser_state,
+    cookie_expiry_from_playwright,
     earliest_token_expiry,
     jwt_expiry,
     split_browser_state,
@@ -128,3 +131,38 @@ def test_bundle_round_trips():
     playwright, extra = split_browser_state(bundled)
     assert extra["https://example.com"]["k"] == "v"
     assert playwright["cookies"] == []
+
+
+# ── cookie-expiry liveness gate (the careem "session_not_live" skip fix) ─────
+def _state(*cookies):
+    return {"cookies": [{"name": n, "expires": e} for n, e in cookies]}
+
+
+def test_cookie_expiry_ignores_rotating_analytics_and_cf_bm():
+    """Careem's `_gat` (1-min) and `__cf_bm` (30-min, re-issued every request) must
+    not drag the session's expiry down — the real SESSION cookie (~35h) governs."""
+    now = datetime.now(timezone.utc).timestamp()
+    state = _state(
+        ("_gat", now + 60),  # 1 min — Google Analytics, rotates
+        ("__cf_bm", now + 1800),  # 30 min — Cloudflare bot, auto-reissued
+        ("_ga_ABC", now + 63072000),  # 2 yr — analytics
+        ("SESSION", now + 126000),  # ~35 h — the real auth cookie
+    )
+    exp = cookie_expiry_from_playwright(state)
+    # Should reflect SESSION (~35h), not the 1-min _gat.
+    assert exp is not None
+    assert (exp.timestamp() - now) > 100000  # well beyond the junk cookies
+
+
+def test_cookie_expiry_still_prefers_real_antibot_cookie():
+    """Talabat/noon path is unchanged: the anti-bot cookie still wins even when a
+    longer-lived junk cookie is present."""
+    now = datetime.now(timezone.utc).timestamp()
+    state = _state(
+        ("_ga", now + 63072000),  # 2 yr junk (ignored)
+        ("_px3", now + 3600),  # 1 h anti-bot (governs)
+        ("SESSION", now + 126000),
+    )
+    exp = cookie_expiry_from_playwright(state)
+    assert exp is not None
+    assert abs((exp.timestamp() - (now + 3600))) < 5  # the _px3 hour

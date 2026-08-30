@@ -466,6 +466,70 @@ async def _first_page(opened: _Opened):
     return await opened.context.new_page()
 
 
+#: Careem business surfaces whose SPA fires an authenticated `/api/saturn-ext/`
+#: call. On a fresh page load the SPA first runs its OIDC code-exchange (from the
+#: session cookies) to mint the in-memory identity token, THEN calls the partner
+#: API with it — so the Authorization header lands a few seconds after the page
+#: commits, not on first paint. We reload across a couple of surfaces so a
+#: bearer-carrying call actually fires. Verified on the VM: the finances page
+#: fires `/v1/partners/me` and `/v1/admin/merchants/{id}`, each with the bearer.
+_CAREEM_BEARER_SURFACES = (
+    "https://partners.careem.com/saturn-ext/merchant/finances",
+    "https://partners.careem.com/saturn-ext/merchant/orders",
+    "https://partners.careem.com/home",
+)
+
+
+async def _await_careem_bearer(
+    page, captured: dict[str, str], *, rounds: int = 6
+) -> None:
+    """Wait until a saturn-ext request carrying the Authorization bearer has been
+    seen, reloading business surfaces between polls.
+
+    `captured` is filled by the page's own `request` listener; this only drives
+    the navigations that make the authenticated call fire and returns as soon as
+    the bearer is in hand. It is shared by the warm (`probe_channel`) and the
+    login (`login_with_account`) paths — the login path used to give the exchange
+    a single fixed `sleep(4)` and captured nothing, which is why a reauth pushed a
+    careem session with an empty `header_profile` that then 401'd on every ingest.
+    """
+    for i in range(rounds):
+        # Check before sleeping: the caller already loaded a surface and waited,
+        # so the bearer is often in hand on entry — don't burn a 4s tick on it.
+        if captured.get("authorization"):
+            return
+        await asyncio.sleep(4)
+        if captured.get("authorization"):
+            return
+        try:
+            await page.goto(
+                _CAREEM_BEARER_SURFACES[i % len(_CAREEM_BEARER_SURFACES)],
+                wait_until="commit",
+                timeout=30_000,
+            )
+        except Exception:  # noqa: BLE001 — SPA lazy nav; keep polling
+            pass
+
+
+def _assert_careem_bearer_captured(channel: str, captured: dict[str, str]) -> None:
+    """Refuse to push a careem session that carries no partner bearer.
+
+    A careem session replays cookies + the Authorization bearer + the
+    `application`/`meta`/`uuid`/… header profile — cookies alone 403 and the
+    bearer alone 401 (verified live). If capture missed the bearer, the session
+    would be pushed `live` and silently 401 on every ingest, and — because a live
+    session with no known expiry never looks unhealthy — heal-sessions would never
+    re-touch it. Raising instead leaves it `needs_bootstrap`, so the 2-minute heal
+    keeps retrying until a capture actually lands the bearer.
+    """
+    if channel == "careem" and "authorization" not in captured:
+        raise NeedsHumanLogin(
+            "careem: captured a session with no partner bearer — the "
+            "/api/saturn-ext/ call never fired its Authorization header. Not "
+            "pushing it live; the reauth cron will retry."
+        )
+
+
 async def probe_channel(channel: str) -> ProbeResult:
     """Load the channel's probe page and return cookies, headers, persisted state.
 
@@ -487,28 +551,23 @@ async def probe_channel(channel: str) -> ProbeResult:
                 if probe.match not in request.url:
                     return
                 headers = request.headers
-                # Careem: the finances page fires an OIDC identity-token call
-                # (aud=com.careem.internal) AND the real partner-API calls, which
-                # carry a business-audience bearer. Log every saturn-ext request's
-                # aud+url to identify them, and prefer capturing a NON-identity
-                # (partner-API) bearer over the identity one.
+                # Careem's partner API carries ONE bearer — the OIDC identity
+                # token (aud=com.careem.internal). There is NO separate
+                # "partner-API" token: every /api/saturn-ext/ call (scope, billing,
+                # partners/me, …) sends that same token — verified live in the
+                # portal. The old code preferred a non-identity bearer that does
+                # not exist, so it never settled and the reload loop below spun its
+                # whole budget. Log the aud for observability; capture below.
                 if channel == "careem" and "authorization" in headers:
-                    aud = _bearer_aud(headers.get("authorization", ""))
                     logger.info(
                         "careem saturn-ext: aud=%s %s %s",
-                        aud,
+                        _bearer_aud(headers.get("authorization", "")),
                         request.method,
                         request.url[:120],
                     )
-                    if aud and aud != "com.careem.internal":
-                        captured.clear()
-                        captured.update(headers)
-                    elif "authorization" not in captured:
-                        captured.update(headers)  # provisional identity token
-                    return
                 if "authorization" in captured:
                     return
-                # Non-careem: capture the first match, preferring a bearer one.
+                # Capture the first match, preferring one that carries the bearer.
                 if not captured or "authorization" in headers:
                     captured.clear()
                     captured.update(headers)
@@ -545,33 +604,13 @@ async def probe_channel(channel: str) -> ProbeResult:
                     str(exc).splitlines()[0][:120],
                 )
             await asyncio.sleep(3)
-            # Careem's finances page bounces through an OAuth code-exchange
-            # (`/saturn-ext/auth/identity?code=…`) before the authenticated
-            # `/api/saturn-ext/` call fires, so the Authorization header the
-            # provider replays is often not captured on the first settle. Give the
-            # exchange a moment and re-load the probe page until the header lands.
+            # Careem's SPA mints its bearer via an OIDC code-exchange (from the
+            # session cookies) AFTER the page loads, then calls /api/saturn-ext/
+            # with it — so the Authorization header lands a few seconds after the
+            # page commits, not on first paint. Wait for it (reloading business
+            # surfaces) before snapshotting.
             if channel == "careem":
-                # Reload until we hold a PARTNER-API bearer, not just the OIDC
-                # identity token the exchange call carries. Try a couple of known
-                # business surfaces so a saturn-ext API call actually fires.
-                surfaces = [
-                    probe.probe_url,
-                    "https://partners.careem.com/saturn-ext/merchant/orders",
-                    "https://partners.careem.com/home",
-                ]
-                for i in range(6):
-                    await asyncio.sleep(4)
-                    cap_aud = _bearer_aud(captured.get("authorization", ""))
-                    if cap_aud and cap_aud != "com.careem.internal":
-                        break
-                    try:
-                        await page.goto(
-                            surfaces[i % len(surfaces)],
-                            wait_until="commit",
-                            timeout=30_000,
-                        )
-                    except Exception:  # noqa: BLE001 — SPA lazy nav; keep polling
-                        pass
+                await _await_careem_bearer(page, captured)
                 logger.info(
                     "careem: captured token aud=%s",
                     _bearer_aud(captured.get("authorization", "")),
@@ -580,6 +619,7 @@ async def probe_channel(channel: str) -> ProbeResult:
         finally:
             await opened.close()
 
+    _assert_careem_bearer_captured(channel, result.request_headers)
     if _url_looks_logged_out(result.final_url):
         raise NeedsHumanLogin(
             f"{channel} session is stale (landed on {result.final_url}). "
@@ -679,6 +719,12 @@ async def login_interactive(channel: str) -> ProbeResult:
                     timeout=max(settings.PROBE_TIMEOUT_MS, 90_000),
                 )
                 await asyncio.sleep(4)
+                # Careem's bearer is minted by an OIDC exchange that finishes a few
+                # seconds after the finances page loads; a single fixed sleep here
+                # captured nothing, so a reauth pushed an empty header_profile that
+                # 401'd forever. Wait for the bearer, same as the warm path.
+                if channel == "careem":
+                    await _await_careem_bearer(page, captured)
                 if await page_looks_authenticated(channel, page):
                     result = await _snapshot_context(channel, context, page, captured)
                 else:
@@ -696,6 +742,7 @@ async def login_interactive(channel: str) -> ProbeResult:
     finally:
         _stop_chrome(chrome)
 
+    _assert_careem_bearer_captured(channel, result.request_headers)
     print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
     return result
 
@@ -891,6 +938,12 @@ async def login_with_account(
                     timeout=max(settings.PROBE_TIMEOUT_MS, 90_000),
                 )
                 await asyncio.sleep(4)
+                # Careem's bearer is minted by an OIDC exchange that finishes a few
+                # seconds after the finances page loads; a single fixed sleep here
+                # captured nothing, so a reauth pushed an empty header_profile that
+                # 401'd forever. Wait for the bearer, same as the warm path.
+                if channel == "careem":
+                    await _await_careem_bearer(page, captured)
                 if await page_looks_authenticated(channel, page):
                     result = await _snapshot_context(channel, context, page, captured)
                 else:
@@ -908,6 +961,7 @@ async def login_with_account(
     finally:
         _stop_chrome(chrome)
 
+    _assert_careem_bearer_captured(channel, result.request_headers)
     print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
     return result
 

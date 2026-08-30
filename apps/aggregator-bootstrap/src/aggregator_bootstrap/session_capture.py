@@ -32,6 +32,25 @@ _EXPIRY_SKEW = timedelta(seconds=120)
 
 _ANTI_BOT_COOKIES = ("_px3", "bm_sv", "_abck", "ak_bmsc", "_pxvid", "WEBDFPID")
 
+#: Cookies whose expiry must NEVER gate a session's liveness. Web-analytics
+#: cookies (Google's `_ga*`/`_gid`/`_gat`) and Cloudflare's `__cf_bm` bot cookie
+#: are not credentials: `_gat` lives ONE MINUTE and `__cf_bm` ~30 (and the edge
+#: re-issues `__cf_bm` on every request, so curl_cffi always sends a fresh one).
+#: Careem carries a `_gat`, so taking `min` across ALL cookies made its session
+#: look expired ~30s after every capture — the ingest then skipped it as "not
+#: live" and burned 360s waiting for a needless reauth, though its SESSION cookie
+#: (~35h) and bearer (~72h) were both fine. Drop this rotating junk before taking
+#: the min so the gate reflects the real session cookie. (Only matters for a
+#: channel with no `_ANTI_BOT_COOKIES` — talabat/noon already gate on those.)
+_ROTATING_COOKIE_PREFIXES = ("_ga", "_gid", "_gat")
+
+
+def _gates_liveness(cookie_name: str) -> bool:
+    """Whether a cookie's expiry should count toward the session's liveness."""
+    if cookie_name == "__cf_bm":
+        return False
+    return not cookie_name.startswith(_ROTATING_COOKIE_PREFIXES)
+
 
 def _looks_like_token_key(name: str) -> bool:
     return bool(name) and bool(_TOKEN_KEY.search(name))
@@ -108,8 +127,11 @@ def cookie_expiry_from_playwright(
         expires = cookie.get("expires")
         if not isinstance(expires, (int, float)) or expires <= 0:
             continue
+        name = cookie.get("name") or ""
+        if not _gates_liveness(name):
+            continue  # rotating analytics / Cloudflare bot cookie — not a credential
         timestamps.append(float(expires))
-        if cookie.get("name") in _ANTI_BOT_COOKIES:
+        if name in _ANTI_BOT_COOKIES:
             antibot.append(float(expires))
     chosen = antibot or timestamps
     if not chosen:

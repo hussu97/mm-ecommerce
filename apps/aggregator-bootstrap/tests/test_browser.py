@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from aggregator_bootstrap.browser import _clear_stale_singleton_locks
+import asyncio
+
+import pytest
+
+from aggregator_bootstrap.browser import (
+    NeedsHumanLogin,
+    _assert_careem_bearer_captured,
+    _await_careem_bearer,
+    _clear_stale_singleton_locks,
+)
 
 
 def test_clears_singleton_locks(tmp_path):
@@ -73,3 +82,60 @@ def test_spawn_chrome_clears_locks_before_launch(tmp_path, monkeypatch):
         "stale SingletonLock was not cleared before Chrome was spawned"
     )
     assert not (profile / "SingletonLock").exists()
+
+
+# ── careem bearer capture (the reauth 401 fix) ──────────────────────────────
+def test_careem_guard_raises_without_a_bearer():
+    """A careem session with cookies but no Authorization must NOT be pushed live:
+    it would 401 on every ingest yet look healthy, so heal never retries it."""
+    with pytest.raises(NeedsHumanLogin):
+        _assert_careem_bearer_captured("careem", {"user-agent": "x"})
+
+
+def test_careem_guard_passes_with_a_bearer():
+    _assert_careem_bearer_captured("careem", {"authorization": "Bearer t"})  # no raise
+
+
+def test_guard_is_a_noop_for_other_channels():
+    # talabat/noon replay their token from a cookie/scope header, not this profile.
+    _assert_careem_bearer_captured("talabat", {"user-agent": "x"})  # no raise
+
+
+class _FakePage:
+    """A page whose Nth goto makes the bearer 'arrive' in the shared dict."""
+
+    def __init__(self, captured, arrive_on_goto):
+        self.captured = captured
+        self.arrive_on_goto = arrive_on_goto
+        self.gotos = 0
+
+    async def goto(self, url, **kwargs):
+        self.gotos += 1
+        if self.gotos >= self.arrive_on_goto:
+            self.captured["authorization"] = "Bearer tok"
+
+
+def test_await_bearer_returns_immediately_when_already_captured(monkeypatch):
+    """On entry with the bearer already in hand, no sleep and no reload."""
+    slept = []
+    monkeypatch.setattr(asyncio, "sleep", lambda s: slept.append(s) or _done())
+    captured = {"authorization": "Bearer already"}
+    page = _FakePage(captured, arrive_on_goto=99)
+    asyncio.run(_await_careem_bearer(page, captured, rounds=6))
+    assert page.gotos == 0
+    assert slept == []
+
+
+def test_await_bearer_reloads_until_the_header_lands(monkeypatch):
+    """The reauth path: the bearer shows up only after a reload — the loop waits
+    and reloads a business surface rather than giving up after one fixed sleep."""
+    monkeypatch.setattr(asyncio, "sleep", lambda s: _done())
+    captured: dict[str, str] = {}
+    page = _FakePage(captured, arrive_on_goto=2)  # bearer arrives on the 2nd goto
+    asyncio.run(_await_careem_bearer(page, captured, rounds=6))
+    assert captured.get("authorization") == "Bearer tok"
+    assert page.gotos == 2  # stopped as soon as it landed, did not spin all 6
+
+
+async def _done():
+    return None
