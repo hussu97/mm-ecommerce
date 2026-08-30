@@ -510,10 +510,11 @@ def _record_reauth_failure(channel: str) -> None:
         _REAUTH_BACKOFF_BASE_SECONDS * (2 ** (failures - 1)),
         _REAUTH_BACKOFF_MAX_SECONDS,
     )
+    next_at = time.time() + delay
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps({"failures": failures, "next_at": time.time() + delay}),
+            json.dumps({"failures": failures, "next_at": next_at}),
             encoding="utf-8",
         )
     except OSError:  # pragma: no cover — a write failure just means no backoff
@@ -524,16 +525,36 @@ def _record_reauth_failure(channel: str) -> None:
         failures,
         int(delay // 60),
     )
+    # Publish the next-attempt time to the API so the ingest's reauth wait can bail
+    # out early instead of burning the full AGGREGATOR_REAUTH_WAIT_SECONDS on a
+    # login this daemon will not re-drive until `next_at`. Best-effort: the backoff
+    # file above is the source of truth for the daemon; this is only an optimisation
+    # for the API, so a reporting blip must never disturb the heal loop.
+    try:
+        asyncio.run(push.report_reauth_backoff(channel, next_at))
+    except Exception:  # noqa: BLE001 — best-effort telemetry to the API
+        logger.warning("reauth: could not publish %s backoff to the API", channel)
 
 
 def _clear_reauth_backoff(channel: str) -> None:
     """Reset the backoff — the channel is healthy again."""
+    existed = False
     try:
         _reauth_backoff_path(channel).unlink()
+        existed = True
     except FileNotFoundError:
         pass
     except OSError:  # pragma: no cover — best effort
         pass
+    # Only tell the API when we actually cleared a standing backoff — otherwise the
+    # healthy-channel tick (every 2 min for every live channel) would spam clears.
+    # A successful relogin already clears it API-side via the fresh session push;
+    # this covers a channel that went healthy on its own after a backoff was set.
+    if existed:
+        try:
+            asyncio.run(push.report_reauth_backoff(channel, None))
+        except Exception:  # noqa: BLE001 — best-effort telemetry to the API
+            logger.warning("reauth: could not clear %s backoff on the API", channel)
 
 
 def _heal_once(only: set[str] | None = None) -> int:

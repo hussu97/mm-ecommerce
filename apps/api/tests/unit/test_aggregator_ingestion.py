@@ -163,12 +163,19 @@ async def test_retry_stops_once_a_run_is_recorded(monkeypatch):
         calls["daily"] += 1
         return (1, 0)
 
+    retried = {"n": 0}
+
+    async def fake_retry(slot):
+        retried["n"] += 1
+
     monkeypatch.setattr(ingest, "run_daily_once", fake_daily)
     monkeypatch.setattr(ingest, "is_enabled", lambda: True)
     monkeypatch.setattr(ingest, "_slot_ran_since", lambda since: _async_true())
+    monkeypatch.setattr(ingest, "_retry_failed_channels_this_slot", fake_retry)
 
     await ingest._run_daily_with_retry()
     assert calls["daily"] == 1
+    assert retried["n"] == 1  # once the slot is recorded, per-channel retry runs
 
 
 async def test_retry_exhausts_when_nothing_records(monkeypatch):

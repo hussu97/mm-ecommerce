@@ -358,6 +358,15 @@ class AggregatorSession(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: When the worker's heal daemon will next attempt this channel's login. It
+    #: backs a failing login off exponentially on its own volume (invisible to the
+    #: API); publishing the next-attempt time here lets the ingest skip its reauth
+    #: WAIT when the worker will not act within it, instead of burning the full
+    #: AGGREGATOR_REAUTH_WAIT_SECONDS and recording RUN_FAILED. Cleared on every
+    #: successful session push (a fresh login means healthy).
+    reauth_backoff_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         UniqueConstraint("channel", "account_ref", name="uq_aggregator_session"),

@@ -50,6 +50,10 @@ class LoadedSession:
     token_expires_at: datetime | None = None
     cookie_expires_at: datetime | None = None
     status: str = SESSION_NEEDS_BOOTSTRAP
+    #: When the worker's heal daemon will next try this channel's login (published
+    #: by the worker on a reauth failure). The ingest reads it to avoid waiting on a
+    #: reauth the worker will not perform in time.
+    reauth_backoff_until: datetime | None = None
 
 
 _NOON_SCOPE_KEYS = (
@@ -298,6 +302,7 @@ async def load(
         token_expires_at=row.token_expires_at,
         cookie_expires_at=row.cookie_expires_at,
         status=row.status,
+        reauth_backoff_until=row.reauth_backoff_until,
     )
 
 
@@ -335,8 +340,29 @@ async def upsert_bootstrap(
     row.last_bootstrap_at = utcnow()
     row.last_warmed_at = utcnow()
     row.last_error = None
+    # A fresh login means the channel is healthy again — forget any published heal
+    # backoff so the ingest does not keep skipping a channel that has recovered.
+    row.reauth_backoff_until = None
     await db.flush()
     return row
+
+
+async def set_reauth_backoff(
+    db: AsyncSession,
+    channel: str,
+    *,
+    backoff_until: datetime | None,
+    account_ref: str = "",
+) -> None:
+    """Publish (or clear) when the worker's heal daemon will next re-drive this
+    channel's login. Called by the worker on a reauth failure so the ingest can
+    skip a reauth wait the worker will not honour in time. Its own committed write
+    on a dedicated column — never touches the session blob or status. No-op if the
+    row does not exist yet (nothing to skip-wait on)."""
+    row = await _row(db, channel, account_ref)
+    if row is not None:
+        row.reauth_backoff_until = backoff_until
+        await db.flush()
 
 
 async def record_refresh(

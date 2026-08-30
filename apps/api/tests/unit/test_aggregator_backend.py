@@ -7,16 +7,31 @@ fail-closed auth on the reconciliation reads.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
-from app.services.aggregators import mapping, reconcile
+from app.services.aggregators import ingest, mapping, reconcile
 from app.services.aggregators.session_store import LoadedSession
 from app.services.providers.careem_provider import CareemClient
+
+
+class _FakeSessionCtx:
+    """A minimal `async with AsyncSessionFactory() as db` stand-in for _await_reauth
+    tests — session_store calls are mocked, so the db only needs to commit."""
+
+    async def __aenter__(self):
+        return SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+
+    async def __aexit__(self, *_a):
+        return False
+
+
+def _fake_session_factory():
+    return _FakeSessionCtx()
 
 
 # ── reconcile skips Deliveroo synthetic carrier orders ────────────────────────
@@ -479,3 +494,108 @@ class TestSweepReleasesConnectionBeforeReauth:
         assert "commit" in calls and calls.index("commit") < calls.index(
             "await_reauth"
         ), f"connection not released before the wait: {calls}"
+
+
+# ── gap 2: _await_reauth honours the worker's published heal backoff ───────────
+class TestAwaitReauthBackoff:
+    """When the worker publishes a heal backoff (via reauth_backoff_until), the
+    ingest must not burn its full reauth wait on a login the worker won't re-drive
+    in time — it flags the session and bails, letting a later tick recover it."""
+
+    async def test_skips_wait_when_backed_off_past_the_wait(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.core.config.settings.AGGREGATOR_REAUTH_WAIT_SECONDS", 360
+        )
+        monkeypatch.setattr(ingest, "AsyncSessionFactory", _fake_session_factory)
+        loaded = LoadedSession(
+            channel="careem",
+            account_ref="",
+            status="needs_bootstrap",
+            reauth_backoff_until=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+        monkeypatch.setattr(
+            ingest.session_store, "load", AsyncMock(return_value=loaded)
+        )
+        monkeypatch.setattr(
+            ingest.session_store,
+            "session_unusable_reason",
+            lambda s: "needs_bootstrap",
+        )
+        monkeypatch.setattr(ingest.session_store, "mark_needs_bootstrap", AsyncMock())
+        polled = {"n": 0}
+
+        async def fake_session_for(db, ch, prov):
+            polled["n"] += 1
+            return object()
+
+        monkeypatch.setattr(ingest, "_session_for", fake_session_for)
+
+        out = await ingest._await_reauth("careem", object())
+        assert out is None
+        assert polled["n"] == 0  # never waited/polled — worker won't heal in time
+
+    async def test_waits_when_no_backoff_and_returns_recovered_session(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "app.core.config.settings.AGGREGATOR_REAUTH_WAIT_SECONDS", 360
+        )
+        monkeypatch.setattr(
+            "app.core.config.settings.AGGREGATOR_REAUTH_POLL_SECONDS", 0.01
+        )
+        monkeypatch.setattr(ingest, "AsyncSessionFactory", _fake_session_factory)
+        loaded = LoadedSession(
+            channel="careem",
+            account_ref="",
+            status="needs_bootstrap",
+            reauth_backoff_until=None,  # nothing published → wait as before
+        )
+        monkeypatch.setattr(
+            ingest.session_store, "load", AsyncMock(return_value=loaded)
+        )
+        monkeypatch.setattr(
+            ingest.session_store, "session_unusable_reason", lambda s: "cookie expired"
+        )
+        monkeypatch.setattr(ingest.session_store, "mark_needs_bootstrap", AsyncMock())
+        recovered = object()
+
+        async def fake_session_for(db, ch, prov):
+            return recovered  # daemon brought it back on the first poll
+
+        monkeypatch.setattr(ingest, "_session_for", fake_session_for)
+
+        out = await ingest._await_reauth("careem", object())
+        assert out is recovered
+
+
+async def test_reauth_backoff_endpoint_sets_value(client, monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "tok")
+    captured = {}
+
+    async def fake_set(db, channel, *, backoff_until, account_ref=""):
+        captured["channel"] = channel
+        captured["until"] = backoff_until
+
+    monkeypatch.setattr(
+        "app.services.aggregators.session_store.set_reauth_backoff", fake_set
+    )
+    resp = await client.post(
+        "/api/v1/aggregators/worker/reauth-backoff",
+        json={"channel": "careem", "backoff_until": "2026-08-30T13:00:00+00:00"},
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 204
+    assert captured["channel"] == "careem"
+    assert captured["until"] is not None
+
+
+async def test_reauth_backoff_endpoint_is_fail_closed(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "the-real-token"
+    )
+    resp = await client.post(
+        "/api/v1/aggregators/worker/reauth-backoff",
+        json={"channel": "careem", "backoff_until": None},
+        headers={"Authorization": "Bearer wrong"},
+    )
+    assert resp.status_code == 401

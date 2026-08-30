@@ -1288,6 +1288,37 @@
         "title": "AggregatorMailboxWrite",
         "type": "object"
       },
+      "AggregatorReauthBackoffPush": {
+        "description": "The worker publishing when it will next re-drive a channel's login.\n\nSent on a reauth failure (with the backoff's next-attempt time) so the ingest\ncan skip a wait the worker will not honour in time; `backoff_until=None` clears\nit. Same push-bearer auth as the session push.",
+        "properties": {
+          "account_ref": {
+            "default": "",
+            "title": "Account Ref",
+            "type": "string"
+          },
+          "backoff_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backoff Until"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel"
+        ],
+        "title": "AggregatorReauthBackoffPush",
+        "type": "object"
+      },
       "AggregatorReconciliationList": {
         "description": "A page of reconciliation rows, plus the unpaginated total for the filter.",
         "properties": {
@@ -2262,6 +2293,35 @@
           "login_method"
         ],
         "title": "AggregatorWorkerAccount",
+        "type": "object"
+      },
+      "AggregatorWorkerHealChannel": {
+        "description": "Status-only row for the VM heal cron \u2014 never cookies, tokens, or blobs.\n\n`token_expired` / `cookie_expired` are cheap column comparisons against now\n(a NULL expiry is unknown, not expired). The cron starts a worker when\n`status` is not `live` or either flag is true.",
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "cookie_expired": {
+            "default": false,
+            "title": "Cookie Expired",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "token_expired": {
+            "default": false,
+            "title": "Token Expired",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel",
+          "status"
+        ],
+        "title": "AggregatorWorkerHealChannel",
         "type": "object"
       },
       "AggregatorWorkerSession": {
@@ -32083,6 +32143,113 @@
           }
         },
         "summary": "Hydrate Accounts",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/needs-heal": {
+      "get": {
+        "description": "Status-only session list for the VM heal cron.\n\nSame push-token auth as GET `/worker/sessions`, but never decrypts a blob \u2014\nthe cron only needs to know whether any channel is not live before it\nstarts a worker.",
+        "operationId": "worker_needs_heal_api_v1_aggregators_worker_needs_heal_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AggregatorWorkerHealChannel"
+                  },
+                  "title": "Response Worker Needs Heal Api V1 Aggregators Worker Needs Heal Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Needs Heal",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/reauth-backoff": {
+      "post": {
+        "description": "The worker publishing when it will next re-drive a dead channel's login.\n\nThe heal daemon backs a failing login off (up to an hour) on its own volume,\nwhich the API cannot see; it reports the next-attempt time here so the ingest's\nreauth wait can bail out early instead of burning the full wait on a reauth the\nworker will not perform in time. `backoff_until=null` clears it. Same push-token\nauth as the session push; a no-op if the channel has never been bootstrapped.",
+        "operationId": "worker_report_reauth_backoff_api_v1_aggregators_worker_reauth_backoff_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AggregatorReauthBackoffPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Report Reauth Backoff",
         "tags": [
           "Aggregators"
         ]

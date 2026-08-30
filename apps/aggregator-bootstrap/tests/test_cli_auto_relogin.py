@@ -96,33 +96,60 @@ def test_try_auto_relogin_skips_when_no_account(monkeypatch):
 
 
 # ── reauth backoff (guardrail: a dead channel must not be re-driven every tick) ──
+def _stub_backoff_report(monkeypatch) -> list:
+    """Capture the worker→API backoff reports and keep the tests offline."""
+    reports: list = []
+
+    async def _rep(channel, backoff_until):
+        reports.append((channel, backoff_until))
+
+    monkeypatch.setattr(cli.push, "report_reauth_backoff", _rep)
+    return reports
+
+
 def test_reauth_backoff_arms_and_blocks_then_clears(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    reports = _stub_backoff_report(monkeypatch)
     ch = "talabat"
     # No state → eligible immediately.
     assert cli._reauth_cooldown_remaining(ch) == 0.0
-    # A failure arms the backoff (>= base of 5 min).
+    # A failure arms the backoff (>= base of 5 min) AND publishes it to the API.
     cli._record_reauth_failure(ch)
     remaining = cli._reauth_cooldown_remaining(ch)
     assert 0 < remaining <= cli._REAUTH_BACKOFF_BASE_SECONDS + 1
+    assert reports[-1][0] == ch and reports[-1][1] is not None
     # A second failure grows it (exponential).
     cli._record_reauth_failure(ch)
     assert cli._reauth_cooldown_remaining(ch) > cli._REAUTH_BACKOFF_BASE_SECONDS
-    # Success clears it.
+    # Success clears it — locally and on the API.
     cli._clear_reauth_backoff(ch)
     assert cli._reauth_cooldown_remaining(ch) == 0.0
+    assert reports[-1] == (ch, None)
 
 
 def test_reauth_backoff_is_capped(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    _stub_backoff_report(monkeypatch)
     ch = "talabat"
     for _ in range(20):  # far past the cap
         cli._record_reauth_failure(ch)
     assert cli._reauth_cooldown_remaining(ch) <= cli._REAUTH_BACKOFF_MAX_SECONDS + 1
 
 
+def test_clear_reauth_backoff_does_not_report_when_nothing_to_clear(
+    monkeypatch, tmp_path
+):
+    """The 2-minute healthy-channel tick calls _clear_reauth_backoff constantly;
+    it must not spam the API when there was no standing backoff to clear."""
+    monkeypatch.setattr(cli.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    reports = _stub_backoff_report(monkeypatch)
+    cli._clear_reauth_backoff("noon")  # no backoff file exists
+    assert reports == []
+
+
 def test_heal_once_skips_a_channel_in_backoff(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    _stub_backoff_report(monkeypatch)
     monkeypatch.setattr(
         cli.push,
         "pull_sessions",

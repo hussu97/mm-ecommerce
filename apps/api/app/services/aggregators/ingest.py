@@ -887,13 +887,34 @@ async def _await_reauth(
     if wait <= 0:
         return None
     async with AsyncSessionFactory() as flag_db:
-        reason = session_store.session_unusable_reason(
-            await session_store.load(flag_db, channel)
-        )
+        loaded = await session_store.load(flag_db, channel)
+        reason = session_store.session_unusable_reason(loaded)
         await session_store.mark_needs_bootstrap(
             flag_db, channel, error=f"reauth requested by ingest ({reason})"
         )
         await flag_db.commit()
+    deadline = utcnow() + timedelta(seconds=wait)
+    # If the worker has published a heal backoff that ends AFTER our whole wait
+    # would, it will not re-drive this channel's login in time — so waiting is pure
+    # dead time that ends in RUN_FAILED and holds up the rest of the sequential
+    # sweep. Skip it; the session is already flagged needs_bootstrap, so once the
+    # backoff elapses the 2-minute heal cron picks the channel up and a later sweep
+    # promotes it. When the backoff ends WITHIN our wait (or none is published) we
+    # still wait — the daemon may well bring it back in time.
+    backoff_until = loaded.reauth_backoff_until if loaded is not None else None
+    if backoff_until is not None:
+        if backoff_until.tzinfo is None:
+            backoff_until = backoff_until.replace(tzinfo=timezone.utc)
+        if backoff_until > deadline:
+            logger.info(
+                "aggregator %s: session unusable (%s), but the worker heal is backed "
+                "off until %s (past our %ss wait) — not waiting; a later tick retries",
+                channel,
+                reason,
+                backoff_until.isoformat(),
+                wait,
+            )
+            return None
     logger.info(
         "aggregator %s: session unusable (%s) — awaiting reauth daemon (<=%ss)",
         channel,
@@ -901,7 +922,6 @@ async def _await_reauth(
         wait,
     )
     poll = max(settings.AGGREGATOR_REAUTH_POLL_SECONDS, 1.0)
-    deadline = utcnow() + timedelta(seconds=wait)
     while utcnow() < deadline:
         await asyncio.sleep(poll)
         async with AsyncSessionFactory() as poll_db:
@@ -1788,6 +1808,95 @@ async def _slot_ran_since(since: datetime) -> bool:
     return row is not None
 
 
+#: Same-night retry for a channel whose nightly pass FAILED on auth. Bounded and
+#: spaced so the reauth daemon has time to bring a dead session back between tries.
+_DAILY_CH_RETRY_ATTEMPTS = 3
+_DAILY_CH_RETRY_DELAY_SECONDS = 15 * 60
+
+
+async def _channels_latest_run_failed_since(slot: datetime) -> list[str]:
+    """Channels whose MOST-RECENT run since `slot` is FAILED — i.e. the daily pass
+    got no data for them (a dead/backed-off session at pass time) and no later run
+    has since superseded that failure. A subsequent successful backfill run makes a
+    channel drop out of this set, so it is the live "still missing" list."""
+    async with AsyncSessionFactory() as db:
+        latest = (
+            select(
+                AggregatorSyncRun.channel,
+                func.max(AggregatorSyncRun.started_at).label("mx"),
+            )
+            .where(AggregatorSyncRun.started_at >= slot)
+            .group_by(AggregatorSyncRun.channel)
+            .subquery()
+        )
+        rows = await db.scalars(
+            select(AggregatorSyncRun.channel)
+            .join(
+                latest,
+                and_(
+                    AggregatorSyncRun.channel == latest.c.channel,
+                    AggregatorSyncRun.started_at == latest.c.mx,
+                ),
+            )
+            .where(AggregatorSyncRun.status == RUN_FAILED)
+        )
+    return sorted(set(rows))
+
+
+def _daily_window_dates(now: datetime) -> tuple[date, date]:
+    """The Dubai business-date range the nightly pass covers — the last
+    `AGGREGATOR_LOOKBACK_DAYS` days ending yesterday — so a same-night retry re-pulls
+    exactly the window the failed pass would have."""
+    today = _start_of_today_dubai(now).date()
+    lookback = max(settings.AGGREGATOR_LOOKBACK_DAYS, 1)
+    return today - timedelta(days=lookback), today - timedelta(days=1)
+
+
+async def _retry_failed_channels_this_slot(slot: datetime) -> None:
+    """Bounded same-night retry for channels the nightly pass failed on.
+
+    The nightly pass is once a day and the rolling refresh is SALES-ONLY, so a
+    channel whose session was dead at `AGGREGATOR_RUN_HOUR_DXB` would otherwise
+    carry no finance (commission/VAT) until the next successful night. Re-run JUST
+    the failed channels over the same window a few times, spaced out to give the
+    reauth daemon time to recover the session, via `run_range` (which re-pulls
+    sales + finance and re-promotes). Safe against the "don't hammer a dead login"
+    rule: `run_range` only re-flags a dead session and WAITS for the worker to heal
+    it — the worker owns the login and its own backoff — so this never drives the
+    marketplace login itself. Idempotent; stops as soon as nothing is still failed.
+    """
+    from_date, to_date = _daily_window_dates(utcnow())
+    for attempt in range(1, _DAILY_CH_RETRY_ATTEMPTS + 1):
+        if not is_enabled():
+            return
+        failed = await _channels_latest_run_failed_since(slot)
+        if not failed:
+            return
+        logger.warning(
+            "aggregator nightly pass: %s failed this slot — same-night retry %s/%s "
+            "in %ss (finance would otherwise wait for the next night)",
+            ", ".join(failed),
+            attempt,
+            _DAILY_CH_RETRY_ATTEMPTS,
+            _DAILY_CH_RETRY_DELAY_SECONDS,
+        )
+        await asyncio.sleep(_DAILY_CH_RETRY_DELAY_SECONDS)
+        try:
+            await run_range(failed, from_date, to_date)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a bad retry must not kill the scheduler
+            logger.exception("aggregator same-night channel retry failed")
+    still = await _channels_latest_run_failed_since(slot)
+    if still:
+        logger.error(
+            "aggregator: %s still failed after %s same-night retries — finance for "
+            "them waits for the next nightly pass",
+            ", ".join(still),
+            _DAILY_CH_RETRY_ATTEMPTS,
+        )
+
+
 async def _run_daily_with_retry() -> None:
     """Run the daily pass, retrying a wholesale failure with backoff.
 
@@ -1796,6 +1905,10 @@ async def _run_daily_with_retry() -> None:
     `_RETRY_ATTEMPTS`. A slot still empty after that is left for the next boot
     catch-up and surfaced by the health check; it is never retried indefinitely,
     which for an auth-dead channel would risk locking the account.
+
+    Once the slot IS recorded, a bounded per-channel retry catches any single
+    channel that failed on auth while the others succeeded — otherwise its finance
+    would wait a whole day (`_retry_failed_channels_this_slot`).
     """
     slot = _last_due_at(utcnow())
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
@@ -1807,7 +1920,10 @@ async def _run_daily_with_retry() -> None:
             sales,
             finance,
         )
-        if not is_enabled() or await _slot_ran_since(slot):
+        if not is_enabled():
+            return
+        if await _slot_ran_since(slot):
+            await _retry_failed_channels_this_slot(slot)
             return
         if attempt < _RETRY_ATTEMPTS:
             logger.warning(

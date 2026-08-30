@@ -12,6 +12,7 @@ files from the encrypted row rather than asking for a login.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -36,6 +37,24 @@ async def push_session(payload: dict[str, Any]) -> dict[str, Any]:
         resp = await client.post(url, json=payload, headers=_headers())
         resp.raise_for_status()
         return resp.json()
+
+
+async def report_reauth_backoff(channel: str, backoff_until: float | None) -> None:
+    """Tell the API when this channel's login will next be re-driven, so the ingest
+    can skip a reauth wait the heal daemon will not honour in time. `backoff_until`
+    is a unix timestamp (seconds) or None to clear. Best-effort — a reporting blip
+    must never fail the heal loop."""
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/reauth-backoff"
+    iso = (
+        datetime.fromtimestamp(backoff_until, tz=UTC).isoformat()
+        if backoff_until is not None
+        else None
+    )
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            url, json={"channel": channel, "backoff_until": iso}, headers=_headers()
+        )
+        resp.raise_for_status()
 
 
 async def pull_sessions() -> list[dict[str, Any]]:

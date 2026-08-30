@@ -32,6 +32,19 @@ class AggregatorSessionPush(BaseModel):
     cookie_expires_at: datetime | None = None
 
 
+class AggregatorReauthBackoffPush(BaseModel):
+    """The worker publishing when it will next re-drive a channel's login.
+
+    Sent on a reauth failure (with the backoff's next-attempt time) so the ingest
+    can skip a wait the worker will not honour in time; `backoff_until=None` clears
+    it. Same push-bearer auth as the session push.
+    """
+
+    channel: str
+    account_ref: str = ""
+    backoff_until: datetime | None = None
+
+
 class AggregatorWorkerSession(BaseModel):
     """The decrypted session a worker hydrates from after a deploy/restart.
 

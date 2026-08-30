@@ -630,6 +630,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/worker/needs-heal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Worker Needs Heal
+         * @description Status-only session list for the VM heal cron.
+         *
+         *     Same push-token auth as GET `/worker/sessions`, but never decrypts a blob —
+         *     the cron only needs to know whether any channel is not live before it
+         *     starts a worker.
+         */
+        get: operations["worker_needs_heal_api_v1_aggregators_worker_needs_heal_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/worker/reauth-backoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Worker Report Reauth Backoff
+         * @description The worker publishing when it will next re-drive a dead channel's login.
+         *
+         *     The heal daemon backs a failing login off (up to an hour) on its own volume,
+         *     which the API cannot see; it reports the next-attempt time here so the ingest's
+         *     reauth wait can bail out early instead of burning the full wait on a reauth the
+         *     worker will not perform in time. `backoff_until=null` clears it. Same push-token
+         *     auth as the session push; a no-op if the channel has never been bootstrapped.
+         */
+        post: operations["worker_report_reauth_backoff_api_v1_aggregators_worker_reauth_backoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/worker/sessions": {
         parameters: {
             query?: never;
@@ -7939,6 +7989,25 @@ export interface components {
             username?: string | null;
         };
         /**
+         * AggregatorReauthBackoffPush
+         * @description The worker publishing when it will next re-drive a channel's login.
+         *
+         *     Sent on a reauth failure (with the backoff's next-attempt time) so the ingest
+         *     can skip a wait the worker will not honour in time; `backoff_until=None` clears
+         *     it. Same push-bearer auth as the session push.
+         */
+        AggregatorReauthBackoffPush: {
+            /**
+             * Account Ref
+             * @default
+             */
+            account_ref: string;
+            /** Backoff Until */
+            backoff_until?: string | null;
+            /** Channel */
+            channel: string;
+        };
+        /**
          * AggregatorReconciliationList
          * @description A page of reconciliation rows, plus the unpaginated total for the filter.
          */
@@ -8288,6 +8357,30 @@ export interface components {
              * @default
              */
             password: string;
+        };
+        /**
+         * AggregatorWorkerHealChannel
+         * @description Status-only row for the VM heal cron — never cookies, tokens, or blobs.
+         *
+         *     `token_expired` / `cookie_expired` are cheap column comparisons against now
+         *     (a NULL expiry is unknown, not expired). The cron starts a worker when
+         *     `status` is not `live` or either flag is true.
+         */
+        AggregatorWorkerHealChannel: {
+            /** Channel */
+            channel: string;
+            /**
+             * Cookie Expired
+             * @default false
+             */
+            cookie_expired: boolean;
+            /** Status */
+            status: string;
+            /**
+             * Token Expired
+             * @default false
+             */
+            token_expired: boolean;
         };
         /**
          * AggregatorWorkerSession
@@ -18539,6 +18632,70 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AggregatorWorkerAccount"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_needs_heal_api_v1_aggregators_worker_needs_heal_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorWorkerHealChannel"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_report_reauth_backoff_api_v1_aggregators_worker_reauth_backoff_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AggregatorReauthBackoffPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

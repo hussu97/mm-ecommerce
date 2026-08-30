@@ -18,7 +18,7 @@ import hmac
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +53,7 @@ from app.schemas.aggregator import (
     AggregatorFeesRow,
     AggregatorFeesSummaryOut,
     AggregatorInvoiceUrl,
+    AggregatorReauthBackoffPush,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
     AggregatorRunTriggerIn,
@@ -205,6 +206,31 @@ async def worker_needs_heal(
     starts a worker.
     """
     return await session_store.list_heal_channels(db)
+
+
+@router.post("/worker/reauth-backoff", status_code=204)
+async def worker_report_reauth_backoff(
+    body: AggregatorReauthBackoffPush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The worker publishing when it will next re-drive a dead channel's login.
+
+    The heal daemon backs a failing login off (up to an hour) on its own volume,
+    which the API cannot see; it reports the next-attempt time here so the ingest's
+    reauth wait can bail out early instead of burning the full wait on a reauth the
+    worker will not perform in time. `backoff_until=null` clears it. Same push-token
+    auth as the session push; a no-op if the channel has never been bootstrapped.
+    """
+    if body.channel not in AGGREGATOR_CHANNELS:
+        raise BadRequestError(f"unknown aggregator channel: {body.channel}")
+    await session_store.set_reauth_backoff(
+        db,
+        body.channel,
+        backoff_until=body.backoff_until,
+        account_ref=body.account_ref,
+    )
+    return Response(status_code=204)
 
 
 @router.put("/account", response_model=AggregatorAccountPublic)
