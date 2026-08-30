@@ -468,18 +468,17 @@ class Settings(BaseSettings):
     AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS: int = 14
     #: The rolling sales-only refresh cadence, in minutes. SEPARATE from the daily
     #: pass: it re-scrapes only sales (not finance) over a short rolling window and
-    #: re-promotes, so values that settle AFTER an order is first seen are picked up
-    #: within the hour instead of waiting for the nightly run.
+    #: re-promotes, so values that settle AFTER an order is first seen (a Talabat
+    #: commission landing hours later) are picked up within the hour rather than at
+    #: the nightly run. Shares the daily pass's sales advisory lock. 0 disables it.
     #:
-    #: DISABLED BY DEFAULT (0) after an incident on 2026-08-30: the sweep holds a DB
-    #: connection AND the sales advisory lock across the up-to-360s per-channel
-    #: reauth wait, so when Careem's short-lived cookie expired and its session went
-    #: dead, each hourly tick pinned connections while waiting; over hours the
-    #: pool (5+5) was exhausted and the API stopped serving — prod down. Re-enable
-    #: only after the sweep is changed to RELEASE its DB connection during the
-    #: reauth wait (and ideally cap the concurrent lock-holding). Until then, the
-    #: once-a-day pass carries the same latent risk at a survivable frequency.
-    AGGREGATOR_SALES_REFRESH_MINUTES: int = 0
+    #: Re-enabled at 60 after the 2026-08-30 incident once its cause was fixed: the
+    #: sweep used to hold a DB connection idle-in-transaction across the up-to-360s
+    #: per-channel reauth wait, so a dead Careem session pinned connections each
+    #: tick and exhausted the pool, taking the API down. `_sweep_channel` /
+    #: `_run_range_channel` now COMMIT (or roll back) before every `_await_reauth`,
+    #: releasing the connection for the wait. See rolling-sales-refresh-pool-deadlock.
+    AGGREGATOR_SALES_REFRESH_MINUTES: int = 60
     #: The rolling refresh's window, in hours back from now. 36 covers all of
     #: yesterday plus today across the Dubai/UTC offset, so a late-settling value on
     #: a late-yesterday order is still in range. Idempotent upserts, so widen freely.

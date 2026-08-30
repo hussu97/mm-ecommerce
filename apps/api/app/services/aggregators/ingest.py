@@ -909,6 +909,12 @@ async def _sweep_channel(
     """
     session = await _session_for(db, channel, provider)
     if session is None:
+        # Release this session's pooled connection BEFORE the up-to-360s reauth
+        # wait — otherwise `db` sits idle-in-transaction holding a connection for
+        # the whole wait, and several such waits at once exhaust the pool and wedge
+        # the API (the 2026-08-30 incident). `_session_for` only read, so a rollback
+        # loses nothing; `db` re-acquires a connection on its next statement.
+        await db.rollback()
         session = await _await_reauth(channel, provider)
         if session is None:
             return 0
@@ -933,6 +939,12 @@ async def _sweep_channel(
             # upserts are idempotent, so re-fetching from the start is safe.
             if not attempted_reauth:
                 attempted_reauth = True
+                # Commit what we have (the run row, any orders persisted so far)
+                # to RELEASE the pooled connection before the up-to-360s reauth
+                # wait — holding it idle-in-transaction for the wait is what
+                # exhausted the pool on 2026-08-30. `run` stays usable after commit
+                # (expire_on_commit=False); the row reads as `running` meanwhile.
+                await db.commit()
                 fresh = await _await_reauth(channel, provider)
                 if fresh is not None:
                     session = fresh
@@ -1242,6 +1254,10 @@ async def _run_range_channel(
         session = await _session_for(db, channel, provider)
         if session is None:
             # Trigger-based reauth: flag + wait for the daemon before giving up.
+            # Commit first so this channel's connection is released for the
+            # up-to-360s wait rather than held idle-in-transaction (see the
+            # 2026-08-30 pool-exhaustion incident). `run` stays usable afterwards.
+            await db.commit()
             session = await _await_reauth(channel, provider)
         if session is None:
             run.status = RUN_FAILED
@@ -1267,6 +1283,8 @@ async def _run_range_channel(
                     # Trigger reauth once for the whole range run, then retry.
                     if not reauth_tried:
                         reauth_tried = True
+                        # Release the connection for the wait (see above).
+                        await db.commit()
                         fresh = await _await_reauth(channel, provider)
                         if fresh is not None:
                             session = fresh

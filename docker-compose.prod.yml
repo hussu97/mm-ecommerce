@@ -23,13 +23,18 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       # Tuned for e2-micro: keep shared_buffers small to leave headroom for the app
       POSTGRES_INITDB_ARGS: ""
-    # `max_connections` was 20, which left no room for a deploy. Postgres
-    # reserves 3 slots for a superuser, so 17 were actually available to the
-    # app — while the two API apps can each open pool_size 5 + max_overflow 5,
-    # which is 20 between them before the old containers of a rolling deploy are
-    # even counted. The 2026-08-21 audit measured 15 in use during an overlap.
-    # Backends share most of their memory, so the extra slots cost the 320m cap
-    # far less than 10 x work_mem suggests, and are only opened under load.
+    # `max_connections` was 20, which left no room for a deploy; it is 30. Postgres
+    # reserves 3 slots for a superuser, so 27 are available to the app. The two API
+    # apps share one engine config (app/core/database.py): pool_size 5 (baseline) +
+    # max_overflow 8 (burst) = 13 max each. Baselines are 5 per container, so a
+    # rolling deploy that recreates api+pos-api stays ~20 during overlap; the burst
+    # slots open on demand and the realistic peak (api ~13 + pos-api's handful +
+    # worker/psql/monitoring) fits under 27. max_overflow was raised (from 5) for
+    # burst headroom AFTER the 2026-08-30 pool-exhaustion incident, whose real cause
+    # was the aggregator sweep pinning connections idle across a 6-minute reauth
+    # wait (fixed in ingest), not too small a pool. Raising max_connections past 30
+    # needs the 320m cap raised too and a deliberate postgres recreate (the deploy
+    # only recreates api/pos-api) — do that with a VM resize, not on a 2GB box.
     #
     # Note for anyone editing the block below: it is a folded scalar, so a `#`
     # line inside it is not a comment — it becomes an argument to postgres.
@@ -188,7 +193,7 @@ services:
       AGGREGATOR_REAUTH_WAIT_SECONDS: ${AGGREGATOR_REAUTH_WAIT_SECONDS:-360}
       AGGREGATOR_REAUTH_POLL_SECONDS: ${AGGREGATOR_REAUTH_POLL_SECONDS:-5.0}
       AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS: ${AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS:-14}
-      AGGREGATOR_SALES_REFRESH_MINUTES: ${AGGREGATOR_SALES_REFRESH_MINUTES:-0}
+      AGGREGATOR_SALES_REFRESH_MINUTES: ${AGGREGATOR_SALES_REFRESH_MINUTES:-60}
       AGGREGATOR_SALES_ROLLING_HOURS: ${AGGREGATOR_SALES_ROLLING_HOURS:-36}
       AGGREGATOR_TIMEOUT_SECONDS: ${AGGREGATOR_TIMEOUT_SECONDS:-20.0}
       AGGREGATOR_REQUESTS_PER_SECOND: ${AGGREGATOR_REQUESTS_PER_SECOND:-1.0}

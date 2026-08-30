@@ -372,3 +372,66 @@ class TestSalesRefreshBootCatchup:
         # No catch-up (recent), and the loop's first sleep is cancelled before its
         # own run — so zero refreshes fired.
         assert await self._run_once_and_capture(monkeypatch, recent) == 0
+
+
+# ── reauth waits must NOT hold a DB connection (2026-08-30 pool-deadlock fix) ──
+class TestSweepReleasesConnectionBeforeReauth:
+    """The sweep must release its pooled DB connection BEFORE the up-to-360s reauth
+    wait — holding it idle-in-transaction across the wait is what exhausted the pool
+    and took the API down. These pin the ordering: release happens before the wait."""
+
+    async def test_upfront_reauth_rolls_back_first(self, monkeypatch):
+        from app.services.aggregators import ingest
+
+        calls: list[str] = []
+        db = AsyncMock()
+        db.rollback = AsyncMock(side_effect=lambda: calls.append("rollback"))
+
+        async def no_session(*a, **k):
+            return None
+
+        async def fake_reauth(*a, **k):
+            calls.append("await_reauth")
+            return None
+
+        monkeypatch.setattr(ingest, "_session_for", no_session)
+        monkeypatch.setattr(ingest, "_await_reauth", fake_reauth)
+
+        written = await ingest._sweep_channel(db, "careem", object(), "sales")
+        assert written == 0
+        assert calls == ["rollback", "await_reauth"], (
+            f"connection not released before the wait: {calls}"
+        )
+
+    async def test_midpull_reauth_commits_first(self, monkeypatch):
+        from app.services.aggregators import ingest
+
+        calls: list[str] = []
+        db = AsyncMock()
+        db.commit = AsyncMock(side_effect=lambda: calls.append("commit"))
+
+        async def live_session(*a, **k):
+            return object()
+
+        async def fake_new_run(*a, **k):
+            return SimpleNamespace(status=None, error=None, finished_at=None)
+
+        async def fail_fetch(*a, **k):
+            raise ingest.AggregatorAuthError("401")
+
+        async def fake_reauth(*a, **k):
+            calls.append("await_reauth")
+            return None
+
+        monkeypatch.setattr(ingest, "_session_for", live_session)
+        monkeypatch.setattr(ingest, "_new_run", fake_new_run)
+        monkeypatch.setattr(ingest, "_fetch_and_persist", fail_fetch)
+        monkeypatch.setattr(ingest, "_await_reauth", fake_reauth)
+        monkeypatch.setattr(ingest, "_sweep_window", lambda *a, **k: (None, None))
+        monkeypatch.setattr(ingest.session_store, "mark_needs_bootstrap", AsyncMock())
+
+        written = await ingest._sweep_channel(db, "careem", object(), "sales")
+        assert written == 0
+        assert "commit" in calls and calls.index("commit") < calls.index(
+            "await_reauth"
+        ), f"connection not released before the wait: {calls}"
