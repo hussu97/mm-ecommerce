@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.aggregators.normalized import StandardOrder
+from app.services.aggregators.session_store import LoadedSession
 from app.services.aggregators.statement_docs import StoredStatementInvoice
 from app.services.providers.deliveroo_provider import (
     DeliverooClient,
@@ -25,6 +26,19 @@ from app.services.providers.deliveroo_provider import (
 )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+
+def _org_session() -> LoadedSession:
+    """A resolved session carrying org_id — what `_augment_from_db` guarantees
+    before any finance call, so the org-scoped URLs resolve without the removed
+    hard-coded default."""
+    return LoadedSession(
+        channel="deliveroo",
+        account_ref="",
+        cookies={"token": "jwt"},
+        tokens={"access_token": "jwt", "org_id": "497912"},
+    )
+
 
 _SAMPLE_CSV = textwrap.dedent("""\
     Invoice Reference,12345
@@ -148,7 +162,7 @@ async def test_invoice_csv_returns_none_on_403():
 async def test_fetch_statements_parses_lines_without_archival():
     """CSV parse populates statement lines; invoice fields stay unset until PDF wiring."""
     client = DeliverooClient()
-    session = MagicMock()
+    session = _org_session()
 
     _invoice_meta = {
         "id": "INV-99",
@@ -181,7 +195,7 @@ async def test_fetch_statements_parses_lines_without_archival():
 async def test_fetch_statements_empty_lines_when_csv_unavailable():
     """When the CSV download fails (403), lines stay empty and no archive is attempted."""
     client = DeliverooClient()
-    session = MagicMock()
+    session = _org_session()
 
     _invoice_meta = {
         "id": "INV-77",
@@ -212,7 +226,7 @@ async def test_fetch_payouts_derives_one_per_invoice():
     """Deliveroo settles each invoice 1:1, so a payout is derived per invoice —
     keyed on the statement id so the statement↔payout back-link can close."""
     client = DeliverooClient()
-    session = MagicMock()
+    session = _org_session()
     _invoice_meta = {
         "id": "INV-99",
         "period_start": "2026-08-01",

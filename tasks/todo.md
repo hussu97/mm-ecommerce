@@ -244,10 +244,10 @@ Manual runs work; the hourly autonomous refresh 401s — an architecture problem
 - [x] `app_setup.py`: wire the single supervisor; it finally-cancels its children (8s shutdown cap preserved)
 - [x] 3 unit tests (leader runs both loops / standby never ticks / standby→leader promotion)
 
-## Phase 2 — Deliveroo mint fix [A]
-- [ ] remove `_DEFAULT_ORG_ID`/`_DEFAULT_RESTAURANT_IDS` + fallbacks; require account/branch-map, raise if absent
-- [ ] delete org_id override in `_login`; stop silent login degradation; merge captured anti-bot cookies on mint
-- [ ] one-off DEBUG log to confirm mechanism on VM; update `test_deliveroo_provider.py`
+## Phase 2 — Deliveroo mint fix [A] — DONE (commit)
+- [x] removed `_DEFAULT_ORG_ID`/`_DEFAULT_RESTAURANT_IDS` + fallbacks; org from account.extras, outlets from branch map; `_augment_from_db`/`_org_id`/`_restaurant_ids` raise `AggregatorUnavailableError` if absent
+- [x] deleted the `companies[0].id` org override in `_login` (the wrong-scope 401 cause); `_login` returns None on failure (not the stale `previous`); carries the captured cf_clearance/anti-bot cookies forward on mint
+- [x] enhanced mint log (org + outlet count + carried cookie names) is the on-VM confirmation signal; updated `test_deliveroo_provider.py` + 3 new `_login`/`_augment` tests
 
 ## Phase 3 — Worker daemon: queue + hard timeout + resident Xvfb [W]
 - [ ] `serve)` entrypoint (resident Xvfb); `queue.py`; extract `reauth.py`; `daemon.py`

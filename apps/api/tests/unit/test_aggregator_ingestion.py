@@ -333,6 +333,143 @@ async def test_deliveroo_augments_session_from_db_not_the_stale_constant(monkeyp
     assert "701111" in dp.provider._restaurant_ids(out)  # the constant never had it
 
 
+async def test_deliveroo_augment_raises_when_org_absent(monkeypatch):
+    """No hard-coded org fallback: a session+account with no org_id raises loudly
+    (retry-later) instead of scoping every request to a stale default that 401s."""
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers import deliveroo_provider as dp
+
+    async def fake_load(_db, _ch):
+        return SimpleNamespace(extras={}, email="e", password="p")  # no org_id
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_load)
+
+    async def fake_outlets(_db):
+        return ["693359"]
+
+    monkeypatch.setattr(dp, "_outlet_ids_from_map", fake_outlets)
+
+    session = LoadedSession(
+        channel=dp.CHANNEL_DELIVEROO, account_ref="", status=dp.SESSION_LIVE, tokens={}
+    )
+    with pytest.raises(dp.AggregatorUnavailableError):
+        await dp.provider._augment_from_db(SimpleNamespace(), session)
+
+
+class _FakeDeliverooLogin:
+    """A fake Partner Hub /api/session response for exercising `_login`."""
+
+    def __init__(self, *, status=200, body=None):
+        self._status = status
+        self._body = body or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    async def post(self, *_a, **_k):
+        return SimpleNamespace(status_code=self._status, json=lambda: self._body)
+
+
+def _wire_login(monkeypatch, *, status, body):
+    """Patch account_store, httpx, the outlet map, and session_store around
+    `_login`, returning the dict of kwargs the mint upserts."""
+    import httpx
+
+    from app.services.aggregators import session_store
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers import deliveroo_provider as dp
+
+    async def fake_account(_db, _ch):
+        return SimpleNamespace(email="e", password="p", extras={"org_id": "497912"})
+
+    monkeypatch.setattr("app.services.aggregators.account_store.load", fake_account)
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **k: _FakeDeliverooLogin(status=status, body=body),
+    )
+
+    async def fake_outlets(_db):
+        return ["693359"]
+
+    monkeypatch.setattr(dp, "_outlet_ids_from_map", fake_outlets)
+
+    captured: dict = {}
+
+    async def fake_upsert(_db, **kwargs):
+        captured.update(kwargs)
+
+    async def fake_reload(_db, _ch):
+        return LoadedSession(
+            channel=dp.CHANNEL_DELIVEROO,
+            account_ref="",
+            status=dp.SESSION_LIVE,
+            tokens=captured.get("tokens", {}),
+            cookies=captured.get("cookies", {}),
+        )
+
+    monkeypatch.setattr(session_store, "upsert_bootstrap", fake_upsert)
+    monkeypatch.setattr(session_store, "load", fake_reload)
+    return captured
+
+
+async def test_deliveroo_login_keeps_account_org_and_carries_antibot_cookies(
+    monkeypatch,
+):
+    """The mint must NOT overwrite the account org with restaurant_companies[0].id
+    (a company id — the wrong scope that 401'd one second after 'login ok'), and it
+    must carry the browser-captured cf_clearance cookie forward (the Cloudflare-
+    fronted data endpoint needs it; the mint returns only the JWT)."""
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers import deliveroo_provider as dp
+
+    captured = _wire_login(
+        monkeypatch,
+        status=200,
+        body={
+            "access_token": "fresh-token",
+            "session_id": "s1",
+            "restaurant_companies": [{"id": 999999}],  # company id — must NOT win
+        },
+    )
+    previous = LoadedSession(
+        channel=dp.CHANNEL_DELIVEROO,
+        account_ref="",
+        cookies={"cf_clearance": "cf-abc", "token": "old"},
+        tokens={},
+        header_profile={},
+    )
+
+    out = await dp.provider._login(SimpleNamespace(), previous)
+
+    assert out is not None
+    assert captured["tokens"]["org_id"] == "497912"  # account org, not 999999
+    assert captured["cookies"]["cf_clearance"] == "cf-abc"  # carried forward
+    assert captured["cookies"]["token"] == "fresh-token"  # fresh token overlaid
+
+
+async def test_deliveroo_login_failure_returns_none_not_stale_session(monkeypatch):
+    """A hard login failure returns None (→ reauth path flags the channel), NOT the
+    stale previous session — proceeding on an expired Bearer is what 401'd forever."""
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers import deliveroo_provider as dp
+
+    _wire_login(monkeypatch, status=401, body={})
+    previous = LoadedSession(
+        channel=dp.CHANNEL_DELIVEROO,
+        account_ref="",
+        status=dp.SESSION_LIVE,
+        tokens={"access_token": "stale"},
+        cookies={"token": "stale"},
+    )
+
+    out = await dp.provider._login(SimpleNamespace(), previous)
+    assert out is None
+
+
 def test_crypto_refuses_without_a_key(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_CONFIG_ENCRYPTION_KEY", "")
     assert crypto.is_configured() is False

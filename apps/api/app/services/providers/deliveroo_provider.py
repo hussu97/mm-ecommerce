@@ -76,14 +76,13 @@ _API = f"{_HUB}/api"
 _LOGIN_URL = f"{_API}/session"
 _REFRESH_URL = f"{_API}/session/refresh"
 
-#: Last-resort org / outlet ids, used only when neither the session, the account
-#: `extras`, nor the `aggregator_branch_map` rows carry them. These duplicate DB
-#: data (the org lives on `aggregator_account.extras.org_id`, the outlets are the
-#: `aggregator_branch_map` rows for this channel), so a fall to either is logged
-#: as a warning — reaching them means the DB is missing config it should hold,
-#: and the list is stale by construction (it never had the Karama outlet).
-_DEFAULT_ORG_ID = "497912"
-_DEFAULT_RESTAURANT_IDS = ("693359", "693360", "693361")
+#: The org and outlet ids are read from the DB ONLY — the org from
+#: `aggregator_account.extras.org_id`, the outlets from the `aggregator_branch_map`
+#: rows for this channel. There are deliberately NO hard-coded fallbacks: the old
+#: `_DEFAULT_ORG_ID`/`_DEFAULT_RESTAURANT_IDS` duplicated DB data, went stale (they
+#: never had the Karama outlet), and silently masked missing config as a wrong-scope
+#: 200-but-empty pull. When the DB genuinely lacks this config the provider raises
+#: `AggregatorUnavailableError` (loud, retry-later) instead of guessing.
 
 #: Re-login this far before JWT `exp` so a sweep never presents an expired
 #: Bearer. The identity token this login mints lasts under an hour.
@@ -358,14 +357,22 @@ class DeliverooClient(BaseAggregatorClient):
         return headers
 
     def _org_id(self, session: LoadedSession) -> str:
-        """The `orgId` / `org_id` every call is scoped to."""
+        """The `orgId` / `org_id` every call is scoped to.
+
+        Resolved by `_augment_from_db` before the sweep, so by the time this runs
+        it is present. If it is genuinely missing (no session token, no account
+        `extras.org_id`) the channel cannot be scoped — raise rather than guess a
+        stale default that returns a wrong-scope 401.
+        """
         for source in (session.tokens or {}, session.header_profile or {}):
             value = _first(
                 source, "org_id", "orgId", "organisation_id", "organization_id"
             )
             if value:
                 return str(value)
-        return _DEFAULT_ORG_ID
+        raise AggregatorUnavailableError(
+            "deliveroo: no org_id (set aggregator_account.extras.org_id)"
+        )
 
     def _restaurant_ids(self, session: LoadedSession) -> list[str]:
         tokens = session.tokens or {}
@@ -377,7 +384,9 @@ class DeliverooClient(BaseAggregatorClient):
         extras = tokens.get("restaurants")
         if isinstance(extras, list) and extras:
             return [str(x) for x in extras if x]
-        return list(_DEFAULT_RESTAURANT_IDS)
+        raise AggregatorUnavailableError(
+            "deliveroo: no outlet ids (seed aggregator_branch_map for deliveroo)"
+        )
 
     def _token_is_fresh(self, session: LoadedSession) -> bool:
         exp = session.token_expires_at
@@ -428,24 +437,20 @@ class DeliverooClient(BaseAggregatorClient):
         tokens = dict(session.tokens or {})
         if not _first(tokens, "org_id", "orgId", "organisation_id", "organization_id"):
             org = await self._org_from_account(db)
-            if org:
-                tokens["org_id"] = org
-            else:
-                logger.warning(
-                    "deliveroo: no org_id in session or account extras — "
-                    "falling back to stale default %s",
-                    _DEFAULT_ORG_ID,
+            if not org:
+                raise AggregatorUnavailableError(
+                    "deliveroo: no org_id in session or account extras "
+                    "(set aggregator_account.extras.org_id)"
                 )
+            tokens["org_id"] = org
         if not _outlet_ids_in(tokens):
             outlets = await _outlet_ids_from_map(db)
-            if outlets:
-                tokens["restaurant_ids"] = outlets
-            else:
-                logger.warning(
-                    "deliveroo: no restaurant ids in session or aggregator_branch_map "
-                    "— falling back to stale default %s",
-                    list(_DEFAULT_RESTAURANT_IDS),
+            if not outlets:
+                raise AggregatorUnavailableError(
+                    "deliveroo: no outlet ids in session or aggregator_branch_map "
+                    "(seed the deliveroo branch map)"
                 )
+            tokens["restaurant_ids"] = outlets
         session.tokens = tokens
         return session
 
@@ -466,8 +471,12 @@ class DeliverooClient(BaseAggregatorClient):
 
         account = await account_store.load(db, self.channel)
         if account is None or not account.email or not account.password:
+            # No credentials to mint with — the httpx path can't help and neither
+            # can the worker (same account). Return None so the sweep flags the
+            # channel needs_bootstrap (visible) rather than proceeding on a stale
+            # token that will 401 anyway.
             logger.warning("deliveroo: no stored email/password; cannot HTTP-login")
-            return previous
+            return None
         import httpx
 
         async with httpx.AsyncClient(timeout=self._timeout, http2=True) as client:
@@ -484,47 +493,64 @@ class DeliverooClient(BaseAggregatorClient):
                 json={"email": account.email, "password": account.password},
             )
         if response.status_code >= 400:
+            # A hard login failure is a dead credential, not a transient blip.
+            # Returning the *previous* (stale) session here is exactly what made
+            # the sweep 401 forever: it proceeded on an expired Bearer. Return None
+            # so the reauth path takes over and the channel is flagged, visible.
             logger.warning("deliveroo login returned %s", response.status_code)
-            return previous
+            return None
         body = response.json()
         token = body.get("access_token") or ""
         if not token:
             logger.warning("deliveroo login returned no access_token")
-            return previous
+            return None
+        # Org id: the ACCOUNT's org (extras.org_id) is authoritative, then the
+        # login body. Do NOT overwrite it with restaurant_companies[0].id — that is
+        # the restaurant *company* id, a different entity, and scoping every request
+        # to it returned a 401 one second after a "successful" login (the autonomous
+        # symptom). `_augment_from_db` backfills from the account if both are absent.
         org_id = str(
             (account.extras or {}).get("org_id")
             or _first(body, "org_id", "orgId")
-            or _DEFAULT_ORG_ID
+            or ""
         )
-        companies = body.get("restaurant_companies") or []
-        if companies and isinstance(companies[0], dict) and companies[0].get("id"):
-            org_id = str(companies[0]["id"])
-        restaurant_ids = (
-            _restaurant_ids_from_login(body)
-            or await _outlet_ids_from_map(db)
-            or list(_DEFAULT_RESTAURANT_IDS)
+        # Outlets from the login body, else the branch map. No hard-coded fallback —
+        # `_augment_from_db` raises loudly if neither yields ids.
+        restaurant_ids = _restaurant_ids_from_login(body) or await _outlet_ids_from_map(
+            db
         )
         exp = _jwt_exp(token)
         header_profile = dict(previous.header_profile or {}) if previous else {}
         header_profile.setdefault("user-agent", _BROWSER_UA)
         header_profile.setdefault("accept-language", "en-GB,en;q=0.9,ar;q=0.8")
+        # Preserve the browser-captured anti-bot cookies (cf_clearance et al.) from
+        # the prior session — the mint returns only the JWT, and dropping the rest
+        # left the Cloudflare-fronted data endpoint without the cookie it needs, so
+        # the minted Bearer 401'd. Carry them forward; overlay the fresh token.
+        cookies = dict((previous.cookies if previous else None) or {})
+        cookies["token"] = token
+        tokens = {
+            "access_token": token,
+            "session_id": body.get("session_id"),
+            "restaurant_ids": restaurant_ids,
+        }
+        if org_id:
+            tokens["org_id"] = org_id
         await session_store.upsert_bootstrap(
             db,
             channel=self.channel,
-            cookies={"token": token},
-            tokens={
-                "access_token": token,
-                "session_id": body.get("session_id"),
-                "org_id": org_id,
-                "restaurant_ids": restaurant_ids,
-            },
+            cookies=cookies,
+            tokens=tokens,
             header_profile=header_profile,
             token_expires_at=exp,
             cookie_expires_at=exp,
         )
         logger.info(
-            "deliveroo HTTP login ok; %s restaurants, token exp %s",
+            "deliveroo HTTP login ok; org=%s, %s outlet(s), carried cookies=%s, "
+            "token exp %s",
+            org_id or "(from account)",
             len(restaurant_ids),
+            sorted(cookies.keys()),
             exp.isoformat() if exp else "unknown",
         )
         return await session_store.load(db, self.channel)
