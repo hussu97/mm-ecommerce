@@ -285,6 +285,14 @@ def _spawn_chrome(*, profile: Path, port: int, url: str) -> Any:
             "https://www.google.com/chrome/ then re-run login."
         )
     os.makedirs(profile, exist_ok=True)
+    # Clear a previous run's Singleton* locks here too, not only in the Playwright
+    # `_launch_persistent` path. This raw-subprocess launch is the one the headed
+    # AUTO-RELOGIN (heal-sessions) uses, and a SIGKILLed warm's stale lock made
+    # Chrome refuse the profile and never open its debug port — the exact
+    # "Chrome did not open a debug port" that kept auto-relogin failing until the
+    # locks were cleared by hand. One flock means only one Chrome runs at a time,
+    # so a lingering lock is always stale and safe to remove before launch.
+    _clear_stale_singleton_locks(profile)
     args = standalone_chrome_args(
         binary=binary, user_data_dir=profile, port=port, url=url
     )
@@ -354,14 +362,23 @@ def _clear_stale_singleton_locks(user_data_dir: Path) -> None:
     that lock behind, and since each warm runs in a fresh container the hostname
     never matches, so every subsequent warm is blocked forever. These files are
     pure runtime state (no session data), safe to delete before we relaunch.
+
+    Globs `Singleton*` rather than naming the three we know (SingletonLock /
+    SingletonCookie / SingletonSocket) so a Chrome-version rename can't
+    reintroduce the wedge. Best-effort: a missing dir or an unremovable file is
+    logged, never raised, so it can never block the launch that follows.
     """
-    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+    try:
+        stale = list(user_data_dir.glob("Singleton*"))
+    except OSError:  # pragma: no cover — dir unreadable; the launch will surface it
+        return
+    for lock in stale:
         try:
-            (user_data_dir / name).unlink()
+            lock.unlink()
         except FileNotFoundError:
             pass
         except OSError as exc:  # pragma: no cover — best effort
-            logger.warning("could not clear %s in %s: %s", name, user_data_dir, exc)
+            logger.warning("could not clear %s: %s", lock, exc)
 
 
 async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool, channel: str):
