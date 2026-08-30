@@ -88,6 +88,20 @@ async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
     )
 
 
+#: GrubTech's own `source.channel` string for a channel — what actually lands in
+#: `grubops_order_map.source_channel` — which is NOT always the display label
+#: `CHANNEL_GRUBOPS_LABEL` uses. GrubTech calls Noon just "Noon", while MM groups
+#: its sales under "Noon Food". `_find_mm_order` matched only the display label, so
+#: for Noon it found NOTHING: every Barsha/Sharjah Noon order failed to link to its
+#: GrubOps order, deferred the full adopt-grace, then filed a duplicate standalone —
+#: the noon-duplicate problem. Match BOTH names so the lookup finds the map row
+#: whichever string GrubTech wrote. Channels whose GrubTech name equals their
+#: display label need no entry here.
+_GRUBOPS_SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
+    CHANNEL_NOON: ("Noon",),
+}
+
+
 async def _find_mm_order(
     db: AsyncSession,
     channel: str,
@@ -99,13 +113,21 @@ async def _find_mm_order(
     GrubTech records the marketplace's SHORT customer code as its `externalId`
     (Noon's "2253"), while the scrape keys on the long `orderNr`. So the map is
     matched on either id the two sides might carry — the long `external_order_id`
-    or the short `display_ref` — both under the channel label, which keeps the
-    lookup channel-scoped."""
-    label = CHANNEL_GRUBOPS_LABEL.get(channel)
+    or the short `display_ref` — under any source_channel string GrubTech uses for
+    this channel (its display label plus any `_GRUBOPS_SOURCE_ALIASES`), which keeps
+    the lookup channel-scoped without missing Noon's "Noon" vs "Noon Food" split."""
+    labels = [
+        label
+        for label in (
+            CHANNEL_GRUBOPS_LABEL.get(channel),
+            *_GRUBOPS_SOURCE_ALIASES.get(channel, ()),
+        )
+        if label
+    ]
     refs = [r for r in (external_order_id, display_ref) if r]
     map_row = await db.scalar(
         select(GrubOpsOrderMap).where(
-            GrubOpsOrderMap.source_channel == label,
+            GrubOpsOrderMap.source_channel.in_(labels),
             GrubOpsOrderMap.external_id.in_(refs),
             GrubOpsOrderMap.mm_order_id.is_not(None),
         )

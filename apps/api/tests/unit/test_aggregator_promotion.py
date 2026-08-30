@@ -316,6 +316,30 @@ def test_promoter_channel_label_matches_grubops_noon_food():
     assert promote.reconcile.CHANNEL_GRUBOPS_LABEL[CHANNEL_NOON] == "Noon Food"
 
 
+async def test_find_mm_order_matches_both_noon_names():
+    """GrubTech writes grubops_order_map.source_channel="Noon", but MM's display
+    label is "Noon Food". _find_mm_order must match BOTH, else every Barsha/Sharjah
+    Noon order fails to link, defers the full adopt-grace, and files a duplicate
+    standalone — the noon-duplicate bug."""
+    from app.models.aggregator import CHANNEL_NOON, CHANNEL_TALABAT
+
+    captured = {}
+
+    class _DB:
+        async def scalar(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return None  # no map row → _find_mm_order returns None after this call
+
+    out = await promote.reconcile._find_mm_order(_DB(), CHANNEL_NOON, "FG8UNN1", "9721")
+    assert out is None
+    assert "'Noon Food'" in captured["sql"]  # the display label
+    assert "'Noon'" in captured["sql"]  # GrubTech's own source.channel name
+
+    # A channel whose GrubTech name equals its label queries just the one label.
+    await promote.reconcile._find_mm_order(_DB(), CHANNEL_TALABAT, "3857897051", None)
+    assert "'Talabat'" in captured["sql"]
+
+
 async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     """Barsha/Sharjah with a GrubOps order → link only, never build/recreate it.
 
