@@ -265,15 +265,30 @@ _cutover_pair() {
   rm -f "$backup"
 
   echo "==> Probing https://${host}/health through nginx..."
-  if ! code=$(curl -sS --max-time 15 \
-    --resolve "${host}:443:127.0.0.1" \
-    -o /dev/null -w "%{http_code}" \
-    "https://${host}/health"); then
-    code="curl-fail"
-  fi
+  # Retry, and force HTTP/1.1. The first HTTPS request straight after
+  # `nginx -s reload` races the reload: over HTTP/2 that surfaced intermittently as
+  # `curl: (16) Error in the HTTP2 framing layer`, which twice rolled back an
+  # otherwise-healthy deploy (the new slot was already `/health`-ok on 8000 and
+  # nginx -t/-reload had both passed). `--http1.1` removes the HTTP/2 framing race
+  # entirely — the probe only needs to prove nginx routes to a live upstream, not to
+  # exercise HTTP/2 — and the loop rides out any other momentary blip (a 502 while
+  # nginx finishes swapping upstreams, a reset). A genuine fault still fails every
+  # attempt: app down → 502 each time, wrong Host → 400 each time, so it aborts.
+  code="curl-fail"
+  for _attempt in 1 2 3 4 5; do
+    code=$(curl -sS --http1.1 --max-time 15 \
+      --resolve "${host}:443:127.0.0.1" \
+      -o /dev/null -w "%{http_code}" \
+      "https://${host}/health") || code="curl-fail"
+    [ "$code" = "200" ] && break
+    if [ "$_attempt" -lt 5 ]; then
+      echo "    probe attempt ${_attempt}/5: ${code} — retrying in 2s..."
+      sleep 2
+    fi
+  done
   if [ "$code" != "200" ]; then
     _abort_switch "$idle" "$live" "$blue" \
-      "https://${host}/health returned HTTP ${code} after reload (want 200). A TrustedHost 400 means the Host header is wrong; a 502 means nginx is still pointing at a down slot."
+      "https://${host}/health returned HTTP ${code} after reload and 5 attempts (want 200). A TrustedHost 400 means the Host header is wrong; a 502 means nginx is still pointing at a down slot."
   fi
   echo "    https://${host}/health → 200"
 
