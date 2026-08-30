@@ -192,7 +192,12 @@ async def login_talabat(
 
     if await _talabat_is_authenticated_app(page):
         logger.info("talabat: already authenticated on load")
-        return
+        # RETURN THE PAGE, not None: login_with_account does
+        # `page = await login_talabat(...)`, so a bare `return` set page=None and
+        # the heal then timed out even though the profile was already logged in —
+        # the commonest way talabat can heal without a fresh OTP login. Match
+        # login_careem / login_noon, which return the page on every exit.
+        return page
     if await _talabat_human_verification_present(page):
         await _talabat_debug_shot(page, "px-gate")
         raise AntiBotChallengeError(
@@ -207,7 +212,7 @@ async def login_talabat(
         await password_input.wait_for(state="visible", timeout=15_000)
     except Exception as exc:  # noqa: BLE001
         if await _talabat_is_authenticated_app(page):
-            return
+            return page
         await _talabat_debug_shot(page, "no-credential-inputs")
         raise LoginError(
             f"Talabat login page did not expose credential inputs at {page.url}"
@@ -229,7 +234,7 @@ async def login_talabat(
                 "credentials; not bypassed."
             )
         logger.info("talabat: no /2fa step after submit — treating as through")
-        return  # no 2FA step — already through
+        return page  # no 2FA step — already through
 
     logger.info("talabat: 2FA step reached, polling the Graph mailbox for the OTP")
     # PREFER the mailbox recipe's own sender/subject filters, exactly like
