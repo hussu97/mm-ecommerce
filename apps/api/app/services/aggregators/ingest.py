@@ -278,8 +278,34 @@ def _aware_business(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=_DUBAI)
 
 
+#: (channel, external_outlet_id) pairs already warned about as unmapped, so the
+#: warning below fires once per unknown outlet per process rather than once per
+#: order per sweep. Outlets are a handful, so this stays tiny; it resets on
+#: restart, which is fine — one warning per outlet per boot is the intent.
+_UNMAPPED_OUTLETS_WARNED: set[tuple[str, str]] = set()
+
+
 async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> None:
     branch_id = await _branch_for(db, channel, order.external_outlet_id)
+    # An order whose outlet does not resolve to a branch is stored with branch_id
+    # NULL and then NEVER promoted (promote_channel filters branch_id IS NULL), so
+    # it silently never reaches the MM order tables — the exact way a DSO/Karama (or
+    # a store-id-drifted) outlet goes dark with no signal. Warn once per unknown
+    # outlet so `aggregator_branch_map` drift is visible in the logs instead of
+    # showing up as "that branch has no orders". branch_id is _PRESERVE_IF_NULL, so
+    # this only bites an outlet that has NEVER mapped, not a transient re-resolve miss.
+    if branch_id is None and order.external_outlet_id:
+        key = (channel, order.external_outlet_id)
+        if key not in _UNMAPPED_OUTLETS_WARNED:
+            _UNMAPPED_OUTLETS_WARNED.add(key)
+            logger.warning(
+                "aggregator %s order %s: outlet %r is not in aggregator_branch_map — "
+                "order stored but will NOT be promoted to an MM order until the outlet "
+                "is mapped",
+                channel,
+                order.external_order_id,
+                order.external_outlet_id,
+            )
     values = {
         "channel": channel,
         "external_order_id": order.external_order_id,
@@ -1764,6 +1790,14 @@ async def _run_daily_with_retry() -> None:
 #: A live session with no success/warm in this long is reported stale. Comfortably
 #: longer than the daily cadence, so an ordinary day never trips it.
 _HEALTH_STALE_AFTER = timedelta(days=2)
+#: Keeta is the exception: it is push-only, refreshed by the worker's warm cron
+#: every 3h (not by any API sweep), and is meant to be near-realtime. Nothing ever
+#: marks it needs_bootstrap and heal-sessions cannot revive it (no Xvfb), so if its
+#: warm cron dies its `status` stays "live" and the ONLY signal is this staleness
+#: line. At the 2-day default that signal arrives two days late for a channel that
+#: should never be more than a few hours cold — so Keeta trips after ~7h (two
+#: missed 3h warms plus slack), turning a dead warm into a same-day log warning.
+_HEALTH_STALE_AFTER_BY_CHANNEL = {"keeta": timedelta(hours=7)}
 
 
 async def _log_health() -> None:
@@ -1788,8 +1822,18 @@ async def _log_health() -> None:
         if last is not None:
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
-            if now - last > _HEALTH_STALE_AFTER:
-                unhealthy.append(f"{r.channel}=stale({(now - last).days}d)")
+            threshold = _HEALTH_STALE_AFTER_BY_CHANNEL.get(
+                r.channel, _HEALTH_STALE_AFTER
+            )
+            age = now - last
+            if age > threshold:
+                # Sub-day staleness (Keeta) reads better in hours than "0d".
+                span = (
+                    f"{age.days}d"
+                    if age.days
+                    else f"{int(age.total_seconds() // 3600)}h"
+                )
+                unhealthy.append(f"{r.channel}=stale({span})")
     if unhealthy:
         logger.warning(
             "aggregator health: %s need attention", ", ".join(sorted(unhealthy))

@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# Backup PostgreSQL database with 7-day local retention.
+# Backup PostgreSQL database, keeping the newest KEEP_BACKUPS local dumps.
 # Optionally uploads to GCP Cloud Storage (uses VM attached service account).
 set -euo pipefail
 
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 BACKUP_DIR="${BACKUP_DIR:-$DEPLOY_DIR/backups}"
 COMPOSE_FILE="docker-compose.prod.yml"
-RETENTION_DAYS=7
+# Retention is COUNT-based, not age-based: keep the newest KEEP_BACKUPS dumps
+# whenever they were taken, prune everything older. A deploy that happens to fire
+# several times in a day still leaves exactly the last KEEP_BACKUPS on disk (age
+# retention would keep every dump for 7 days, then all of them expire together);
+# a quiet week still leaves the last KEEP_BACKUPS (age retention would delete the
+# only dumps we have because they aged out). This prune runs every deploy, right
+# after this run's fresh dump lands, so the newest is always among those kept.
+KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
 
 cd "$DEPLOY_DIR"
 
@@ -97,9 +104,24 @@ if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
   fi
 fi
 
-echo "==> Removing backups older than ${RETENTION_DAYS} days..."
-find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" \
-  -mtime +"${RETENTION_DAYS}" -delete
+echo "==> Pruning local backups, keeping the newest ${KEEP_BACKUPS}..."
+# Count-based prune. Read newest-first (`ls -t`) into an array with a while-read
+# loop (not `mapfile`, which is a bash-4 builtin absent from the bash 3.2 some
+# hosts ship). Fed by a process substitution, not a pipe, so the `|| true`
+# swallows the non-zero `ls` exit when the glob matches nothing and `set -o
+# pipefail` never sees a SIGPIPE — the same trap the diagnostics block below
+# documents. Our filenames are timestamped and contain no newlines, so line-based
+# reading is safe. Everything past KEEP_BACKUPS is deleted; the dump this run just
+# wrote is the newest, so it is always kept.
+_backups=()
+while IFS= read -r _f; do
+  [ -n "$_f" ] && _backups+=("$_f")
+done < <(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null || true)
+if [ "${#_backups[@]}" -gt "$KEEP_BACKUPS" ]; then
+  for _old in "${_backups[@]:$KEEP_BACKUPS}"; do
+    rm -f -- "$_old" && echo "    removed $(basename "$_old")"
+  done
+fi
 
 echo "==> Backup complete."
 # A full ls of every retained dump is hundreds of log lines on this box and

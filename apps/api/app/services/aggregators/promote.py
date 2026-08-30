@@ -544,31 +544,47 @@ async def _build_order(
     return order
 
 
-async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:
-    """Bring an already-promoted order back in line with the ledger — its money
-    and status, in case the marketplace mutated the order after we first filed it."""
-    for field, value in _money_fields(agg).items():
-        setattr(order, field, value)
-    # Backfill the customer the scraper captured onto an order first filed without
-    # it — one promoted before its channel exposed the customer (Keeta's
-    # recipientInfo, Noon's customerInfo), or one this pass converged onto by
-    # `(source, external_reference)`. Fill-only: a value already on the order (a
-    # GrubOps-sourced order carries its own) is never overwritten, and `_build_order`
-    # already sets it on a fresh promote — this closes the gap for the existing rows.
+def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
+    """Fill-only backfill of the scraped customer + rider onto an MM order.
+
+    Writes each field ONLY when the order has no value there yet, so a GrubOps-
+    sourced order (Barsha/Sharjah — it carries its own customer/rider from GrubTech)
+    is never overwritten, while an order first filed WITHOUT contact receives what
+    the scrape has since captured. Two orders need that backfill: a standalone
+    promoted before its channel exposed the customer (Keeta's `recipientInfo`,
+    Noon's `customerInfo`), and — the case this helper was extracted to also cover —
+    a GrubOps push that landed with an empty/masked customer, which the GrubOps-
+    owned promotion path would otherwise link and leave blank forever. The
+    `_PREFER_UNMASKED` upsert already keeps `agg.customer_*` at the best (unmasked)
+    value ever seen, so a fill here is the real value, not a mask that will later
+    be un-redacted out from under it.
+    """
     if not order.customer_name and agg.customer_name:
         order.customer_name = agg.customer_name
     if not order.customer_phone and agg.customer_phone:
         order.customer_phone = agg.customer_phone
     if not order.shipping_address_snapshot and agg.customer_address:
         order.shipping_address_snapshot = agg.customer_address
-    # DA info: refresh from the scrape (fill-only against a GrubOps-sourced order,
-    # which carries its own rider from GrubTech and must not be overwritten).
+    # DA info: fill-only against a GrubOps-sourced order, which carries its own rider
+    # from GrubTech and must not be overwritten.
     if not order.aggregator_driver_name and agg.driver_name:
         order.aggregator_driver_name = agg.driver_name
     if not order.aggregator_driver_phone and agg.driver_phone:
         order.aggregator_driver_phone = agg.driver_phone
     if not order.aggregator_driver_status and agg.driver_status:
         order.aggregator_driver_status = agg.driver_status
+
+
+async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:
+    """Bring an already-promoted order back in line with the ledger — its money
+    and status, in case the marketplace mutated the order after we first filed it."""
+    for field, value in _money_fields(agg).items():
+        setattr(order, field, value)
+    # Backfill the customer + rider the scraper captured onto an order first filed
+    # without it — one promoted before its channel exposed the customer, or one this
+    # pass converged onto by `(source, external_reference)`. Fill-only (see helper);
+    # `_build_order` already sets these on a fresh promote.
+    _fill_scraped_contact(order, agg)
     # If the marketplace's short customer code has since landed, correct the
     # pickup/display code first derived from the long id (its last-4), so the
     # ticket and any later GrubOps-adopt lookup see the value GrubTech quotes.
@@ -663,8 +679,16 @@ async def promote_order(
             await _backfill_statement_lines(
                 db, agg.channel, agg.external_order_id, grubops_order.id
             )
+            # Fill-only overlay of the scraped customer + rider. The GrubOps push
+            # often lands with an empty (or masked) customer, and linking alone left
+            # that order blank forever — the scrape captured the contact but only the
+            # standalone path ever wrote it. Fill-only, so a GrubOps order that DID
+            # carry its own customer/rider from GrubTech is untouched; this only
+            # closes the gap where GrubTech gave us nothing and the scrape has it.
+            _fill_scraped_contact(grubops_order, agg)
             if agg.commission_amount is not None or agg.payment_fee is not None:
                 await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
+            await db.flush()
             await _record_fulfilment(db, grubops_order)
             return grubops_order
         # No GrubOps order found on a GrubOps branch. GrubOps is the source of

@@ -52,6 +52,22 @@ def _agg(**over):
     return SimpleNamespace(**base)
 
 
+def _mm_order(**over):
+    """A stand-in MM Order for the GrubOps-owned promotion path — just the fields
+    the overlay reads/writes (id, the scraped-contact columns filled fill-only)."""
+    base = dict(
+        id=uuid.uuid4(),
+        customer_name=None,
+        customer_phone=None,
+        shipping_address_snapshot=None,
+        aggregator_driver_name=None,
+        aggregator_driver_phone=None,
+        aggregator_driver_status=None,
+    )
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
 class _FakeDB:
     async def flush(self):
         return None
@@ -254,7 +270,7 @@ async def test_promotion_owned_order_is_attached_to_pos(monkeypatch):
 async def test_grubops_owned_order_is_not_re_attached_to_pos(monkeypatch):
     """A GrubOps-owned order (Barsha/Sharjah) is already on the register — the
     promotion overlay must NOT attach it a second time."""
-    grubops_order = SimpleNamespace(id=uuid.uuid4())
+    grubops_order = _mm_order()
     attach_calls = []
 
     async def fake_has_grubops(db, branch_id):
@@ -307,7 +323,7 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     marketplace's ACTUAL settled fees onto its fee columns (a null-guarded fee
     stamp), so the assertion is: nothing is built, and only the fee overlay runs.
     """
-    grubops_order = SimpleNamespace(id=uuid.uuid4())
+    grubops_order = _mm_order()
     build_calls = {"n": 0}
     stamp_calls = {"n": 0, "kwargs": None}
 
@@ -340,6 +356,46 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     # The actual settled fee is overlaid onto the GrubOps order.
     assert stamp_calls["n"] == 1
     assert stamp_calls["kwargs"]["actual_commission"] == Decimal("9.00")
+
+
+async def test_grubops_owned_order_backfills_scraped_customer_fill_only(monkeypatch):
+    """The GrubOps push often lands with an empty customer; the scrape has it. On
+    promotion the GrubOps-owned path fills the scraped customer/rider onto the order
+    — but FILL-ONLY, so a value GrubTech already provided is never overwritten. This
+    is the fix for "GrubOps orders show no scraped customer info"."""
+    grubops_order = _mm_order(
+        customer_name="",  # GrubTech gave us nothing → should be filled
+        aggregator_driver_name="GrubTech Rider",  # GrubTech DID give this → keep it
+    )
+
+    async def fake_has_grubops(db, branch_id):
+        return True
+
+    async def fake_find_mm(db, channel, ext, display_ref=None):
+        return grubops_order
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
+    monkeypatch.setattr(promote.order_fees, "stamp", _noop)
+    monkeypatch.setattr(promote, "_record_fulfilment", _noop)
+
+    agg = _agg(
+        customer_name="Ambika",
+        customer_phone="+97144451555",
+        customer_address={"text": "DSO Tower 3"},
+        driver_name="Scraped Rider",
+    )
+    out = await promote.promote_order(_FakeDB(), agg)
+    assert out is grubops_order
+    # Empty fields filled from the scrape.
+    assert grubops_order.customer_name == "Ambika"
+    assert grubops_order.customer_phone == "+97144451555"
+    assert grubops_order.shipping_address_snapshot == {"text": "DSO Tower 3"}
+    # A field GrubTech already provided is left untouched (fill-only).
+    assert grubops_order.aggregator_driver_name == "GrubTech Rider"
 
 
 async def test_grubops_branch_defers_within_grace(monkeypatch):

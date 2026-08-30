@@ -1393,9 +1393,13 @@ echo | openssl s_client -connect api.meltingmomentscakes.com:443 2>/dev/null | o
 **SSL renewal**: Handled automatically by the `certbot` container (runs every 12 hours).
 
 **Database backups**: `hussainabbasi786110`'s cron runs `scripts/backup-db.sh` at
-02:00 UTC daily, keeping 7 days locally in `/opt/melting-moments-cakes/backups`
-and 90 days in `gs://melting-moments-cakes-backups` (aged out by a bucket
-lifecycle rule). `deploy.yml` takes an extra one before every migration. Verify
+02:00 UTC daily, keeping the newest `KEEP_BACKUPS` (default 5) dumps locally in
+`/opt/melting-moments-cakes/backups` — count-based, not age-based, so the prune
+leaves the last 5 whenever they were taken and never lets a quiet week age out
+the only copies on disk — and 90 days in `gs://melting-moments-cakes-backups`
+(the offsite copy is append-only here and aged out by a bucket lifecycle rule,
+not by this prune). `deploy.yml` takes an extra one before every migration, and
+that run prunes too, so several deploys in a day still leave only the last 5. Verify
 offsite copies are still arriving with `gcloud storage ls -l
 gs://melting-moments-cakes-backups/backups/` — the local dumps existing proves
 nothing about the offsite ones, which is exactly how their absence went unnoticed
