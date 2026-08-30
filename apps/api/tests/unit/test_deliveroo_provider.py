@@ -519,3 +519,37 @@ def test_merge_detail_realistic_customer_is_pseudonymous_id():
     merged = client._merge_order_detail(_base_order(), _REALISTIC_DETAIL, "rest-1")
     assert merged.customer_name == "Deliveroo customer 32419558"
     assert merged.customer_phone is None
+
+
+# ── 7. display_ref = the short order number (GrubOps convergence key) ──────────
+def test_parse_list_order_sets_display_ref_to_short_order_number():
+    """On a GrubOps branch (Barsha/Sharjah) the Foodics order stores Deliveroo's
+    SHORT order number as its external_id; our external_order_id is Deliveroo's
+    UUID, which Foodics never sees. Mapping order_number -> display_ref is what
+    lets promotion converge onto the GrubOps order instead of filing a standalone
+    duplicate (the 29-Aug Barsha +55 discrepancy)."""
+    client = DeliverooClient()
+    order = client._parse_list_order(
+        {
+            "order_id": "b6b2c42e-1a1e-317d-b444-cdf70bc5f7f3",
+            "order_number": "5254",
+            "amount": {"fractional": 5500},
+            "status": "delivered",
+        },
+        "rest-1",
+    )
+    assert order is not None
+    assert order.external_order_id == "b6b2c42e-1a1e-317d-b444-cdf70bc5f7f3"
+    assert (
+        order.display_ref == "5254"
+    )  # the shared key with grubops_order_map.external_id
+
+
+def test_merge_order_detail_preserves_display_ref():
+    """The detail merge rebuilds the order; it must not drop the short-number key."""
+    client = DeliverooClient()
+    base = StandardOrder(
+        external_order_id="uuid-1", external_outlet_id="rest-1", display_ref="5254"
+    )
+    merged = client._merge_order_detail(base, {"status": "delivered"}, "rest-1")
+    assert merged.display_ref == "5254"

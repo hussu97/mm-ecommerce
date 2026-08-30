@@ -636,6 +636,14 @@ class DeliverooClient(BaseAggregatorClient):
         status = (row.get("status") or "").strip() or None
         return StandardOrder(
             external_order_id=external_id,
+            # The short human order number (`5254`) is the shared key with the
+            # GrubOps/Foodics order on a GrubOps branch — Foodics stores it as the
+            # order's `external_id`. Our own `external_order_id` is Deliveroo's
+            # UUID, which Foodics never sees, so WITHOUT this the promotion could
+            # not converge onto the GrubOps order and filed a standalone duplicate
+            # on Barsha/Sharjah (Deliveroo's `display_ref` was NULL). Setting it
+            # lets `_find_mm_order` match `display_ref` → `grubops_order_map.external_id`.
+            display_ref=order_number or None,
             external_outlet_id=restaurant_id,
             business_date=business_date,
             placed_at=placed_at,
@@ -784,6 +792,7 @@ class DeliverooClient(BaseAggregatorClient):
         raw["detail"] = detail
         return StandardOrder(
             external_order_id=order.external_order_id,
+            display_ref=order.display_ref,  # carry the short order number (GrubOps convergence key)
             external_outlet_id=order.external_outlet_id or restaurant_id,
             business_date=order.business_date,
             placed_at=order.placed_at,
