@@ -65,7 +65,7 @@ def test_the_register_runs_the_register_app():
     for svc in ("pos-api", "pos-api-green"):
         command = str(compose["services"][svc].get("command", ""))
         assert "app.pos_main:app" in command, f"{svc} is a second storefront API"
-        assert "--timeout-graceful-shutdown 25" in command
+        assert "--timeout-graceful-shutdown 8" in command
 
 
 def test_storefront_slots_finish_in_flight_requests():
@@ -73,10 +73,10 @@ def test_storefront_slots_finish_in_flight_requests():
     for svc in ("api", "api-green"):
         command = str(compose["services"][svc].get("command", ""))
         assert "app.main:app" in command
-        assert "--timeout-graceful-shutdown 25" in command
-        assert compose["services"][svc].get("stop_grace_period") == "30s"
+        assert "--timeout-graceful-shutdown 8" in command
+        assert compose["services"][svc].get("stop_grace_period") == "10s"
     for svc in ("pos-api", "pos-api-green"):
-        assert compose["services"][svc].get("stop_grace_period") == "30s"
+        assert compose["services"][svc].get("stop_grace_period") == "10s"
 
 
 def test_nginx_bind_mounts_runtime_upstreams():
@@ -123,16 +123,31 @@ def test_postgres_max_connections_stays_at_thirty():
 def test_api_healthcheck_start_period_covers_i18n_seed():
     """
     compose --wait fails the moment Docker marks the container unhealthy.
-    /ping is served only after lifespan (the i18n seed on api). 30s + 5×10s
-    retries killed api-green mid-seed on the first cutover.
+    /ping is served only after lifespan. The seed is one table load now, so
+    60s is enough for import+seed on the e2-small; 180s was the N+1 workaround.
     """
     compose = yaml.safe_load(COMPOSE.read_text())
     for svc in ("api", "api-green", "pos-api", "pos-api-green"):
         period = compose["services"][svc]["healthcheck"]["start_period"]
         seconds = int(str(period).rstrip("s"))
-        assert seconds >= 180, (
+        assert seconds >= 60, (
             f"{svc} start_period={period!r} is too short for seed+wait"
         )
+        assert seconds <= 90, (
+            f"{svc} start_period={period!r} is padded for the old N+1 seed"
+        )
+        interval = compose["services"][svc]["healthcheck"]["interval"]
+        assert interval in ("5s", "5"), interval
+
+
+def test_api_slots_do_not_re_pull_an_image_already_on_the_vm():
+    """
+    Deploy/rollback pull (or tag) :latest first. pull_policy: always then
+    re-checked GHCR on alembic + each idle slot — three extra 10–36s waits.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    for svc in ("api", "api-green", "pos-api", "pos-api-green"):
+        assert compose["services"][svc].get("pull_policy") == "missing", svc
 
 
 def test_every_pos_setting_reaches_a_container():

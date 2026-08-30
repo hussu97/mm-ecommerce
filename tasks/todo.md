@@ -1,3 +1,19 @@
+# Deploy pipeline speed (2026-08-30)
+
+Baseline: GCP job `33300260803` was 18.6 min (pytest 98s + API image 67s +
+bootstrap image 104s + VM 13.3 min). VM time was Playwright pull 4.5 min,
+compose re-pulling :latest three times, N+1 i18n seed, 15s×2 drain, 30s×2 stop.
+
+- [x] Batch i18n seed (one SELECT, not one per key)
+- [x] `pull_policy: missing` on API slots; stop compose re-pulls
+- [x] Split test-api || build-api || build-bootstrap; promote :latest after tests
+- [x] Drop `--cov` on deploy pytest; drop bootstrap VM pull; drop deploy.yml from bootstrap/web/admin filters
+- [x] Faster healthcheck/drain/stop; flock on `/tmp/mm-aggregator-warm.lock`
+- [x] Skip journald restart, certbot compose-run, builder prune on API-only deploys
+- [ ] Push, watch e2e deploy, record timings vs 18.6 min
+
+---
+
 # Aggregator: manual run trigger + placed-at timestamp fix
 
 ## Part 1 — Manual "Run now" trigger from the admin Runs page

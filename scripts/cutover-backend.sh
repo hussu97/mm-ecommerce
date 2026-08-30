@@ -18,12 +18,12 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 SLOT_FILE="${SLOT_FILE:-$DEPLOY_DIR/.deploy-slot}"
 UPSTREAMS_FILE="${UPSTREAMS_FILE:-$DEPLOY_DIR/nginx/runtime/upstreams.conf}"
-WARM_LOCK="${WARM_LOCK:-/var/lock/aggregator-warm.lock}"
+WARM_LOCK="${WARM_LOCK:-/tmp/mm-aggregator-warm.lock}"
 # Must match keepalive_timeout in nginx/runtime/upstreams.conf.
-DRAIN_SECONDS="${DRAIN_SECONDS:-15}"
-STOP_GRACE="${STOP_GRACE:-30}"
-WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
-HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-30}"
+DRAIN_SECONDS="${DRAIN_SECONDS:-5}"
+STOP_GRACE="${STOP_GRACE:-10}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-90}"
+HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-10}"
 
 API_HOST="${API_HOST:-api.meltingmomentscakes.com}"
 POS_HOST="${POS_HOST:-pos.meltingmomentscakes.com}"
@@ -84,14 +84,14 @@ _write_upstreams() {
 upstream api_backend {
     server ${API_LIVE}:8000;
     keepalive 32;
-    keepalive_timeout 15s;
+    keepalive_timeout 5s;
     keepalive_requests 1000;
 }
 
 upstream pos_backend {
     server ${POS_LIVE}:8000;
     keepalive 32;
-    keepalive_timeout 15s;
+    keepalive_timeout 5s;
     keepalive_requests 1000;
 }
 EOF
@@ -141,8 +141,11 @@ _wait_for_aggregator_idle() {
 
   if command -v flock >/dev/null 2>&1; then
     mkdir -p "$(dirname "$WARM_LOCK")"
-    # Hold the lock for the rest of this process so cron cannot start Chrome
-    # while one extra API is in memory. Cron uses the same path.
+    # World-writable: cron runs as root and creates this first otherwise, and
+    # a 644 root:root file is what made cutover print "Permission denied" and
+    # continue without the lock — so heal-sessions could start Chrome mid-cutover.
+    touch "$WARM_LOCK" 2>/dev/null || true
+    chmod 666 "$WARM_LOCK" 2>/dev/null || true
     exec 9>"$WARM_LOCK" || {
       echo "WARNING: cannot open $WARM_LOCK — continuing without flock"
       _stop_aggregator_workers
@@ -176,7 +179,7 @@ _wait_health() {
       return 0
     fi
     echo "    waiting... (${i}/${HEALTH_ATTEMPTS})"
-    sleep 2
+    sleep 1
   done
   echo "ERROR: $svc failed /health. Container logs:" >&2
   _compose logs --tail=50 "$svc" || true

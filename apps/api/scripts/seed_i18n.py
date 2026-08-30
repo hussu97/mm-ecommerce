@@ -1564,24 +1564,26 @@ async def seed(session: AsyncSession) -> None:
 
     await session.flush()
 
-    # Translations
+    # One SELECT for the table, then compare in memory. The previous loop did a
+    # round-trip per key (~1,500 queries on this file) and that is what made
+    # FastAPI's lifespan — and therefore /ping — take minutes on the e2-small,
+    # which is why compose --wait needed a 180s start_period.
+    result = await session.execute(select(UiTranslation))
+    existing_by_key = {
+        (row.locale, row.namespace, row.key): row for row in result.scalars()
+    }
+    added = 0
+    updated = 0
     for locale, namespace, key, value in ALL_TRANSLATIONS:
-        result = await session.execute(
-            select(UiTranslation).where(
-                UiTranslation.locale == locale,
-                UiTranslation.namespace == namespace,
-                UiTranslation.key == key,
-            )
-        )
-        existing = result.scalar_one_or_none()
+        existing = existing_by_key.get((locale, namespace, key))
         if not existing:
             session.add(
                 UiTranslation(locale=locale, namespace=namespace, key=key, value=value)
             )
-            print(f"  ✅ {locale}:{namespace}.{key}")
+            added += 1
         elif existing.value != value:
             existing.value = value
-            print(f"  🔄 {locale}:{namespace}.{key} updated")
+            updated += 1
 
     await session.commit()
     # Redis outlives the restart this seed runs inside. Without this, a deploy
@@ -1590,7 +1592,11 @@ async def seed(session: AsyncSession) -> None:
     from app.services import i18n_service
 
     await i18n_service.invalidate_translations()
-    print("\n✨ i18n seed complete!")
+    unchanged = len(ALL_TRANSLATIONS) - added - updated
+    print(
+        f"✨ i18n seed complete ({added} added, {updated} updated, "
+        f"{unchanged} unchanged)"
+    )
 
 
 async def main() -> None:

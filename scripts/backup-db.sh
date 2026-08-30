@@ -102,5 +102,8 @@ find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" \
   -mtime +"${RETENTION_DAYS}" -delete
 
 echo "==> Backup complete."
-echo "    Existing local backups:"
-ls -lh "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null || echo "    (none)"
+# A full ls of every retained dump is hundreds of log lines on this box and
+# nobody reads it. Count + newest is enough to see the job ran.
+newest=$(ls -t "$BACKUP_DIR"/mm_ecommerce_*.sql.gz 2>/dev/null | head -1)
+count=$(find "$BACKUP_DIR" -name "mm_ecommerce_*.sql.gz" | wc -l | tr -d " ")
+echo "    ${count} local backups; newest: ${newest:-none}"

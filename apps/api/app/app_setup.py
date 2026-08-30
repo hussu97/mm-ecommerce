@@ -240,9 +240,12 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
         for task in background:
             task.cancel()
             # Awaited so a batch mid-booking finishes rather than being torn
-            # off halfway between a quotation and an order.
-            with suppress(asyncio.CancelledError):
-                await task
+            # off halfway between a quotation and an order. Cap the wait:
+            # an ingest tick blocked in httpx used to hold SIGTERM for the
+            # full uvicorn graceful-shutdown window (~25s), which is what
+            # made `docker stop -t 30` take 40s per colour on every deploy.
+            with suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(task, timeout=8)
         logger.info("%s shutting down", service)
 
     return lifespan

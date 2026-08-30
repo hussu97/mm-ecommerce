@@ -51,14 +51,12 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
-              - '.github/workflows/deploy.yml'
             admin:
               - 'apps/admin/**'
               - 'packages/**'
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
-              - '.github/workflows/deploy.yml'
             api:
               - 'apps/api/**'
               - 'apps/aggregator-bootstrap/**'
@@ -68,19 +66,21 @@ jobs:
               - 'scripts/deploy.sh'
               - '.github/workflows/deploy.yml'
             bootstrap:
-              - 'apps/aggregator-bootstrap/**'
-              - '.github/workflows/deploy.yml'
+              - 'apps/aggregator-bootstrap/Dockerfile'
+              - 'apps/aggregator-bootstrap/docker-entrypoint.sh'
+              - 'apps/aggregator-bootstrap/pyproject.toml'
+              - 'apps/aggregator-bootstrap/uv.lock'
+              - 'apps/aggregator-bootstrap/src/**'
             nginx:
               - 'nginx/**'
 
   # ── Test & deploy ────────────────────────────────────────────────────────────
   #
-  # Lint and test are steps here rather than jobs of their own. As separate
-  # jobs they gated the deploy serially, so every deploy paid for a second
-  # runner to boot, check the repo out, install node and install the workspace
-  # a second time — about 65s of wall clock to re-create a machine identical to
-  # the one the deploy was about to build on. Steps run in order, so a failing
-  # lint still stops the deploy before anything is built or shipped.
+  # Web/admin keep lint and test as steps on the same runner as the Vercel
+  # build. Splitting those gated the deploy serially and paid ~65s to boot a
+  # second machine that then installed pnpm again. API is different: pytest
+  # and docker build are 90s+60s of independent work, so they are sibling
+  # jobs and the VM deploy waits for both.
 
   deploy-web:
     name: Test & Deploy Web to Vercel
@@ -236,15 +236,23 @@ jobs:
           echo "::error::vercel deploy failed three times"
           exit 1
 
-  deploy-gcp:
-    name: Test & Deploy API to GCP
+  # Test, image build, and (when needed) the Playwright bootstrap build run as
+  # three jobs so wall clock is max(test, build) instead of test+build+bootstrap.
+  # :latest is NOT pushed here — a red suite must not retag production. The
+  # deploy job promotes the SHA tag after tests pass.
+  #
+  # Web/admin keep lint+test as steps on the same runner: splitting those
+  # paid ~65s to boot a second machine that then installed pnpm again. API
+  # docker build is 60–100s of work that does not need the test database, so
+  # the split is worth a runner.
+
+  test-api:
+    name: Test API
     needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       contents: read
-      packages: write  # push to GHCR
     # A real database, because the bugs that reached production were a lazy
     # load in async context and a stale read after commit. Neither is visible
     # without a live session and a round trip.
@@ -267,10 +275,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Test ────────────────────────────────────────────────────────────────
-      # Nothing below this block runs if any of it fails, so the image is never
-      # built and the VM is never touched on a red suite.
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -288,6 +292,13 @@ jobs:
         with:
           path: ~/.cache/ruff
           key: ruff-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
+
+      - name: Cache pytest
+        uses: actions/cache@v4
+        with:
+          path: apps/api/.pytest_cache
+          key: pytest-${{ runner.os }}-${{ hashFiles('apps/api/pyproject.toml') }}
+          restore-keys: pytest-${{ runner.os }}-
 
       - name: Install dependencies
         run: |
@@ -320,13 +331,23 @@ jobs:
       # does help on a developer machine with more cores (9.6s -> 5.6s), which
       # is why the dependency is still there.
       #
-      # `-v` is gone though: it printed 1280 lines nobody reads.
+      # Coverage stays on pr-check.yml. `--cov` on every deploy added ~20–30s
+      # for a report nobody reads off the production pipeline.
       - name: Run pytest
         run: |
           cd apps/api
-          pytest tests/ --tb=short --cov=app --cov-report=term-missing
+          pytest tests/ --tb=short
 
-      # ── Deploy ──────────────────────────────────────────────────────────────
+  build-api:
+    name: Build API image
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -338,8 +359,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build on the fast GH Actions runner (4 vCPU, SSD) instead of the e2-micro.
-      # GHA layer cache keeps subsequent builds fast (pip install hits cache).
+      # SHA tag only. Promoting :latest before tests pass would leave a failing
+      # commit as what the VM pulls on the next `docker pull :latest`.
       - name: Build and push API image
         uses: docker/build-push-action@v6
         with:
@@ -348,19 +369,32 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/mm-ecommerce-api:latest
             ghcr.io/${{ github.repository_owner }}/mm-ecommerce-api:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
 
-      # The Playwright/Keeta bootstrap worker image. Built here (the fast runner)
-      # and pulled on the VM, where a cron runs it one-shot every few hours to
-      # warm the aggregator sessions and re-pull Keeta orders. Its own context
-      # (apps/aggregator-bootstrap) — the Dockerfile COPYs pyproject/src relative
-      # to it. Only rebuilt when its own sources change (see the `bootstrap`
-      # path filter); a routine API deploy skips this ~4.7GB build entirely.
+  build-bootstrap:
+    name: Build aggregator-bootstrap image
+    needs: changes
+    if: needs.changes.outputs.bootstrap == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push aggregator-bootstrap image
-        if: needs.changes.outputs.bootstrap == 'true'
         uses: docker/build-push-action@v6
         with:
           context: apps/aggregator-bootstrap
@@ -368,10 +402,50 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/mm-ecommerce-aggregator-bootstrap:latest
             ghcr.io/${{ github.repository_owner }}/mm-ecommerce-aggregator-bootstrap:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=bootstrap
+          cache-to: type=gha,mode=max,scope=bootstrap
+
+  deploy-gcp:
+    name: Deploy API to GCP
+    needs: [changes, test-api, build-api, build-bootstrap]
+    # `always()` so a skipped build-bootstrap (routine API deploy) does not
+    # skip this job. The result checks still refuse to ship a red suite.
+    if: >
+      always() &&
+      needs.changes.result == 'success' &&
+      needs.changes.outputs.api == 'true' &&
+      needs.test-api.result == 'success' &&
+      needs.build-api.result == 'success' &&
+      (needs.build-bootstrap.result == 'success' || needs.build-bootstrap.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote API image to :latest
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/${{ github.repository_owner }}/mm-ecommerce-api:latest \
+            ghcr.io/${{ github.repository_owner }}/mm-ecommerce-api:${{ github.sha }}
+
+      - name: Promote aggregator-bootstrap image to :latest
+        if: needs.changes.outputs.bootstrap == 'true'
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/${{ github.repository_owner }}/mm-ecommerce-aggregator-bootstrap:latest \
+            ghcr.io/${{ github.repository_owner }}/mm-ecommerce-aggregator-bootstrap:${{ github.sha }}
 
       - name: Setup SSH
         run: |
@@ -552,21 +626,19 @@ jobs:
           # the live images plus, briefly mid-deploy, the one they just replaced.
           echo "Reclaiming superseded images before pulling..."
           docker image prune -f < /dev/null || true
-          docker builder prune -f < /dev/null || true
 
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
-          # Only pull the ~4.7GB Playwright image when its sources actually
-          # changed (the `bootstrap` path filter). On every other deploy the
-          # image already on the VM is current, so re-pulling it is pure disk
-          # churn and pull time — the thing that kept filling the disk.
+          # Do not pull the ~4.7GB Playwright image here. It is not on the
+          # request path; `aggregator-worker` has pull_policy: always, so the
+          # next cron tick fetches a new :latest. Pulling it inline added
+          # 4.5 minutes to API deploys that happened to change bootstrap
+          # sources (or, previously, deploy.yml).
           if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
-            echo "Pulling the aggregator bootstrap worker image..."
-            docker pull ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest \
-              || echo "WARNING: bootstrap worker image pull failed — warm cron will retry"
+            echo "Bootstrap image pushed to GHCR — cron will pull it on the next tick."
           else
-            echo "Bootstrap sources unchanged — keeping the existing image, skipping pull."
+            echo "Bootstrap sources unchanged — skipping pull."
           fi
 
           # A migration can drop a table, and `alembic downgrade` cannot bring
@@ -628,8 +700,14 @@ jobs:
               && sudo chmod 644 /etc/cron.d/aggregator-warm \
               && echo "aggregator warm cron installed" \
               || echo "WARNING: could not install aggregator warm cron"
+            # Deploy user and root cron must both flock this. A 644 root:root
+            # file under /var/lock is why cutover used to continue without the lock.
+            sudo touch /tmp/mm-aggregator-warm.lock
+            sudo chmod 666 /tmp/mm-aggregator-warm.lock
           else
             echo "WARNING: no passwordless sudo — install /etc/cron.d/aggregator-warm by hand"
+            touch /tmp/mm-aggregator-warm.lock 2>/dev/null || true
+            chmod 666 /tmp/mm-aggregator-warm.lock 2>/dev/null || true
           fi
 
           # Every docker command here needs `< /dev/null`. This whole script is
@@ -666,15 +744,18 @@ jobs:
           # openssl, so the check there reported no dates and warned on every
           # certificate unconditionally — noise that would soon be ignored.
           echo "Certificate expiry:"
-          docker compose -f docker-compose.prod.yml run --rm --no-deps --entrypoint sh -T certbot -c '
-            for c in /etc/letsencrypt/live/*/cert.pem; do
+          # Host openssl on the bind-mounted certs — `compose run certbot`
+          # started a container every deploy for a 15s date print.
+          if command -v openssl >/dev/null 2>&1; then
+            for c in certbot/conf/live/*/cert.pem; do
               [ -e "$c" ] || continue
-              echo "  $(basename $(dirname $c)): $(openssl x509 -enddate -noout -in "$c" | cut -d= -f2)"
-              # Say so while there is still time to act, rather than finding
-              # out from a browser error after it has expired.
+              echo "  $(basename "$(dirname "$c")"): $(openssl x509 -enddate -noout -in "$c" | cut -d= -f2)"
               openssl x509 -checkend 604800 -noout -in "$c" > /dev/null \
                 || echo "    WARNING: expires within 7 days"
-            done' < /dev/null || true
+            done
+          else
+            echo "  skipped: no openssl on host"
+          fi
 
           # A second dangling sweep after the restart: the image the containers
           # were running at the start of this deploy lost its :latest tag when
@@ -689,19 +770,27 @@ jobs:
 
           # nginx is built on the VM when nginx/ changes (--build above) and
           # its cache is never reclaimed otherwise — it had grown to 3.2GB.
-          echo "Pruning stale build cache..."
-          docker builder prune -f < /dev/null
+          if [ "$NGINX_CHANGED" = "true" ]; then
+            echo "Pruning stale build cache..."
+            docker builder prune -f < /dev/null
+          fi
 
           # journald shipped uncapped (default: 10% of the disk = 2GB here) and
           # had reached 810MB. Cap it so logs cannot crowd out the DB. Guarded
-          # and non-fatal: a logging tweak must never fail a deploy.
+          # and non-fatal: a logging tweak must never fail a deploy. Skip the
+          # restart once the drop-in exists — restarting journald every
+          # deploy was a few seconds of gap for no change.
           echo "Capping systemd journal size..."
           if sudo -n true < /dev/null 2>/dev/null; then
-            sudo -n mkdir -p /etc/systemd/journald.conf.d < /dev/null
-            printf '[Journal]\nSystemMaxUse=200M\nSystemMaxFileSize=50M\n' \
-              | sudo -n tee /etc/systemd/journald.conf.d/99-size-cap.conf > /dev/null
-            sudo -n systemctl restart systemd-journald < /dev/null
-            sudo -n journalctl --vacuum-size=200M < /dev/null 2>&1 | tail -1
+            if [ ! -f /etc/systemd/journald.conf.d/99-size-cap.conf ]; then
+              sudo -n mkdir -p /etc/systemd/journald.conf.d < /dev/null
+              printf '[Journal]\nSystemMaxUse=200M\nSystemMaxFileSize=50M\n' \
+                | sudo -n tee /etc/systemd/journald.conf.d/99-size-cap.conf > /dev/null
+              sudo -n systemctl restart systemd-journald < /dev/null
+              sudo -n journalctl --vacuum-size=200M < /dev/null 2>&1 | tail -1
+            else
+              echo "  already capped"
+            fi
           else
             echo "  skipped: no passwordless sudo for $(whoami)"
           fi

@@ -4,7 +4,7 @@
 # The worker runs real Chrome HEADED under a virtual display (Xvfb, via the image
 # entrypoint) because the anti-bot edges drop headless Chrome — see
 # docker-entrypoint.sh. Two staggered one-shot jobs; each warms one channel at a
-# time. They also share an `flock` (/var/lock/aggregator-warm.lock) so that even
+# time. They also share an `flock` (/tmp/mm-aggregator-warm.lock) so that even
 # if the Keeta pull overruns its 15-minute head start, the noon/talabat warm
 # WAITS rather than starting a second headed-Chrome container alongside it — at
 # most one Chrome runs at any instant, which is what keeps this within the VM's
@@ -64,6 +64,6 @@
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
-0 */3 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
-15 22 * * * root /usr/bin/flock -w 1200 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat careem; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
-*/2 * * * * root /usr/bin/flock -w 100 /var/lock/aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions' 2>&1 | /usr/bin/logger -t aggregator-reauth
+0 */3 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
+15 22 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat careem; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
+*/2 * * * * root /usr/bin/flock -w 100 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions' 2>&1 | /usr/bin/logger -t aggregator-reauth

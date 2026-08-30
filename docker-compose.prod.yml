@@ -418,13 +418,16 @@ services:
 
   api:
     image: ghcr.io/hussu97/mm-ecommerce-api:latest
-    pull_policy: always
+    # Deploy/rollback already `docker pull` (or tag) before compose up. `always`
+    # re-checked GHCR on alembic run + each idle slot — three extra 10–36s
+    # pulls on the e2-small after the image was already local.
+    pull_policy: missing
     restart: always
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000
       --workers ${UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 25"
-    stop_grace_period: 30s
+      --timeout-graceful-shutdown 8"
+    stop_grace_period: 10s
     environment: *api-environment
     # Ship stdout/stderr directly to GCP Cloud Logging.
     # The app emits structured JSON (severity/message/time/stack_trace) in
@@ -440,14 +443,14 @@ services:
           memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
-      # /ping is not served until FastAPI lifespan finishes (i18n seed on
-      # api). compose --wait treats unhealthy as failure, and 30s + 5×10s
-      # retries (~80s) is shorter than the seed on this VM — that is why
-      # api-green was killed mid-"Running i18n seed...".
-      start_period: 180s
+      # /ping is served only after lifespan (i18n seed on api). The seed used
+      # to do one SELECT per key (~minutes on this VM); it is one table load
+      # now. 60s covers import + seed; compose --wait still returns as soon
+      # as the probe passes.
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -456,14 +459,17 @@ services:
 
   pos-api:
     image: ghcr.io/hussu97/mm-ecommerce-api:latest
-    pull_policy: always
+    # Deploy/rollback already `docker pull` (or tag) before compose up. `always`
+    # re-checked GHCR on alembic run + each idle slot — three extra 10–36s
+    # pulls on the e2-small after the image was already local.
+    pull_policy: missing
     restart: always
     # The same image as the storefront API — one build, two applications.
     command: >
       sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 25"
-    stop_grace_period: 30s
+      --timeout-graceful-shutdown 8"
+    stop_grace_period: 10s
     environment: *pos-environment
     # Ship stdout/stderr directly to GCP Cloud Logging.
     # The app emits structured JSON (severity/message/time/stack_trace) in
@@ -483,10 +489,10 @@ services:
           memory: 256m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 180s
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -501,13 +507,16 @@ services:
   api-green:
     profiles: ["green"]
     image: ghcr.io/hussu97/mm-ecommerce-api:latest
-    pull_policy: always
+    # Deploy/rollback already `docker pull` (or tag) before compose up. `always`
+    # re-checked GHCR on alembic run + each idle slot — three extra 10–36s
+    # pulls on the e2-small after the image was already local.
+    pull_policy: missing
     restart: always
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000
       --workers ${UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 25"
-    stop_grace_period: 30s
+      --timeout-graceful-shutdown 8"
+    stop_grace_period: 10s
     environment: *api-environment
     logging: *gcplogs
     networks:
@@ -518,10 +527,10 @@ services:
           memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 180s
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -531,13 +540,16 @@ services:
   pos-api-green:
     profiles: ["green"]
     image: ghcr.io/hussu97/mm-ecommerce-api:latest
-    pull_policy: always
+    # Deploy/rollback already `docker pull` (or tag) before compose up. `always`
+    # re-checked GHCR on alembic run + each idle slot — three extra 10–36s
+    # pulls on the e2-small after the image was already local.
+    pull_policy: missing
     restart: always
     command: >
       sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 25"
-    stop_grace_period: 30s
+      --timeout-graceful-shutdown 8"
+    stop_grace_period: 10s
     environment: *pos-environment
     logging: *gcplogs
     networks:
@@ -548,10 +560,10 @@ services:
           memory: 256m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: pos.meltingmomentscakes.com", "http://localhost:8000/ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 180s
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy

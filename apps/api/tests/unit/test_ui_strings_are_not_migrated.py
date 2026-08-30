@@ -79,3 +79,17 @@ def test_the_seed_still_runs_on_boot():
         "this test and the `ui_translations` exception in CLAUDE.md rule 7 — "
         "the reason for both has gone."
     )
+
+
+def test_seed_loads_translations_in_one_query():
+    """
+    A SELECT per key (~1,500 round-trips) is what made api-green sit in
+    'Running i18n seed...' past the healthcheck start_period.
+    """
+    import inspect
+
+    from scripts import seed_i18n
+
+    source = inspect.getsource(seed_i18n.seed)
+    assert "existing_by_key" in source
+    assert "UiTranslation.key == key" not in source

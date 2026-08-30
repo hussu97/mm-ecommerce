@@ -35,14 +35,14 @@ def test_drain_matches_upstream_keepalive_timeout():
     upstreams = UPSTREAMS.read_text()
     script = CUTOVER.read_text()
     timeouts = set(re.findall(r"keepalive_timeout\s+(\d+)s", upstreams))
-    assert timeouts == {"15"}, timeouts
+    assert timeouts == {"5"}, timeouts
     default = re.search(r'DRAIN_SECONDS="\$\{DRAIN_SECONDS:-(\d+)\}"', script)
     assert default is not None, "DRAIN_SECONDS default missing from cutover script"
-    assert default.group(1) == "15"
-    assert 'STOP_GRACE="${STOP_GRACE:-30}"' in script
+    assert default.group(1) == "5"
+    assert 'STOP_GRACE="${STOP_GRACE:-10}"' in script
     wait = re.search(r'WAIT_TIMEOUT="\$\{WAIT_TIMEOUT:-(\d+)\}"', script)
     assert wait is not None, "WAIT_TIMEOUT default missing from cutover script"
-    assert int(wait.group(1)) >= 300
+    assert int(wait.group(1)) >= 90
 
 
 def test_committed_upstreams_point_at_slot_a():
@@ -155,3 +155,51 @@ def test_decommission_never_drops_ecommerce_tables():
     assert "DROP DATABASE mm_ecommerce" not in text
     assert "melting-moments-cakes_aggregator_sessions" in text
     assert "/etc/cron.d/aggregator-warm" in text
+
+
+def test_cutover_flock_is_writable_by_the_deploy_user():
+    """
+    Cron runs as root. /var/lock/aggregator-warm.lock created 644 root:root
+    made cutover print Permission denied and continue without the lock, so
+    heal-sessions could start Chrome next to api-green.
+    """
+    cron = (
+        ROOT / "apps" / "aggregator-bootstrap" / "deploy" / "aggregator-warm.cron"
+    ).read_text()
+    script = CUTOVER.read_text()
+    assert "/tmp/mm-aggregator-warm.lock" in script
+    assert "/tmp/mm-aggregator-warm.lock" in cron
+    assert "/var/lock/aggregator-warm.lock" not in script
+    assert "/var/lock/aggregator-warm.lock" not in cron
+
+
+def test_deploy_yml_runs_tests_and_image_build_as_sibling_jobs():
+    """
+    Serial pytest-then-docker on one runner was 98s+67s before SSH. Sibling
+    jobs overlap them. :latest is promoted only after tests pass.
+    """
+    text = DEPLOY_YML.read_text()
+    assert "name: Test API" in text
+    assert "name: Build API image" in text
+    assert "name: Deploy API to GCP" in text
+    assert "Promote API image to :latest" in text
+    assert "needs: [changes, test-api, build-api, build-bootstrap]" in text
+    assert "--cov=app" not in text
+    assert (
+        "docker pull ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest"
+        not in text
+    )
+
+
+def test_bootstrap_path_filter_does_not_include_the_workflow_file():
+    """A deploy.yml-only or cron-only change must not rebuild the 4.7GB image."""
+    text = DEPLOY_YML.read_text()
+    match = re.search(
+        r"bootstrap:\n((?:[ \t]+- .+\n)+)",
+        text,
+    )
+    assert match is not None, "bootstrap path filter missing"
+    listed = match.group(1)
+    assert "deploy.yml" not in listed
+    assert "aggregator-bootstrap/deploy" not in listed
+    assert "aggregator-bootstrap/src/**" in listed
