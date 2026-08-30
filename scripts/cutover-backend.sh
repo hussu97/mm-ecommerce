@@ -22,7 +22,7 @@ WARM_LOCK="${WARM_LOCK:-/var/lock/aggregator-warm.lock}"
 # Must match keepalive_timeout in nginx/runtime/upstreams.conf.
 DRAIN_SECONDS="${DRAIN_SECONDS:-15}"
 STOP_GRACE="${STOP_GRACE:-30}"
-WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-300}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-30}"
 
 API_HOST="${API_HOST:-api.meltingmomentscakes.com}"

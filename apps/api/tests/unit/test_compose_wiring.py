@@ -120,6 +120,21 @@ def test_postgres_max_connections_stays_at_thirty():
     assert "-c max_connections=100" not in text
 
 
+def test_api_healthcheck_start_period_covers_i18n_seed():
+    """
+    compose --wait fails the moment Docker marks the container unhealthy.
+    /ping is served only after lifespan (the i18n seed on api). 30s + 5×10s
+    retries killed api-green mid-seed on the first cutover.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    for svc in ("api", "api-green", "pos-api", "pos-api-green"):
+        period = compose["services"][svc]["healthcheck"]["start_period"]
+        seconds = int(str(period).rstrip("s"))
+        assert seconds >= 180, (
+            f"{svc} start_period={period!r} is too short for seed+wait"
+        )
+
+
 def test_every_pos_setting_reaches_a_container():
     """
     Catches the general shape of the bug: a POS_* setting added to config and

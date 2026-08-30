@@ -443,7 +443,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # /ping is not served until FastAPI lifespan finishes (i18n seed on
+      # api). compose --wait treats unhealthy as failure, and 30s + 5×10s
+      # retries (~80s) is shorter than the seed on this VM — that is why
+      # api-green was killed mid-"Running i18n seed...".
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy
@@ -482,7 +486,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy
@@ -517,7 +521,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy
@@ -547,7 +551,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 180s
     depends_on:
       postgres:
         condition: service_healthy

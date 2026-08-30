@@ -40,6 +40,9 @@ def test_drain_matches_upstream_keepalive_timeout():
     assert default is not None, "DRAIN_SECONDS default missing from cutover script"
     assert default.group(1) == "15"
     assert 'STOP_GRACE="${STOP_GRACE:-30}"' in script
+    wait = re.search(r'WAIT_TIMEOUT="\$\{WAIT_TIMEOUT:-(\d+)\}"', script)
+    assert wait is not None, "WAIT_TIMEOUT default missing from cutover script"
+    assert int(wait.group(1)) >= 300
 
 
 def test_committed_upstreams_point_at_slot_a():
