@@ -54,11 +54,12 @@ def upgrade() -> None:
     op.execute(
         f"""
         INSERT INTO order_deliveries (
-            order_id, provider, fee_charged, courier_status, cancel_reason,
+            id, order_id, provider, fee_charged, courier_status, cancel_reason,
             driver_name, driver_phone, driver_assigned_at, driver_assignment_count,
             booked_at, previous_courier_order_ids, dispatch_attempts
         )
-        SELECT o.id,
+        SELECT gen_random_uuid(),
+               o.id,
                {_CHANNEL_CASE},
                o.aggregator_delivery_fee,
                o.aggregator_driver_status,
@@ -87,9 +88,9 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO order_drivers (
-            order_id, provider, name, phone, sequence, is_active, assigned_at
+            id, order_id, provider, name, phone, sequence, is_active, assigned_at
         )
-        SELECT d.order_id, d.provider, d.driver_name, d.driver_phone,
+        SELECT gen_random_uuid(), d.order_id, d.provider, d.driver_name, d.driver_phone,
                1, true, coalesce(d.driver_assigned_at, d.created_at)
         FROM order_deliveries d
         JOIN orders o ON o.id = d.order_id
