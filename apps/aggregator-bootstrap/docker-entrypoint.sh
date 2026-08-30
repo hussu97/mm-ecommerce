@@ -17,9 +17,16 @@
 # the X server down when the command exits — no resident X server between the
 # one-shot cron runs. HEADLESS=false (set in the image env) makes the Playwright
 # launches actually use it.
+#
+# heal-sessions MUST have a display too: when it finds a dead anti-bot channel it
+# drives the stored login, which spawns HEADED Chrome (HEADLESS=false). Without a
+# display Chrome never opens its debug port and every anti-bot re-login fails as
+# "Chrome did not open a debug port" — so the every-2-min heal could detect death
+# but never fix noon/talabat/careem. Wrapping it in Xvfb closes that gap. (heal's
+# no-op ticks still cost a short-lived X server; acceptable for the reliability.)
 cmd="$1"
 case "$cmd" in
-    login|warm-sessions|bootstrap|capture-and-push|serve-reauth)
+    login|warm-sessions|bootstrap|capture-and-push|serve-reauth|heal-sessions)
         exec xvfb-run -a --server-args="-screen 0 1280x1024x24 -nolisten tcp" \
             aggregator-bootstrap "$@"
         ;;

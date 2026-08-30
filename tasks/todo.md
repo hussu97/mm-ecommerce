@@ -224,3 +224,53 @@ a dead one for a human. `needs_bootstrap` never triggered a re-login.
 - [x] Tests for the escalation + the login/push + human-needed + no-account paths.
 Note: untested against a live headed browser (can't run Chromium+Xvfb here); logic
 reuses existing, proven login/push functions.
+
+
+---
+
+# Aggregator auth & ingestion redesign — make autonomous runs work 100% (2026-08-30)
+
+Branch: `aggregator-auth-redesign`. Plan: `~/.claude/plans/this-repo-contains-some-merry-twilight.md`.
+Root causes + live-VM evidence: memory `aggregator-autonomous-401-root-causes.md`.
+Manual runs work; the hourly autonomous refresh 401s — an architecture problem
+(single shared flock + status-column coordination + reactive heal with ~7 failure modes).
+
+## Phase 0 — Acute stopgaps [W] (revertible) — DONE (commit)
+- [x] `docker-entrypoint.sh`: heal-sessions now runs under xvfb (heal can re-login anti-bot)
+- [x] `deploy/aggregator-warm.cron`: `timeout -k 30` around every `docker compose run` (reap hangs, free flock); single shared lock kept (1 Chrome = fits RAM)
+
+## Phase 1 — Leader election [A]
+- [ ] `ingest.py`: `_SCHEDULER_LEADER_LOCK_KEY` + `run_aggregator_schedulers_forever()` (reuse advisory_lock.held, lifetime hold)
+- [ ] `app_setup.py`: wire supervisor once; finally-cancel children (8s shutdown cap)
+- [ ] unit test (mock advisory_lock.held False→True)
+
+## Phase 2 — Deliveroo mint fix [A]
+- [ ] remove `_DEFAULT_ORG_ID`/`_DEFAULT_RESTAURANT_IDS` + fallbacks; require account/branch-map, raise if absent
+- [ ] delete org_id override in `_login`; stop silent login degradation; merge captured anti-bot cookies on mint
+- [ ] one-off DEBUG log to confirm mechanism on VM; update `test_deliveroo_provider.py`
+
+## Phase 3 — Worker daemon: queue + hard timeout + resident Xvfb [W]
+- [ ] `serve)` entrypoint (resident Xvfb); `queue.py`; extract `reauth.py`; `daemon.py`
+- [ ] `browser.kill_live_chrome()` + `_LIVE_CHROME` registry; `run_job_guarded` hard timeout
+- [ ] in-process Dubai-wall-clock scheduler; retire cron+flock; compose worker always-on
+
+## Phase 4 — DB-as-truth profile fix [W]
+- [ ] `browser.py` probe_channel: always use hydrated storage_state (drop `.chrome` preference)
+
+## Phase 5 — Per-channel policy + one retry helper [W]+[A]
+- [ ] `services/aggregators/policy.py` + worker `channels/policy.py`; `next_backoff()`; absorb scattered constants; golden test
+
+## Phase 6 — Robust liveness [A]+[W]
+- [ ] migration `168_agg_liveness` (`last_verified_at`, `consecutive_failures`); model + session_store; worker stamps; `@mm/types` regen
+
+## Phase 7 — Reauth contract + careem coverage [A]+[W]
+- [ ] `request_heal`; simplify `_await_reauth`; worker consumes heal queue; careem login_method fix
+
+## Phase 8 — Observability + alerting [A]+[W]
+- [ ] `_log_lifecycle`; extend `_log_health`; dead-beyond-threshold alert; worker `report_needs_human`
+
+## Phase 9 — Deploy finalization [W]
+- [ ] deploy.yml: drop cron/flock, add compose pull+up; healthcheck; delete cron file
+
+## Review (redesign)
+_(filled in as phases land)_
