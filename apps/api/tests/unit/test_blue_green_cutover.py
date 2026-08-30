@@ -115,6 +115,18 @@ def test_cutover_probes_health_with_production_host():
     assert "localhost:8000/ping" not in text
 
 
+def test_cutover_stops_aggregator_worker_instead_of_waiting():
+    """
+    heal-sessions is a cron one-shot. Waiting it out stalled deploys; stopping
+    it is safe — the next tick retries any channel left needs_bootstrap.
+    """
+    text = CUTOVER.read_text()
+    assert 'docker ps -q --filter "name=aggregator-worker"' in text
+    assert "docker stop -t 15" in text
+    assert "waiting (${i}/240)" not in text
+    assert "still running after 20 minutes" not in text
+
+
 def test_failed_idle_start_stops_the_idle_slot():
     """
     compose --wait / /health failing with the idle colour already up is how

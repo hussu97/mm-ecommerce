@@ -117,36 +117,52 @@ _running() {
   [ -n "$id" ]
 }
 
+_aggregator_worker_ids() {
+  docker ps -q --filter "name=aggregator-worker" < /dev/null || true
+}
+
+_stop_aggregator_workers() {
+  local ids
+  ids=$(_aggregator_worker_ids)
+  [ -n "$ids" ] || return 0
+  echo "==> Stopping one-shot aggregator-worker so cutover has RAM..."
+  echo "    $ids"
+  # heal-sessions / warm-sessions are cron one-shots, not a daemon. A half-
+  # finished login stays `needs_bootstrap` and the next */2 min tick retries.
+  # Waiting them out held the deploy for up to 20 minutes (and a dead Talabat
+  # login used to hold the warm lock for 45). SIGTERM the container; compose
+  # `--rm` then exits and drops the flock this script is about to take.
+  # shellcheck disable=SC2086
+  docker stop -t 15 $ids < /dev/null || true
+}
+
 _wait_for_aggregator_idle() {
-  local i
-  echo "==> Refusing to overlap a running aggregator-worker..."
-  for i in $(seq 1 240); do
-    if ! docker ps --filter "name=aggregator-worker" --format '{{.ID}}' < /dev/null | grep -q .; then
-      break
+  _stop_aggregator_workers
+
+  if command -v flock >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$WARM_LOCK")"
+    # Hold the lock for the rest of this process so cron cannot start Chrome
+    # while one extra API is in memory. Cron uses the same path.
+    exec 9>"$WARM_LOCK" || {
+      echo "WARNING: cannot open $WARM_LOCK — continuing without flock"
+      _stop_aggregator_workers
+      return 0
+    }
+    echo "==> Acquiring $WARM_LOCK so cron cannot start Chrome during cutover..."
+    if ! flock -w 30 9; then
+      echo "    lock still held after stop; stopping workers again and retrying"
+      _stop_aggregator_workers
+      if ! flock -w 30 9; then
+        _die "could not acquire $WARM_LOCK after stopping aggregator-worker"
+      fi
     fi
-    echo "  aggregator-worker is running; waiting (${i}/240)"
-    sleep 5
-  done
-  if docker ps --filter "name=aggregator-worker" --format '{{.ID}}' < /dev/null | grep -q .; then
-    _die "aggregator-worker still running after 20 minutes; refusing to overlap"
+    echo "    acquired $WARM_LOCK (held until this script exits)"
+  else
+    echo "    flock not available — worker stop only"
   fi
 
-  if ! command -v flock >/dev/null 2>&1; then
-    echo "    flock not available — continuing after the container check"
-    return 0
-  fi
-  mkdir -p "$(dirname "$WARM_LOCK")"
-  # Hold the lock for the rest of this process so cron cannot start Chrome
-  # while one extra API is in memory. Cron uses the same path.
-  exec 9>"$WARM_LOCK" || {
-    echo "WARNING: cannot open $WARM_LOCK — continuing without flock"
-    return 0
-  }
-  echo "==> Waiting for $WARM_LOCK..."
-  if ! flock -w 1200 9; then
-    _die "timed out waiting for $WARM_LOCK"
-  fi
-  echo "    acquired $WARM_LOCK (held until this script exits)"
+  # A heal tick may have started between the first stop and flock.
+  _stop_aggregator_workers
 }
 
 _wait_health() {
