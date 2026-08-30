@@ -105,22 +105,37 @@ if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
 
   # Offsite retention now matches local: keep only the newest KEEP_BACKUPS in GCS
   # too, rather than letting the bucket keep everything (or age it out by a
-  # lifecycle rule). Best-effort — a failed prune must NEVER fail the backup, the
-  # same rule the upload above follows. Timestamped filenames (YYYYMMDD_HHMMSS)
-  # sort chronologically, so a plain `sort` puts newest LAST; we delete all but
-  # the trailing KEEP_BACKUPS. Works with either CLI; a host with neither simply
-  # skips (nothing was uploaded there anyway).
+  # lifecycle rule). Best-effort — a failed OR SLOW prune must NEVER fail the
+  # backup, the same rule the upload above follows. Timestamped filenames
+  # (YYYYMMDD_HHMMSS) sort chronologically, so a plain `sort` puts newest LAST;
+  # we delete all but the trailing KEEP_BACKUPS. Works with either CLI; a host
+  # with neither simply skips (nothing was uploaded there anyway).
+  #
+  # The deletes are issued as ONE batched call, and the whole prune is wrapped in
+  # a hard `timeout`. That is load-bearing, not belt-and-braces: the FIRST run
+  # after switching away from append-only has a large backlog (dozens of dumps),
+  # and deleting them one-at-a-time (~8s each under `gcloud storage rm`) ran past
+  # the deploy's `timeout 600 backup-db.sh` and aborted the migration on
+  # 2026-08-30. A single `gcloud storage rm <many urls>` parallelises internally,
+  # and the outer timeout guarantees the housekeeping can never eat the backup's
+  # time budget even if the backlog is pathological or the network is slow.
   echo "==> Pruning GCS backups, keeping the newest ${KEEP_BACKUPS}..."
   _gcs_glob="gs://${BACKUP_GCS_BUCKET}/backups/mm_ecommerce_*.sql.gz"
+  # `timeout` bounds the prune; where it is missing, run the command directly.
+  if command -v timeout >/dev/null 2>&1; then
+    _cap() { timeout 180 "$@"; }
+  else
+    _cap() { "$@"; }
+  fi
   if command -v gcloud >/dev/null 2>&1; then
     _gcs_ls() { gcloud storage ls "$_gcs_glob" 2>/dev/null; }
-    _gcs_rm() { gcloud storage rm "$1" >/dev/null 2>&1; }
+    _gcs_del() { _cap gcloud storage rm "$@" >/dev/null 2>&1; }
   elif command -v gsutil >/dev/null 2>&1; then
     _gcs_ls() { gsutil ls "$_gcs_glob" 2>/dev/null; }
-    _gcs_rm() { gsutil rm "$1" >/dev/null 2>&1; }
+    _gcs_del() { _cap gsutil -m rm "$@" >/dev/null 2>&1; }
   else
     _gcs_ls() { :; }
-    _gcs_rm() { :; }
+    _gcs_del() { :; }
   fi
   _gcs=()
   while IFS= read -r _u; do
@@ -128,15 +143,14 @@ if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
   done < <(_gcs_ls | sort || true)
   _gcs_prune=$(( ${#_gcs[@]} - KEEP_BACKUPS ))
   if [ "$_gcs_prune" -gt 0 ]; then
-    _i=0
-    while [ "$_i" -lt "$_gcs_prune" ]; do
-      if _gcs_rm "${_gcs[$_i]}"; then
-        echo "    removed $(basename "${_gcs[$_i]}")"
-      else
-        echo "    WARNING: could not remove ${_gcs[$_i]} from GCS"
-      fi
-      _i=$(( _i + 1 ))
-    done
+    # The oldest _gcs_prune objects (array is newest-last after sort).
+    _to_delete=( "${_gcs[@]:0:$_gcs_prune}" )
+    if _gcs_del "${_to_delete[@]}"; then
+      echo "    removed ${_gcs_prune} old GCS backup(s), kept the newest ${KEEP_BACKUPS}"
+    else
+      echo "    WARNING: GCS prune of ${_gcs_prune} object(s) did not complete;"
+      echo "             the local backup and this run's offsite copy are unaffected."
+    fi
   fi
 fi
 
