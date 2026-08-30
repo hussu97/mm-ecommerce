@@ -102,6 +102,42 @@ if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
     echo "    WARNING: BACKUP_GCS_BUCKET is set but neither gcloud nor gsutil is"
     echo "             installed on this host, so backups are LOCAL ONLY."
   fi
+
+  # Offsite retention now matches local: keep only the newest KEEP_BACKUPS in GCS
+  # too, rather than letting the bucket keep everything (or age it out by a
+  # lifecycle rule). Best-effort — a failed prune must NEVER fail the backup, the
+  # same rule the upload above follows. Timestamped filenames (YYYYMMDD_HHMMSS)
+  # sort chronologically, so a plain `sort` puts newest LAST; we delete all but
+  # the trailing KEEP_BACKUPS. Works with either CLI; a host with neither simply
+  # skips (nothing was uploaded there anyway).
+  echo "==> Pruning GCS backups, keeping the newest ${KEEP_BACKUPS}..."
+  _gcs_glob="gs://${BACKUP_GCS_BUCKET}/backups/mm_ecommerce_*.sql.gz"
+  if command -v gcloud >/dev/null 2>&1; then
+    _gcs_ls() { gcloud storage ls "$_gcs_glob" 2>/dev/null; }
+    _gcs_rm() { gcloud storage rm "$1" >/dev/null 2>&1; }
+  elif command -v gsutil >/dev/null 2>&1; then
+    _gcs_ls() { gsutil ls "$_gcs_glob" 2>/dev/null; }
+    _gcs_rm() { gsutil rm "$1" >/dev/null 2>&1; }
+  else
+    _gcs_ls() { :; }
+    _gcs_rm() { :; }
+  fi
+  _gcs=()
+  while IFS= read -r _u; do
+    [ -n "$_u" ] && _gcs+=("$_u")
+  done < <(_gcs_ls | sort || true)
+  _gcs_prune=$(( ${#_gcs[@]} - KEEP_BACKUPS ))
+  if [ "$_gcs_prune" -gt 0 ]; then
+    _i=0
+    while [ "$_i" -lt "$_gcs_prune" ]; do
+      if _gcs_rm "${_gcs[$_i]}"; then
+        echo "    removed $(basename "${_gcs[$_i]}")"
+      else
+        echo "    WARNING: could not remove ${_gcs[$_i]} from GCS"
+      fi
+      _i=$(( _i + 1 ))
+    done
+  fi
 fi
 
 echo "==> Pruning local backups, keeping the newest ${KEEP_BACKUPS}..."

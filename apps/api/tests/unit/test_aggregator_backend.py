@@ -235,6 +235,50 @@ async def test_keeta_orders_push_ingests_parsed_orders(client, monkeypatch):
     assert [c for c, _ in upserts] == ["keeta", "keeta"]
 
 
+async def test_keeta_orders_push_triggers_promote_when_something_ingested(
+    client, monkeypatch
+):
+    """Keeta is push-only and meant to be the freshest channel, so a push kicks a
+    promote immediately instead of waiting for the hourly sweep — but only when it
+    actually ingested something."""
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SESSION_PUSH_TOKEN", "tok")
+    monkeypatch.setattr(
+        "app.services.providers.keeta_provider.provider.parse_orders",
+        lambda payload: [object()],
+    )
+
+    async def fake_upsert(db, channel, order):
+        return None
+
+    monkeypatch.setattr("app.services.aggregators.ingest.upsert_order", fake_upsert)
+
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        "app.services.aggregators.ingest.trigger_promote_reconcile_in_background",
+        lambda: calls.__setitem__("n", calls["n"] + 1) or True,
+    )
+
+    # Something ingested → promote kicked.
+    resp = await client.post(
+        "/api/v1/aggregators/keeta/orders",
+        json={"payloads": [{"a": 1}]},
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ingested": 1}
+    assert calls["n"] == 1
+
+    # Nothing ingested → no promote kicked.
+    resp = await client.post(
+        "/api/v1/aggregators/keeta/orders",
+        json={"payloads": []},
+        headers={"Authorization": "Bearer tok"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ingested": 0}
+    assert calls["n"] == 1
+
+
 async def test_keeta_orders_push_isolates_a_bad_payload(client, monkeypatch):
     # One malformed payload must not fail the whole batch — it is logged and
     # skipped, the good payloads still ingest.

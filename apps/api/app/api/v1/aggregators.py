@@ -393,6 +393,13 @@ async def push_keeta_orders(
     as the sweep upserts the other channels. Returns the count of orders written.
     """
     ingested = await ingest.ingest_keeta_payloads(db, body.payloads)
+    # Keeta is push-only and is meant to be the freshest channel, but promotion ran
+    # only on the hourly sweep — so a pushed order sat unlinked in aggregator_order
+    # for up to an hour (and after a redeploy, until the next tick). Kick a tracked
+    # promote+reconcile now so it lands in the MM tables within seconds. Idempotent
+    # and backstopped by the hourly sweep; fires only when something was ingested.
+    if ingested:
+        ingest.trigger_promote_reconcile_in_background()
     return KeetaOrdersResult(ingested=ingested)
 
 

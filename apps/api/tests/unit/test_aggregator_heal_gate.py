@@ -98,17 +98,22 @@ def test_cron_heal_python_parses_and_flags_not_live():
             "cookie_expired": False,
         }
     ]
+    # A live session whose token/cookie is (nominally) expired must NOT trigger a
+    # headed heal: the flags fire heal for channels heal cannot help (Talabat's
+    # rotating PerimeterX cookie, Noon's warm-only Akamai cookie, Deliveroo/Careem
+    # which self-heal in the sweep), which ran a headed heal every 2 minutes all
+    # day. A genuinely dead session reaches `status != live` and still trips heal.
     expired = [
         {
             "channel": "noon",
             "status": "live",
             "token_expired": True,
-            "cookie_expired": False,
+            "cookie_expired": True,
         }
     ]
     assert _run(live) == 1
     assert _run(dead) == 0
-    assert _run(expired) == 0
+    assert _run(expired) == 1  # live status → no heal, despite expiry flags
     assert _run({"channels": dead}) == 0
     assert _run({"channels": live}) == 1
 
@@ -234,3 +239,24 @@ async def test_list_heal_channels_does_not_call_decrypt(monkeypatch):
     assert out[1]["status"] == "needs_bootstrap"
     assert out[1]["token_expired"] is True
     assert out[1]["cookie_expired"] is False
+
+
+async def test_list_heal_channels_talabat_cookie_expiry_is_advisory():
+    """Talabat's rotating PerimeterX cookie must report cookie_expired=False even
+    when its nominal TTL has passed — otherwise the 2-minute heal cron re-warmed it
+    headed all day. Noon's expired cookie still reports True."""
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(minutes=10)
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        return_value=SimpleNamespace(
+            all=lambda: [
+                ("noon", "live", None, past),
+                ("talabat", "live", None, past),
+            ]
+        )
+    )
+    out = await session_store.list_heal_channels(db)
+    by_ch = {r["channel"]: r for r in out}
+    assert by_ch["noon"]["cookie_expired"] is True
+    assert by_ch["talabat"]["cookie_expired"] is False

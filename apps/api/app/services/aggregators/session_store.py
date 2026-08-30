@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.aggregator import (
+    CHANNEL_TALABAT,
     SESSION_DEAD,
     SESSION_LIVE,
     SESSION_NEEDS_BOOTSTRAP,
@@ -211,6 +212,22 @@ async def enrich_session(
     return session
 
 
+#: Channels whose stored *cookie* expiry is advisory, not authoritative, so it
+#: must NOT proactively fail a live session. Talabat's load-bearing cookie is a
+#: PerimeterX `_px3`, whose nominal TTL is only a few minutes — but PerimeterX
+#: keeps the session alive by ROTATING it on each replay, so the httpx sweep goes
+#: on working for hours past that nominal expiry (until the cookie genuinely
+#: decays, which surfaces as a real 401 the reactive reauth already handles).
+#: Reading the 5-minute nominal expiry as "unusable" made every rolling sales
+#: sweep reject talabat and wait on a reauth that, on success, produced another
+#: 5-minute cookie that had usually re-expired by the next poll — so talabat
+#: recorded ZERO sales-mode runs and got no intraday data at all. Its *token*
+#: expiry (hours) is still honoured; only the rotating cookie is treated as
+#: advisory. Other channels' cookies (Noon Akamai ~hours, Deliveroo/Careem ~days)
+#: carry meaningful expiries and are unaffected.
+_COOKIE_EXPIRY_ADVISORY_CHANNELS = frozenset({CHANNEL_TALABAT})
+
+
 def session_unusable_reason(
     session: LoadedSession | None, *, now: datetime | None = None
 ) -> str | None:
@@ -225,16 +242,20 @@ def session_unusable_reason(
     expiry that has demonstrably passed, does. Returns a short reason for the
     operator ("needs_bootstrap", "token expired", …) so the trigger can say which
     channels will not run and why.
+
+    The cookie expiry is skipped for `_COOKIE_EXPIRY_ADVISORY_CHANNELS` (Talabat),
+    whose anti-bot cookie rotates on replay and outlives its short nominal TTL —
+    honouring it there starved the channel of every intraday sweep.
     """
     if session is None:
         return "no session — never bootstrapped"
     if session.status != SESSION_LIVE:
         return session.status
     now = now or utcnow()
-    for label, exp in (
-        ("token", session.token_expires_at),
-        ("cookie", session.cookie_expires_at),
-    ):
+    checks = [("token", session.token_expires_at)]
+    if session.channel not in _COOKIE_EXPIRY_ADVISORY_CHANNELS:
+        checks.append(("cookie", session.cookie_expires_at))
+    for label, exp in checks:
         if exp is not None:
             if exp.tzinfo is None:
                 exp = exp.replace(tzinfo=timezone.utc)
@@ -415,7 +436,17 @@ async def list_heal_channels(db: AsyncSession) -> list[dict]:
             "channel": channel,
             "status": status,
             "token_expired": _expiry_passed(token_exp, now),
-            "cookie_expired": _expiry_passed(cookie_exp, now),
+            # Advisory-cookie channels (Talabat) report cookie_expired=False: their
+            # PerimeterX cookie's ~5-minute nominal TTL is not a liveness signal (it
+            # rotates/outlives it), so keying the 2-minute heal cron on it re-warmed
+            # talabat headed every 2 minutes all day, holding the shared warm flock
+            # and starving the other channels. Heal talabat on a non-live status or a
+            # real token expiry instead — same authority the API sweep now uses.
+            "cookie_expired": (
+                False
+                if channel in _COOKIE_EXPIRY_ADVISORY_CHANNELS
+                else _expiry_passed(cookie_exp, now)
+            ),
         }
         for channel, status, token_exp, cookie_exp in rows
     ]

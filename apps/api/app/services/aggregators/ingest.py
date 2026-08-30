@@ -1602,6 +1602,39 @@ def _launch_tracked(coro) -> bool:
     return True
 
 
+async def _promote_reconcile_soon() -> None:
+    """Promote + reconcile shortly after a push, so a push-only channel (Keeta)
+    links into MM orders within seconds instead of waiting up to a full
+    `AGGREGATOR_SALES_REFRESH_MINUTES` for the next hourly sweep to promote it.
+
+    The brief sleep lets the request that launched this commit its upserts first —
+    the push handler's `get_db` commits only after the handler returns, and this
+    task reads on its own session. The sweeps are idempotent and the hourly refresh
+    is a backstop, so the rare case where the commit has not landed in time simply
+    resolves on the next tick rather than losing anything. Cancellation-safe; a
+    failure is logged and never propagates (it is fire-and-forget)."""
+    try:
+        await asyncio.sleep(2)
+        promoted = await sweep_promote_once()
+        if promoted:
+            logger.info("aggregator push-triggered promote: %s MM order(s)", promoted)
+        await sweep_reconcile_once()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — fire-and-forget must never surface
+        logger.exception("aggregator push-triggered promote/reconcile failed")
+
+
+def trigger_promote_reconcile_in_background() -> bool:
+    """Kick promote+reconcile as a tracked background task (convention #5 — a
+    module-held `asyncio.Task`, never `BackgroundTasks`). Used by the Keeta push
+    endpoints so pushed orders promote near-realtime. Returns whether it started
+    (False when disabled or there is no running loop, e.g. in a test)."""
+    if not is_enabled():
+        return False
+    return _launch_tracked(_promote_reconcile_soon())
+
+
 async def session_readiness(
     db: AsyncSession, channels: list[str] | None = None
 ) -> list[dict]:

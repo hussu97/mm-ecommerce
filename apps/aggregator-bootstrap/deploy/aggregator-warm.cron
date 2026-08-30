@@ -53,8 +53,17 @@
 # 3) Trigger-based re-auth (every 2 min). The host curls GET /worker/needs-heal
 #    with AGGREGATOR_SESSION_PUSH_TOKEN from /opt/melting-moments-cakes/.env (never
 #    printed) and only `docker compose run --rm aggregator-worker heal-sessions`
-#    when some channel status is not live. If all are live, it logs and exits
-#    without starting a container. heal-sessions itself does not wrap Xvfb (see
+#    when some channel's STATUS is not live. It deliberately does NOT trigger on the
+#    reported token_expired/cookie_expired flags: those fire heal for channels it
+#    cannot help — Talabat's PerimeterX cookie has a ~5-minute nominal TTL yet keeps
+#    working via edge-rotation (so `cookie_expired` was true almost always, running
+#    a headed heal every 2 minutes all day and hogging this very flock), Noon's
+#    Akamai cookie is refreshed only by the 22:15 Xvfb warm (heal cannot warm it),
+#    and Deliveroo/Careem refresh their own credentials inside the API httpx sweep.
+#    A genuinely dead credential still heals: the sweep flags that session
+#    `needs_bootstrap` (status != live) when it cannot use it, which trips this tick.
+#    If all are live, it logs and exits without starting a container. heal-sessions
+#    itself does not wrap Xvfb (see
 #    docker-entrypoint.sh). Worker backoff files live in the container volume, not
 #    the API: a channel that is needs_bootstrap but in backoff will still start
 #    the worker — that is OK because heal will not use xvfb. It SHARES the warm
@@ -66,4 +75,4 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TZ=Asia/Dubai
 0 */3 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel keeta' 2>&1 | /usr/bin/logger -t aggregator-keeta-pull
 15 22 * * * root /usr/bin/flock -w 1200 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && for ch in noon talabat; do /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker warm-sessions --channel "$ch"; done' 2>&1 | /usr/bin/logger -t aggregator-antibot-warm
-*/2 * * * * root /usr/bin/flock -w 100 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && token=$(grep -E "^AGGREGATOR_SESSION_PUSH_TOKEN=" /opt/melting-moments-cakes/.env | head -n1 | cut -d= -f2- | tr -d "\r") && if body=$(curl -sS -H "Authorization: Bearer $token" https://api.meltingmomentscakes.com/api/v1/aggregators/worker/needs-heal) && printf "%s" "$body" | python3 -c "import json,sys; d=json.load(sys.stdin); items=d if isinstance(d,list) else (next(iter(d.values()),[]) if isinstance(d,dict) else []); sys.exit(0 if any((i.get(\"status\") or \"\")!=\"live\" or i.get(\"token_expired\") or i.get(\"cookie_expired\") for i in items) else 1)"; then /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions; else echo aggregator-reauth: all sessions live, skip; fi' 2>&1 | /usr/bin/logger -t aggregator-reauth
+*/2 * * * * root /usr/bin/flock -w 100 /tmp/mm-aggregator-warm.lock -c 'cd /opt/melting-moments-cakes && token=$(grep -E "^AGGREGATOR_SESSION_PUSH_TOKEN=" /opt/melting-moments-cakes/.env | head -n1 | cut -d= -f2- | tr -d "\r") && if body=$(curl -sS -H "Authorization: Bearer $token" https://api.meltingmomentscakes.com/api/v1/aggregators/worker/needs-heal) && printf "%s" "$body" | python3 -c "import json,sys; d=json.load(sys.stdin); items=d if isinstance(d,list) else (next(iter(d.values()),[]) if isinstance(d,dict) else []); sys.exit(0 if any((i.get(\"status\") or \"\")!=\"live\" for i in items) else 1)"; then /usr/bin/docker compose -f docker-compose.prod.yml run --rm aggregator-worker heal-sessions; else echo aggregator-reauth: all sessions live, skip; fi' 2>&1 | /usr/bin/logger -t aggregator-reauth

@@ -53,6 +53,24 @@ def test_expired_cookie_is_not_usable():
     assert session_store.session_unusable_reason(s, now=_NOW) == "cookie expired"
 
 
+def test_talabat_expired_cookie_is_advisory_and_still_usable():
+    """Talabat's PerimeterX cookie has a ~5-minute nominal TTL but rotates on
+    replay, so its expiry must NOT reject the session — that starved every intraday
+    sweep. Only Talabat is exempt; the same expired cookie on Noon is still fatal."""
+    talabat = _sess(channel="talabat", cookie_expires_at=_NOW - timedelta(minutes=1))
+    assert session_store.session_unusable_reason(talabat, now=_NOW) is None
+    assert session_store.is_session_usable(talabat, now=_NOW)
+    noon = _sess(channel="noon", cookie_expires_at=_NOW - timedelta(minutes=1))
+    assert session_store.session_unusable_reason(noon, now=_NOW) == "cookie expired"
+
+
+def test_talabat_expired_token_is_still_honoured():
+    """Only the rotating cookie is advisory for Talabat — a real token expiry (the
+    OTP session) still makes it unusable so the sweep reauths it."""
+    s = _sess(channel="talabat", token_expires_at=_NOW - timedelta(hours=1))
+    assert session_store.session_unusable_reason(s, now=_NOW) == "token expired"
+
+
 def test_future_expiry_is_usable():
     s = _sess(
         token_expires_at=_NOW + timedelta(hours=2),
