@@ -594,9 +594,12 @@ export default function OrderDetailPage() {
             )}
           </div>
 
-          {/* The aggregator's rider, once assigned. No live GPS in the payload,
-              so no distance — a name and a number is all GrubOps gives us. */}
-          {(order.aggregator_driver_name || order.aggregator_driver_phone) && (
+          {/* The aggregator's rider — a FALLBACK only. The rider is now mirrored
+              into order_deliveries, so the unified Fulfilment panel below shows it
+              for every order type; this block renders only for an order whose
+              delivery row has not been created yet (pre-backfill / mid-deploy), so
+              the driver never shows twice and never disappears. */}
+          {!delivery && (order.aggregator_driver_name || order.aggregator_driver_phone) && (
             <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-gray-100 pt-3">
               <span className="text-[11px] font-body uppercase tracking-widest text-gray-400">
                 Driver

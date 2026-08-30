@@ -46,7 +46,12 @@ export function DeliveryPanel({
   isSettled: boolean;
 }) {
   const cost = delivery.cost_total ?? delivery.quoted_cost;
-  const isCourier = delivery.provider !== 'third_party';
+  // A marketplace rider (Careem/Talabat/…) is a fulfilment courier we only
+  // OBSERVE: the aggregator dispatches and controls it, so this panel shows its
+  // driver and status but offers none of the courier controls — the same "we did
+  // not book this" posture as a third_party zone.
+  const isAggregator = Boolean(delivery.courier?.is_aggregator);
+  const isCourier = delivery.provider !== 'third_party' && !isAggregator;
   // noon Send publishes a rate card and no quotation API, so their number is
   // computed here rather than billed. Saying so stops it being read as an
   // invoice line.
