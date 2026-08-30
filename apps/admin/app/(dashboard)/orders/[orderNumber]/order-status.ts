@@ -123,6 +123,69 @@ export function recipientName(snapshot: Record<string, string>): string {
     .join(' ');
 }
 
+/**
+ * One address, however the source shaped it.
+ *
+ * A website order's `shipping_address_snapshot` uses `unit_number` /
+ * `address_line_1` / `city` (what `ADDRESS_FIELDS` lists). A promoted marketplace
+ * order carries the marketplace's OWN keys instead — Keeta `{address, building,
+ * unit, house}`, Noon `{street, area, city, lat, lng}`, Careem `{street, building,
+ * number, city, area, nickname, lat, lng}` — so the fixed website key list matched
+ * nothing and the whole address rendered BLANK on the one screen a dispatcher opens
+ * when a rider can't find the door. This coalesces each display line from every key
+ * a channel might use for it, so the same panel renders every order type.
+ *
+ * Coordinates come as `latitude`/`longitude` (website, decimal) or `lat`/`lng`
+ * (marketplaces) — and Noon sends them as scaled integers (`253337438` = 25.3337438).
+ * A real UAE lat/lng is within ±180, so any larger magnitude is a scaled int → /1e7.
+ */
+export interface NormalizedAddress {
+  rows: { label: string; value: string }[];
+  lat: number | null;
+  lng: number | null;
+}
+
+function _firstValue(
+  snapshot: Record<string, unknown> | null | undefined,
+  keys: string[],
+): string | null {
+  for (const key of keys) {
+    const raw = snapshot?.[key];
+    if (raw != null && String(raw).trim()) return String(raw).trim();
+  }
+  return null;
+}
+
+function _coord(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return null;
+  return Math.abs(n) > 180 ? n / 1e7 : n;
+}
+
+export function normalizeAddressSnapshot(
+  snapshot: Record<string, unknown> | null | undefined,
+): NormalizedAddress {
+  if (!snapshot) return { rows: [], lat: null, lng: null };
+  const rows: { label: string; value: string }[] = [];
+  const add = (label: string, keys: string[]) => {
+    const value = _firstValue(snapshot, keys);
+    if (value) rows.push({ label, value });
+  };
+  // Flat/villa leads — a pin finds the building, the unit finishes the delivery.
+  add('Flat / villa / office', ['unit_number', 'number', 'unit']);
+  add('Address', ['address_line_1', 'street', 'address']);
+  add('Building / directions', ['address_line_2', 'building', 'house']);
+  add('Area', ['area']);
+  add('City', ['city']);
+  add('Saved as', ['label', 'nickname']);
+  return {
+    rows,
+    lat: _coord(snapshot.latitude ?? snapshot.lat),
+    lng: _coord(snapshot.longitude ?? snapshot.lng),
+  };
+}
+
 export const STATUS_LABEL: Record<OrderStatus, string> = {
   created: 'created',
   confirmed: 'confirmed',

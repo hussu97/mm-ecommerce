@@ -26,7 +26,7 @@ import { useConfirm, useToast } from '@/components/ui/feedback';
 import { cn, formatCurrency, formatDateTime } from '@/lib/utils';
 
 import {
-  ADDRESS_FIELDS,
+  normalizeAddressSnapshot,
   MOVABLE_STATUSES,
   SETTLED_STATUSES,
   STATUS_LABEL,
@@ -406,9 +406,13 @@ export default function OrderDetailPage() {
   // Built here rather than in the JSX so the guard and the URL stay together:
   // a missing pin renders no button rather than a link to the middle of the sea.
   const snapshot = order.shipping_address_snapshot;
+  // Coalesced across the website shape AND every marketplace's own address keys, so
+  // a promoted Keeta/Noon/Careem order renders its address (and pin) instead of the
+  // blank panel the fixed website key list produced.
+  const address = normalizeAddressSnapshot(snapshot);
   const mapsHref =
-    snapshot?.latitude && snapshot?.longitude
-      ? `https://www.google.com/maps/search/?api=1&query=${snapshot.latitude},${snapshot.longitude}`
+    address.lat != null && address.lng != null
+      ? `https://www.google.com/maps/search/?api=1&query=${address.lat},${address.lng}`
       : null;
   // The customer, from the order first and the address snapshot second. A
   // website order carries its name and number on the snapshot; an aggregator or
@@ -798,16 +802,12 @@ export default function OrderDetailPage() {
                   emails, the ticket and both couriers; this page was the fifth
                   copy and the last one still dropping it. */}
               <dl className="mt-2 space-y-1.5">
-                {ADDRESS_FIELDS.map(({ key, label }) => {
-                  const value = snapshot[key];
-                  if (!value) return null;
-                  return (
-                    <div key={key}>
-                      <dt className="text-[10px] uppercase tracking-wider text-gray-400">{label}</dt>
-                      <dd className="text-gray-700">{value}</dd>
-                    </div>
-                  );
-                })}
+                {address.rows.map(({ label, value }) => (
+                  <div key={label}>
+                    <dt className="text-[10px] uppercase tracking-wider text-gray-400">{label}</dt>
+                    <dd className="text-gray-700">{value}</dd>
+                  </div>
+                ))}
               </dl>
               {/* The pin, not the typed address. A UAE address line is often
                   unsearchable — "villa 12, behind the mosque" is a real one —
