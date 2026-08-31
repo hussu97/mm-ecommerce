@@ -115,7 +115,7 @@ class Cell:
 
     revenue: Decimal = _ZERO  # order total, VAT included
     discount: Decimal = _ZERO
-    charges: Decimal = _ZERO  # commission + payment fee + courier cost, our costs
+    charges: Decimal = _ZERO  # commission + payment + marketing + courier, our costs
     refunds: Decimal = _ZERO
     count: int = 0
 
@@ -179,6 +179,7 @@ async def _fetch(
             func.coalesce(func.sum(Order.discount_amount), 0),
             func.coalesce(func.sum(func.coalesce(Order.aggregator_fee, 0)), 0),
             func.coalesce(func.sum(func.coalesce(Order.payment_fee, 0)), 0),
+            func.coalesce(func.sum(func.coalesce(Order.marketing_fee, 0)), 0),
             func.coalesce(func.sum(func.coalesce(courier_cost, 0)), 0),
             func.coalesce(func.sum(func.coalesce(Order.refunded_amount, 0)), 0),
         )
@@ -225,6 +226,7 @@ async def build(
         discount,
         agg_fee,
         pay_fee,
+        mkt_fee,
         cour_cost,
         refunds,
     ) in raw:
@@ -239,7 +241,7 @@ async def build(
         cell = matrix.setdefault((bdate, bid), {}).setdefault(col, Cell())
         cell.revenue += revenue
         cell.discount += discount
-        cell.charges += agg_fee + pay_fee + cour_cost
+        cell.charges += agg_fee + pay_fee + mkt_fee + cour_cost
         cell.refunds += refunds
         cell.count += int(cnt or 0)
 
@@ -315,6 +317,10 @@ async def build_detail(
             # last-4). Appended (o[14], o[15]) so the earlier positions are stable.
             Order.external_reference,
             Order.aggregator_display_code,
+            # The merchant-funded promotion the marketplace billed back (Keeta's
+            # "Promotion funded by merchant", scraped onto aggregator_order and
+            # propagated to the order). Appended (o[16]) so earlier positions hold.
+            func.coalesce(Order.marketing_fee, 0),
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
@@ -481,6 +487,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                 "vat",
                 "commission",
                 "payment fee",
+                "marketing fee",
                 "courier cost",
                 "refund",
                 "net",
@@ -488,7 +495,8 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
             [
                 # positional: 0 date,1 order#,2 branch,3 source,4 channel,5 status,
                 # 6 pos_status,7 customer,8 total,9 vat,10 commission,11 payfee,
-                # 12 courier,13 refund,14 external_reference,15 display_code
+                # 12 courier,13 refund,14 external_reference,15 display_code,
+                # 16 marketing_fee
                 [
                     o[0],
                     o[1],
@@ -504,12 +512,14 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                     _dec(o[9]),
                     _dec(o[10]),
                     _dec(o[11]),
+                    _dec(o[16]),
                     _dec(o[12]),
                     _dec(o[13]),
                     _dec(
                         (o[8] or _ZERO)
                         - (o[10] or _ZERO)
                         - (o[11] or _ZERO)
+                        - (o[16] or _ZERO)
                         - (o[12] or _ZERO)
                         - (o[13] or _ZERO)
                     ),

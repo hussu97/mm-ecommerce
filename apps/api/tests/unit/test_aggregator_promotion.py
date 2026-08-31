@@ -47,6 +47,7 @@ def _agg(**over):
         driver_phone=None,
         driver_status=None,
         cancellation_fee=None,
+        marketing_fee=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -765,6 +766,7 @@ def _agg_with_customer(**over):
         driver_phone=None,
         driver_status=None,
         cancellation_fee=None,
+        marketing_fee=None,
     )
     base.update(over)
     return SimpleNamespace(**base)

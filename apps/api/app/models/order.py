@@ -200,6 +200,15 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: order the marketplace did not charge one (null ≠ zero, as above).
     cancellation_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    #: A merchant-funded promotion the marketplace billed back to the shop —
+    #: Keeta's "Promotion funded by merchant" (`feeDtl.merchantFee.activityFee`).
+    #: A real cost that is neither commission nor payment processing, kept on its
+    #: own column so it nets the order correctly and shows apart from the
+    #: marketplace's cut. Scraped onto `aggregator_order.marketing_fee` and copied
+    #: here by `order_fees.stamp`. Null on own-channel orders and on any aggregator
+    #: order without one (null ≠ zero, as above).
+    marketing_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
+
     #: How much of `total` has been sent back to the card.
     #:
     #: Not a boolean, because a partial refund is the normal case: the shop

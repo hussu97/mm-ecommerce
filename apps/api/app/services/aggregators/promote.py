@@ -220,6 +220,7 @@ def _actual_fee_overrides(agg: AggregatorOrder) -> dict:
         "actual_commission": agg.commission_amount,
         "actual_payment_fee": agg.payment_fee,
         "actual_cancellation_fee": agg.cancellation_fee,
+        "actual_marketing_fee": agg.marketing_fee,
     }
 
 

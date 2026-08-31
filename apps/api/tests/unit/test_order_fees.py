@@ -201,3 +201,22 @@ async def test_stamp_own_channel_still_models_its_own_card_fee():
     await order_fees.stamp(_FakeDB(row=None), order)  # no gateway row → default 2.9%+1
     assert order.aggregator_fee is None  # no marketplace on an own-channel order
     assert order.payment_fee == Decimal("4.10")  # (100*2.9% + 1) + 5% VAT
+
+
+@pytest.mark.asyncio
+async def test_stamp_propagates_the_scraped_marketing_fee():
+    """The merchant-funded promotion the marketplace billed back (Keeta's
+    activityFee) rides onto the order like the cancellation fee — a purely-scraped
+    actual, written only when non-null."""
+    order = _order(
+        source="aggregator", aggregator_channel="Keeta 2.0", marketing_fee=None
+    )
+
+    await order_fees.stamp(
+        _FakeDB(None),
+        order,
+        actual_commission=Decimal("9.00"),
+        actual_marketing_fee=Decimal("3.00"),
+    )
+    assert order.marketing_fee == Decimal("3.00")
+    assert order.aggregator_fee == Decimal("9.00")

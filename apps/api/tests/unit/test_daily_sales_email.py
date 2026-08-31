@@ -108,7 +108,7 @@ def _stub_db(rows):
     return _DB()
 
 
-def _row(branch, source, channel, cnt, rev, disc, agg, pay, courier, refund):
+def _row(branch, source, channel, cnt, rev, disc, agg, pay, courier, refund, mkt="0"):
     return (
         "2026-08-24",
         branch,
@@ -119,6 +119,7 @@ def _row(branch, source, channel, cnt, rev, disc, agg, pay, courier, refund):
         D(disc),
         D(agg),
         D(pay),
+        D(mkt),  # marketing_fee, between payment fee and courier cost
         D(courier),
         D(refund),
     )
@@ -251,6 +252,7 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
                 D("0"),
                 "TLB-REF-9",  # external_reference (o[14])
                 "9",  # aggregator_display_code (o[15])
+                D("0"),  # marketing_fee (o[16])
             ),
         ],
         statements=[
@@ -303,7 +305,8 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
     assert wb["Orders"].cell(row=2, column=3).value == "TLB-REF-9"  # aggregator ref
     assert wb["Orders"].cell(row=2, column=4).value == "9"  # aggregator code
     assert wb["Orders"].cell(row=2, column=6).value == "Talabat"  # channel label
-    assert wb["Orders"].cell(row=2, column=15).value == 44.0  # net = 50-5-1
+    assert wb["Orders"].cell(row=2, column=13).value == 0.0  # marketing fee
+    assert wb["Orders"].cell(row=2, column=16).value == 44.0  # net = 50-5-1-0
     assert wb["Statements"].cell(row=2, column=2).value == "S1"
     assert wb["Statement Lines"].cell(row=2, column=8).value == 10.0
     assert wb["Payouts"].cell(row=2, column=4).value == 85.0
