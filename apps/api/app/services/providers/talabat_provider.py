@@ -541,6 +541,14 @@ def _month_windows(from_date: date, to_date: date) -> list[tuple[date, date]]:
     return windows
 
 
+#: The DeliveryHero vendor-api that backs Talabat's menu-management console (a
+#: different host from the order/finance GraphQL). UAE platform. Verified live from
+#: the VM session 2026-09-01 — the stored session carries the `authorization`
+#: bearer + `x-global-entity-id` the SPA sends, and request_json's TLS impersonation
+#: passes PerimeterX, so the menu reads with the same session the sales ingest uses.
+_MENU_API = "https://vendor-api-gdp-ae.me.restaurant-partners.com/api/5/platforms/TB_AE"
+
+
 class TalabatClient(BaseAggregatorClient):
     channel = CHANNEL_TALABAT
     uses_tls_impersonation = True
@@ -650,6 +658,36 @@ class TalabatClient(BaseAggregatorClient):
             if isinstance(value, list) and value:
                 return True
         return False
+
+    # ── catalog (catalog sync) ───────────────────────────────────────────────
+    # Verified live from the VM session 2026-09-01:
+    #   {_MENU_API}/vendors/{v}/catalogs
+    #     -> {catalogs:[{id, name, categories:[{id, name}]}], ...}
+    #   {_MENU_API}/vendors/{v}/catalogs/{catalogId}/categories/{categoryId}/products
+    #     -> [{id, name, description, unitPrice, availability:{available}, active,
+    #          productOptionIds, isVariation, ...}]
+
+    async def list_catalogs(self, session: LoadedSession, vendor: str) -> Any:
+        """The vendor's catalogs, each with its `categories` inline."""
+        return await self.request_json(
+            session, "GET", f"{_MENU_API}/vendors/{vendor}/catalogs"
+        )
+
+    async def list_category_products(
+        self,
+        session: LoadedSession,
+        vendor: str,
+        catalog_id: str,
+        category_id: str,
+    ) -> Any:
+        """One category's products (a bare array)."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/{catalog_id}"
+            f"/categories/{category_id}/products",
+            params={"locale": "en-AE", "sizeSupport": "true"},
+        )
 
     async def prepare_session(
         self, db: AsyncSession, session: LoadedSession | None

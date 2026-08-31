@@ -17,7 +17,11 @@ readers land newest-value-first:
 - **Careem** — DONE, verified against the live catalog API (catalog-catalogs →
   catalog-categories → catalog-products; price = `defaultPrice`, availability =
   `status == "ACTIVE"`), replayed through the bearer session.
-- **Keeta / Talabat / Noon / Deliveroo** — same session-replay pattern; in progress.
+- **Talabat** — DONE, verified live from the VM session against the DeliveryHero
+  vendor-api (price = `unitPrice`, availability = `availability.available` & `active`).
+- **Keeta / Noon / Deliveroo** — menus behind anti-bot / a separate login; see the
+  audit. Keeta (H5guard) + Noon (Akamai) need a headed VM capture; Deliveroo's menu
+  is behind a second login the sales session does not hold.
 """
 
 from __future__ import annotations
@@ -262,13 +266,109 @@ async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     return parse_careem_catalog(categories, products_by_cat)
 
 
+# ── Talabat catalog reader ────────────────────────────────────────────────────
+# Verified live from the VM session (2026-09-01). The DeliveryHero vendor-api backs
+# the menu console: /catalogs -> {catalogs:[{id,name,categories:[{id,name}]}]};
+# /catalogs/<cid>/categories/<catid>/products -> [{name, unitPrice,
+# availability:{available}, active, ...}]. Replayed through the sales session (which
+# carries the DeliveryHero bearer); request_json's TLS impersonation passes PX.
+
+
+def _talabat_items(products: Any) -> list[NormalizedItem]:
+    items: list[NormalizedItem] = []
+    for p in products if isinstance(products, list) else []:
+        if not isinstance(p, dict) or not p.get("name"):
+            continue
+        avail = p.get("availability")
+        available = avail.get("available") if isinstance(avail, dict) else avail
+        items.append(
+            NormalizedItem(
+                name=p["name"],
+                external_id=str(p["id"]) if p.get("id") is not None else None,
+                description=p.get("description"),
+                price=Decimal(str(p["unitPrice"]))
+                if p.get("unitPrice") is not None
+                else None,
+                is_available=bool(p.get("active", True))
+                and bool(True if available is None else available),
+            )
+        )
+    return items
+
+
+def parse_talabat_catalog(
+    catalogs: Any, products_by_category: dict[str, Any]
+) -> NormalizedMenu:
+    """Talabat catalogs (categories inline) + per-category products → menu. Pure,
+    unit-tested against the real shapes."""
+    catalog_list = (
+        catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
+    ) or []
+    cats: list[NormalizedCategory] = []
+    for catalog in catalog_list:
+        for cat in catalog.get("categories", []) or []:
+            cid = str(cat.get("id")) if cat.get("id") is not None else ""
+            cats.append(
+                NormalizedCategory(
+                    cat.get("name", ""),
+                    external_id=cid or None,
+                    items=_talabat_items(products_by_category.get(cid)),
+                )
+            )
+    return NormalizedMenu(source="talabat", categories=cats)
+
+
+async def _talabat_vendor(db: AsyncSession, branch_id: Any) -> str:
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorBranchMap
+
+    row = (
+        await db.execute(
+            select(AggregatorBranchMap).where(
+                AggregatorBranchMap.channel == "talabat",
+                AggregatorBranchMap.branch_id == branch_id,
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.external_outlet_id:
+        raise AggregatorUnavailableError(
+            f"no active talabat outlet map for branch {branch_id}"
+        )
+    return row.external_outlet_id
+
+
+async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
+    from app.services.aggregators import session_store
+    from app.services.providers import talabat_provider as tp
+
+    session = await session_store.load(db, "talabat")
+    vendor = await _talabat_vendor(db, branch_id)
+    catalogs = await tp.provider.list_catalogs(session, vendor)
+    catalog_list = (
+        catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
+    ) or []
+    products_by_cat: dict[str, Any] = {}
+    for catalog in catalog_list:
+        catalog_id = str(catalog["id"])
+        for cat in catalog.get("categories", []) or []:
+            cid = str(cat.get("id")) if cat.get("id") is not None else ""
+            if cid:
+                products_by_cat[cid] = await tp.provider.list_category_products(
+                    session, vendor, catalog_id, cid
+                )
+    return parse_talabat_catalog(catalogs, products_by_cat)
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
-# Foodics reads the Grubtech price tag (real, verified); Careem replays its bearer
-# session against the real catalog endpoints. Keeta/Talabat/Noon/Deliveroo follow
-# the same session-replay pattern and land next.
+# Foodics (Grubtech price tag), Careem (catalog REST) and Talabat (DeliveryHero
+# vendor-api) are verified live. Keeta (H5guard) / Noon (Akamai) / Deliveroo
+# (separate Menus login) menus need a headed VM capture — see the audit.
 _MENU_READERS: dict[str, Any] = {
     TARGET_FOODICS: _read_foodics_menu,
     "careem": _read_careem_menu,
+    "talabat": _read_talabat_menu,
 }
 _HOURS_READERS: dict[str, Any] = {}

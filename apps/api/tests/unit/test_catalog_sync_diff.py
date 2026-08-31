@@ -391,6 +391,59 @@ def test_careem_parser_uses_real_shapes():
     assert menu.categories[1].items[0].price == Decimal("55")
 
 
+def test_talabat_parser_uses_real_shapes():
+    # The exact shapes the live Talabat/DeliveryHero vendor-api returned via the VM
+    # session (2026-09-01): catalogs carry categories inline; a product's price is
+    # `unitPrice` and availability is `availability.available` (AND `active`).
+    from app.services.aggregators.menu_readers import parse_talabat_catalog
+
+    catalogs = {
+        "catalogs": [
+            {
+                "id": "1334277",
+                "name": "Menu",
+                "categories": [
+                    {"id": 20241870, "name": "Brownies"},
+                    {"id": 20241871, "name": "Cakes"},
+                ],
+            }
+        ]
+    }
+    products = {
+        "20241870": [
+            {
+                "id": "2747116483",
+                "name": "Pistachio Kunafa Brownies",
+                "unitPrice": 0,
+                "availability": {"available": True},
+                "active": True,
+            },
+            {
+                "id": "2747116484",
+                "name": "Fudge Brownies",
+                "unitPrice": 0,
+                "availability": {"available": False},
+                "active": True,
+            },
+        ],
+        "20241871": [
+            {
+                "id": "9",
+                "name": "Matilda Slice",
+                "unitPrice": 55,
+                "availability": {"available": True},
+                "active": True,
+            },
+        ],
+    }
+    menu = parse_talabat_catalog(catalogs, products)
+    assert [c.name for c in menu.categories] == ["Brownies", "Cakes"]
+    br = {i.name: i for i in menu.categories[0].items}
+    assert br["Pistachio Kunafa Brownies"].is_available is True
+    assert br["Fudge Brownies"].is_available is False  # availability.available=False
+    assert menu.categories[1].items[0].price == Decimal("55")
+
+
 def test_menu_ops_resolve_channel_id_from_last_read():
     # The snapshot (actual) carries each item's channel id; a delete op must carry
     # that id so the writer knows what to remove.
