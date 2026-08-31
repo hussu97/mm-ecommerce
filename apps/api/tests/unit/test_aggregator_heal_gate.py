@@ -10,13 +10,8 @@ commands. The curl needs-heal gate still keeps healthy ticks from starting one.)
 
 from __future__ import annotations
 
-import ast
 import inspect
-import json
-import os
 import re
-import subprocess
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +22,6 @@ from app.services.aggregators import crypto, session_store
 
 ROOT = Path(__file__).resolve().parents[4]
 ENTRYPOINT = ROOT / "apps" / "aggregator-bootstrap" / "docker-entrypoint.sh"
-CRON = ROOT / "apps" / "aggregator-bootstrap" / "deploy" / "aggregator-warm.cron"
 
 
 def _noncomment(text: str) -> str:
@@ -66,94 +60,12 @@ def test_entrypoint_heal_sessions_wraps_xvfb():
     assert "login" in before
 
 
-def _heal_python_source() -> str:
-    heal = next(
-        ln
-        for ln in CRON.read_text().splitlines()
-        if ln.startswith("*/2") and not ln.startswith("#")
-    )
-    match = re.search(r'python3 -c "((?:\\.|[^"\\])*)"', heal)
-    assert match is not None, f"python3 -c snippet missing from heal line: {heal}"
-    return match.group(1).replace('\\"', '"')
-
-
-def test_cron_heal_python_parses_and_flags_not_live():
-    code = _heal_python_source()
-    ast.parse(code)
-
-    def _run(payload) -> int:
-        # The gate now reads the needs-heal body from the HEAL_BODY env var (not
-        # stdin) — cron.d turns a bare `%` into a newline, which truncated the old
-        # `printf "%s" | python3` pipe, so the body is passed via env instead.
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            env={**os.environ, "HEAL_BODY": json.dumps(payload)},
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return result.returncode
-
-    live = [
-        {
-            "channel": "noon",
-            "status": "live",
-            "token_expired": False,
-            "cookie_expired": False,
-        }
-    ]
-    dead = [
-        {
-            "channel": "talabat",
-            "status": "needs_bootstrap",
-            "token_expired": False,
-            "cookie_expired": False,
-        }
-    ]
-    # A live session whose token/cookie is (nominally) expired must NOT trigger a
-    # headed heal: the flags fire heal for channels heal cannot help (Talabat's
-    # rotating PerimeterX cookie, Noon's warm-only Akamai cookie, Deliveroo/Careem
-    # which self-heal in the sweep), which ran a headed heal every 2 minutes all
-    # day. A genuinely dead session reaches `status != live` and still trips heal.
-    expired = [
-        {
-            "channel": "noon",
-            "status": "live",
-            "token_expired": True,
-            "cookie_expired": True,
-        }
-    ]
-    assert _run(live) == 1
-    assert _run(dead) == 0
-    assert _run(expired) == 1  # live status → no heal, despite expiry flags
-    assert _run({"channels": dead}) == 0
-    assert _run({"channels": live}) == 1
-
-
-def test_cron_heal_line_has_no_bare_percent():
-    """A bare `%` in a cron.d command is converted to a newline and everything after
-    it becomes the command's stdin — which silently truncated the old `printf "%s"`
-    heal gate at `printf "`, so the every-2-min heal ran nothing for hours while
-    looking scheduled. Every `%` on the heal line (if any) must be backslash-escaped."""
-    heal = next(
-        ln
-        for ln in CRON.read_text().splitlines()
-        if ln.startswith("*/2") and not ln.startswith("#")
-    )
-    assert re.search(r"(?<!\\)%", heal) is None, (
-        f"unescaped % in cron heal line (cron will truncate it): {heal}"
-    )
-
-
-def test_cron_antibot_warm_omits_careem():
-    antibot = next(
-        ln
-        for ln in CRON.read_text().splitlines()
-        if ln.startswith("15 22") and not ln.startswith("#")
-    )
-    assert "careem" not in antibot
-    assert "noon" in antibot
-    assert "talabat" in antibot
+# The heal SCHEDULE and its gate moved off cron into the always-on worker daemon
+# (Phase 3): the `deploy/aggregator-warm.cron` file is retired, and the heal
+# cadence + "which channels are dead" gate now live in
+# `apps/aggregator-bootstrap/src/aggregator_bootstrap/daemon.py` (`_heal_poll`,
+# `_run_scheduler`), covered by that package's `tests/test_daemon.py`. The
+# entrypoint tests above still apply — the `serve`/`heal-sessions` arms remain.
 
 
 async def test_needs_heal_rejected_when_unconfigured(client, monkeypatch):

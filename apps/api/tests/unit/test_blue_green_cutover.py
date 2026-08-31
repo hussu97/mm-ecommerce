@@ -125,14 +125,17 @@ def test_cutover_probes_health_with_production_host():
     assert "localhost:8000/ping" not in text
 
 
-def test_cutover_stops_aggregator_worker_instead_of_waiting():
-    """
-    heal-sessions is a cron one-shot. Waiting it out stalled deploys; stopping
-    it is safe — the next tick retries any channel left needs_bootstrap.
-    """
+def test_cutover_stops_and_restarts_aggregator_worker_daemon():
+    """aggregator-worker is a long-lived daemon (Phase 3), not a cron one-shot.
+    Cutover stops it to free RAM for the green API slot, then restarts it via an
+    EXIT trap — success or failure — so no caller (deploy.yml, rollback.yml,
+    deploy.sh) leaves the box with no worker (and therefore no healing)."""
     text = CUTOVER.read_text()
     assert 'docker ps -q --filter "name=aggregator-worker"' in text
     assert "docker stop -t 15" in text
+    assert "trap _restart_aggregator_worker EXIT" in text
+    assert "up -d --no-deps aggregator-worker" in text
+    # the old 20-minute wait/flock behaviour is gone
     assert "waiting (${i}/240)" not in text
     assert "still running after 20 minutes" not in text
 
@@ -164,55 +167,19 @@ def test_decommission_never_drops_ecommerce_tables():
     assert "/etc/cron.d/aggregator-warm" in text
 
 
-def test_cutover_flock_is_writable_by_the_deploy_user():
-    """
-    Cron runs as root. /var/lock/aggregator-warm.lock created 644 root:root
-    made cutover print Permission denied and continue without the lock, so
-    heal-sessions could start Chrome next to api-green.
-    """
-    cron = (
-        ROOT / "apps" / "aggregator-bootstrap" / "deploy" / "aggregator-warm.cron"
-    ).read_text()
+def test_cutover_has_no_dead_flock_machinery():
+    """The always-on worker daemon (Phase 3) serialises browser jobs in-process, so
+    the old shared warm flock is dead. Cutover must not reference it — a leftover
+    flock acquire is dead code that could only fail a deploy. Scheduling itself moved
+    off cron into the daemon; `deploy/aggregator-warm.cron` is retired."""
     script = CUTOVER.read_text()
-    assert "/tmp/mm-aggregator-warm.lock" in script
-    assert "/tmp/mm-aggregator-warm.lock" in cron
-    assert "/var/lock/aggregator-warm.lock" not in script
-    assert "/var/lock/aggregator-warm.lock" not in cron
-
-
-def test_aggregator_warm_cron_three_clocks_and_curl_gated_heal():
-    """Keeta 3h, 22:15 noon+talabat (no Careem), 2min curl-gated heal."""
-    cron = (
+    assert "WARM_LOCK" not in script
+    assert "mm-aggregator-warm.lock" not in script
+    assert "flock -w" not in script  # the lock acquire
+    assert "exec 9>" not in script  # the lock fd
+    assert not (
         ROOT / "apps" / "aggregator-bootstrap" / "deploy" / "aggregator-warm.cron"
-    ).read_text()
-    jobs = [ln for ln in cron.splitlines() if ln and not ln.startswith("#")]
-    keeta = [ln for ln in jobs if ln.startswith("0 */3")]
-    antibot = [ln for ln in jobs if ln.startswith("15 22")]
-    heal = [ln for ln in jobs if ln.startswith("*/2")]
-    assert len(keeta) == 1, keeta
-    assert "warm-sessions --channel keeta" in keeta[0]
-    assert "-w 1200" in keeta[0]
-    assert "/tmp/mm-aggregator-warm.lock" in keeta[0]
-    assert len(antibot) == 1, antibot
-    assert "noon" in antibot[0]
-    assert "talabat" in antibot[0]
-    assert "careem" not in antibot[0]
-    assert "warm-sessions" in antibot[0]
-    assert "-w 1200" in antibot[0]
-    assert len(heal) == 1, heal
-    assert "/api/v1/aggregators/worker/needs-heal" in heal[0]
-    assert "curl" in heal[0]
-    assert "heal-sessions" in heal[0]
-    assert "-w 100" in heal[0]
-    assert "/tmp/mm-aggregator-warm.lock" in heal[0]
-    assert "/var/lock/aggregator-warm.lock" not in heal[0]
-    # Gated: compose run only inside the curl/python `if`, not unconditional.
-    assert "if " in heal[0]
-    assert "then" in heal[0]
-    # Token is grepped, never echoed.
-    assert "AGGREGATOR_SESSION_PUSH_TOKEN" in heal[0]
-    assert "echo $token" not in heal[0]
-    assert 'echo "$token"' not in heal[0]
+    ).exists()
 
 
 def test_deploy_yml_runs_tests_and_image_build_as_sibling_jobs():

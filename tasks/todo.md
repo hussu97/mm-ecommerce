@@ -259,11 +259,11 @@ Manual runs work; the hourly autonomous refresh 401s — an architecture problem
 - [x] `browser.kill_live_chrome()` + `_LIVE_CHROME` registry; `run_job_guarded` hard timeout
 - [x] in-process Dubai-wall-clock scheduler; retire cron+flock; compose worker always-on (`restart: unless-stopped`, `command:["serve"]`, heartbeat healthcheck); deploy.yml `pull`+`up -d` (also fixes the pull_policy:missing stale-image bug)
 - [x] worker suite green: 84 passed, ruff clean; unit tests for queue + daemon (timeout→kill, dispatch routing, heal poll, Dubai next_due)
-- **NOT MERGED TO MAIN / NOT DEPLOYED — remaining before it can ship:**
-  - [ ] Rework `scripts/cutover-backend.sh`: remove the dead flock/warm-lock machinery (daemon takes no flock); still `docker stop` the worker to free RAM during cutover, but ensure it is `up -d`'d again by EVERY caller (deploy.yml done; verify rollback.yml + deploy.sh)
-  - [ ] Update the 5 obsolete API cron-model tests (they read the now-deleted cron): `test_aggregator_heal_gate.py::{test_cron_heal_python_parses_and_flags_not_live,test_cron_heal_line_has_no_bare_percent,test_cron_antibot_warm_omits_careem}` + `test_blue_green_cutover.py::{test_cutover_flock_is_writable_by_the_deploy_user,test_aggregator_warm_cron_three_clocks_and_curl_gated_heal}` → repoint to the daemon model or retire (daemon behavior already covered by `test_daemon.py`). Keep `test_decommission_never_drops_ecommerce_tables` intent.
-  - [ ] **VM validation (live browser) before flip**: build the bootstrap image, run `docker compose run --rm aggregator-worker serve` under the resident Xvfb, confirm it starts, heartbeats, heals a killed session, and stays < 2GB with one transient Chrome; then validate the deploy/cutover stop→up-d interaction in a low-traffic window.
-- NOTE: main still runs the cron model (Phases 0-2 + hotfix), which is verified working + self-healing — so prod is safe while Phase 3 awaits a validated cutover.
+- **NOT MERGED TO MAIN / NOT DEPLOYED — cross-track integration DONE, one gate remains:**
+  - [x] Reworked `scripts/cutover-backend.sh`: removed the dead flock/warm-lock machinery; cutover `docker stop`s the daemon for RAM and restarts it via an `EXIT` trap (`_restart_aggregator_worker`) so EVERY caller (deploy.yml, rollback.yml, deploy.sh) brings it back — even on a mid-cutover failure. deploy.yml now pulls the bootstrap image BEFORE cutover so the trap-restart lands on the new image (removed the redundant post-cutover up -d).
+  - [x] Updated/retired the 5 obsolete cron-model tests → daemon model; API suite 2590 passed, worker 84 passed, ruff clean.
+  - [ ] **VM validation (live browser) before flip** — the one remaining gate: build the bootstrap image, run `docker compose run --rm aggregator-worker serve` under the resident Xvfb, confirm it starts, heartbeats, heals a killed session, and stays < 2GB with one transient Chrome; then validate the deploy/cutover stop→trap-restart interaction in a low-traffic window. Then merge to main.
+- NOTE: main still runs the cron model (Phases 0-2 + hotfix), verified working + self-healing (chaos-tested) — so prod is safe while Phase 3 awaits its validated cutover.
 
 ## Phase 4 — DB-as-truth profile fix [W]
 - [ ] `browser.py` probe_channel: always use hydrated storage_state (drop `.chrome` preference)

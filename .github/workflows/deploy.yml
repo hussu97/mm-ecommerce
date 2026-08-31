@@ -724,26 +724,24 @@ jobs:
             echo "nginx/ unchanged — skipping rebuild; cutover will reload upstreams."
           fi
 
-          echo "Cutting over API then POS onto the new image (idle slot, nginx reload, drain)..."
-          bash scripts/cutover-backend.sh < /dev/null
-
-          # (Re)start the always-on aggregator worker daemon AFTER cutover — cutover
-          # stops it to free RAM for the green API slot, and `restart:
-          # unless-stopped` keeps a stopped container stopped until this explicit
-          # `up -d`. The ~4.7 GB bootstrap image is pulled ONLY when its sources
-          # changed: this explicit pull is the fix for the old `pull_policy: missing`
-          # bug where a rebuilt :latest was never fetched to the VM, so worker code
-          # changes silently never deployed. `up -d` then recreates the container on
-          # the new image (and starts it whether it was stopped by cutover or never
-          # existed on this VM before).
+          # Pull the rebuilt ~4.7 GB aggregator-bootstrap image BEFORE cutover, and
+          # ONLY when its sources changed. This is the fix for the old
+          # `pull_policy: missing` bug where a rebuilt :latest was never fetched to
+          # the VM, so worker code changes silently never deployed. Pulling before
+          # cutover means cutover's own restart (below) lands the daemon on the new
+          # image — `docker compose up -d` recreates the container when the image
+          # changed.
           if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
             echo "Pulling the rebuilt aggregator-bootstrap image..."
             docker compose -f docker-compose.prod.yml pull aggregator-worker < /dev/null \
               || echo "WARNING: could not pull aggregator-bootstrap image"
           fi
-          echo "Starting the aggregator worker daemon..."
-          docker compose -f docker-compose.prod.yml up -d aggregator-worker < /dev/null \
-            || echo "WARNING: could not start aggregator-worker"
+
+          echo "Cutting over API then POS onto the new image (idle slot, nginx reload, drain)..."
+          # cutover stops the always-on aggregator-worker daemon to free RAM for the
+          # green API slot, then restarts it (on the image just pulled) via an EXIT
+          # trap — success or failure — so no caller leaves the box without a worker.
+          bash scripts/cutover-backend.sh < /dev/null
 
           # The deploy only ever started api and nginx, so when the certbot
           # renewal loop died it stayed dead through every subsequent deploy

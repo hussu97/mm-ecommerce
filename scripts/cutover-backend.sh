@@ -18,7 +18,6 @@ DEPLOY_DIR="${DEPLOY_DIR:-/opt/melting-moments-cakes}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 SLOT_FILE="${SLOT_FILE:-$DEPLOY_DIR/.deploy-slot}"
 UPSTREAMS_FILE="${UPSTREAMS_FILE:-$DEPLOY_DIR/nginx/runtime/upstreams.conf}"
-WARM_LOCK="${WARM_LOCK:-/tmp/mm-aggregator-warm.lock}"
 # Must match keepalive_timeout in nginx/runtime/upstreams.conf.
 DRAIN_SECONDS="${DRAIN_SECONDS:-5}"
 STOP_GRACE="${STOP_GRACE:-10}"
@@ -117,55 +116,29 @@ _running() {
   [ -n "$id" ]
 }
 
-_aggregator_worker_ids() {
-  docker ps -q --filter "name=aggregator-worker" < /dev/null || true
-}
-
-_stop_aggregator_workers() {
+_stop_aggregator_worker() {
+  # Free the worker's RAM for the cutover window (both API colours are briefly
+  # up on this e2-small). aggregator-worker is now a long-lived DAEMON
+  # (`restart: unless-stopped`), not a cron one-shot — so there is no warm flock
+  # to take (the daemon serialises browser jobs in-process). `docker stop` on a
+  # restart:unless-stopped container stays stopped until we bring it back;
+  # `_restart_aggregator_worker` (armed as an EXIT trap in `cutover`) does that on
+  # every exit, success or failure, so no caller leaves the daemon down.
   local ids
-  ids=$(_aggregator_worker_ids)
+  ids=$(docker ps -q --filter "name=aggregator-worker" < /dev/null || true)
   [ -n "$ids" ] || return 0
-  echo "==> Stopping one-shot aggregator-worker so cutover has RAM..."
-  echo "    $ids"
-  # heal-sessions / warm-sessions are cron one-shots, not a daemon. A half-
-  # finished login stays `needs_bootstrap` and the next */2 min tick retries.
-  # Waiting them out held the deploy for up to 20 minutes (and a dead Talabat
-  # login used to hold the warm lock for 45). SIGTERM the container; compose
-  # `--rm` then exits and drops the flock this script is about to take.
+  echo "==> Stopping aggregator-worker daemon so cutover has RAM..."
   # shellcheck disable=SC2086
   docker stop -t 15 $ids < /dev/null || true
 }
 
-_wait_for_aggregator_idle() {
-  _stop_aggregator_workers
-
-  if command -v flock >/dev/null 2>&1; then
-    mkdir -p "$(dirname "$WARM_LOCK")"
-    # World-writable: cron runs as root and creates this first otherwise, and
-    # a 644 root:root file is what made cutover print "Permission denied" and
-    # continue without the lock — so heal-sessions could start Chrome mid-cutover.
-    touch "$WARM_LOCK" 2>/dev/null || true
-    chmod 666 "$WARM_LOCK" 2>/dev/null || true
-    exec 9>"$WARM_LOCK" || {
-      echo "WARNING: cannot open $WARM_LOCK — continuing without flock"
-      _stop_aggregator_workers
-      return 0
-    }
-    echo "==> Acquiring $WARM_LOCK so cron cannot start Chrome during cutover..."
-    if ! flock -w 30 9; then
-      echo "    lock still held after stop; stopping workers again and retrying"
-      _stop_aggregator_workers
-      if ! flock -w 30 9; then
-        _die "could not acquire $WARM_LOCK after stopping aggregator-worker"
-      fi
-    fi
-    echo "    acquired $WARM_LOCK (held until this script exits)"
-  else
-    echo "    flock not available — worker stop only"
-  fi
-
-  # A heal tick may have started between the first stop and flock.
-  _stop_aggregator_workers
+_restart_aggregator_worker() {
+  # Bring the daemon back on the current :latest image (the deploy pulls the new
+  # bootstrap image before calling cutover, so this lands on the new one; a
+  # changed image makes compose recreate, an unchanged one just starts it).
+  echo "==> Restarting aggregator-worker daemon..."
+  _compose up -d --no-deps aggregator-worker || \
+    echo "WARNING: could not restart aggregator-worker daemon"
 }
 
 _wait_health() {
@@ -312,7 +285,12 @@ _cutover_pair() {
 }
 
 cutover() {
-  _wait_for_aggregator_idle
+  _stop_aggregator_worker
+  # Ensure the daemon comes back no matter how this script exits — a mid-cutover
+  # `_die` must not leave the box with no aggregator worker (no healing). The trap
+  # covers deploy.yml, rollback.yml and deploy.sh alike, so none of them has to
+  # remember to restart it.
+  trap _restart_aggregator_worker EXIT
   _load_slots
   echo "==> Current live slots: api=${API_LIVE} pos-api=${POS_LIVE}"
   _cutover_pair api api-green "$API_HOST"
