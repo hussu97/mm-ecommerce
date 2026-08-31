@@ -23,7 +23,7 @@ import typer
 
 from . import push
 from .accounts import PortalAccount, from_env, pull_account
-from .browser import NeedsHumanLogin, login_with_account
+from .browser import ChromeLaunchError, NeedsHumanLogin, login_with_account
 from .config import settings
 from .warm import push_probe
 
@@ -97,6 +97,18 @@ def _try_auto_relogin(channel: str) -> ReloginOutcome:
                 mailbox=account.mailbox or None,
             )
         )
+    except ChromeLaunchError as exc:
+        # The browser could not be launched (dead/mid-restart display, no debug
+        # port) — infra, not a human wall. Short transient backoff so the next
+        # tick retries once the Xvfb supervisor has the display back, instead of
+        # flagging needs-human for an hour (the 2026-08-31 outage).
+        logger.warning(
+            "%s auto re-login hit a browser-launch failure (%s) — transient, "
+            "will retry shortly",
+            channel,
+            exc,
+        )
+        return ReloginOutcome.TRANSIENT
     except NeedsHumanLogin as exc:
         logger.warning(
             "%s auto re-login needs a human (%s) — left flagged for a headed login",

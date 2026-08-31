@@ -30,13 +30,33 @@ case "$cmd" in
         # The always-on worker daemon (Phase 3). It is long-lived and spawns Chrome
         # per job, so — unlike the retired one-shot warms, each wrapped in its own
         # `xvfb-run` that tears the display down on exit — it needs ONE resident
-        # virtual display that outlives every individual job. Start Xvfb in the
-        # background and point Chrome at it; tini (init:true) reaps it on shutdown.
-        # HEADLESS=false (image/compose env) makes the per-job Chrome launches use
-        # this display. This is the only resident process besides the daemon; no
-        # Chrome sits resident (that is the e2-small RAM guarantee).
-        Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1 &
+        # virtual display that outlives every individual job. HEADLESS=false
+        # (image/compose env) makes the per-job Chrome launches use this display.
+        # This is the only resident process besides the daemon; no Chrome sits
+        # resident (that is the e2-small RAM guarantee).
+        #
+        # SUPERVISE it. Two failures took the whole aggregator down on 2026-08-31:
+        # (1) a stale `/tmp/.X99-lock` (left by an Xvfb that crashed or by a plain
+        # `docker restart`, which preserves /tmp) makes a fresh `Xvfb :99` refuse
+        # to bind — it exits immediately, DISPLAY points at nothing, and every
+        # headed re-login fails "did not open a debug port"; (2) a single
+        # backgrounded Xvfb that dies mid-life is never restarted, wedging all
+        # logins until a human recreates the container. The loop below fixes both:
+        # it removes any stale lock/socket BEFORE each start, runs Xvfb in the
+        # foreground of a subshell (so the subshell reaps it — no `<defunct>`
+        # zombie), and restarts it within ~1s if it ever exits. `_wait_for_display`
+        # on the Python side bridges the sub-second restart window.
+        (
+            while true; do
+                rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
+                Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1
+                echo "entrypoint: Xvfb :99 exited ($?) — cleaning lock, restarting in 1s" >&2
+                sleep 1
+            done
+        ) &
         export DISPLAY=:99
+        # Give the display a moment to bind before the daemon's first job.
+        sleep 1
         exec aggregator-bootstrap serve
         ;;
     login|warm-sessions|bootstrap|capture-and-push|serve-reauth|heal-sessions)

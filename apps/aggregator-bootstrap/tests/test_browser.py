@@ -7,11 +7,25 @@ import asyncio
 import pytest
 
 from aggregator_bootstrap.browser import (
+    ChromeLaunchError,
     NeedsHumanLogin,
     _assert_careem_bearer_captured,
     _await_careem_bearer,
     _clear_stale_singleton_locks,
+    _wait_for_cdp,
 )
+
+
+def test_wait_for_cdp_raises_transient_launch_error(monkeypatch):
+    """No debug port (dead display / crashed Chrome) is INFRA, not a human wall.
+
+    It must raise `ChromeLaunchError` — which reauth maps to a short transient
+    backoff — and NOT `NeedsHumanLogin`, which would flag the channel for an hour
+    (the 2026-08-31 outage). Port 1 never answers, so the wait times out fast."""
+    with pytest.raises(ChromeLaunchError):
+        asyncio.run(_wait_for_cdp(1, timeout_s=0.5))
+    # Guard the classification explicitly: a launch failure is not a human one.
+    assert not issubclass(ChromeLaunchError, NeedsHumanLogin)
 
 
 def test_clears_singleton_locks(tmp_path):

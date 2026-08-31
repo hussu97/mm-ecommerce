@@ -15,7 +15,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from aggregator_bootstrap import cli, reauth
-from aggregator_bootstrap.browser import NeedsHumanLogin
+from aggregator_bootstrap.browser import ChromeLaunchError, NeedsHumanLogin
 
 
 def _patch_warm_raises(monkeypatch):
@@ -93,6 +93,32 @@ def test_try_auto_relogin_returns_needs_human_when_human_needed(monkeypatch):
 
     assert reauth._try_auto_relogin("talabat") is reauth.ReloginOutcome.NEEDS_HUMAN
     assert pushed is False  # nothing captured, so nothing pushed
+
+
+def test_try_auto_relogin_treats_browser_launch_failure_as_transient(monkeypatch):
+    """A dead/mid-restart display ("did not open a debug port") is INFRA, not a
+    human wall: it must earn the SHORT transient backoff so the heal loop retries
+    once the Xvfb supervisor is back — not the hour-long needs-human backoff that
+    left every channel dead on 2026-08-31."""
+    account = SimpleNamespace(email="ops@shop.ae", password="pw", mailbox="ops@shop.ae")
+    monkeypatch.setattr(
+        reauth, "_load_account", lambda ch, require_password=True: account
+    )
+
+    async def _login(channel, *, email, password, mailbox):
+        raise ChromeLaunchError("Chrome did not open a debug port on 45001")
+
+    pushed = False
+
+    async def _push(channel, result):
+        nonlocal pushed
+        pushed = True
+
+    monkeypatch.setattr(reauth, "login_with_account", _login)
+    monkeypatch.setattr(reauth, "push_probe", _push)
+
+    assert reauth._try_auto_relogin("deliveroo") is reauth.ReloginOutcome.TRANSIENT
+    assert pushed is False
 
 
 def test_try_auto_relogin_skips_when_no_account(monkeypatch):

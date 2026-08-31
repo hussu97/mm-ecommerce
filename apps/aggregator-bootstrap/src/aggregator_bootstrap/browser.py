@@ -150,6 +150,20 @@ class NeedsHumanLogin(NotLoggedInError):
     """The session cannot be saved from here; run `login --channel` headed."""
 
 
+class ChromeLaunchError(NotLoggedInError):
+    """Chrome could not be launched/attached — an INFRA failure, not a human one.
+
+    Distinct from `NeedsHumanLogin` on purpose: a dead virtual display, a
+    mid-restart Xvfb, or a Chrome that never bound its debug port is *transient*
+    — the entrypoint's Xvfb supervisor brings the display back and a retry
+    succeeds. Classifying it as needs-human (the 2026-08-31 outage: a stale
+    `/tmp/.X99-lock` wedged Xvfb, so every re-login failed "no debug port" and
+    all five channels were flagged for a human who was never needed) parks a
+    self-healable channel behind the hour-long backoff. Reauth maps this to a
+    SHORT transient backoff instead, so the heal loop keeps trying.
+    """
+
+
 #: How long the headed login waits for the OPERATOR (OTP, captcha, passkey) in
 #: the interactive path — a person may be away from the keyboard.
 _LOGIN_WAIT_SECONDS = 45 * 60
@@ -354,7 +368,40 @@ def _stop_chrome(proc: Any) -> None:
         proc.kill()
 
 
-async def _wait_for_cdp(port: int, *, timeout_s: float = 30) -> None:
+def _wait_for_display(*, timeout_s: float = 6.0) -> None:
+    """Best-effort: block until the resident X display answers before we spawn.
+
+    The `serve` entrypoint supervises Xvfb and can be mid-restart (a crash, a
+    stale-lock clean) exactly when a heal tick wants a browser — waiting a few
+    seconds for it to come back turns a spurious "no debug port" into a normal
+    spawn. A no-op when there is no `DISPLAY` (the interactive / one-shot
+    `xvfb-run` paths manage their own) or when `xdpyinfo` is not installed, and
+    it never raises — a genuinely dead display still surfaces as a transient
+    `ChromeLaunchError` from `_wait_for_cdp`, which the heal loop retries.
+    """
+    display = os.environ.get("DISPLAY")
+    if not display or shutil.which("xdpyinfo") is None:
+        return
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        probe = subprocess.run(  # noqa: S603 — fixed argv, display from our env
+            ["xdpyinfo", "-display", display],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if probe.returncode == 0:
+            return
+        time.sleep(0.25)
+
+
+async def _wait_for_cdp(port: int, *, timeout_s: float = 60) -> None:
+    # 60s, not 30: on the memory-starved e2-small (often <100 MB free, swapping
+    # hard while keeta pulls run) a cold headed Chrome can take ~10s to bind its
+    # debug port and much longer under concurrent load. A 30s window tripped
+    # intermittently — Chrome was alive and healthy, just slow — and every trip
+    # read as "did not open a debug port" and (before ChromeLaunchError) flagged
+    # the channel needs-human. The wait is cheap (we poll and return the instant
+    # the port answers), so a generous ceiling only helps the slow case.
     import httpx
 
     deadline = time.monotonic() + timeout_s
@@ -368,7 +415,11 @@ async def _wait_for_cdp(port: int, *, timeout_s: float = 30) -> None:
             except Exception:  # noqa: BLE001 — Chrome is still booting
                 pass
             await asyncio.sleep(0.25)
-    raise NeedsHumanLogin(f"Chrome did not open a debug port on {port}")
+    # An INFRA failure, not a human one: the display died or Chrome crashed
+    # before binding its debug port. Raise the transient error so the heal loop
+    # retries in seconds (the Xvfb supervisor brings the display back) instead of
+    # flagging the channel needs-human for an hour. See ChromeLaunchError.
+    raise ChromeLaunchError(f"Chrome did not open a debug port on {port}")
 
 
 def _spawn_chrome(*, profile: Path, port: int, url: str) -> Any:
@@ -379,6 +430,10 @@ def _spawn_chrome(*, profile: Path, port: int, url: str) -> Any:
             "https://www.google.com/chrome/ then re-run login."
         )
     os.makedirs(profile, exist_ok=True)
+    # Make sure the resident X display is actually up before we launch — it may be
+    # mid-restart under the entrypoint's Xvfb supervisor. A dead display is the
+    # single most common cause of "did not open a debug port".
+    _wait_for_display()
     # Clear a previous run's Singleton* locks here too, not only in the Playwright
     # `_launch_persistent` path. This raw-subprocess launch is the one the headed
     # AUTO-RELOGIN (heal-sessions) uses, and a SIGKILLed warm's stale lock made
