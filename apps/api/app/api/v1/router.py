@@ -12,6 +12,7 @@ from .branches import router as branches_router
 from .bulk import router as bulk_router
 from .business_settings import router as business_settings_router
 from .cart import router as cart_router
+from .catalog_sync import router as catalog_sync_router
 from .categories import router as categories_router
 from .cms import router as cms_router
 from .custom_orders import (
@@ -95,6 +96,9 @@ from .webhooks import router as webhooks_router
 api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+api_router.include_router(
+    catalog_sync_router, prefix="/catalog-sync", tags=["Catalog Sync"]
+)
 api_router.include_router(categories_router, prefix="/categories", tags=["Categories"])
 api_router.include_router(redirects_router, prefix="/redirects", tags=["Redirects"])
 api_router.include_router(products_router, prefix="/products", tags=["Products"])

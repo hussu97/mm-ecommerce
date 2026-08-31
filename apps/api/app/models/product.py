@@ -93,6 +93,23 @@ class Product(Base, UUIDMixin, TimestampMixin):
         default=lambda: list(SALES_CHANNELS),
         server_default="{pos,web}",
     )
+    #: Whether this product should be pushed to the delivery marketplaces by the
+    #: catalog sync — its own switch, deliberately NOT `sales_channels`.
+    #:
+    #: The two answer different questions and the audit found they disagree: every
+    #: Brownie and Cookie is `sales_channels = ['web']` (not the POS counter) yet
+    #: lives on every marketplace today. So "goes to the aggregators" is a third
+    #: axis, seeded from the current Foodics `Grubtech` group membership, not
+    #: inferred from where else the item sells. Off by default: a product joins the
+    #: aggregator sync only when an operator opts it in. See
+    #: `services/aggregators/catalog_sync.py`.
+    sync_to_aggregators: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    #: Restrict the sync to specific channels (a subset of the outlet's live
+    #: targets), or null for "all of them". Lets an item go to Keeta but not
+    #: Deliveroo without a column per channel — data, not a migration.
+    sync_channels: Mapped[Any | None] = mapped_column(ARRAY(String), nullable=True)
     is_stock_product: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )

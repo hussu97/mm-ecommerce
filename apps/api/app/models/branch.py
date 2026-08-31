@@ -212,6 +212,15 @@ class Branch(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="BranchHoliday.holiday_date",
     )
+    #: The canonical per-day marketplace schedule (source of truth for the
+    #: catalog-&-hours sync), distinct from the single `opening_from`/`opening_to`
+    #: storefront window above. Empty until an operator fills it in.
+    weekly_hours: Mapped[list[BranchWeeklyHours]] = relationship(
+        "BranchWeeklyHours",
+        back_populates="branch",
+        cascade="all, delete-orphan",
+        order_by="BranchWeeklyHours.weekday, BranchWeeklyHours.shift_index",
+    )
 
     def _translated(self, field: str, locale: str) -> str | None:
         """
@@ -340,6 +349,64 @@ class BranchHoliday(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<BranchHoliday {self.holiday_date} {self.name}>"
+
+
+class BranchWeeklyHours(Base, UUIDMixin, TimestampMixin):
+    """One open shift, on one weekday, for the marketplace-hours sync.
+
+    A **canonical per-day, multi-shift schedule** MM has not had until now. The
+    `Branch` above carries a single `opening_from`/`opening_to` window — enough
+    for the storefront's trading-hours check, but it cannot express a marketplace
+    schedule (Careem closed Wednesdays, a split morning/evening shift), so the
+    catalog-&-hours sync had nothing to fan out. This table is that source of
+    truth: rows are the shifts a branch is OPEN, so a weekday with no rows is
+    **closed** (the same "absence is the ordinary state" idiom `branch_holidays`
+    uses). Multiple rows per weekday give split shifts; each channel's writer
+    (a later phase) normalises them to that portal's shape (Keeta caps at 5
+    periods/day, Careem/Talabat take multiple slots).
+
+    Separate from `Branch.opening_from`/`opening_to` on purpose — that window is
+    the storefront's, this schedule is the marketplaces'; the audit found the two
+    legitimately differ (Foodics 08:00–23:00 vs Talabat 08:00–22:00). Times are
+    "HH:MM" strings like the branch window, so a shift can cross midnight without
+    date arithmetic; the CHECK holds the shape. `weekday` is 0=Sunday…6=Saturday
+    (the UAE week and the order every portal lists days in).
+    """
+
+    __tablename__ = "branch_weekly_hours"
+    __table_args__ = (
+        UniqueConstraint(
+            "branch_id", "weekday", "shift_index", name="uq_branch_weekly_hours_shift"
+        ),
+        CheckConstraint(
+            "weekday >= 0 AND weekday <= 6", name="ck_branch_weekly_hours_weekday"
+        ),
+        CheckConstraint("shift_index >= 0", name="ck_branch_weekly_hours_shift_index"),
+        CheckConstraint(
+            r"opens ~ '^\d{2}:\d{2}$' AND closes ~ '^\d{2}:\d{2}$'",
+            name="ck_branch_weekly_hours_time_format",
+        ),
+    )
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    #: 0=Sunday … 6=Saturday.
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: 0-based ordinal within the day, so two shifts on one weekday are two rows.
+    shift_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    opens: Mapped[str] = mapped_column(String(5), nullable=False)
+    closes: Mapped[str] = mapped_column(String(5), nullable=False)
+
+    branch: Mapped[Branch] = relationship("Branch", back_populates="weekly_hours")
+
+    def __repr__(self) -> str:
+        return f"<BranchWeeklyHours {self.branch_id} d{self.weekday} {self.opens}-{self.closes}>"
 
 
 class BranchBusinessDay(Base, UUIDMixin, TimestampMixin):

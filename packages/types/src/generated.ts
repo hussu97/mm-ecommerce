@@ -1905,6 +1905,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog-sync/categories/{category_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Category Sync
+         * @description Opt a category into (or out of) the aggregator sync.
+         */
+        put: operations["set_category_sync_api_v1_catalog_sync_categories__category_id__sync_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog-sync/drift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Branch Drift
+         * @description Menu + hours drift for one branch, per target — computed from snapshots.
+         *
+         *     Read-only: it diffs MM's flagged catalogue against the last stored read of
+         *     each integrator. Targets with no snapshot yet come back with null diffs
+         *     (nothing has been read for them).
+         */
+        get: operations["branch_drift_api_v1_catalog_sync_drift_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog-sync/products/{product_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Product Sync
+         * @description Opt a product into (or out of) the aggregator sync.
+         */
+        put: operations["set_product_sync_api_v1_catalog_sync_products__product_id__sync_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog-sync/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push
+         * @description Write MM's menu/hours to one target. Hard-gated; dry-run in Phase 1.
+         *
+         *     503s unless `CATALOG_SYNC_ENABLED`. Even enabled, Phase 1 returns the plan it
+         *     *would* apply (routed per the audit rule) and mutates nothing.
+         */
+        post: operations["push_api_v1_catalog_sync_push_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog-sync/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh
+         * @description Read each integrator's live menu/hours into a fresh snapshot. Gated.
+         *
+         *     503s unless `CATALOG_SYNC_READ_ENABLED` — it opens marketplace sessions. Per
+         *     target isolated, so one dead session never blocks the rest.
+         */
+        post: operations["refresh_api_v1_catalog_sync_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog-sync/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sync Status
+         * @description The feature's posture: flags, targets, and the integrated branches.
+         */
+        get: operations["sync_status_api_v1_catalog_sync_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/categories": {
         parameters: {
             query?: never;
@@ -8925,6 +9055,22 @@ export interface components {
              */
             type: "restaurant" | "kitchen" | "warehouse";
         };
+        /**
+         * BranchDriftReport
+         * @description Menu + hours drift for one branch, per target.
+         */
+        BranchDriftReport: {
+            /** Branch Id */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Targets */
+            targets: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** BranchHolidayCreate */
         BranchHolidayCreate: {
             /** Holiday Date */
@@ -9605,6 +9751,24 @@ export interface components {
             subtotal: number;
             /** User Id */
             user_id: string | null;
+        };
+        /**
+         * CatalogSyncStatus
+         * @description The feature's posture — flags + what it would drive.
+         */
+        CatalogSyncStatus: {
+            /** Enforce Price Parity */
+            enforce_price_parity: boolean;
+            /** Integrated Branches */
+            integrated_branches: {
+                [key: string]: string;
+            }[];
+            /** Read Enabled */
+            read_enabled: boolean;
+            /** Targets */
+            targets: string[];
+            /** Write Enabled */
+            write_enabled: boolean;
         };
         /** CategoryCreate */
         CategoryCreate: {
@@ -15074,6 +15238,26 @@ export interface components {
             warehouse_id?: string | null;
         };
         /**
+         * PushPlan
+         * @description A dry-run push plan (Phase 1 mutates nothing).
+         */
+        PushPlan: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Kind */
+            kind: string;
+            /** Note */
+            note: string;
+            /** Route */
+            route: string;
+            /** Target */
+            target: string;
+            /** Would Apply */
+            would_apply: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
          * PushTokenRegisterRequest
          * @description What a register tells us so it can be woken.
          */
@@ -16066,6 +16250,27 @@ export interface components {
             reference?: string | null;
             /** Tax Number */
             tax_number?: string | null;
+        };
+        /** SyncFlagResponse */
+        SyncFlagResponse: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Sync Channels */
+            sync_channels?: string[] | null;
+            /** Sync To Aggregators */
+            sync_to_aggregators: boolean;
+        };
+        /**
+         * SyncFlagUpdate
+         * @description Toggle whether a product/category is pushed to the aggregators.
+         */
+        SyncFlagUpdate: {
+            /** Sync Channels */
+            sync_channels?: string[] | null;
+            /** Sync To Aggregators */
+            sync_to_aggregators: boolean;
         };
         /** TableCreate */
         TableCreate: {
@@ -21060,6 +21265,196 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_category_sync_api_v1_catalog_sync_categories__category_id__sync_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                category_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncFlagUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncFlagResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    branch_drift_api_v1_catalog_sync_drift_get: {
+        parameters: {
+            query: {
+                branch_id: string;
+                /** @description Comma-separated targets; default all. */
+                targets?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchDriftReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_product_sync_api_v1_catalog_sync_products__product_id__sync_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                product_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncFlagUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncFlagResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_api_v1_catalog_sync_push_post: {
+        parameters: {
+            query: {
+                target: string;
+                branch_id?: string | null;
+                kind?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushPlan"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_api_v1_catalog_sync_refresh_post: {
+        parameters: {
+            query: {
+                branch_id: string;
+                targets?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_status_api_v1_catalog_sync_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSyncStatus"];
                 };
             };
         };

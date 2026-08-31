@@ -49,6 +49,7 @@ export const NAV: Array<
   //   • Logins         — session liveness, checked often enough to keep on the rail.
   { section: 'Marketplaces' },
   { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
+  { href: '/catalog-sync',  label: 'Catalog Sync',    icon: 'sync_alt' },
   { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance', match: '/aggregators' },
   { href: '/aggregators/invoices', label: 'Invoices', icon: 'receipt_long' },
   { href: '/aggregators/fees', label: 'Fees & VAT', icon: 'percent' },

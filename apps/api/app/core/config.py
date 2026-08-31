@@ -495,6 +495,40 @@ class Settings(BaseSettings):
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.
     AGGREGATOR_REQUESTS_PER_SECOND: float = 1.0
 
+    # ── Catalog & hours sync (menu/hours push to the aggregators + Foodics) ────
+    #: The other direction from the ingest: manage the catalogue and branch
+    #: hours/holidays ONCE in MM and reconcile them out to each marketplace —
+    #: menu via the Foodics `Grubtech` group + price tag for the two integrated
+    #: branches (Sharjah, Barsha) and via each portal's own tool for the
+    #: non-Foodics outlets (Al Karama, Silicon Oasis); hours per portal for every
+    #: outlet (Foodics never carries aggregator hours). See
+    #: `services/aggregators/catalog_sync.py` and
+    #: `docs/aggregator-catalog-hours-sync-audit.md`.
+    #:
+    #: TWO flags, both off by default, because the read side and the write side
+    #: carry very different risk:
+    #:
+    #: `CATALOG_SYNC_READ_ENABLED` gates the read/diff: fetching each integrator's
+    #: live menu + hours and computing the drift against MM. Read-only against the
+    #: portals, but it still opens marketplace sessions and spends the headed
+    #: worker's quota, so it stays off until watched once. With it off, the drift
+    #: report serves the last stored snapshot and the refresh endpoints 503.
+    CATALOG_SYNC_READ_ENABLED: bool = False
+    #: `CATALOG_SYNC_ENABLED` is the master gate for every WRITE — the Foodics
+    #: group/price-tag edits, the per-portal menu edits, and the hours/holiday
+    #: fan-out. Off means the push endpoints 503 and the sync service refuses to
+    #: mutate anything; a wrong map or a bad diff would otherwise change a live
+    #: menu or close a branch on a marketplace. Even with it ON, Phase-1 push runs
+    #: as a **dry-run** (it records the plan it WOULD apply and writes nothing) —
+    #: the actual writers land in a later phase behind this same flag.
+    CATALOG_SYNC_ENABLED: bool = False
+    #: Aggregator price policy (audit finding): the Foodics `Grubtech` price-tag
+    #: price MUST equal the product's own price — a reprice updates both in
+    #: lockstep. When true the diff flags any price-tag ≠ product price as a
+    #: drift to reconcile (no seasonal-uplift exceptions). Kept as a dial so the
+    #: policy is one edit, not scattered through the diff.
+    CATALOG_SYNC_ENFORCE_PRICE_PARITY: bool = True
+
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key
     #: means a `slider` zone prices and sells exactly as it does today and

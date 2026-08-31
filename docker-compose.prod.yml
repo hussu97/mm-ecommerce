@@ -138,6 +138,16 @@ x-api-environment: &api-environment
   AGGREGATOR_SALES_ROLLING_HOURS: ${AGGREGATOR_SALES_ROLLING_HOURS:-36}
   AGGREGATOR_TIMEOUT_SECONDS: ${AGGREGATOR_TIMEOUT_SECONDS:-20.0}
   AGGREGATOR_REQUESTS_PER_SECOND: ${AGGREGATOR_REQUESTS_PER_SECOND:-1.0}
+  # ── Catalog & hours sync (menu/hours push) ──────────────────────────
+  # Both default OFF: the read side opens marketplace sessions, and the
+  # write side would change a live menu / branch hours. They stay false in
+  # production until watched, exactly like AGGREGATOR_INGEST_ENABLED did.
+  # Named here because this block is an allow-list — an unset flag reads as
+  # its default, which for these is the safe (off) state, but a flag the app
+  # reads and this file does not name is still model↔prod drift.
+  CATALOG_SYNC_READ_ENABLED: ${CATALOG_SYNC_READ_ENABLED:-false}
+  CATALOG_SYNC_ENABLED: ${CATALOG_SYNC_ENABLED:-false}
+  CATALOG_SYNC_ENFORCE_PRICE_PARITY: ${CATALOG_SYNC_ENFORCE_PRICE_PARITY:-true}
   # ── Slider ──────────────────────────────────────────────────────────
   # The third courier. Every one of these has to be here and not only in
   # `.env`: this block is an allow-list, and a variable the VM holds but

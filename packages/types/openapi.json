@@ -3725,6 +3725,40 @@
         "title": "BranchCreate",
         "type": "object"
       },
+      "BranchDriftReport": {
+        "description": "Menu + hours drift for one branch, per target.",
+        "properties": {
+          "branch_id": {
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "targets": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Targets",
+            "type": "object"
+          }
+        },
+        "required": [
+          "branch_id",
+          "targets"
+        ],
+        "title": "BranchDriftReport",
+        "type": "object"
+      },
       "BranchHolidayCreate": {
         "properties": {
           "holiday_date": {
@@ -6025,6 +6059,49 @@
           "session_id"
         ],
         "title": "CartResponse",
+        "type": "object"
+      },
+      "CatalogSyncStatus": {
+        "description": "The feature's posture \u2014 flags + what it would drive.",
+        "properties": {
+          "enforce_price_parity": {
+            "title": "Enforce Price Parity",
+            "type": "boolean"
+          },
+          "integrated_branches": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Integrated Branches",
+            "type": "array"
+          },
+          "read_enabled": {
+            "title": "Read Enabled",
+            "type": "boolean"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Targets",
+            "type": "array"
+          },
+          "write_enabled": {
+            "title": "Write Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "read_enabled",
+          "write_enabled",
+          "enforce_price_parity",
+          "targets",
+          "integrated_branches"
+        ],
+        "title": "CatalogSyncStatus",
         "type": "object"
       },
       "CategoryCreate": {
@@ -22797,6 +22874,49 @@
         "title": "PurchaseOrderUpdate",
         "type": "object"
       },
+      "PushPlan": {
+        "description": "A dry-run push plan (Phase 1 mutates nothing).",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "would_apply": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Would Apply",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run",
+          "target",
+          "route",
+          "kind",
+          "would_apply",
+          "note"
+        ],
+        "title": "PushPlan",
+        "type": "object"
+      },
       "PushTokenRegisterRequest": {
         "description": "What a register tells us so it can be woken.",
         "properties": {
@@ -25745,6 +25865,71 @@
           }
         },
         "title": "SupplierUpdate",
+        "type": "object"
+      },
+      "SyncFlagResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sync_channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Channels"
+          },
+          "sync_to_aggregators": {
+            "title": "Sync To Aggregators",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "sync_to_aggregators"
+        ],
+        "title": "SyncFlagResponse",
+        "type": "object"
+      },
+      "SyncFlagUpdate": {
+        "description": "Toggle whether a product/category is pushed to the aggregators.",
+        "properties": {
+          "sync_channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Channels"
+          },
+          "sync_to_aggregators": {
+            "title": "Sync To Aggregators",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sync_to_aggregators"
+        ],
+        "title": "SyncFlagUpdate",
         "type": "object"
       },
       "TableCreate": {
@@ -36338,6 +36523,360 @@
         "summary": "Set Cart Promo",
         "tags": [
           "Cart"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/categories/{category_id}/sync": {
+      "put": {
+        "description": "Opt a category into (or out of) the aggregator sync.",
+        "operationId": "set_category_sync_api_v1_catalog_sync_categories__category_id__sync_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "category_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Category Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncFlagUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncFlagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Category Sync",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/drift": {
+      "get": {
+        "description": "Menu + hours drift for one branch, per target \u2014 computed from snapshots.\n\nRead-only: it diffs MM's flagged catalogue against the last stored read of\neach integrator. Targets with no snapshot yet come back with null diffs\n(nothing has been read for them).",
+        "operationId": "branch_drift_api_v1_catalog_sync_drift_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated targets; default all.",
+            "in": "query",
+            "name": "targets",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated targets; default all.",
+              "title": "Targets"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchDriftReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Branch Drift",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/products/{product_id}/sync": {
+      "put": {
+        "description": "Opt a product into (or out of) the aggregator sync.",
+        "operationId": "set_product_sync_api_v1_catalog_sync_products__product_id__sync_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Product Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncFlagUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncFlagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Product Sync",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/push": {
+      "post": {
+        "description": "Write MM's menu/hours to one target. Hard-gated; dry-run in Phase 1.\n\n503s unless `CATALOG_SYNC_ENABLED`. Even enabled, Phase 1 returns the plan it\n*would* apply (routed per the audit rule) and mutates nothing.",
+        "operationId": "push_api_v1_catalog_sync_push_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "menu",
+              "title": "Kind",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PushPlan"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Push",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/refresh": {
+      "post": {
+        "description": "Read each integrator's live menu/hours into a fresh snapshot. Gated.\n\n503s unless `CATALOG_SYNC_READ_ENABLED` \u2014 it opens marketplace sessions. Per\ntarget isolated, so one dead session never blocks the rest.",
+        "operationId": "refresh_api_v1_catalog_sync_refresh_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "targets",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Targets"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Refresh Api V1 Catalog Sync Refresh Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Refresh",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/status": {
+      "get": {
+        "description": "The feature's posture: flags, targets, and the integrated branches.",
+        "operationId": "sync_status_api_v1_catalog_sync_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSyncStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Sync Status",
+        "tags": [
+          "Catalog Sync"
         ]
       }
     },

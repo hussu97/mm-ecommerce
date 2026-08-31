@@ -950,6 +950,9 @@ it here and redeploying.
 | `AGGREGATOR_SALES_ROLLING_HOURS` | `36` | That refresh's window, in hours back from now. 36 covers all of yesterday plus today across the Dubai/UTC offset |
 | `AGGREGATOR_TIMEOUT_SECONDS` | `20.0` | Aggregator HTTP timeout |
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
+| `CATALOG_SYNC_READ_ENABLED` | `false` | Gate on the catalog-sync **read** side (fetch each integrator's live menu/hours + compute drift). Off until watched — it opens marketplace sessions. Storefront only |
+| `CATALOG_SYNC_ENABLED` | `false` | Master gate on every catalog-sync **write** (Foodics Grubtech group/price tag, per-portal menu, hours fan-out). Off keeps the push endpoints 503; even on, Phase-1 push is a dry run |
+| `CATALOG_SYNC_ENFORCE_PRICE_PARITY` | `true` | Policy: the Foodics Grubtech price-tag price must equal the product price — any difference is flagged drift (no seasonal-uplift exceptions) |
 
 **Keeta daily browser pull.** Keeta is the only channel that needs a browser (its
 requests are `mtgsig`-signed in-page). Deliveroo and the other httpx channels

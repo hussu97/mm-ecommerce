@@ -216,6 +216,29 @@ export const categoriesApi = {
   delete: (slug: string) => api.delete<void>(`/categories/${slug}`),
 };
 
+// ─── Catalog & hours sync ─────────────────────────────────────────────────────
+// Read-only drift report + the per-item sync toggle. Refresh (live read) and
+// push (write) are gated server-side and 503 when off; the UI reflects that.
+export const catalogSyncApi = {
+  status: () => api.get<Schemas['CatalogSyncStatus']>('/catalog-sync/status'),
+  drift: (branchId: string, targets?: string) =>
+    api.get<Schemas['BranchDriftReport']>(
+      `/catalog-sync/drift${buildQs({ branch_id: branchId, targets })}`,
+    ),
+  refresh: (branchId: string, targets?: string) =>
+    api.post<Record<string, unknown>>(
+      `/catalog-sync/refresh${buildQs({ branch_id: branchId, targets })}`,
+    ),
+  push: (target: string, branchId?: string, kind: 'menu' | 'hours' = 'menu') =>
+    api.post<Schemas['PushPlan']>(
+      `/catalog-sync/push${buildQs({ target, branch_id: branchId, kind })}`,
+    ),
+  setProductSync: (productId: string, data: Schemas['SyncFlagUpdate']) =>
+    api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/products/${productId}/sync`, data),
+  setCategorySync: (categoryId: string, data: Schemas['SyncFlagUpdate']) =>
+    api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/categories/${categoryId}/sync`, data),
+};
+
 // ─── Menu groups ──────────────────────────────────────────────────────────────
 
 /** A node of the register's menu tree, with its descendants nested inside. */
