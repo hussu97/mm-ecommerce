@@ -265,8 +265,34 @@ Manual runs work; the hourly autonomous refresh 401s — an architecture problem
   - [ ] **VM validation (live browser) before flip** — the one remaining gate: build the bootstrap image, run `docker compose run --rm aggregator-worker serve` under the resident Xvfb, confirm it starts, heartbeats, heals a killed session, and stays < 2GB with one transient Chrome; then validate the deploy/cutover stop→trap-restart interaction in a low-traffic window. Then merge to main.
 - NOTE: main still runs the cron model (Phases 0-2 + hotfix), verified working + self-healing (chaos-tested) — so prod is safe while Phase 3 awaits its validated cutover.
 
-## Phase 4 — DB-as-truth profile fix [W]
-- [ ] `browser.py` probe_channel: always use hydrated storage_state (drop `.chrome` preference)
+## Reassessment after Phases 0-3 + 5 shipped/built (2026-08-31)
+With the real bugs fixed (cron `%`, heal-no-xvfb, flock starvation, deliveroo mint,
+stale-image) and the daemon built, Phases 4/6/7/8 as originally specced are now
+mostly diminishing-returns or need live-browser validation. Applying the repo's
+"Simplicity First / Minimal Impact / no over-engineering" principle:
+- **Phase 4 (DB-as-truth profile)** — real (root cause #3) but changes anti-bot
+  browser behavior; only validatable with a live browser → BUNDLE with the Phase 3
+  VM validation, not blind on the branch.
+- **Phase 6 (liveness columns)** — DROPPED as over-engineering: `consecutive_failures`
+  would *delay* recovery (the worker's 2-min heal keys on `status != live`), transient
+  vs auth is already distinguished (`AggregatorUnavailableError` vs `AggregatorAuthError`),
+  and `last_verified_at` duplicates existing `last_success_at`/`last_warmed_at`. Migration
+  stub written then reverted.
+- **Phase 7 (reauth contract + careem)** — careem coverage is already delivered (the
+  fixed heal re-logs careem headed, verified live); the `_await_reauth` rewrite is an
+  elegance refactor of a working critical path → skip unless a concrete problem appears.
+- **Phase 8 (observability/alerting)** — the genuinely valuable core is a PROACTIVE
+  alert for the irreducible human-needed cases (captcha/passkey/mailbox-down) via the
+  daemon's NEEDS_HUMAN signal → the API's email funnel. Tie it to the Phase 3
+  validation (it needs the daemon). Existing `_log_health` WARNING already feeds VM
+  log-based alerting.
+
+**Recommended next action: validate + deploy the Phase 3 daemon** (highest remaining
+value), folding in Phase 4 (profile) and Phase 8 (human-needed alerting) during that
+focused, live-browser session. Phases 6/7 not worth their complexity.
+
+## Phase 4 — DB-as-truth profile fix [W] — DEFERRED (bundle with Phase 3 VM validation)
+- [ ] `browser.py` probe_channel: always use hydrated storage_state (drop `.chrome` preference); validate CF pass rate on the VM
 
 ## Phase 5 — Per-channel policy + one retry helper [W]+[A] — API-side DONE (on branch)
 - [x] `app/services/aggregators/policy.py`: `ChannelPolicy` (cookie_expiry_advisory, health_stale_after) + `policy_for()` + `next_backoff()` (exp + full jitter). Absorbed `_COOKIE_EXPIRY_ADVISORY_CHANNELS` (session_store) and `_HEALTH_STALE_AFTER*` (ingest); both files now read the policy. Behavior-preserving; golden test asserts resolved values == old constants. 117 tests pass, ruff clean.
