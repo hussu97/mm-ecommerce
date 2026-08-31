@@ -47,7 +47,8 @@ aggregator-bootstrap login --channel deliveroo --auto   # fill stored creds afte
 aggregator-bootstrap login --channel careem             # headed, you sign in
 aggregator-bootstrap hydrate              # pull DB → local files
 aggregator-bootstrap capture-and-push --all
-aggregator-bootstrap warm-sessions        # hydrate + warm all (VM cron)
+aggregator-bootstrap warm-sessions        # hydrate + warm all (one-shot, manual)
+aggregator-bootstrap serve                # the always-on worker daemon (prod)
 ```
 
 `store-account` writes the encrypted `aggregator_account` row (login method +
@@ -78,5 +79,22 @@ egress in the UAE region** — PerimeterX/Akamai bind cookies loosely to IP/ASN.
 Do **not** run it on the small app VM: the browser's RAM is why it is a
 separate job.
 
-Default CMD is `warm-sessions` (hydrate + warm). First-time minting is
-`login`, run headed from a laptop that can reach the API, once per channel.
+### Scheduling (in-process, no host cron)
+
+Production runs ONE always-on daemon: `aggregator-bootstrap serve` (compose
+service `aggregator-worker`, `command: ["serve"]`, `restart: unless-stopped`).
+It replaces the retired host-cron model (the deleted `deploy/aggregator-warm.cron`
+and its shared flock). `daemon.py` holds a priority job queue drained by a single
+consumer, so at most one headed Chrome runs at a time (spawned per job, torn down
+after — the e2-small RAM guarantee), and it schedules everything the cron used to:
+the nightly anti-bot warm (aligned to the API's 23:00 Dubai sweep), the 3-hourly
+Keeta pull, the Deliveroo invoice pull, and a session-health heal poll that
+re-logs-in dead channels. A RELOGIN preempts a queued warm; every job runs under a
+hard timeout that SIGKILLs a wedged Chrome (`browser.kill_live_chrome`). All
+cadences/timeouts are `config.Settings` `WORKER_*` fields. The entrypoint's
+`serve)` arm starts one resident Xvfb for the daemon; the other CLIs keep their
+per-invocation `xvfb-run`. `serve-reauth` remains as a hand-run one-shot heal loop.
+
+Default CMD is `warm-sessions` (hydrate + warm), the one-shot form for manual use;
+`serve` is what prod runs. First-time minting is `login`, run headed from a laptop
+that can reach the API, once per channel.

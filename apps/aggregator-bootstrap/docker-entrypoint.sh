@@ -26,6 +26,19 @@
 # no-op ticks still cost a short-lived X server; acceptable for the reliability.)
 cmd="$1"
 case "$cmd" in
+    serve)
+        # The always-on worker daemon (Phase 3). It is long-lived and spawns Chrome
+        # per job, so — unlike the retired one-shot warms, each wrapped in its own
+        # `xvfb-run` that tears the display down on exit — it needs ONE resident
+        # virtual display that outlives every individual job. Start Xvfb in the
+        # background and point Chrome at it; tini (init:true) reaps it on shutdown.
+        # HEADLESS=false (image/compose env) makes the per-job Chrome launches use
+        # this display. This is the only resident process besides the daemon; no
+        # Chrome sits resident (that is the e2-small RAM guarantee).
+        Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1 &
+        export DISPLAY=:99
+        exec aggregator-bootstrap serve
+        ;;
     login|warm-sessions|bootstrap|capture-and-push|serve-reauth|heal-sessions)
         exec xvfb-run -a --server-args="-screen 0 1280x1024x24 -nolisten tcp" \
             aggregator-bootstrap "$@"

@@ -632,16 +632,15 @@ jobs:
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
-          # Do not pull the ~4.7GB Playwright image here. It is not on the
-          # request path; aggregator-worker uses pull_policy: missing so
-          # deploy/cron do not GHCR-pull it 720×/day. A bootstrap image
-          # change still pulls on the next compose run (tag missing or
-          # retagged locally). Pulling it inline added 4.5 minutes to API
-          # deploys that happened to change bootstrap sources.
+          # The ~4.7GB Playwright bootstrap image is pulled + the worker restarted
+          # further down, and ONLY when its sources changed (see "aggregator worker
+          # daemon"). It is not on the API request path, so it must not slow a
+          # routine API deploy — that is why the pull is gated on BOOTSTRAP_CHANGED
+          # there rather than pulled inline here.
           if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
-            echo "Bootstrap image pushed to GHCR — cron will pull it on the next tick."
+            echo "Bootstrap image changed — the worker step below will pull + restart it."
           else
-            echo "Bootstrap sources unchanged — skipping pull."
+            echo "Bootstrap sources unchanged — worker keeps its current image."
           fi
 
           # A migration can drop a table, and `alembic downgrade` cannot bring
@@ -692,25 +691,16 @@ jobs:
             sh -c 'for p in "cms:*" "i18n:*" "categories:*" "products:*" "blog:*" "redirects:*"; do redis-cli --scan --pattern "$p" | xargs -r redis-cli del; done' < /dev/null \
             || echo "WARNING: cache flush failed — content may be stale for up to 5 minutes"
 
-          # Install the aggregator warm cron from the repo so it survives every
-          # deploy (the git reset above refreshed the file). The worker itself is
-          # a profiled compose service — never started by `up`, only `run` one-shot
-          # by this cron — so headless Chrome never sits resident on this small VM.
-          echo "Installing the aggregator warm cron..."
+          # Retire the host-cron aggregator model: scheduling is now in-process in
+          # the always-on worker daemon (Phase 3, daemon.py), so drop the
+          # /etc/cron.d file. The worker itself is (re)started AFTER cutover below —
+          # cutover stops it to free RAM for the green API slot, and with
+          # `restart: unless-stopped` a stop stays stopped until an explicit `up -d`.
+          echo "Removing the retired aggregator warm cron (scheduling is now in-process)..."
           if sudo -n true 2>/dev/null; then
-            sudo cp apps/aggregator-bootstrap/deploy/aggregator-warm.cron /etc/cron.d/aggregator-warm \
-              && sudo chown root:root /etc/cron.d/aggregator-warm \
-              && sudo chmod 644 /etc/cron.d/aggregator-warm \
-              && echo "aggregator warm cron installed" \
-              || echo "WARNING: could not install aggregator warm cron"
-            # Deploy user and root cron must both flock this. A 644 root:root
-            # file under /var/lock is why cutover used to continue without the lock.
-            sudo touch /tmp/mm-aggregator-warm.lock
-            sudo chmod 666 /tmp/mm-aggregator-warm.lock
+            sudo rm -f /etc/cron.d/aggregator-warm || true
           else
-            echo "WARNING: no passwordless sudo — install /etc/cron.d/aggregator-warm by hand"
-            touch /tmp/mm-aggregator-warm.lock 2>/dev/null || true
-            chmod 666 /tmp/mm-aggregator-warm.lock 2>/dev/null || true
+            rm -f /etc/cron.d/aggregator-warm 2>/dev/null || true
           fi
 
           # Every docker command here needs `< /dev/null`. This whole script is
@@ -736,6 +726,24 @@ jobs:
 
           echo "Cutting over API then POS onto the new image (idle slot, nginx reload, drain)..."
           bash scripts/cutover-backend.sh < /dev/null
+
+          # (Re)start the always-on aggregator worker daemon AFTER cutover — cutover
+          # stops it to free RAM for the green API slot, and `restart:
+          # unless-stopped` keeps a stopped container stopped until this explicit
+          # `up -d`. The ~4.7 GB bootstrap image is pulled ONLY when its sources
+          # changed: this explicit pull is the fix for the old `pull_policy: missing`
+          # bug where a rebuilt :latest was never fetched to the VM, so worker code
+          # changes silently never deployed. `up -d` then recreates the container on
+          # the new image (and starts it whether it was stopped by cutover or never
+          # existed on this VM before).
+          if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
+            echo "Pulling the rebuilt aggregator-bootstrap image..."
+            docker compose -f docker-compose.prod.yml pull aggregator-worker < /dev/null \
+              || echo "WARNING: could not pull aggregator-bootstrap image"
+          fi
+          echo "Starting the aggregator worker daemon..."
+          docker compose -f docker-compose.prod.yml up -d aggregator-worker < /dev/null \
+            || echo "WARNING: could not start aggregator-worker"
 
           # The deploy only ever started api and nginx, so when the certbot
           # renewal loop died it stayed dead through every subsequent deploy

@@ -25,7 +25,9 @@ import json
 import logging
 import os
 import shutil
+import signal
 import sqlite3
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -57,6 +59,87 @@ from .fingerprint import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── live Chrome registry ─────────────────────────────────────────────────────
+# Every Chrome the worker launches is registered here so the daemon's per-job
+# timeout wrapper can force-kill a wedged one: `asyncio.wait_for` cancels the
+# awaiting coroutine, but a hung headed Chrome (a stuck OTP wait, a page.goto that
+# never returns) keeps running and holding RAM, and the single-consumer RAM
+# guarantee needs it gone before the next job spawns its own. There is normally at
+# most one entry (one job at a time), but a set tolerates the headed-login path
+# that spawns Chrome via `_spawn_chrome` while a Playwright context is also open.
+_LIVE_CHROME: set[Any] = set()
+
+
+def _register_chrome(handle: Any) -> None:
+    if handle is not None:
+        _LIVE_CHROME.add(handle)
+
+
+def _unregister_chrome(handle: Any) -> None:
+    _LIVE_CHROME.discard(handle)
+
+
+def _playwright_chrome_pid(handle: Any) -> int | None:
+    """Best-effort OS pid of a Playwright-launched Chrome.
+
+    Playwright does not expose the browser process publicly, so we reach through
+    its transport (`_connection._transport._proc`). Wrapped defensively: a version
+    bump or a connect-over-CDP browser (no local process) just yields None, and
+    the kill degrades to the Playwright context's own cancellation cleanup.
+    """
+    for obj in (handle, getattr(handle, "browser", None)):
+        try:
+            proc = obj._connection._transport._proc  # noqa: SLF001 — no public API
+            pid = int(proc.pid)
+        except Exception:  # noqa: BLE001 — not a local Playwright browser
+            continue
+        if pid > 0:
+            return pid
+    return None
+
+
+def _kill_one(handle: Any) -> None:
+    if isinstance(handle, subprocess.Popen):
+        # A Chrome we spawned ourselves (headed login/relogin). `_spawn_chrome`
+        # uses start_new_session=True, so it owns a process group — one killpg
+        # reaps Chrome and every renderer/GPU child in one shot.
+        if handle.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(handle.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                handle.kill()
+            except OSError:
+                pass
+        return
+    pid = _playwright_chrome_pid(handle)
+    if pid is None:
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def kill_live_chrome() -> None:
+    """SIGKILL every Chrome the worker currently has open, then clear the registry.
+
+    Called by the daemon when a job overruns its budget. Best-effort and never
+    raises — an already-reaped handle is fine; the point is only to guarantee no
+    Chrome survives into the next job.
+    """
+    for handle in list(_LIVE_CHROME):
+        try:
+            _kill_one(handle)
+        except Exception:  # noqa: BLE001 — a stubborn handle must not block the rest
+            logger.warning("kill_live_chrome: could not kill %r", handle)
+        _LIVE_CHROME.discard(handle)
 
 
 class NotLoggedInError(RuntimeError):
@@ -113,6 +196,7 @@ class _Opened:
     chrome: Any = None  # subprocess.Popen when we spawned Chrome ourselves
 
     async def close(self) -> None:
+        _unregister_chrome(self.browser)
         if self.persistent and self.chrome is None:
             await self.context.close()
         elif self.browser is not None and self.chrome is None:
@@ -260,6 +344,7 @@ def _session_cookies_present(channel: str, names: set[str]) -> bool:
 def _stop_chrome(proc: Any) -> None:
     if proc is None:
         return
+    _unregister_chrome(proc)
     if proc.poll() is not None:
         return
     proc.terminate()
@@ -287,8 +372,6 @@ async def _wait_for_cdp(port: int, *, timeout_s: float = 30) -> None:
 
 
 def _spawn_chrome(*, profile: Path, port: int, url: str) -> Any:
-    import subprocess
-
     binary = chrome_binary()
     if not binary:
         raise NeedsHumanLogin(
@@ -308,12 +391,15 @@ def _spawn_chrome(*, profile: Path, port: int, url: str) -> Any:
         binary=binary, user_data_dir=profile, port=port, url=url
     )
     logger.info("spawning Chrome profile=%s port=%s", profile, port)
-    return subprocess.Popen(  # noqa: S603 — args are ours, not user input
+    proc = subprocess.Popen(  # noqa: S603 — args are ours, not user input
         args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
+    # Register so the daemon's timeout wrapper can SIGKILL a wedged headed login.
+    _register_chrome(proc)
+    return proc
 
 
 async def _connect_cdp(pw, port: int):
@@ -428,6 +514,7 @@ async def _open_context(pw, channel: str, *, headed: bool) -> _Opened:
     context = await _launch_persistent(pw, profile, headed=headed, channel=channel)
     if extra:
         await context.add_init_script(_session_storage_init_script(extra))
+    _register_chrome(context.browser)  # so a wedged warm/probe can be force-killed
     return _Opened(context=context, browser=context.browser, persistent=True)
 
 
@@ -468,6 +555,7 @@ async def _open_storage_state_context(pw, channel: str) -> _Opened:
     )
     if extra:
         await context.add_init_script(_session_storage_init_script(extra))
+    _register_chrome(browser)  # so a wedged warm/probe can be force-killed
     return _Opened(context=context, browser=browser, persistent=False)
 
 
