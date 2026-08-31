@@ -254,10 +254,16 @@ Manual runs work; the hourly autonomous refresh 401s — an architecture problem
 - [x] deleted the `companies[0].id` org override in `_login` (the wrong-scope 401 cause); `_login` returns None on failure (not the stale `previous`); carries the captured cf_clearance/anti-bot cookies forward on mint
 - [x] enhanced mint log (org + outlet count + carried cookie names) is the on-VM confirmation signal; updated `test_deliveroo_provider.py` + 3 new `_login`/`_augment` tests
 
-## Phase 3 — Worker daemon: queue + hard timeout + resident Xvfb [W]
-- [ ] `serve)` entrypoint (resident Xvfb); `queue.py`; extract `reauth.py`; `daemon.py`
-- [ ] `browser.kill_live_chrome()` + `_LIVE_CHROME` registry; `run_job_guarded` hard timeout
-- [ ] in-process Dubai-wall-clock scheduler; retire cron+flock; compose worker always-on
+## Phase 3 — Worker daemon: queue + hard timeout + resident Xvfb [W] — BUILT on branch `aggregator-auth-redesign`, NOT deployed
+- [x] `serve)` entrypoint (resident Xvfb); `queue.py`; extracted `reauth.py`; `daemon.py` (commit e5a93538, merged 31ec1c90)
+- [x] `browser.kill_live_chrome()` + `_LIVE_CHROME` registry; `run_job_guarded` hard timeout
+- [x] in-process Dubai-wall-clock scheduler; retire cron+flock; compose worker always-on (`restart: unless-stopped`, `command:["serve"]`, heartbeat healthcheck); deploy.yml `pull`+`up -d` (also fixes the pull_policy:missing stale-image bug)
+- [x] worker suite green: 84 passed, ruff clean; unit tests for queue + daemon (timeout→kill, dispatch routing, heal poll, Dubai next_due)
+- **NOT MERGED TO MAIN / NOT DEPLOYED — remaining before it can ship:**
+  - [ ] Rework `scripts/cutover-backend.sh`: remove the dead flock/warm-lock machinery (daemon takes no flock); still `docker stop` the worker to free RAM during cutover, but ensure it is `up -d`'d again by EVERY caller (deploy.yml done; verify rollback.yml + deploy.sh)
+  - [ ] Update the 5 obsolete API cron-model tests (they read the now-deleted cron): `test_aggregator_heal_gate.py::{test_cron_heal_python_parses_and_flags_not_live,test_cron_heal_line_has_no_bare_percent,test_cron_antibot_warm_omits_careem}` + `test_blue_green_cutover.py::{test_cutover_flock_is_writable_by_the_deploy_user,test_aggregator_warm_cron_three_clocks_and_curl_gated_heal}` → repoint to the daemon model or retire (daemon behavior already covered by `test_daemon.py`). Keep `test_decommission_never_drops_ecommerce_tables` intent.
+  - [ ] **VM validation (live browser) before flip**: build the bootstrap image, run `docker compose run --rm aggregator-worker serve` under the resident Xvfb, confirm it starts, heartbeats, heals a killed session, and stays < 2GB with one transient Chrome; then validate the deploy/cutover stop→up-d interaction in a low-traffic window.
+- NOTE: main still runs the cron model (Phases 0-2 + hotfix), which is verified working + self-healing — so prod is safe while Phase 3 awaits a validated cutover.
 
 ## Phase 4 — DB-as-truth profile fix [W]
 - [ ] `browser.py` probe_channel: always use hydrated storage_state (drop `.chrome` preference)
