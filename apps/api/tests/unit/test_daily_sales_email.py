@@ -369,26 +369,28 @@ async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
 
 
 @pytest.mark.asyncio
-async def test_it_sends_todays_report_after_the_last_close_plus_buffer():
-    # Two branches, closing 22:00 and 23:00. At 23:50 the later close (23:00) plus
-    # the 45-minute settle buffer (23:45) is behind us, so today is due. The three
-    # prior days are already mailed, isolating "today sends".
+async def test_it_sends_the_day_the_morning_after_at_the_send_hour():
+    # Branches close 22:00 and 23:00 on the 25th. The report for the 25th is held
+    # past its close+buffer until 01:00 Dubai on the 26th (the send hour, giving
+    # the overnight aggregator scrape the night to land). At 01:05 on the 26th it
+    # is due; the 26th itself is still in progress and held. Prior days are mailed.
     sent = await _run_tick(
-        now=datetime(2026, 8, 25, 23, 50, tzinfo=_DUBAI),
+        now=datetime(2026, 8, 26, 1, 5, tzinfo=_DUBAI),
         branches=[_branch("A", opening_to="22:00"), _branch("B", opening_to="23:00")],
-        already_sent={"2026-08-22", "2026-08-23", "2026-08-24"},
+        already_sent={"2026-08-23", "2026-08-24"},
     )
     assert sent == ["2026-08-25"]
 
 
 @pytest.mark.asyncio
-async def test_it_holds_today_until_the_settle_buffer_has_passed():
-    # 23:30 is after the 23:00 close but inside the 45-minute buffer (due 23:45),
-    # so today is held; the prior days are already sent, so nothing goes out.
+async def test_it_holds_today_until_the_send_hour_even_after_close():
+    # 00:30 on the 26th is well past the 25th's close+buffer (23:45) but before the
+    # 01:00 send hour, so the 25th is still held — the send hour, not the close, is
+    # the binding floor now. Prior days already sent, so nothing goes out.
     sent = await _run_tick(
-        now=datetime(2026, 8, 25, 23, 30, tzinfo=_DUBAI),
+        now=datetime(2026, 8, 26, 0, 30, tzinfo=_DUBAI),
         branches=[_branch("A", opening_to="23:00")],
-        already_sent={"2026-08-22", "2026-08-23", "2026-08-24"},
+        already_sent={"2026-08-23", "2026-08-24"},
     )
     assert sent == []
 
