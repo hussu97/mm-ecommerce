@@ -873,6 +873,20 @@ async def _fetch_and_persist(
     return written, finance.truncation_note, detail
 
 
+def _retrieved_from_detail(mode: str, detail: dict) -> dict:
+    """The 'retrieved' headline figures a sweep knows the moment it finishes, from
+    `_fetch_and_persist`'s per-kind `detail` — no DB re-count. So a scheduled
+    sales/finance run shows what it pulled immediately, even before the separate
+    global promote fills in the promotion split (which `_finalize_run_coverage`
+    merges in afterwards, from the same coverage functions the backfill uses)."""
+    if mode == RUN_MODE_SALES:
+        return {"orders_retrieved": int(detail.get("orders", 0))}
+    return {
+        "statements_total": int(detail.get("statements", 0)),
+        "payouts_total": int(detail.get("payouts", 0)),
+    }
+
+
 async def _session_for(db: AsyncSession, channel: str, provider: BaseAggregatorClient):
     """Load + enrich + prepare a channel session, or None if not live."""
     session = await session_store.load(db, channel)
@@ -993,7 +1007,7 @@ async def _sweep_channel(
     attempted_reauth = False
     while True:
         try:
-            written, truncation, _detail = await _fetch_and_persist(
+            written, truncation, detail = await _fetch_and_persist(
                 db, channel, provider, mode, session, since=since, until=until
             )
             break
@@ -1027,7 +1041,12 @@ async def _sweep_channel(
 
     run.status = RUN_COMPLETED
     run.finished_at = utcnow()
-    run.stats = {"written": written, "from": since.isoformat(), "to": until.isoformat()}
+    run.stats = {
+        "written": written,
+        "from": since.isoformat(),
+        "to": until.isoformat(),
+        **_retrieved_from_detail(mode, detail),
+    }
     if truncation:
         run.stats["truncation"] = truncation
         logger.info("aggregator %s %s truncated: %s", channel, mode, truncation)
@@ -1072,16 +1091,18 @@ async def sweep_channel_once(
 _RANGE_LOCK_KEY = 0x6D6D_4241_5443_4809
 
 
-async def _range_stats(
+async def _order_coverage_stats(
     db: AsyncSession, channel: str, from_date: date, to_date: date
 ) -> dict:
-    """Promotion/coverage stats for a channel over a business-date range.
+    """Orders retrieved + the promotion split for a channel over a business-date
+    range — the order half of a run's coverage.
 
-    All counts are scoped to `aggregator_order.business_date` in [from, to]
-    (String(10), lexicographic == chronological for ISO dates). "existing" =
-    promoted onto an order GrubOps already owns (Barsha/Sharjah overlay); "new" =
-    promotion-created. Invoices/statements/payouts are counted from the DB, so a
-    re-run reports the true current coverage, not just this pass's deltas.
+    Counts are scoped to `aggregator_order.business_date` in [from, to] (String(10),
+    lexicographic == chronological for ISO dates). "existing" = promoted onto an
+    order GrubOps already owns (Barsha/Sharjah overlay); "new" = promotion-created.
+    Read from the DB, so it reports the true current coverage of the window, not
+    just one pass's deltas — which is why the same function serves a ranged backfill
+    and a scheduled sweep alike (see `_run_coverage_stats`).
     """
     from app.models.grubops_order import GrubOpsOrderMap
 
@@ -1120,6 +1141,24 @@ async def _range_stats(
         )
         or 0
     )
+    not_promoted = retrieved - promoted
+    pct = lambda n: round(100.0 * n / retrieved, 1) if retrieved else 0.0  # noqa: E731
+    return {
+        "orders_retrieved": retrieved,
+        "orders_promoted": promoted,
+        "orders_promoted_new": promoted - existing,
+        "orders_promoted_existing": existing,
+        "orders_not_promoted": not_promoted,
+        "pct_promoted": pct(promoted),
+        "pct_existing": pct(existing),
+        "pct_not_promoted": pct(not_promoted),
+    }
+
+
+async def _finance_totals(db: AsyncSession, channel: str) -> dict:
+    """Statements / invoices / payouts on record for a channel — the finance half of
+    a run's coverage. Channel-wide (not date-scoped), so a run reports the true
+    current finance coverage, matching how the console shows it."""
     statements = (
         await db.scalar(
             select(func.count())
@@ -1147,20 +1186,28 @@ async def _range_stats(
         )
         or 0
     )
-    not_promoted = retrieved - promoted
-    pct = lambda n: round(100.0 * n / retrieved, 1) if retrieved else 0.0  # noqa: E731
     return {
-        "orders_retrieved": retrieved,
-        "orders_promoted": promoted,
-        "orders_promoted_new": promoted - existing,
-        "orders_promoted_existing": existing,
-        "orders_not_promoted": not_promoted,
-        "pct_promoted": pct(promoted),
-        "pct_existing": pct(existing),
-        "pct_not_promoted": pct(not_promoted),
         "statements_total": statements,
         "invoices_total": invoices,
         "payouts_total": payouts,
+    }
+
+
+async def _run_coverage_stats(
+    db: AsyncSession, channel: str, from_date: date, to_date: date
+) -> dict:
+    """The expected data for a run across ALL its sources — orders + promotion
+    (date-scoped) and statements/invoices/payouts (channel-wide).
+
+    The single place every run type builds its headline figures from, so the admin
+    Runs table shows the same shape however a run was triggered: a ranged backfill
+    (both modes), and — via `_finalize_run_coverage` after the global promote — the
+    scheduled sales/finance sweeps. Keeping it in one function is why the columns no
+    longer diverge between "Backfill" and "Sales" rows.
+    """
+    return {
+        **await _order_coverage_stats(db, channel, from_date, to_date),
+        **await _finance_totals(db, channel),
     }
 
 
@@ -1392,7 +1439,7 @@ async def _run_range_channel(
             errors.append(f"reconcile: {exc}")
             logger.exception("aggregator %s range reconcile failed", channel)
 
-    stats.update(await _range_stats(db, channel, from_date, to_date))
+    stats.update(await _run_coverage_stats(db, channel, from_date, to_date))
     run.finished_at = utcnow()
     if errors:
         run.status = RUN_PARTIAL
@@ -1512,6 +1559,49 @@ async def sweep_reconcile_once() -> int:
         return touched
 
 
+def _window_business_dates(since: datetime, until: datetime) -> tuple[date, date]:
+    """The Dubai business-date range a sweep window covers, so a scheduled run's
+    coverage is scoped the same way the backfill scopes its range."""
+    return since.astimezone(_DUBAI).date(), until.astimezone(_DUBAI).date()
+
+
+async def _finalize_run_coverage(
+    mode: str, since: datetime, until: datetime, *, not_before: datetime
+) -> None:
+    """After the global promote, write each channel's canonical coverage onto its run
+    row FROM THIS PASS — so a scheduled sales/finance run shows the same
+    retrieved+promotion figures a backfill does, both built from
+    `_order_coverage_stats` / `_finance_totals`. Only rows started at/after
+    `not_before` (this pipeline's start) are touched, so a prior pass's row is never
+    rewritten, and a channel skipped this pass (no live session → no new row) is
+    left alone. Never raises — stats finalisation must not fail a pass."""
+    from_d, to_d = _window_business_dates(since, until)
+    try:
+        async with AsyncSessionFactory() as db:
+            for channel in AGGREGATOR_CHANNELS:
+                run = await db.scalar(
+                    select(AggregatorSyncRun)
+                    .where(
+                        AggregatorSyncRun.channel == channel,
+                        AggregatorSyncRun.mode == mode,
+                        AggregatorSyncRun.started_at >= not_before,
+                    )
+                    .order_by(AggregatorSyncRun.started_at.desc())
+                    .limit(1)
+                )
+                if run is None:
+                    continue
+                extra = (
+                    await _order_coverage_stats(db, channel, from_d, to_d)
+                    if mode == RUN_MODE_SALES
+                    else await _finance_totals(db, channel)
+                )
+                run.stats = {**(run.stats or {}), **extra}
+                await db.commit()
+    except Exception:  # noqa: BLE001 — a stats-finalisation blip must not fail a pass
+        logger.exception("aggregator %s run-coverage finalize failed", mode)
+
+
 async def run_daily_once() -> tuple[int, int]:
     """One full daily pass: sales → finance → promote → reconcile.
 
@@ -1523,6 +1613,10 @@ async def run_daily_once() -> tuple[int, int]:
     covers Keeta as well as the httpx channels. Each no-ops when disabled or when
     a channel has no live session.
     """
+    started = utcnow()
+    since, until = _sweep_window(
+        started, from_date=None, to_date=None, lookback_days=None, lookback_hours=None
+    )
     sales = await sweep_sales_once()
     finance = await sweep_finance_once()
     promoted = await sweep_promote_once()
@@ -1531,6 +1625,11 @@ async def run_daily_once() -> tuple[int, int]:
     reconciled = await sweep_reconcile_once()
     if reconciled:
         logger.info("aggregator reconciliation wrote %s row(s)", reconciled)
+    # Now that promote has run, fill each sweep run row's promotion split (and finance
+    # totals) from the same coverage functions the backfill uses, so the Runs table
+    # shows the same figures for a scheduled pass as for a manual backfill.
+    await _finalize_run_coverage(RUN_MODE_SALES, since, until, not_before=started)
+    await _finalize_run_coverage(RUN_MODE_FINANCE, since, until, not_before=started)
     return sales, finance
 
 
@@ -1556,6 +1655,10 @@ async def run_sales_refresh_once() -> int:
     if not is_enabled():
         return 0
     hours = settings.AGGREGATOR_SALES_ROLLING_HOURS
+    started = utcnow()
+    since, until = _sweep_window(
+        started, from_date=None, to_date=None, lookback_days=None, lookback_hours=hours
+    )
     sales = await _sweep_all(RUN_MODE_SALES, _SALES_LOCK_KEY, lookback_hours=hours)
     promoted = await sweep_promote_once()
     if promoted:
@@ -1563,6 +1666,9 @@ async def run_sales_refresh_once() -> int:
     reconciled = await sweep_reconcile_once()
     if reconciled:
         logger.info("aggregator rolling refresh reconciled %s row(s)", reconciled)
+    # Fill the sales run rows' promotion split from the shared coverage functions,
+    # now that promote has run — same figures as a backfill (see run_daily_once).
+    await _finalize_run_coverage(RUN_MODE_SALES, since, until, not_before=started)
     return sales
 
 

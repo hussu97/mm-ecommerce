@@ -343,10 +343,14 @@ async def test_run_sales_refresh_once_sweeps_rolling_window_then_promotes(monkey
         calls["reconciled"] = True
         return 1
 
+    async def fake_finalize(mode, since, until, *, not_before):
+        calls["finalized"] = mode
+
     monkeypatch.setattr(ingest, "is_enabled", lambda: True)
     monkeypatch.setattr(ingest, "_sweep_all", fake_sweep_all)
     monkeypatch.setattr(ingest, "sweep_promote_once", fake_promote)
     monkeypatch.setattr(ingest, "sweep_reconcile_once", fake_reconcile)
+    monkeypatch.setattr(ingest, "_finalize_run_coverage", fake_finalize)
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SALES_ROLLING_HOURS", 36)
 
     written = await ingest.run_sales_refresh_once()
@@ -354,6 +358,40 @@ async def test_run_sales_refresh_once_sweeps_rolling_window_then_promotes(monkey
     assert written == 7
     assert calls["sweep"] == (ingest.RUN_MODE_SALES, ingest._SALES_LOCK_KEY, 36)
     assert calls["promoted"] and calls["reconciled"]
+    # After promote, the sweep run rows get their promotion split filled in.
+    assert calls["finalized"] == ingest.RUN_MODE_SALES
+
+
+def test_retrieved_from_detail_is_mode_shaped():
+    """A sweep's immediate 'retrieved' figures, from _fetch_and_persist's detail:
+    orders for a sales run, statements/payouts for a finance run — so the Runs table
+    shows what a scheduled run pulled before the global promote fills in promotion."""
+    from app.services.aggregators import ingest
+
+    assert ingest._retrieved_from_detail(ingest.RUN_MODE_SALES, {"orders": 14}) == {
+        "orders_retrieved": 14
+    }
+    assert ingest._retrieved_from_detail(
+        ingest.RUN_MODE_FINANCE, {"statements": 3, "payouts": 2}
+    ) == {"statements_total": 3, "payouts_total": 2}
+    # Missing keys default to 0 — never a KeyError on a sparse detail.
+    assert ingest._retrieved_from_detail(ingest.RUN_MODE_SALES, {}) == {
+        "orders_retrieved": 0
+    }
+
+
+def test_window_business_dates_are_dubai_local():
+    """A sweep window's UTC datetimes map to Dubai (+4) business dates, so the run
+    coverage is scoped the way the backfill scopes its explicit range."""
+    from datetime import datetime, timezone
+
+    from app.services.aggregators import ingest
+
+    since = datetime(2026, 8, 30, 20, 0, tzinfo=timezone.utc)  # 00:00 Dubai, 31st
+    until = datetime(2026, 8, 31, 18, 59, tzinfo=timezone.utc)  # 22:59 Dubai, 31st
+    lo, hi = ingest._window_business_dates(since, until)
+    assert lo.isoformat() == "2026-08-31"
+    assert hi.isoformat() == "2026-08-31"
 
 
 @pytest.mark.asyncio
