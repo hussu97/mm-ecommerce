@@ -14,10 +14,10 @@ without crashing, and the drift pipeline runs off whatever snapshots exist. Live
 readers land newest-value-first:
 - **Foodics** — DONE, verified against the live console API and the real 46-row
   Grubtech price tag (the aggregator menu for the two integrated branches).
-- **Careem** — wired to the real catalog endpoints, replayed through the bearer
-  session; its exact response field names get one confirmation pass at enablement
-  (the parser is defensive until then).
-- **Keeta / Talabat / Noon / Deliveroo** — same session-replay pattern; to add.
+- **Careem** — DONE, verified against the live catalog API (catalog-catalogs →
+  catalog-categories → catalog-products; price = `defaultPrice`, availability =
+  `status == "ACTIVE"`), replayed through the bearer session.
+- **Keeta / Talabat / Noon / Deliveroo** — same session-replay pattern; in progress.
 """
 
 from __future__ import annotations
@@ -158,59 +158,54 @@ async def _read_foodics_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
 
 
 # ── Careem catalog reader (non-Foodics outlets) ───────────────────────────────
-# Wired to the real partner-portal endpoints (confirmed live 2026-08-31), replayed
-# through the same bearer session the sales ingest uses. The exact response FIELD
-# NAMES could not be captured from the browser (the portal gates the JSON), so the
-# parser is defensive — it tries the common Careem shapes — and gets one field
-# confirmation pass at enablement against a live VM session. Gated off until then.
+# Verified against the live partner-portal API (captured 2026-08-31, fields
+# confirmed 2026-09-01). Read flow: catalog-catalogs -> catalog-categories/<id>
+# ({subCategories}) -> catalog-products?categoryId=<cat> ({products:[...]}). A
+# product's price is `defaultPrice`, availability is `status == "ACTIVE"`. Replayed
+# through the same bearer session the sales ingest uses.
 
 
-def _first(d: dict, *keys: str, default: Any = None) -> Any:
-    for k in keys:
-        if isinstance(d, dict) and d.get(k) is not None:
-            return d[k]
-    return default
-
-
-def _rows(payload: Any) -> list[dict]:
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        for k in ("data", "products", "items", "content", "result", "catalogs"):
-            v = payload.get(k)
-            if isinstance(v, list):
-                return v
-    return []
+def _careem_items(products_payload: Any) -> list[NormalizedItem]:
+    products = (
+        products_payload.get("products")
+        if isinstance(products_payload, dict)
+        else products_payload
+    ) or []
+    items: list[NormalizedItem] = []
+    for p in products:
+        if not isinstance(p, dict) or not p.get("name"):
+            continue
+        price = p.get("defaultPrice")
+        if price is None and isinstance(p.get("prices"), list) and p["prices"]:
+            price = (p["prices"][0] or {}).get("price")
+        items.append(
+            NormalizedItem(
+                name=p["name"],
+                external_id=str(p["id"]) if p.get("id") is not None else None,
+                price=Decimal(str(price)) if price is not None else None,
+                is_available=str(p.get("status", "ACTIVE")).upper() == "ACTIVE",
+            )
+        )
+    return items
 
 
 def parse_careem_catalog(
-    catalogs: Any, products_by_category: dict[str, Any]
+    categories: Any, products_by_category: dict[str, Any]
 ) -> NormalizedMenu:
-    """Careem catalogs + per-category products → a channel-neutral menu.
-
-    Defensive field mapping (name/price/available under several possible keys),
-    confirmed against a live response at enablement.
-    """
+    """Careem categories (the catalog's `subCategories`) + per-category products →
+    a channel-neutral menu. Pure, unit-tested against the real shapes."""
+    subs = (
+        categories.get("subCategories") if isinstance(categories, dict) else categories
+    ) or []
     cats: list[NormalizedCategory] = []
-    for cat in _rows(catalogs):
-        cat_id = str(_first(cat, "id", "categoryId", "catalogId", default=""))
-        cat_name = _first(cat, "name", "title", "nameLocalized", default="")
-        items = []
-        for p in _rows(products_by_category.get(cat_id)):
-            price = _first(p, "price", "basePrice", "priceInfo")
-            if isinstance(price, dict):
-                price = _first(price, "price", "amount", "value")
-            avail = _first(p, "available", "isAvailable", "active", default=True)
-            items.append(
-                NormalizedItem(
-                    name=_first(p, "name", "itemName", "title", default=""),
-                    external_id=str(_first(p, "id", "itemId", default="")) or None,
-                    price=Decimal(str(price)) if price is not None else None,
-                    is_available=bool(avail),
-                )
-            )
+    for cat in subs:
+        cid = str(cat.get("id")) if cat.get("id") is not None else ""
         cats.append(
-            NormalizedCategory(cat_name, external_id=cat_id or None, items=items)
+            NormalizedCategory(
+                cat.get("name", ""),
+                external_id=cid or None,
+                items=_careem_items(products_by_category.get(cid)),
+            )
         )
     return NormalizedMenu(source="careem", categories=cats)
 
@@ -245,14 +240,26 @@ async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     session = await session_store.load(db, "careem")
     company, brand, outlet = await _careem_ids(db, branch_id)
     catalogs = await cp.provider.list_catalogs(session, company, brand, outlet)
+    catalog_list = (
+        catalogs if isinstance(catalogs, list) else (catalogs or {}).get("data", [])
+    )
+    if not catalog_list:
+        raise AggregatorUnavailableError("careem returned no catalog")
+    catalog_id = str(catalog_list[0]["id"])
+    categories = await cp.provider.list_categories(
+        session, company, brand, outlet, catalog_id
+    )
+    subs = (
+        categories.get("subCategories") if isinstance(categories, dict) else categories
+    ) or []
     products_by_cat: dict[str, Any] = {}
-    for cat in _rows(catalogs):
-        cid = str(_first(cat, "id", "categoryId", "catalogId", default=""))
+    for cat in subs:
+        cid = str(cat.get("id")) if cat.get("id") is not None else ""
         if cid:
             products_by_cat[cid] = await cp.provider.list_catalog_products(
                 session, company, brand, outlet, cid
             )
-    return parse_careem_catalog(catalogs, products_by_cat)
+    return parse_careem_catalog(categories, products_by_cat)
 
 
 # ── Reader registries ─────────────────────────────────────────────────────────

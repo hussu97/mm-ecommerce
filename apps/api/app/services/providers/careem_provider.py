@@ -293,13 +293,15 @@ class CareemClient(BaseAggregatorClient):
         return outlets
 
     # ── catalog / hours (catalog sync) ───────────────────────────────────────
-    # Endpoints confirmed live from the partner portal 2026-08-31:
-    #   {_API}/v1/careem/1/company/{c}/brand/{b}/outlet/{o}/catalog-catalogs
-    #   {_API}/v1/careem/1/company/{c}/brand/{b}/outlet/{o}/catalog-products
-    #     ?categoryId={cat}&page=1&limit=100
-    #   {_API}/v1/careem/1/company/{c}/brand/{b}/outlet/{o}/food-outlet-operational-hours
-    # (city id = 1 = Dubai, the scope the orders endpoint uses too). Same bearer
-    # session the sales ingest replays.
+    # Endpoints + response shapes confirmed live from the partner portal
+    # (captured 2026-08-31, verified 2026-09-01), city id = 1 = Dubai. Read flow
+    # is three steps, all under {_API}/v1/careem/1/company/{c}/brand/{b}/outlet/{o}:
+    #   catalog-catalogs                -> [{id, name:"Catalog", ...}]
+    #   catalog-categories/{catalogId}  -> {subCategories:[{id, name}]}
+    #   catalog-products?categoryId={cat}&page=1&limit=100
+    #       -> {products:[{id, name, status:"ACTIVE"|"INACTIVE", defaultPrice,
+    #                      prices, customizationGroups}], pagination}
+    # Same bearer session the sales ingest replays.
 
     def _outlet_base(self, company: str, brand: str, outlet: str) -> str:
         return f"{_API}/v1/careem/1/company/{company}/brand/{brand}/outlet/{outlet}"
@@ -307,11 +309,26 @@ class CareemClient(BaseAggregatorClient):
     async def list_catalogs(
         self, session: LoadedSession, company: str, brand: str, outlet: str
     ) -> Any:
-        """The outlet's catalogs/categories."""
+        """The outlet's catalog(s) — an array; `[0].id` is the catalog id."""
         return await self.request_json(
             session,
             "GET",
             f"{self._outlet_base(company, brand, outlet)}/catalog-catalogs",
+        )
+
+    async def list_categories(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        catalog_id: str,
+    ) -> Any:
+        """A catalog's category tree (`{subCategories:[{id, name}]}`)."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-categories/{catalog_id}",
         )
 
     async def list_catalog_products(
