@@ -115,6 +115,11 @@ class StandardOrder:
     net_sales: Decimal | None = None
     commission_amount: Decimal | None = None
     payment_fee: Decimal | None = None
+    #: Merchant-funded promotion the marketplace charges back to us — a real cost
+    #: (Keeta's "Promotion funded by merchant" / `feeDtl.merchantFee.activityFee`),
+    #: distinct from commission so the effective-rate stays commission-only. Counted
+    #: in the fees roll-up alongside commission and payment fee.
+    marketing_fee: Decimal | None = None
     delivery_fee: Decimal | None = None
     vat_amount: Decimal | None = None
     cancellation_fee: Decimal | None = None

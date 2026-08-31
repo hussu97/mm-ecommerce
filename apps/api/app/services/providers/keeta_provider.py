@@ -1127,6 +1127,13 @@ class KeetaClient(BaseAggregatorClient):
                     row, ("paymentFee", "transactionFee", "bankTransactionFee")
                 )
             ),
+            # "Promotion funded by merchant" (delivery-fee discounts) — Keeta charges
+            # this back to us. It is baked into `earnings`/`net_payable` but belongs in
+            # a fee bucket too, so the fees roll-up reports the true total cost. Kept
+            # out of commission so the effective rate stays commission-only.
+            marketing_fee=_abs_money(
+                _first_money(row, ("activityFee", "activity_fee"))
+            ),
             delivery_fee=_abs_money(
                 _first_money(row, ("deliveryFee", "deliveryAmount"))
             ),

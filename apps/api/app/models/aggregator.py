@@ -500,6 +500,10 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
         Numeric(12, 2), nullable=True
     )
     payment_fee: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    #: Merchant-funded promotion charged back to us (Keeta's "Promotion funded by
+    #: merchant" / feeDtl activityFee) — a real fee, kept distinct from commission
+    #: so the effective commission rate stays clean; the fees roll-up adds it in.
+    marketing_fee: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     delivery_fee: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     vat_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     cancellation_fee: Mapped[Decimal | None] = mapped_column(

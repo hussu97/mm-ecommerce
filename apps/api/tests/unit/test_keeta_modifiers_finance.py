@@ -271,6 +271,47 @@ def test_parse_orders_real_envelope_empty_option_arrays_no_modifiers():
     assert item.modifiers_text is None
 
 
+def test_parse_orders_maps_merchant_funded_promotion_to_marketing_fee():
+    """Keeta's feeDtl.merchantFee.activityFee ('Promotion funded by merchant') is a
+    merchant cost — mapped to marketing_fee, kept distinct from commission. Shape and
+    values taken from a real order (5087841884884367): item 40, commission 9,
+    promotion 4, payment fee 0.80, earnings 26.20."""
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "5087841884884367", "status": 40},
+                    "merchantOrder": {"shopId": "1644189187"},
+                    "products": [
+                        {"name": "Kinder Cookie Melt (250 grams)", "count": 1}
+                    ],
+                    "feeDtl": {
+                        "merchantFee": {
+                            "productPrice": 4000,
+                            "commission": 900,
+                            "activityFee": 400,  # merchant-funded promotion
+                            "bankTransactionFee": 80,
+                            "earnings": 2620,
+                            "total": 2620,
+                        }
+                    },
+                }
+            ]
+        },
+    }
+    order = keeta.parse_orders(payload)[0]
+    assert order.commission_amount == Decimal("9.00")
+    assert order.payment_fee == Decimal("0.80")
+    assert order.marketing_fee == Decimal("4.00")  # was dropped before this fix
+    assert order.net_payable == Decimal("26.20")
+    # Commission + payment fee + marketing now reconcile to gross − net (13.80),
+    # where before marketing (4.00) was silent and the buckets under-reported by it.
+    assert (
+        order.commission_amount + order.payment_fee + order.marketing_fee
+    ) == Decimal("13.80")
+
+
 def test_status_code_40_decodes_to_completed():
     payload = {
         "code": 0,

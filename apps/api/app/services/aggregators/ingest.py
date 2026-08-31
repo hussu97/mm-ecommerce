@@ -349,6 +349,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "net_sales": order.net_sales,
         "commission_amount": order.commission_amount,
         "payment_fee": order.payment_fee,
+        "marketing_fee": order.marketing_fee,
         "delivery_fee": order.delivery_fee,
         "vat_amount": order.vat_amount,
         "cancellation_fee": order.cancellation_fee,
