@@ -19,9 +19,14 @@ readers land newest-value-first:
   `status == "ACTIVE"`), replayed through the bearer session.
 - **Talabat** — DONE, verified live from the VM session against the DeliveryHero
   vendor-api (price = `unitPrice`, availability = `availability.available` & `active`).
-- **Keeta / Noon / Deliveroo** — menus behind anti-bot / a separate login; see the
-  audit. Keeta (H5guard) + Noon (Akamai) need a headed VM capture; Deliveroo's menu
-  is behind a second login the sales session does not hold.
+- **Noon** — DONE, verified live from the VM RMS session (`/menu/list` +
+  `/menu/details`; price = `price`, availability = `isActive AND NOT isOos`).
+- **Deliveroo** — menu is behind a SEPARATE Menus-editor login (the sales session's
+  hub `token` does not reach `rs-hub`; "Edit menu" 302s to `/login`). Needs that
+  second session captured before a reader can run — verified, not assumed.
+- **Keeta** — menu API requires an in-browser H5guard (`mtgsig`) signature per
+  request, so the stored session cookie cannot call it server-side. Browser-only;
+  a headed capture is the only path. Verified from the portal's own shell JS.
 """
 
 from __future__ import annotations

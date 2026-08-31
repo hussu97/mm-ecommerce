@@ -397,18 +397,22 @@ unmatched** and need the 3/6/9-piece variants placed by hand — the next seedin
 |---|---|---|
 | **Foodics** (integrated: Barsha, Sharjah) | Console `core-api` — the **Grubtech price tag** | ✅ **Verified live** — parser tested against the real 46-item price tag; full MM-vs-Foodics diff run on real data (found 5 real price mismatches). |
 | **Careem** (Barsha, DSO) | REST `catalog-catalogs → catalog-categories → catalog-products` (bearer) | ✅ **Verified live** — real field shapes captured (`defaultPrice`, `status=="ACTIVE"`); parser tested against the real fixture. |
-| **Keeta** (all 4) | Portal `/m/web/product` | ⚠️ Menu API sits behind **H5guard** anti-tamper — in-browser capture blocked; items known from the ingest map. Needs a VM/worker headed capture to confirm the shape before its reader ships. |
-| **Talabat** (Sharjah, Barsha, Karama) | `menu-management-v2` | ⚠️ **PerimeterX** + the integrated outlets are availability-only (Foodics-fed). Karama menu is UI; needs headed automation. |
-| **Noon** (all 4) | Menu Maker | ⚠️ **Akamai**; two menu-makers (Foodics vs non-Foodics) + a QC-submit step. Needs headed automation. |
-| **Deliveroo** (Sharjah, Barsha, DSO) | separate **Menus** login | ⚠️ Menu is behind a second login the sales session does not hold. Needs its own headed capture. |
+| **Talabat** (Sharjah, Barsha, Karama) | DeliveryHero `vendor-api` | ✅ **Verified from the VM session** — PerimeterX blocks in-browser reads, but the stored session carries the `authorization` bearer + `x-global-entity-id` and TLS impersonation passes PX. `/catalogs → /catalogs/<c>/categories/<cat>/products`; price = `unitPrice`, availability = `availability.available` & `active`. |
+| **Noon** (all 4 + a 5th outlet) | RMS `/menu/details` | ✅ **Verified from the VM RMS session** — Akamai-gated in-browser, but the RMS `n-restaurantcode` session reaches it. `GET /menu/list` (the "Ext. grubtech" menus are Foodics-fed; the MM-managed one is read) + `POST /menu/details {menuCode}`; price = `price`, availability = `isActive AND NOT isOos`. |
+| **Keeta** (all 4) | Portal `/m/web/product` | ⛔ Menu API requires an in-browser **H5guard `mtgsig`** signature per request — the stored session cookie cannot call it server-side (verified from the portal's own shell JS). **Browser-only**; a headed worker capture is the only path. Items known from the ingest map. |
+| **Deliveroo** (Sharjah, Barsha, DSO) | separate **Menus** editor | ⛔ Menu is behind a **separate login** — "Edit menu" 302s to `/login?return_to=/menus/<id>`, and the sales session's hub `token` does not reach `rs-hub` (verified live). Needs that second session captured first. Items known from the ingest map. |
 
-**Honest status:** the two channels with a callable menu API (Foodics, Careem) have
-readers **verified against live data**. The other four gate their menus behind
-anti-bot / a separate login / UI-only editors — exactly what the audit's §"Recommended
-approach" flagged as "headed portal automation." Their **item sets are already known**
-(the ingest map above), so the drift/seed work proceeds; their live **menu readers**
-require a headed capture on the VM worker (the same engine the ingest uses) to confirm
-each shape with zero guessing before shipping — deliberately not hallucinated here.
+**Verified status: 4 of 5 aggregator menu readers work live** (Foodics, Careem,
+Talabat, Noon — each captured from its real API via the browser or the VM session,
+never guessed). The remaining two are **structurally headed-only**: Keeta signs every
+request in-browser (H5guard), and Deliveroo gates its editor behind a second login —
+both proven directly, not assumed. Their **item sets are already known** (the ingest
+map above), so drift/seed work proceeds; their live menu readers wait on a headed
+worker capture (Keeta) or the operator's Menus-editor session (Deliveroo).
+
+**DB gap found:** the noon Menu-Maker lists a **5th outlet `MLTNGMQ677`** that is not
+in `aggregator_branch_map` (which has the 4 known noon outlets). Worth reconciling —
+either a new/renamed outlet or a stale listing.
 
 ## Option-map seeding — the honest finding
 
