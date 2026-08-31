@@ -214,6 +214,22 @@ def _record_reauth_failure(channel: str, *, transient: bool = False) -> None:
         "transient" if transient else "needs-human",
         int(delay),
     )
+    if not transient:
+        # The irreducible zero-touch gap: automated re-login cannot clear a
+        # captcha/passkey/press-and-hold wall or get an OTP when the mailbox is
+        # down, so a human must act. Emit a DISTINCT, greppable ERROR so the VM's
+        # log-based alerting can page specifically on this (there is no ops email
+        # sink — structured logs are the alert channel). The backoff above bounds
+        # how often a stuck channel re-attempts, so this doubles as a debounced
+        # alert rather than per-tick spam.
+        logger.error(
+            "AGGREGATOR_NEEDS_HUMAN channel=%s: automated re-login cannot recover "
+            "this session (captcha/passkey/mailbox); a human must run "
+            "`login --channel %s` on the VM. Next auto-attempt in %ds.",
+            channel,
+            channel,
+            int(delay),
+        )
     # Publish the next-attempt time to the API so the ingest's reauth wait can bail
     # out early instead of burning the full AGGREGATOR_REAUTH_WAIT_SECONDS on a
     # login this daemon will not re-drive until `next_at`. Best-effort: the backoff

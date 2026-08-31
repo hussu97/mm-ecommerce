@@ -217,6 +217,27 @@ def test_transient_backoff_is_far_shorter_than_the_human_backoff(monkeypatch, tm
     assert transient_wait < human_wait
 
 
+def test_needs_human_failure_emits_a_distinct_alert_log(monkeypatch, tmp_path, caplog):
+    """A human-needed reauth failure emits a greppable AGGREGATOR_NEEDS_HUMAN ERROR
+    (the VM's log-based alerting pages on it); a transient failure must NOT."""
+    import logging
+
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    _stub_backoff_report(monkeypatch)
+
+    with caplog.at_level(logging.ERROR, logger="aggregator-bootstrap"):
+        reauth._record_reauth_failure("talabat", transient=False)
+    human = [r for r in caplog.records if "AGGREGATOR_NEEDS_HUMAN" in r.getMessage()]
+    assert len(human) == 1
+    assert "talabat" in human[0].getMessage()
+    assert human[0].levelno == logging.ERROR
+
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="aggregator-bootstrap"):
+        reauth._record_reauth_failure("careem", transient=True)
+    assert not [r for r in caplog.records if "AGGREGATOR_NEEDS_HUMAN" in r.getMessage()]
+
+
 def test_heal_once_uses_the_short_backoff_when_the_relogin_is_transient(
     monkeypatch, tmp_path
 ):
