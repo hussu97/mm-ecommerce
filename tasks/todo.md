@@ -268,8 +268,9 @@ Manual runs work; the hourly autonomous refresh 401s — an architecture problem
 ## Phase 4 — DB-as-truth profile fix [W]
 - [ ] `browser.py` probe_channel: always use hydrated storage_state (drop `.chrome` preference)
 
-## Phase 5 — Per-channel policy + one retry helper [W]+[A]
-- [ ] `services/aggregators/policy.py` + worker `channels/policy.py`; `next_backoff()`; absorb scattered constants; golden test
+## Phase 5 — Per-channel policy + one retry helper [W]+[A] — API-side DONE (on branch)
+- [x] `app/services/aggregators/policy.py`: `ChannelPolicy` (cookie_expiry_advisory, health_stale_after) + `policy_for()` + `next_backoff()` (exp + full jitter). Absorbed `_COOKIE_EXPIRY_ADVISORY_CHANNELS` (session_store) and `_HEALTH_STALE_AFTER*` (ingest); both files now read the policy. Behavior-preserving; golden test asserts resolved values == old constants. 117 tests pass, ruff clean.
+- [W] worker-side tunables already consolidated into `config.Settings` (WORKER_*) by Phase 3; remaining per-channel dicts in browser.py (`_SESSION_COOKIE_NAMES`, `_CHANNEL_LAUNCH_ARGS`) are a low-value optional follow-up.
 
 ## Phase 6 — Robust liveness [A]+[W]
 - [ ] migration `168_agg_liveness` (`last_verified_at`, `consecutive_failures`); model + session_store; worker stamps; `@mm/types` regen

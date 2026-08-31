@@ -63,7 +63,7 @@ from app.models.aggregator import (
     AggregatorSyncRun,
 )
 from app.models.base import utcnow
-from app.services.aggregators import crypto, reconcile, session_store
+from app.services.aggregators import crypto, policy, reconcile, session_store
 from app.services.aggregators.modifiers import modifiers_to_json
 from app.services.aggregators.normalized import (
     FinanceResult,
@@ -1966,19 +1966,6 @@ async def _run_daily_with_retry() -> None:
     )
 
 
-#: A live session with no success/warm in this long is reported stale. Comfortably
-#: longer than the daily cadence, so an ordinary day never trips it.
-_HEALTH_STALE_AFTER = timedelta(days=2)
-#: Keeta is the exception: it is push-only, refreshed by the worker's warm cron
-#: every 3h (not by any API sweep), and is meant to be near-realtime. Nothing ever
-#: marks it needs_bootstrap and heal-sessions cannot revive it (no Xvfb), so if its
-#: warm cron dies its `status` stays "live" and the ONLY signal is this staleness
-#: line. At the 2-day default that signal arrives two days late for a channel that
-#: should never be more than a few hours cold — so Keeta trips after ~7h (two
-#: missed 3h warms plus slack), turning a dead warm into a same-day log warning.
-_HEALTH_STALE_AFTER_BY_CHANNEL = {"keeta": timedelta(hours=7)}
-
-
 async def _log_health() -> None:
     """Log one health line per pass — a WARNING naming any channel that is not live
     or has gone stale, so the VM's log-based alerting has a single signal to watch
@@ -2001,9 +1988,7 @@ async def _log_health() -> None:
         if last is not None:
             if last.tzinfo is None:
                 last = last.replace(tzinfo=timezone.utc)
-            threshold = _HEALTH_STALE_AFTER_BY_CHANNEL.get(
-                r.channel, _HEALTH_STALE_AFTER
-            )
+            threshold = policy.policy_for(r.channel).health_stale_after
             age = now - last
             if age > threshold:
                 # Sub-day staleness (Keeta) reads better in hours than "0d".
