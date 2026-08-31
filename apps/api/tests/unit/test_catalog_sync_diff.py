@@ -341,6 +341,32 @@ def test_foodics_parity_violations_flag_the_uplifts():
     assert violations[0]["name"] == "Ramadan Advent Gift Box (12 Pieces)"
 
 
+def test_careem_parser_maps_catalogs_and_products():
+    from app.services.aggregators.menu_readers import parse_careem_catalog
+
+    catalogs = {
+        "data": [{"id": "c1", "name": "Brownies"}, {"id": "c2", "name": "Cakes"}]
+    }
+    products = {
+        "c1": {
+            "data": [
+                {"id": "i1", "name": "Fudge Brownies", "price": 0, "available": True}
+            ]
+        },
+        "c2": {
+            "data": [
+                {"id": "i2", "name": "Matilda Slice", "price": 55, "isAvailable": False}
+            ]
+        },
+    }
+    menu = parse_careem_catalog(catalogs, products)
+    assert [c.name for c in menu.categories] == ["Brownies", "Cakes"]
+    cakes = menu.categories[1].items[0]
+    assert cakes.name == "Matilda Slice"
+    assert cakes.price == Decimal("55")
+    assert cakes.is_available is False
+
+
 def test_menu_ops_resolve_channel_id_from_last_read():
     # The snapshot (actual) carries each item's channel id; a delete op must carry
     # that id so the writer knows what to remove.

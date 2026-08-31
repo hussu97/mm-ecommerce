@@ -8,14 +8,16 @@ already logs in with, and reads the **`Grubtech` group** (membership) + **price
 tag** (the aggregator price) that the audit identified as the real integrated-branch
 menu. Hours come from each portal's own schedule editor.
 
-**Phase 1 status.** The dispatch, the normalized contract and the source mapping are
-in place; the per-portal fetchers are **gated stubs** — `refresh_target` only calls
-them when `CATALOG_SYNC_READ_ENABLED` is on, and until each is implemented it raises
-`AggregatorUnavailableError`, which the sweep records as a snapshot `error` without
-crashing. The drift pipeline runs off whatever snapshots exist, so it is fully
-exercisable (see the tests) before a single live reader ships. Implement one reader
-at a time here, newest-value-first (Foodics `Grubtech`, then the self-service
-channels Keeta/Careem, then the anti-bot ones), each behind the same flag.
+**Status.** `refresh_target` only calls a reader when `CATALOG_SYNC_READ_ENABLED`
+is on; a target with no reader (or a read that fails) records a snapshot `error`
+without crashing, and the drift pipeline runs off whatever snapshots exist. Live
+readers land newest-value-first:
+- **Foodics** — DONE, verified against the live console API and the real 46-row
+  Grubtech price tag (the aggregator menu for the two integrated branches).
+- **Careem** — wired to the real catalog endpoints, replayed through the bearer
+  session; its exact response field names get one confirmation pass at enablement
+  (the parser is defensive until then).
+- **Keeta / Talabat / Noon / Deliveroo** — same session-replay pattern; to add.
 """
 
 from __future__ import annotations
@@ -155,11 +157,111 @@ async def _read_foodics_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
     return menu
 
 
+# ── Careem catalog reader (non-Foodics outlets) ───────────────────────────────
+# Wired to the real partner-portal endpoints (confirmed live 2026-08-31), replayed
+# through the same bearer session the sales ingest uses. The exact response FIELD
+# NAMES could not be captured from the browser (the portal gates the JSON), so the
+# parser is defensive — it tries the common Careem shapes — and gets one field
+# confirmation pass at enablement against a live VM session. Gated off until then.
+
+
+def _first(d: dict, *keys: str, default: Any = None) -> Any:
+    for k in keys:
+        if isinstance(d, dict) and d.get(k) is not None:
+            return d[k]
+    return default
+
+
+def _rows(payload: Any) -> list[dict]:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in ("data", "products", "items", "content", "result", "catalogs"):
+            v = payload.get(k)
+            if isinstance(v, list):
+                return v
+    return []
+
+
+def parse_careem_catalog(
+    catalogs: Any, products_by_category: dict[str, Any]
+) -> NormalizedMenu:
+    """Careem catalogs + per-category products → a channel-neutral menu.
+
+    Defensive field mapping (name/price/available under several possible keys),
+    confirmed against a live response at enablement.
+    """
+    cats: list[NormalizedCategory] = []
+    for cat in _rows(catalogs):
+        cat_id = str(_first(cat, "id", "categoryId", "catalogId", default=""))
+        cat_name = _first(cat, "name", "title", "nameLocalized", default="")
+        items = []
+        for p in _rows(products_by_category.get(cat_id)):
+            price = _first(p, "price", "basePrice", "priceInfo")
+            if isinstance(price, dict):
+                price = _first(price, "price", "amount", "value")
+            avail = _first(p, "available", "isAvailable", "active", default=True)
+            items.append(
+                NormalizedItem(
+                    name=_first(p, "name", "itemName", "title", default=""),
+                    external_id=str(_first(p, "id", "itemId", default="")) or None,
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=bool(avail),
+                )
+            )
+        cats.append(
+            NormalizedCategory(cat_name, external_id=cat_id or None, items=items)
+        )
+    return NormalizedMenu(source="careem", categories=cats)
+
+
+async def _careem_ids(db: AsyncSession, branch_id: Any) -> tuple[str, str, str]:
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorBranchMap
+
+    row = (
+        await db.execute(
+            select(AggregatorBranchMap).where(
+                AggregatorBranchMap.channel == "careem",
+                AggregatorBranchMap.branch_id == branch_id,
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not (
+        row.external_company_id and row.external_brand_id and row.external_outlet_id
+    ):
+        raise AggregatorUnavailableError(
+            f"no active careem outlet map for branch {branch_id}"
+        )
+    return row.external_company_id, row.external_brand_id, row.external_outlet_id
+
+
+async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
+    from app.services.aggregators import session_store
+    from app.services.providers import careem_provider as cp
+
+    session = await session_store.load(db, "careem")
+    company, brand, outlet = await _careem_ids(db, branch_id)
+    catalogs = await cp.provider.list_catalogs(session, company, brand, outlet)
+    products_by_cat: dict[str, Any] = {}
+    for cat in _rows(catalogs):
+        cid = str(_first(cat, "id", "categoryId", "catalogId", default=""))
+        if cid:
+            products_by_cat[cid] = await cp.provider.list_catalog_products(
+                session, company, brand, outlet, cid
+            )
+    return parse_careem_catalog(catalogs, products_by_cat)
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
-# Foodics reads the Grubtech price tag (real, above); the marketplace readers
-# replay the stored session through `aggregator_base` and land next.
+# Foodics reads the Grubtech price tag (real, verified); Careem replays its bearer
+# session against the real catalog endpoints. Keeta/Talabat/Noon/Deliveroo follow
+# the same session-replay pattern and land next.
 _MENU_READERS: dict[str, Any] = {
     TARGET_FOODICS: _read_foodics_menu,
+    "careem": _read_careem_menu,
 }
 _HOURS_READERS: dict[str, Any] = {}
