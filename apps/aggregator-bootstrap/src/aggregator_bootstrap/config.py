@@ -32,9 +32,7 @@ _ENV_FILES = tuple(
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=_ENV_FILES or ".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=_ENV_FILES or ".env", extra="ignore")
 
     #: The mm-ecommerce API to push sessions to, and the bearer it checks.
     AGGREGATOR_API_URL: str = "https://api.meltingmomentscakes.com"
@@ -77,6 +75,46 @@ class Settings(BaseSettings):
 
     CAREEM_EMAIL: str = ""
     CAREEM_PASSWORD: str = Field(default="", repr=False)
+
+    # ── always-on worker daemon (Phase 3) tunables ───────────────────────────
+    # Operational knobs, NOT secrets (so they are deliberately not on any secret
+    # checklist): per-job hard timeouts, schedule cadences and poll intervals for
+    # `daemon.py`. Defaults reproduce the retired host-cron timings.
+
+    #: Hard per-job budgets (seconds). `asyncio.wait_for` cancels the coroutine and
+    #: the daemon SIGKILLs Chrome past these — the in-process replacement for the
+    #: cron's `timeout -k 30 <budget>`. RELOGIN sits just above the unattended
+    #: auto-login's own 6-minute ceiling (`browser._AUTO_LOGIN_WAIT_SECONDS`) so a
+    #: merely-slow login hits its graceful deadline first and the wrapper only ever
+    #: catches a true wedge.
+    WORKER_RELOGIN_TIMEOUT_SECONDS: int = 480
+    WORKER_WARM_TIMEOUT_SECONDS: int = 600
+    WORKER_KEETA_TIMEOUT_SECONDS: int = 1500
+    WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS: int = 900
+
+    #: Channels warmed nightly to rotate their decaying anti-bot cookie (Noon's
+    #: Akamai bm_sv/_abck, Talabat's PerimeterX _px3). Careem/Deliveroo self-heal in
+    #: the API sweep and Keeta has its own pull, so none of them belong here.
+    WORKER_WARM_CHANNELS: str = "noon,talabat"
+    #: Dubai wall-clock hour (0–23) for the nightly warm — kept just before the
+    #: API's 23:00 (`AGGREGATOR_RUN_HOUR_DXB`) sweep so the rotated cookie is fresh
+    #: when the sweep replays it. Computed in-process (Dubai is a permanent UTC+4).
+    WORKER_WARM_HOUR_DXB: int = 22
+    #: Dubai wall-clock hour for the nightly Deliveroo invoice (finance) pull.
+    WORKER_DELIVEROO_FINANCE_HOUR_DXB: int = 22
+    #: Keeta order-pull cadence (hours). Every few hours, not nightly, so each
+    #: order's customer name/phone/address is captured BEFORE Keeta masks it to
+    #: `***` a few hours after the order.
+    WORKER_KEETA_PULL_INTERVAL_HOURS: int = 3
+    #: How often the daemon asks the API which sessions are dead and enqueues a
+    #: RELOGIN for each (respecting the per-channel reauth backoff).
+    WORKER_HEAL_POLL_SECONDS: int = 120
+    #: How often the scheduler wakes to enqueue what is due (and beats the heartbeat
+    #: the container healthcheck watches).
+    WORKER_SCHEDULER_TICK_SECONDS: int = 30
+    #: Heartbeat file the daemon touches each tick; the compose healthcheck fails
+    #: the container when it goes stale. On the persisted `/data` volume.
+    WORKER_HEARTBEAT_PATH: str = "/data/worker.heartbeat"
 
 
 settings = Settings()

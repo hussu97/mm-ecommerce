@@ -632,45 +632,60 @@ services:
         sleep 12h & wait $${!};
       done"
 
-  # The Keeta browser worker — the one channel that needs a browser (its requests
-  # are mtgsig-signed in-page and cannot be replayed over httpx). Every other
-  # channel, Deliveroo included, authenticates itself inside the API's daily sweep
-  # and needs nothing here, so this is Keeta-only.
-  # `profiles: [worker]` keeps it OUT of the default `up`: this VM is an
-  # e2-small (2 GB RAM), and a resident Chrome would OOM the box (that, not the
-  # IP, is why the README kept it off the app VM; email/password auth removed
-  # the IP concern).
-  # A cron runs it one-shot once a day (`... run --rm aggregator-worker
-  # warm-sessions --channel keeta`) — a plain cold start, not a keep-alive: it
-  # hydrates Keeta's captured session, pulls the orders in-page and pushes them,
-  # then exits, so Chrome is alive only for the ~30s pull. Login stays a one-off
-  # headed run from a laptop.
+  # The always-on aggregator browser worker (Phase 3). It replaces the three
+  # host-cron one-shots (keeta pull, nightly anti-bot warm, 2-minute heal) and
+  # their shared flock with ONE long-lived daemon (`serve` → daemon.py): a
+  # priority-queue scheduler that enqueues those same jobs on cadence, drained by
+  # a SINGLE consumer that spawns Chrome per job and tears it down after. One
+  # consumer ⇒ at most one Chrome at a time — the same RAM guarantee the flock gave
+  # on this e2-small (2 GB), so no Chrome ever sits resident (only the tiny daemon
+  # and a resident Xvfb do). A hard per-job timeout SIGKILLs a wedged Chrome, so a
+  # hung login can no longer starve the others. Login stays a one-off headed run
+  # from a laptop; keeta is still the one channel that needs a browser at all.
   aggregator-worker:
     image: ghcr.io/hussu97/mm-ecommerce-aggregator-bootstrap:latest
-    # deploy/cron must not GHCR-pull this 720×/day; first compose run after a
-    # bootstrap image change still pulls because the tag is missing or
-    # retagged locally.
+    # Kept `missing` so a routine `up -d` (every deploy, or a VM reboot) does NOT
+    # re-pull the ~4.7 GB image. The deploy explicitly `docker compose pull
+    # aggregator-worker` ONLY when the bootstrap sources changed, then `up -d`s it
+    # — which fixes the old bug where `pull_policy: missing` alone meant a rebuilt
+    # :latest was never pulled to the VM (the stale tag existed locally forever, so
+    # worker code changes silently never deployed).
     pull_policy: missing
-    profiles: ["worker"]
-    # tini as PID 1. The entrypoint `exec xvfb-run …`, and xvfb-run run as PID 1
-    # hangs on teardown (it backgrounds Xvfb and nothing reaps it), so the warm
-    # never exits — the whole warm cron would stall. tini reaps the zombie and
-    # forwards signals, so xvfb-run exits cleanly, exactly as it does when it is
-    # a child process rather than PID 1. Verified on the VM: `docker run --init`
-    # exits 0 where the same image without it hangs.
+    restart: unless-stopped
+    # The daemon. The entrypoint's `serve)` arm starts a resident Xvfb and execs
+    # `aggregator-bootstrap serve`.
+    command: ["serve"]
+    # tini as PID 1. The `serve` entrypoint backgrounds Xvfb; run as PID 1 nothing
+    # would reap it on shutdown. tini reaps zombies and forwards signals so the
+    # container stops cleanly. (This also kept the retired one-shot `xvfb-run` from
+    # hanging on teardown; still required for the resident-Xvfb daemon.)
     init: true
     environment:
       AGGREGATOR_API_URL: ${AGGREGATOR_API_URL:-https://api.meltingmomentscakes.com}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       STORAGE_STATE_DIR: /data/sessions
       # MUST stay "false": the anti-bot channels (Akamai/PerimeterX/Cloudflare)
-      # drop headless real Chrome, so the warm cron has to run HEADED under the
-      # entrypoint's Xvfb virtual display. This compose env overrides the image's
-      # `ENV HEADLESS=false`, so a "true" here silently reverts every warm to
+      # drop headless real Chrome, so every per-job Chrome has to run HEADED under
+      # the entrypoint's resident Xvfb display. This compose env overrides the
+      # image's `ENV HEADLESS=false`; a "true" here silently reverts every warm to
       # headless and the sessions stop rotating (verified on the VM).
       HEADLESS: "false"
     volumes:
       - aggregator_sessions:/data
+    # The daemon touches /data/worker.heartbeat every scheduler tick (~30s). If it
+    # goes stale the event loop is wedged, so fail the container and let
+    # `restart: unless-stopped` bring it back. start_period covers hydrate + the
+    # first browser job.
+    healthcheck:
+      # `$$` so compose passes a literal `$` to the container shell (same escaping
+      # as certbot's entrypoint above). Fails when the heartbeat is >5 min stale.
+      test:
+        - CMD-SHELL
+        - test $$(( $$(date +%s) - $$(stat -c %Y /data/worker.heartbeat 2>/dev/null || echo 0) )) -lt 300
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
     logging:
       driver: gcplogs
       options:
@@ -681,8 +696,9 @@ services:
     deploy:
       resources:
         limits:
-          # Enough for one headed Chrome under Xvfb; it leans on swap on this
-          # small VM but only for the brief warm, never held between runs.
+          # Headroom for the resident daemon + Xvfb + ONE transient headed Chrome.
+          # Chrome is spawned per job and torn down after (never two at once), so
+          # the ceiling is one browser, as under the old one-shot model.
           memory: 900m
 
 networks:
@@ -691,6 +707,7 @@ networks:
 
 volumes:
   postgres_data:
-  # The worker's Playwright storage_state, persisted between one-shot runs so a
-  # new image resumes the captured login instead of starting logged-out.
+  # The worker's Playwright storage_state (and its reauth-backoff + heartbeat
+  # files), persisted across restarts/deploys so a new image resumes the captured
+  # login instead of starting logged-out.
   aggregator_sessions:

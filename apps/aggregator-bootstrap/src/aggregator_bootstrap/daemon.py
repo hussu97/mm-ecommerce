@@ -1,0 +1,278 @@
+"""The always-on worker daemon: one priority queue, one browser at a time.
+
+This replaces the three host-cron one-shot containers (keeta pull, nightly warm,
+2-minute heal) and their single shared `flock`. It is a long-lived process that
+runs under a RESIDENT Xvfb (see docker-entrypoint.sh) but keeps NO browser
+resident: a scheduler coroutine enqueues jobs on cadence, and a SINGLE consumer
+drains the queue one job at a time, spawning Chrome for that job and tearing it
+down after. One consumer ⇒ at most one Chrome ever ⇒ the RAM guarantee on the
+e2-small, and job priority means a RELOGIN preempts a queued cookie WARM.
+
+Every job runs under a hard `asyncio.wait_for` budget: a wedged Chrome (a stuck
+OTP wait, a hung page.goto) is SIGKILLed via `browser.kill_live_chrome()` — the
+in-process equivalent of the cron's `timeout -k 30 <budget>` — and the consumer
+moves on. Nothing a job does can kill the consumer.
+
+Cadences, timeouts and poll intervals are `config.Settings` fields (worker
+tunables, defaults reproduce the retired cron timings); there are no bare magic
+numbers here.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from . import browser, push, reauth, warm
+from .browser import NeedsHumanLogin, NotLoggedInError
+from .channels.probes import CHANNEL_PROBES
+from .config import settings
+from .queue import Job, JobKind, JobQueue
+
+logger = logging.getLogger("aggregator-bootstrap")
+
+#: Asia/Dubai is a permanent UTC+4 (no daylight saving since 1972), so we add a
+#: fixed offset instead of depending on tzdata being present in the slim image.
+_DXB_UTC_OFFSET = timedelta(hours=4)
+
+#: JobKind → the Settings field holding its hard per-job timeout budget.
+_TIMEOUT_FIELDS: dict[JobKind, str] = {
+    JobKind.RELOGIN: "WORKER_RELOGIN_TIMEOUT_SECONDS",
+    JobKind.WARM: "WORKER_WARM_TIMEOUT_SECONDS",
+    JobKind.KEETA_PULL: "WORKER_KEETA_TIMEOUT_SECONDS",
+    JobKind.DELIVEROO_FINANCE: "WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS",
+}
+
+
+def next_daily_dxb(hour: int, now_utc: datetime) -> datetime:
+    """The next UTC instant at which the Dubai wall-clock reads `hour`:00.
+
+    Kept as a pure function of `now_utc` so the scheduler stays testable. Returns a
+    tz-aware UTC datetime strictly in the future (if `hour` has already passed today
+    in Dubai, it rolls to tomorrow). This is how the nightly anti-bot warm stays
+    aligned with the API's 23:00 Dubai (`AGGREGATOR_RUN_HOUR_DXB`) sweep window.
+    """
+    dxb_now = now_utc.astimezone(timezone.utc) + _DXB_UTC_OFFSET
+    target = dxb_now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= dxb_now:
+        target += timedelta(days=1)
+    return target - _DXB_UTC_OFFSET
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _touch_heartbeat() -> None:
+    """Bump the heartbeat file the compose healthcheck watches.
+
+    Touched every scheduler tick (and after every job), so a daemon whose event
+    loop is alive but idle still looks healthy, while a wedged loop goes stale.
+    """
+    path = Path(settings.WORKER_HEARTBEAT_PATH)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    except OSError:  # pragma: no cover — a heartbeat write failure is non-fatal
+        logger.warning("daemon: could not touch heartbeat %s", path)
+
+
+def _warm_channels() -> list[str]:
+    """The channels to warm nightly, parsed from WORKER_WARM_CHANNELS."""
+    out: list[str] = []
+    for raw in settings.WORKER_WARM_CHANNELS.split(","):
+        ch = raw.strip()
+        if not ch:
+            continue
+        if ch not in CHANNEL_PROBES:
+            logger.warning("daemon: ignoring unknown warm channel %r", ch)
+            continue
+        out.append(ch)
+    return out
+
+
+def _timeout_for(kind: JobKind) -> int:
+    return int(getattr(settings, _TIMEOUT_FIELDS[kind]))
+
+
+async def _dispatch(job: Job) -> None:
+    """Map a job to the existing coroutine that does the work — reuse, not reimpl.
+
+    RELOGIN drives the stored login in a worker thread: `reauth._try_auto_relogin`
+    is synchronous and starts its own event loop (`asyncio.run`), which cannot run
+    inside the daemon's loop, so `to_thread` gives it one. It never raises; its
+    outcome decides whether the channel's backoff is cleared or armed.
+    """
+    if job.kind is JobKind.RELOGIN:
+        outcome = await asyncio.to_thread(reauth._try_auto_relogin, job.channel)
+        if outcome is reauth.ReloginOutcome.OK:
+            await asyncio.to_thread(reauth._clear_reauth_backoff, job.channel)
+        else:
+            await asyncio.to_thread(
+                reauth._record_reauth_failure,
+                job.channel,
+                transient=(outcome is reauth.ReloginOutcome.TRANSIENT),
+            )
+        return
+    if job.kind is JobKind.WARM:
+        await warm.warm_channel(job.channel)
+        return
+    if job.kind is JobKind.KEETA_PULL:
+        # warm_channel special-cases keeta: it refreshes the session cookies AND
+        # runs the in-page order/finance pull (Keeta is mtgsig-signed in-page, the
+        # one channel the API's httpx sweep cannot reach) — exactly what the retired
+        # `warm-sessions --channel keeta` cron did.
+        await warm.warm_channel("keeta")
+        return
+    if job.kind is JobKind.DELIVEROO_FINANCE:
+        await warm.pull_deliveroo_invoices_in_page()
+        return
+    raise ValueError(f"unknown job kind {job.kind!r}")  # pragma: no cover
+
+
+async def run_job_guarded(queue: JobQueue, job: Job) -> None:
+    """Run one job under its hard timeout. Nothing here escapes to the consumer.
+
+    On timeout: SIGKILL the wedged Chrome and park the channel on the SHORT
+    (transient) backoff — a wedge is not a human-only wall. On a dead stored
+    session (`NeedsHumanLogin`/`NotLoggedInError` from a warm/pull): escalate to a
+    RELOGIN, which preempts the queue, mirroring the old warm cron's --auto-relogin.
+    Any other error is logged and swallowed.
+    """
+    budget = _timeout_for(job.kind)
+    label = f"{job.kind.name}{('/' + job.channel) if job.channel else ''}"
+    logger.info("daemon: running %s (budget %ss)", label, budget)
+    try:
+        await asyncio.wait_for(_dispatch(job), timeout=budget)
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.error("daemon: %s exceeded %ss — killing Chrome", label, budget)
+        browser.kill_live_chrome()
+        if job.channel:
+            await asyncio.to_thread(
+                reauth._record_reauth_failure, job.channel, transient=True
+            )
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        if job.kind is not JobKind.RELOGIN and job.channel:
+            logger.warning(
+                "daemon: %s stored session is dead (%s) — enqueuing RELOGIN",
+                label,
+                exc,
+            )
+            await queue.put(JobKind.RELOGIN, job.channel)
+        else:
+            logger.warning("daemon: %s needs a human login: %s", label, exc)
+    except Exception:  # noqa: BLE001 — one job must never kill the consumer
+        logger.exception("daemon: %s failed", label)
+    else:
+        logger.info("daemon: finished %s", label)
+
+
+async def _heal_poll(queue: JobQueue) -> None:
+    """Ask the API which sessions are dead and enqueue a RELOGIN for each.
+
+    Reuses `push.pull_sessions` + `reauth._channel_needs_reauth` so the daemon and
+    the ingest agree on "dead", and honours the per-channel reauth backoff so a
+    human-only channel is not re-driven every poll. A channel that went healthy on
+    its own has any standing backoff cleared, exactly as the one-shot heal did.
+    """
+    try:
+        bundles = await push.pull_sessions()
+    except Exception:  # noqa: BLE001 — a transient API blip must not kill the loop
+        logger.exception("daemon: heal poll could not read session health")
+        return
+    for bundle in bundles:
+        ch = bundle.get("channel")
+        if not ch:
+            continue
+        if reauth._channel_needs_reauth(bundle) is None:
+            await asyncio.to_thread(reauth._clear_reauth_backoff, ch)
+            continue
+        if reauth._reauth_cooldown_remaining(ch) > 0:
+            continue
+        if await queue.put(JobKind.RELOGIN, ch):
+            logger.info("daemon: %s is dead — enqueued RELOGIN", ch)
+
+
+@dataclass
+class _Daily:
+    """A once-a-day job pinned to a Dubai wall-clock hour."""
+
+    next_at: datetime
+    kind: JobKind
+    channel: str
+    hour: int
+
+
+async def _run_scheduler(queue: JobQueue) -> None:
+    """Enqueue jobs on their cadence. Idempotent: the queue dedupes, so re-enqueuing
+    a still-pending job is a no-op — the scheduler never has to track in-flight state
+    beyond its own next-due timers."""
+    now = _now_utc()
+    daily: list[_Daily] = [
+        _Daily(
+            next_at=next_daily_dxb(settings.WORKER_WARM_HOUR_DXB, now),
+            kind=JobKind.WARM,
+            channel=ch,
+            hour=settings.WORKER_WARM_HOUR_DXB,
+        )
+        for ch in _warm_channels()
+    ]
+    daily.append(
+        _Daily(
+            next_at=next_daily_dxb(settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB, now),
+            kind=JobKind.DELIVEROO_FINANCE,
+            channel="deliveroo",
+            hour=settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB,
+        )
+    )
+    # Interval jobs fire immediately on start, so a fresh deploy pulls Keeta and
+    # heals dead sessions at once rather than waiting a full cadence.
+    keeta_delta = timedelta(hours=settings.WORKER_KEETA_PULL_INTERVAL_HOURS)
+    heal_delta = timedelta(seconds=settings.WORKER_HEAL_POLL_SECONDS)
+    keeta_next = now
+    heal_next = now
+    tick = max(settings.WORKER_SCHEDULER_TICK_SECONDS, 1)
+
+    logger.info(
+        "daemon: scheduler up — warm=%s@%02d:00 DXB, keeta every %sh, heal every %ss",
+        [d.channel for d in daily if d.kind is JobKind.WARM],
+        settings.WORKER_WARM_HOUR_DXB,
+        settings.WORKER_KEETA_PULL_INTERVAL_HOURS,
+        settings.WORKER_HEAL_POLL_SECONDS,
+    )
+    while True:
+        now = _now_utc()
+        _touch_heartbeat()
+        for entry in daily:
+            if now >= entry.next_at:
+                await queue.put(entry.kind, entry.channel)
+                entry.next_at = next_daily_dxb(entry.hour, now)
+        if now >= keeta_next:
+            await queue.put(JobKind.KEETA_PULL, "keeta")
+            keeta_next = now + keeta_delta
+        if now >= heal_next:
+            await _heal_poll(queue)
+            heal_next = now + heal_delta
+        await asyncio.sleep(tick)
+
+
+async def _run_consumer(queue: JobQueue) -> None:
+    """The single browser worker: one job at a time, forever."""
+    while True:
+        job = await queue.get()
+        try:
+            await run_job_guarded(queue, job)
+        finally:
+            queue.complete(job)
+        _touch_heartbeat()
+
+
+async def run_daemon() -> None:
+    """Run the scheduler and the single consumer until the process is stopped."""
+    queue = JobQueue()
+    logger.info("aggregator worker daemon starting")
+    _touch_heartbeat()
+    await asyncio.gather(_run_consumer(queue), _run_scheduler(queue))
