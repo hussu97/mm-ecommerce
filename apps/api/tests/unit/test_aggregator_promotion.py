@@ -341,6 +341,42 @@ async def test_find_mm_order_matches_both_noon_names():
     assert "'Talabat'" in captured["sql"]
 
 
+def test_leading_zero_stripped_normalises_only_short_numeric_codes():
+    """Deliveroo's handoff code is zero-padded on GrubTech ("0127") but unpadded in
+    the scrape ("127"); both must normalise to the same value, while long ids (a
+    UUID, Keeta's 16-digit orderViewId) are left alone so nothing collapses."""
+    strip = promote.reconcile.leading_zero_stripped
+    assert strip("0127") == "127"
+    assert strip("127") == "127"
+    assert strip("0037") == strip("37") == "37"
+    # Long / non-numeric ids are matched verbatim (return None → no normalisation).
+    assert strip("f6647c5b-a9c3-350b-956a-a394374f228d") is None
+    assert strip("5077841337692318") is None  # Keeta orderViewId
+    assert strip(None) is None
+
+
+async def test_find_mm_order_matches_deliveroo_zero_padded_code():
+    """GrubTech stores Deliveroo's externalId zero-padded ("0127"); the scrape's
+    display_ref drops it ("127"). _find_mm_order must match the padded id too, else
+    the Barsha Deliveroo order fails to link and a duplicate standalone is filed."""
+    from app.models.aggregator import CHANNEL_DELIVEROO
+
+    captured = {}
+
+    class _DB:
+        async def scalar(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return None
+
+    out = await promote.reconcile._find_mm_order(
+        _DB(), CHANNEL_DELIVEROO, "f6647c5b-a9c3-350b-956a-a394374f228d", "127"
+    )
+    assert out is None
+    sql = captured["sql"]
+    assert "ltrim" in sql.lower()  # the zero-stripped comparison is present
+    assert "'127'" in sql  # matched against the stripped short code
+
+
 async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     """Barsha/Sharjah with a GrubOps order → link only, never build/recreate it.
 
