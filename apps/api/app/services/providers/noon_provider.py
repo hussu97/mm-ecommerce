@@ -58,7 +58,7 @@ import json
 import logging
 from dataclasses import replace
 from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from app.core.config import settings
@@ -78,6 +78,8 @@ from app.services.aggregators.normalized import (
 )
 from app.services.aggregators.session_store import LoadedSession
 from app.services.aggregators.statement_docs import store_statement_invoice
+from app.services.providers._agg_parse import first_present as _first
+from app.services.providers._agg_parse import parse_money as _num
 from app.services.providers.aggregator_base import (
     AggregatorAuthError,
     AggregatorUnavailableError,
@@ -124,51 +126,9 @@ _AKAMAI_MARKERS = (
 )
 
 
-def _num(value: Any) -> Decimal | None:
-    """A money value as Decimal, or None for anything not a clean number.
-
-    Ports the Playwright `parse_money` cleaning (strip `AED`, thousands commas,
-    accounting parentheses for negatives) but returns None — "unknown" — where
-    that returned 0.0, because a null fee and a zero fee are different claims.
-    """
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, ValueError):
-            return None
-    text = str(value).strip()
-    if not text:
-        return None
-    cleaned = (
-        text.replace("AED", "")
-        .replace("aed", "")
-        .replace(",", "")
-        .replace("(", "-")
-        .replace(")", "")
-        .strip()
-    )
-    if cleaned in {"", "-"}:
-        return None
-    try:
-        return Decimal(cleaned)
-    except (InvalidOperation, ValueError):
-        return None
-
-
 def _abs(value: Decimal | None) -> Decimal | None:
     """`abs`, but None-preserving — an unknown fee stays unknown."""
     return abs(value) if value is not None else None
-
-
-def _first(mapping: dict[str, Any], *keys: str) -> Any:
-    """First present, non-null value among `keys` — a field the CSV spells
-    `snake_case` and a JSON fallback would spell `camelCase`."""
-    for key in keys:
-        if isinstance(mapping, dict) and mapping.get(key) is not None:
-            return mapping[key]
-    return None
 
 
 def _str_or_none(value: Any) -> str | None:

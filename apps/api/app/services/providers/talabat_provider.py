@@ -49,7 +49,7 @@ import re
 import zipfile
 from dataclasses import replace
 from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from openpyxl import load_workbook
@@ -69,6 +69,8 @@ from app.services.aggregators.normalized import (
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
+from app.services.providers._agg_parse import first_present as _first
+from app.services.providers._agg_parse import parse_money as _money
 from app.services.providers.aggregator_base import (
     AggregatorAuthError,
     AggregatorUnavailableError,
@@ -285,47 +287,6 @@ query RequestBulkDownloadAdditionalStatements($params: BulkDownloadAdditionalSta
 
 
 # ── value helpers ─────────────────────────────────────────────────────────────
-def _money(value: Any) -> Decimal | None:
-    """A Talabat money cell as Decimal, or None for a blank/absent/bad value.
-
-    Ported from the exporter's `parse_money` cleaning (strip `AED`, thousands
-    commas, nbsp, and parenthesised negatives) but returning None rather than
-    0.0 where the source was empty — None is "the export did not say", which the
-    normalized layer keeps distinct from a real zero.
-    """
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, ValueError):
-            return None
-    text = str(value).strip()
-    if not text:
-        return None
-    cleaned = (
-        text.replace("AED", "")
-        .replace(",", "")
-        .replace("\xa0", "")
-        .replace("(", "-")
-        .replace(")", "")
-        .strip()
-    )
-    if cleaned in {"", "-"}:
-        return None
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation:
-        return None
-
-
-def _first(row: dict[str, Any], *keys: str) -> Any:
-    """The first present, non-null value among `keys` — for a field the two
-    APIs (or the CSV's two header spellings) name more than one way."""
-    for key in keys:
-        if isinstance(row, dict) and row.get(key) is not None:
-            return row[key]
-    return None
 
 
 #: Markers that mean a Talabat GraphQL `errors` array is really a dead session,

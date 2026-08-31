@@ -52,7 +52,6 @@ import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from app.models.aggregator import CHANNEL_KEETA, GRAIN_LINE
 from app.services.aggregators.modifiers import expand_modifiers
@@ -69,6 +68,7 @@ from app.services.aggregators.normalized import (
     StatementsResult,
 )
 from app.services.aggregators.session_store import LoadedSession
+from app.services.providers._agg_parse import DUBAI_TZ as _BUSINESS_TZ
 from app.services.providers.aggregator_base import (
     AggregatorUnavailableError,
     BaseAggregatorClient,
@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 
 #: The shop's clock. Every date this module emits is a Dubai wall-clock date,
 #: because that is the business date the reports are read against.
-_BUSINESS_TZ = ZoneInfo("Asia/Dubai")
+#: (`_BUSINESS_TZ` is the shared `DUBAI_TZ`, imported above.)
 
 _UNAVAILABLE = (
     "Keeta is ingested in-page by the bootstrap worker "
