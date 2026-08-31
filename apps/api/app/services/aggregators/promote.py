@@ -209,11 +209,12 @@ def _actual_fee_overrides(agg: AggregatorOrder) -> dict:
 
     `commission_amount` / `payment_fee` on the aggregator order are the fees the
     marketplace ACTUALLY took, read off its statement — dynamic, per-order, and
-    null until the order settles. Handed to `order_fees.stamp`, each non-null one
-    overrides the static configured-rate estimate on the MM order, so a promoted
-    order's P&L reflects the real cut once it is known and the modelled cut until
-    then. This is the fee half of the sales↔statement coupling reaching the MM
-    order.
+    null until the order settles. Handed to `order_fees.stamp`, they become the
+    MM order's fees verbatim: a marketplace order's fees come ONLY from the
+    marketplace's own figures, never a modelled configured-rate estimate. Until a
+    channel settles (Careem monthly), the fee stays null — truthfully "not known
+    yet" rather than a static guess. This is the fee half of the sales↔statement
+    coupling reaching the MM order.
     """
     return {
         "actual_commission": agg.commission_amount,

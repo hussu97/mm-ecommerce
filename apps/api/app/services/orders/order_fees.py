@@ -35,7 +35,6 @@ dirham, which is the exact mistake this module exists to stop.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -43,14 +42,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money, to_decimal
-from app.models.courier import Courier
-from app.models.courier_branch_rate import CourierBranchRate
 from app.models.order import Order
 from app.models.payment_gateway import PaymentGateway
-from app.services.couriers import courier_catalog
 from app.services.orders.order_pricing import VAT_RATE
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["OrderFees", "compute", "stamp"]
 
@@ -127,132 +121,19 @@ async def compute(db: AsyncSession, order: Order) -> OrderFees:
         )
 
     if _is_aggregator(order):
-        return await _aggregator_fees(db, order, charged)
+        # A marketplace order carries NO modelled fee. Its commission and payment
+        # fee come only from the channel's own scraped statement, stamped straight
+        # onto the order by `stamp` — never a configured rate. compute() is off
+        # that path now; returning nulls keeps it safe if it is ever called for an
+        # aggregator order (e.g. a future caller) rather than inventing a figure.
+        return OrderFees(
+            aggregator_fee=None, payment_fee=None, payment_fee_is_estimated=False
+        )
     return await _own_channel_fees(db, order, charged)
 
 
 def _is_aggregator(order: Order) -> bool:
     return (order.source or "") == "aggregator"
-
-
-async def _aggregator_fees(
-    db: AsyncSession, order: Order, charged: Decimal
-) -> OrderFees:
-    """
-    A marketplace order: commission and payment fee, both from the channel's row.
-
-    Charged against `total`, which for an aggregator order is the basket the
-    marketplace collected on our behalf. Their delivery charge is deliberately
-    not in it (`orders.aggregator_delivery_fee` carries that, receipt-only), so
-    there is no risk of paying commission on a fee we never received.
-
-    Two things bend the plain reading of the row, because the contracts are not
-    all the same sentence:
-
-      * **The branch.** Deliveroo charges 27% in Sharjah and 31% in Barsha, so a
-        `courier_branch_rate` override is consulted first and its non-null
-        numbers win over the courier default.
-      * **The grammar flags** on the courier row — VAT already inside the rate
-        (Keeta), the flat part netted out before the percentage (Keeta), the
-        payment fee waived on cash (Careem), the flat part charged only to a
-        member (Careem Plus, Talabat Pro). A courier that sets none of them
-        behaves exactly as it did before they existed.
-    """
-    code = courier_catalog.code_for_channel(order.aggregator_channel)
-    row = None
-    if code:
-        row = (
-            await db.execute(select(Courier).where(Courier.code == code))
-        ).scalar_one_or_none()
-    if row is None:
-        # An unrecognised channel name, or a channel with no `couriers` row.
-        # Both are "we cannot say", and both are worth a line in the log —
-        # a new marketplace should not silently price itself at nothing.
-        logger.warning(
-            "No courier row for aggregator channel %r on order %s; fees left unknown",
-            order.aggregator_channel,
-            order.order_number,
-        )
-        return OrderFees(None, None, True)
-
-    override = None
-    if order.branch_id is not None:
-        override = (
-            await db.execute(
-                select(CourierBranchRate).where(
-                    CourierBranchRate.courier_id == row.id,
-                    CourierBranchRate.branch_id == order.branch_id,
-                )
-            )
-        ).scalar_one_or_none()
-
-    return OrderFees(
-        aggregator_fee=_commission(charged, order, row, override),
-        payment_fee=_payment_fee(charged, order, row, override),
-        payment_fee_is_estimated=True,
-    )
-
-
-def _override_or(override: object, courier_value: object, field: str) -> object:
-    """The branch override's value for `field` if it set one, else the courier's.
-
-    Null on the override means "no special rate here", never "free" — so it
-    falls through to the courier default, and only a value the branch actually
-    typed replaces it.
-    """
-    if override is not None:
-        value = getattr(override, field)
-        if value is not None:
-            return value
-    return courier_value
-
-
-def _commission(
-    charged: Decimal, order: Order, row: Courier, override: object
-) -> Decimal | None:
-    """The marketplace's cut on this order, its grammar flags applied."""
-    percent = _override_or(override, row.commission_percent, "commission_percent")
-    fixed = _override_or(override, row.commission_fixed, "commission_fixed")
-
-    # The flat part is a member's fee on Careem/Talabat, and we cannot see who
-    # is a member — so unless the order is explicitly flagged, the flat part is
-    # not charged. Dropped to None (not zero) so that a percentage-only contract
-    # is unaffected and a flat-only one correctly reads as unknown.
-    if row.commission_fixed_requires_member and not order.aggregator_customer_is_member:
-        fixed = None
-
-    if percent is None and fixed is None:
-        return None
-
-    if row.commission_fixed_net_of_base and percent is not None and fixed is not None:
-        # Keeta: "4 AED + 25% of (the item value − the original 4 AED)".
-        before_tax = to_decimal(fixed) + _as_fraction(to_decimal(percent)) * (
-            charged - to_decimal(fixed)
-        )
-    else:
-        before_tax = charged * _as_fraction(to_decimal(percent)) + to_decimal(fixed)
-
-    return money(before_tax) if row.commission_vat_inclusive else _with_vat(before_tax)
-
-
-def _payment_fee(
-    charged: Decimal, order: Order, row: Courier, override: object
-) -> Decimal | None:
-    """What the marketplace's card handling cost on this order."""
-    # A cash order took no card, so a cash-exempt contract (Careem) charges
-    # nothing — a true zero, the way a cash counter sale pays no Stripe fee, not
-    # an unknown. `postpaid` is cash; a null payment type is treated as card
-    # (the historical default and the common case) rather than exempting it.
-    if row.payment_fee_cash_exempt and order.aggregator_payment_type == "postpaid":
-        return _ZERO
-
-    percent = _override_or(override, row.payment_fee_percent, "payment_fee_percent")
-    fixed = _override_or(override, row.payment_fee_fixed, "payment_fee_fixed")
-    if percent is None and fixed is None:
-        return None
-
-    before_tax = charged * _as_fraction(to_decimal(percent)) + to_decimal(fixed)
-    return money(before_tax) if row.payment_fee_vat_inclusive else _with_vat(before_tax)
 
 
 async def _own_channel_fees(
@@ -309,27 +190,35 @@ async def stamp(
     on an unchanged order writes the same numbers — so a retried ingest or a
     reopened-and-reclosed check costs nothing.
 
-    **Actuals beat the model.** `compute` works the fee out from the *configured*
-    rate — a static estimate. Once the marketplace settles the order it tells us
-    the fee it *actually* took (its statement's per-order commission / payment
-    handling), and that dynamic figure is the truth for P&L. So when a caller
-    passes `actual_commission` / `actual_payment_fee` (promotion does, from the
-    settled `aggregator_order`), each non-null actual overrides its modelled
-    counterpart on the order. A null actual — the order has not settled yet —
-    leaves the estimate in place. The reconciliation keeps its own modelled
-    figure by recomputing `compute`, so overriding the stored fee here does not
-    blind the commission-variance check.
+    **A marketplace order's fees come ONLY from the marketplace.** They are the
+    per-order figures the scraper read off the channel's own statement/settlement
+    and handed in as `actual_commission` / `actual_payment_fee`. There is no
+    modelled fallback: a fee we have not scraped yet is left **null** — some
+    channels settle later (Careem monthly), and a null truthfully says "not known
+    yet" rather than inventing a static configured-rate estimate that the shop
+    would read as real money. `compute`'s configured rates survive for ONE thing
+    only — reconciliation's expected-vs-actual overcharge check, which recomputes
+    them itself (`reconcile.reconcile_order`) — never as a value stamped here.
 
-    Flushes rather than commits, per the transaction convention: the
-    request-scoped `get_db` dependency owns the commit.
+    An **own-channel** order (website / counter) is different: its card fee is
+    genuinely ours to model, so it still comes from `compute` (Stripe's real
+    figure does not exist until the charge settles).
+
+    Idempotent, and flushes rather than commits, per the transaction convention:
+    the request-scoped `get_db` dependency owns the commit.
     """
-    fees = await compute(db, order)
-    order.aggregator_fee = (
-        actual_commission if actual_commission is not None else fees.aggregator_fee
-    )
-    order.payment_fee = (
-        actual_payment_fee if actual_payment_fee is not None else fees.payment_fee
-    )
+    if _is_aggregator(order):
+        order.aggregator_fee = actual_commission
+        order.payment_fee = actual_payment_fee
+        fees = OrderFees(
+            aggregator_fee=actual_commission,
+            payment_fee=actual_payment_fee,
+            payment_fee_is_estimated=False,
+        )
+    else:
+        fees = await compute(db, order)
+        order.aggregator_fee = fees.aggregator_fee
+        order.payment_fee = fees.payment_fee
     # The marketplace's cancellation / customer-compensation charge, when the
     # settled aggregator order carried one. There is no modelled counterpart —
     # it is purely a reported actual — so a null leaves the column untouched

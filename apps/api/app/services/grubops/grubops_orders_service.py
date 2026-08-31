@@ -871,11 +871,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
 
     await db.flush()  # the lines must exist before stock reads them back
 
-    # What the marketplace takes off this order, from the rates on its
-    # `couriers` row. Stamped here because an aggregator total is final the
-    # moment it arrives — the marketplace priced it, and nothing downstream
-    # moves it. A channel with no rate configured leaves both columns null,
-    # which reads as "not itemised" rather than "free".
+    # What the marketplace takes off this order comes ONLY from the marketplace's
+    # own settled figures — this is an aggregator order, so `stamp` leaves the fee
+    # columns null here and the aggregator statement scrape fills them later
+    # (`promote` restamps with the scraped actuals). No modelled configured-rate
+    # estimate is written: a null reads as "not known yet", not "free". The total
+    # itself is final the moment the order arrives — the marketplace priced it —
+    # so everything except the fees is stamped now.
     await order_fees.stamp(db, order)
 
     await _decrement_stock(db, order.id)

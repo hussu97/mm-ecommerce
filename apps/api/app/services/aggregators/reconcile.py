@@ -44,7 +44,6 @@ from app.models.base import utcnow
 from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem
-from app.services.orders import order_fees
 
 logger = logging.getLogger(__name__)
 
@@ -212,21 +211,14 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
     flags: list[str] = []
 
     commission_actual = _d(agg.commission_amount)
-    # The MODELLED commission — recomputed from the configured rate, NOT read off
-    # `mm_order.aggregator_fee`. Promotion now overlays the marketplace's ACTUAL
-    # settled cut onto that column, so reading it here would make expected ==
-    # actual and the variance vanish. Recomputing keeps "what we modelled" honest
-    # against "what they charged". `compute` never raises (a missing rate returns
-    # None), so this cannot fail the reconciliation.
+    # No MODELLED expected commission any more: the shop keeps no static
+    # configured commission rate to compare against (fees now come only from the
+    # marketplace's own scraped statement). The overcharge-vs-contract variance
+    # check went with it. `commission_actual` (the real cut the marketplace took)
+    # and `commission_rate_effective` (that cut over the basket) are both scraped
+    # and stay; `commission_expected`/`commission_variance` are left null.
     commission_expected = None
-    if mm_order is not None:
-        modelled = await order_fees.compute(db, mm_order)
-        commission_expected = _d(modelled.aggregator_fee)
     commission_variance = None
-    if commission_actual is not None and commission_expected is not None:
-        commission_variance = commission_actual - commission_expected
-        if abs(commission_variance) > _TOL:
-            flags.append("commission_variance")
 
     total_agg = _d(agg.gross_sales)
     total_mm = _d(mm_order.total) if mm_order else None
