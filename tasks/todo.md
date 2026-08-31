@@ -331,9 +331,21 @@ focused, live-browser session. Phases 6/7 not worth their complexity.
 **Dropped as over-engineering:** Phase 6 (liveness columns — would delay recovery; duplicates existing
 signals), Phase 7 (reauth-contract rewrite of a working path; careem coverage already works).
 
-**Follow-ups (not regressions, worth doing):**
-- Split keeta pull: KEETA_ORDERS every 3h (quick, capture-before-masking) vs KEETA_FINANCE nightly and
-  bounded to a RECENT window — it currently re-downloads months of finance xlsx every pull (~15-20min),
-  monopolizing the single consumer and delaying heal that whole time (the old cron had the same flaw).
-- Phase 4 (DB-as-truth profile) + Phase 8 (proactive alert for irreducible human-needed cases via the
-  daemon's NEEDS_HUMAN → API email funnel) — both need a live browser; do together in a focused session.
+**Follow-ups — status (2026-08-31):**
+- [x] **Keeta split (SHIPPED).** KEETA_ORDERS (priority 2, every 3h): session refresh + orders only,
+  quick (capture-before-masking). KEETA_FINANCE (priority 4 = lowest, nightly @23:00 DXB): settled files,
+  bounded to `WORKER_KEETA_FINANCE_MONTHS_BACK=2` (weekly list page sized to the lookback, newest-first —
+  no more re-downloading the whole history each run). The long finance download moved from every-3h to
+  once-nightly at lowest priority, so it never blocks a heal/orders on the single consumer.
+  `warm_channel("keeta")` stays the full CLI pull.
+- [x] **Phase 8 alert (SHIPPED).** Distinct greppable `AGGREGATOR_NEEDS_HUMAN` ERROR from
+  `_record_reauth_failure` on the needs-human path (captcha/passkey/mailbox) so the VM's log-based
+  alerting pages on it; debounced by the existing backoff. No ops-email infra exists (structured logs
+  ARE the alert channel here), so a dedicated email + its env var (W9) was deliberately NOT added.
+- [ ] **Phase 4 (DB-as-truth profile) — DEFERRED, needs live-browser A/B.** Dropping the persistent
+  `.chrome` profile for the hydrated storage_state removes the anti-bot fingerprint CONTINUITY that helps
+  pass Akamai/PerimeterX; the pass-rate tradeoff can only be measured on the VM. The daemon + working
+  heal already largely mitigate the stale-profile divergence (root cause #3) and all channels are healthy,
+  so a blind change risks regressing a working anti-bot pass for a now-marginal gain. Do it in a live
+  session: A/B a storage_state-opened warm vs the `.chrome` profile per channel and watch the pass rate;
+  the re-seed variant (seed the profile from hydrated state, then snapshot back) is the fallback.
