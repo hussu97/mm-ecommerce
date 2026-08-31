@@ -526,6 +526,13 @@ async def fetch_keeta_finance(
         shop_ids = await _resolve_shop_ids(
             page, fallback_shop_ids=fallback_shop_ids, customer_id=customer_id
         )
+        # Bound the weekly-report re-download to a recent window. The list is
+        # newest-first (pageNum=1), so a page sized to the lookback fetches the most
+        # recent ~months_back of weekly reports instead of the entire history every
+        # run (which re-downloaded dozens of settled XLSX each pull). ~5 weekly
+        # reports/month + margin; ingest is idempotent, so the only cost of the old
+        # behaviour was wasted bandwidth/time, but that time monopolised the daemon.
+        weekly_page_size = max(max(months_back, 2) * 5, 10)
         try:
             tasks = await _post_in_page(
                 page,
@@ -533,7 +540,7 @@ async def fetch_keeta_finance(
                 {
                     "downloadTaskType": _DOWNLOAD_TASK_TYPE_BILLING,
                     "pageNum": 1,
-                    "pageSize": 50,
+                    "pageSize": weekly_page_size,
                 },
             )
         except Exception:  # noqa: BLE001

@@ -72,7 +72,7 @@ async def test_run_job_guarded_swallows_errors(monkeypatch):
     q = JobQueue()
     # A plain error is logged and swallowed, never propagated to the consumer.
     await daemon.run_job_guarded(
-        q, Job(kind=JobKind.KEETA_PULL, seq=0, channel="keeta")
+        q, Job(kind=JobKind.KEETA_ORDERS, seq=0, channel="keeta")
     )
 
 
@@ -130,21 +130,31 @@ async def test_dispatch_routes_warm_keeta_and_deliveroo(monkeypatch):
     async def _warm(channel):
         seen.append(("warm", channel))
 
+    async def _keeta_orders():
+        seen.append(("keeta_orders", None))
+
     async def _deliveroo():
         seen.append(("deliveroo_finance", None))
 
+    async def _keeta_finance():
+        seen.append(("keeta_finance", None))
+
     monkeypatch.setattr(warm, "warm_channel", _warm)
+    monkeypatch.setattr(warm, "warm_keeta_orders", _keeta_orders)
     monkeypatch.setattr(warm, "pull_deliveroo_invoices_in_page", _deliveroo)
+    monkeypatch.setattr(warm, "pull_keeta_finance_in_page", _keeta_finance)
 
     await daemon._dispatch(Job(kind=JobKind.WARM, seq=0, channel="noon"))
-    await daemon._dispatch(Job(kind=JobKind.KEETA_PULL, seq=1, channel="keeta"))
+    await daemon._dispatch(Job(kind=JobKind.KEETA_ORDERS, seq=1, channel="keeta"))
+    await daemon._dispatch(Job(kind=JobKind.KEETA_FINANCE, seq=2, channel="keeta"))
     await daemon._dispatch(
-        Job(kind=JobKind.DELIVEROO_FINANCE, seq=2, channel="deliveroo")
+        Job(kind=JobKind.DELIVEROO_FINANCE, seq=3, channel="deliveroo")
     )
 
     assert seen == [
         ("warm", "noon"),
-        ("warm", "keeta"),  # KEETA_PULL runs the keeta path of warm_channel
+        ("keeta_orders", None),  # KEETA_ORDERS = session refresh + orders (no finance)
+        ("keeta_finance", None),  # KEETA_FINANCE is the separate nightly finance pull
         ("deliveroo_finance", None),
     ]
 

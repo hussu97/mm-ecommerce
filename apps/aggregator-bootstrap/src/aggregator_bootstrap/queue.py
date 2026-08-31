@@ -21,15 +21,22 @@ class JobKind(IntEnum):
 
     RELOGIN preempts everything: a dead session blocks the API's ingest for that
     channel, so healing it matters more than rotating a cookie (WARM), pulling
-    Keeta's masked-soon orders (KEETA_PULL), or fetching Deliveroo invoices
-    (DELIVEROO_FINANCE). The int values ARE the priority, so `JobKind` compares
-    directly in the queue's ordering.
+    Keeta's masked-soon orders (KEETA_ORDERS), or fetching finance
+    (DELIVEROO_FINANCE / KEETA_FINANCE). The int values ARE the priority, so
+    `JobKind` compares directly in the queue's ordering.
+
+    Keeta is split into two jobs on purpose: ORDERS is time-critical (Keeta masks
+    the customer/address a few hours after the order) and quick, so it runs every
+    few hours at a middling priority; FINANCE re-downloads settled statement files
+    and is slow, so it runs once nightly at the LOWEST priority — never blocking a
+    heal or an orders pull behind its long download.
     """
 
     RELOGIN = 0
     WARM = 1
-    KEETA_PULL = 2
+    KEETA_ORDERS = 2
     DELIVEROO_FINANCE = 3
+    KEETA_FINANCE = 4
 
 
 @dataclass(order=True)

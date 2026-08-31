@@ -42,7 +42,8 @@ _DXB_UTC_OFFSET = timedelta(hours=4)
 _TIMEOUT_FIELDS: dict[JobKind, str] = {
     JobKind.RELOGIN: "WORKER_RELOGIN_TIMEOUT_SECONDS",
     JobKind.WARM: "WORKER_WARM_TIMEOUT_SECONDS",
-    JobKind.KEETA_PULL: "WORKER_KEETA_TIMEOUT_SECONDS",
+    JobKind.KEETA_ORDERS: "WORKER_KEETA_ORDERS_TIMEOUT_SECONDS",
+    JobKind.KEETA_FINANCE: "WORKER_KEETA_FINANCE_TIMEOUT_SECONDS",
     JobKind.DELIVEROO_FINANCE: "WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS",
 }
 
@@ -120,12 +121,17 @@ async def _dispatch(job: Job) -> None:
     if job.kind is JobKind.WARM:
         await warm.warm_channel(job.channel)
         return
-    if job.kind is JobKind.KEETA_PULL:
-        # warm_channel special-cases keeta: it refreshes the session cookies AND
-        # runs the in-page order/finance pull (Keeta is mtgsig-signed in-page, the
-        # one channel the API's httpx sweep cannot reach) — exactly what the retired
-        # `warm-sessions --channel keeta` cron did.
-        await warm.warm_channel("keeta")
+    if job.kind is JobKind.KEETA_ORDERS:
+        # Refresh the keeta session cookies + pull orders in-page (Keeta is
+        # mtgsig-signed in-page, the one channel the API's httpx sweep cannot reach).
+        # Finance is a separate nightly KEETA_FINANCE job so its slow downloads never
+        # block a heal/orders behind them on the single consumer. (This is
+        # warm_keeta_orders, NOT warm_channel("keeta") — the latter also pulls finance
+        # and is the manual/CLI full pull.)
+        await warm.warm_keeta_orders()
+        return
+    if job.kind is JobKind.KEETA_FINANCE:
+        await warm.pull_keeta_finance_in_page()
         return
     if job.kind is JobKind.DELIVEROO_FINANCE:
         await warm.pull_deliveroo_invoices_in_page()
@@ -228,8 +234,19 @@ async def _run_scheduler(queue: JobQueue) -> None:
             hour=settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB,
         )
     )
-    # Interval jobs fire immediately on start, so a fresh deploy pulls Keeta and
-    # heals dead sessions at once rather than waiting a full cadence.
+    # Keeta FINANCE is nightly (settled files are slow to re-download); Keeta ORDERS
+    # is the frequent interval job below (capture-before-masking). Splitting them
+    # keeps the long finance download off the every-few-hours hot path.
+    daily.append(
+        _Daily(
+            next_at=next_daily_dxb(settings.WORKER_KEETA_FINANCE_HOUR_DXB, now),
+            kind=JobKind.KEETA_FINANCE,
+            channel="keeta",
+            hour=settings.WORKER_KEETA_FINANCE_HOUR_DXB,
+        )
+    )
+    # Interval jobs fire immediately on start, so a fresh deploy pulls Keeta orders
+    # and heals dead sessions at once rather than waiting a full cadence.
     keeta_delta = timedelta(hours=settings.WORKER_KEETA_PULL_INTERVAL_HOURS)
     heal_delta = timedelta(seconds=settings.WORKER_HEAL_POLL_SECONDS)
     keeta_next = now
@@ -237,10 +254,12 @@ async def _run_scheduler(queue: JobQueue) -> None:
     tick = max(settings.WORKER_SCHEDULER_TICK_SECONDS, 1)
 
     logger.info(
-        "daemon: scheduler up — warm=%s@%02d:00 DXB, keeta every %sh, heal every %ss",
+        "daemon: scheduler up — warm=%s@%02d:00 DXB, keeta orders every %sh, "
+        "keeta finance @%02d:00 DXB, heal every %ss",
         [d.channel for d in daily if d.kind is JobKind.WARM],
         settings.WORKER_WARM_HOUR_DXB,
         settings.WORKER_KEETA_PULL_INTERVAL_HOURS,
+        settings.WORKER_KEETA_FINANCE_HOUR_DXB,
         settings.WORKER_HEAL_POLL_SECONDS,
     )
     while True:
@@ -251,7 +270,7 @@ async def _run_scheduler(queue: JobQueue) -> None:
                 await queue.put(entry.kind, entry.channel)
                 entry.next_at = next_daily_dxb(entry.hour, now)
         if now >= keeta_next:
-            await queue.put(JobKind.KEETA_PULL, "keeta")
+            await queue.put(JobKind.KEETA_ORDERS, "keeta")
             keeta_next = now + keeta_delta
         if now >= heal_next:
             await _heal_poll(queue)

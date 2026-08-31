@@ -6,21 +6,26 @@ from aggregator_bootstrap.queue import Job, JobKind, JobQueue
 
 
 def test_jobkind_priority_order():
-    # Lower value = higher priority = dequeued first.
+    # Lower value = higher priority = dequeued first. Finance jobs sit last so a
+    # slow nightly finance download never blocks a heal or an orders pull.
     assert (
-        JobKind.RELOGIN < JobKind.WARM < JobKind.KEETA_PULL < JobKind.DELIVEROO_FINANCE
+        JobKind.RELOGIN
+        < JobKind.WARM
+        < JobKind.KEETA_ORDERS
+        < JobKind.DELIVEROO_FINANCE
+        < JobKind.KEETA_FINANCE
     )
 
 
 async def test_get_returns_highest_priority_first():
     q = JobQueue()
     # Enqueue out of priority order.
-    assert await q.put(JobKind.KEETA_PULL, "keeta")
+    assert await q.put(JobKind.KEETA_ORDERS, "keeta")
     assert await q.put(JobKind.WARM, "noon")
     assert await q.put(JobKind.RELOGIN, "talabat")
 
     kinds = [(await q.get()).kind for _ in range(3)]
-    assert kinds == [JobKind.RELOGIN, JobKind.WARM, JobKind.KEETA_PULL]
+    assert kinds == [JobKind.RELOGIN, JobKind.WARM, JobKind.KEETA_ORDERS]
 
 
 async def test_fifo_within_a_priority():
@@ -45,13 +50,13 @@ async def test_dedupes_same_kind_and_channel_while_pending():
 
 async def test_in_flight_job_still_dedupes_until_completed():
     q = JobQueue()
-    assert await q.put(JobKind.KEETA_PULL, "keeta") is True
+    assert await q.put(JobKind.KEETA_ORDERS, "keeta") is True
     job = await q.get()
     # Dequeued but not completed → still "in flight", so a re-enqueue is refused.
-    assert await q.put(JobKind.KEETA_PULL, "keeta") is False
+    assert await q.put(JobKind.KEETA_ORDERS, "keeta") is False
     q.complete(job)
     # Once completed, the same job may be scheduled again.
-    assert await q.put(JobKind.KEETA_PULL, "keeta") is True
+    assert await q.put(JobKind.KEETA_ORDERS, "keeta") is True
 
 
 async def test_complete_clears_only_that_key():

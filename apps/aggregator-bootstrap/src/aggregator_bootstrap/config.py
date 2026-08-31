@@ -89,7 +89,12 @@ class Settings(BaseSettings):
     #: catches a true wedge.
     WORKER_RELOGIN_TIMEOUT_SECONDS: int = 480
     WORKER_WARM_TIMEOUT_SECONDS: int = 600
-    WORKER_KEETA_TIMEOUT_SECONDS: int = 1500
+    #: Keeta ORDERS pull (session refresh + in-page order pages) — quick, runs every
+    #: few hours, so a modest budget.
+    WORKER_KEETA_ORDERS_TIMEOUT_SECONDS: int = 600
+    #: Keeta FINANCE pull (downloads settled statement/billing files) — the slow one,
+    #: runs once nightly at lowest priority, so it gets the long budget.
+    WORKER_KEETA_FINANCE_TIMEOUT_SECONDS: int = 1500
     WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS: int = 900
 
     #: Channels warmed nightly to rotate their decaying anti-bot cookie (Noon's
@@ -102,10 +107,22 @@ class Settings(BaseSettings):
     WORKER_WARM_HOUR_DXB: int = 22
     #: Dubai wall-clock hour for the nightly Deliveroo invoice (finance) pull.
     WORKER_DELIVEROO_FINANCE_HOUR_DXB: int = 22
-    #: Keeta order-pull cadence (hours). Every few hours, not nightly, so each
+    #: Keeta ORDERS-pull cadence (hours). Every few hours, not nightly, so each
     #: order's customer name/phone/address is captured BEFORE Keeta masks it to
-    #: `***` a few hours after the order.
+    #: `***` a few hours after the order. This job is orders-only now; finance is a
+    #: separate nightly job (below) so the long finance download never blocks a heal
+    #: or an orders pull behind it on the single consumer.
     WORKER_KEETA_PULL_INTERVAL_HOURS: int = 3
+    #: Dubai wall-clock hour for the nightly Keeta FINANCE pull (settled statement
+    #: files). Split from the orders pull because it re-downloads settled files and
+    #: is slow; nightly + lowest priority keeps it off the hot path.
+    WORKER_KEETA_FINANCE_HOUR_DXB: int = 23
+    #: How many months back the nightly Keeta finance pull lists — the LIST calls are
+    #: newest-first, so this bounds how far back settled files are re-fetched (the
+    #: pull used to re-download every historical file every run). 2 covers a
+    #: late-settling statement while keeping the nightly download small; ingest is
+    #: idempotent so a re-fetch is harmless, only wasteful.
+    WORKER_KEETA_FINANCE_MONTHS_BACK: int = 2
     #: How often the daemon asks the API which sessions are dead and enqueues a
     #: RELOGIN for each (respecting the per-channel reauth backoff).
     WORKER_HEAL_POLL_SECONDS: int = 120

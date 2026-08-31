@@ -18,6 +18,7 @@ from typing import Any
 
 from .accounts import pull_account
 from .browser import NeedsHumanLogin, NotLoggedInError, _storage_state_path
+from .config import settings
 from .deliveroo_pull import fetch_deliveroo_invoices
 from .hydrate import hydrate_from_api
 from .keeta_pull import fetch_keeta_finance, fetch_keeta_orders
@@ -59,15 +60,17 @@ async def warm_channel(channel: str) -> dict[str, Any]:
     the sweep to replay.
     """
     if channel == "keeta":
-        # Still recapture the browser state so a Keeta warm refreshes cookies
-        # in the DB, then pull orders + finance in-page.
+        # Full manual pull (this is what `warm-sessions --channel keeta` runs):
+        # refresh the session + orders, then best-effort finance. The DAEMON does
+        # NOT call this for its 3h job — it calls `warm_keeta_orders` so the slow
+        # finance download stays a separate nightly KEETA_FINANCE job.
+        result = await warm_keeta_orders()
         try:
-            payload = await capture("keeta")
-            await push_session(payload)
-        except NeedsHumanLogin:
-            logger.error("keeta needs a headed login; skipping in-page pull")
-            raise
-        return await pull_keeta_orders_in_page()
+            finance = await pull_keeta_finance_in_page()
+            result = {**result, "keeta_finance": finance}
+        except Exception:  # noqa: BLE001 — orders already pushed; finance is best-effort
+            logger.exception("keeta in-page finance pull failed — orders still ok")
+        return result
     payload = await capture(channel)
     result = await push_session(payload)
     logger.info("pushed %s session: %s", channel, result.get("status"))
@@ -93,46 +96,55 @@ async def push_probe(channel: str, result) -> dict[str, Any]:
     return pushed
 
 
-async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
-    """Fetch Keeta orders + best-effort finance in-page and push the payloads.
+async def warm_keeta_orders() -> dict[str, Any]:
+    """Refresh the Keeta session cookies + pull ORDERS — the daemon's frequent job.
 
-    Uses the hydrated Playwright `storage_state` + sessionStorage, *not* the
-    headed Chrome profile. That profile often keeps a stale HK login redirect
-    that clears `LOGIN_ACCOUNTID` even when the API session blob is good.
-    Playwright is imported lazily so this module imports without the browser lib.
-
-    The Keeta account's `extras` (`shop_ids`, `customer_id`) are threaded into
-    the finance pull as *fallbacks* — the live V2 endpoint and sessionStorage
-    still win, and an account with no extras behaves exactly as before (same
-    idiom as the Deliveroo `org_id` pull below).
+    This is the time-critical, quick half of the Keeta pull (finance is the separate
+    nightly `pull_keeta_finance_in_page`). Recapturing the browser state keeps
+    Keeta's session fresh in the DB every few hours, then orders are pulled in-page.
     """
-    from .browser import _open_storage_state_context
-    from .engine import async_playwright
+    try:
+        payload = await capture("keeta")
+        await push_session(payload)
+    except NeedsHumanLogin:
+        logger.error("keeta needs a headed login; skipping in-page pull")
+        raise
+    return await pull_keeta_orders_in_page()
 
-    account = await pull_account("keeta")
-    extras = (account.extras if account else None) or {}
-    raw_shop_ids = extras.get("shop_ids")
-    fallback_shop_ids = (
-        [str(s) for s in raw_shop_ids if s] if isinstance(raw_shop_ids, list) else None
-    ) or None
-    customer_id = str(extras.get("customer_id") or "").strip() or None
 
+def _keeta_state_or_raise():
+    """The hydrated Keeta storage_state path, or raise if it was never captured.
+
+    Both Keeta pulls open the hydrated Playwright `storage_state` + sessionStorage,
+    *not* the headed Chrome profile — that profile often keeps a stale HK login
+    redirect that clears `LOGIN_ACCOUNTID` even when the API session blob is good.
+    """
     state = _storage_state_path("keeta")
     if not state.exists():
         raise NotLoggedInError(
             f"keeta session state missing at {state}; run a login/bootstrap first"
         )
+    return state
 
+
+async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
+    """Fetch Keeta ORDERS in-page and push them. Finance is a SEPARATE nightly job
+    (`pull_keeta_finance_in_page`) so its slow file downloads never block a heal or
+    an orders pull behind them on the daemon's single consumer.
+
+    Orders are the time-critical half: Keeta masks each order's customer
+    name/phone/address to `***` a few hours after the order, so this runs every few
+    hours to capture them first. Playwright is imported lazily so this module
+    imports without the browser lib.
+    """
+    from .browser import _open_storage_state_context
+    from .engine import async_playwright
+
+    _keeta_state_or_raise()
     async with async_playwright() as pw:
         opened = await _open_storage_state_context(pw, "keeta")
         try:
             payloads = await fetch_keeta_orders(opened.context, months_back=months_back)
-            finance_payloads, finance_note = await fetch_keeta_finance(
-                opened.context,
-                months_back=max(months_back, 2),
-                fallback_shop_ids=fallback_shop_ids,
-                customer_id=customer_id,
-            )
         finally:
             await opened.close()
 
@@ -144,7 +156,51 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
         out["payloads"] = len(payloads)
     else:
         logger.warning("keeta: no getOrders payloads fetched; nothing to push")
+    return out
 
+
+async def pull_keeta_finance_in_page(
+    *, months_back: int | None = None
+) -> dict[str, Any]:
+    """Fetch Keeta FINANCE (settled statement/billing files) in-page + httpx, push.
+
+    Split from the orders pull: it re-downloads settled files and is slow, so the
+    daemon runs it once nightly at the lowest priority. `months_back` bounds how far
+    the newest-first LIST calls reach (default `WORKER_KEETA_FINANCE_MONTHS_BACK`) so
+    it no longer re-downloads the entire history every run; ingest is idempotent so a
+    re-fetch is only wasteful, never wrong.
+
+    The Keeta account's `extras` (`shop_ids`, `customer_id`) are threaded in as
+    *fallbacks* — the live V2 endpoint and sessionStorage still win, and an account
+    with no extras behaves exactly as before.
+    """
+    from .browser import _open_storage_state_context
+    from .engine import async_playwright
+
+    if months_back is None:
+        months_back = settings.WORKER_KEETA_FINANCE_MONTHS_BACK
+    account = await pull_account("keeta")
+    extras = (account.extras if account else None) or {}
+    raw_shop_ids = extras.get("shop_ids")
+    fallback_shop_ids = (
+        [str(s) for s in raw_shop_ids if s] if isinstance(raw_shop_ids, list) else None
+    ) or None
+    customer_id = str(extras.get("customer_id") or "").strip() or None
+
+    _keeta_state_or_raise()
+    async with async_playwright() as pw:
+        opened = await _open_storage_state_context(pw, "keeta")
+        try:
+            finance_payloads, finance_note = await fetch_keeta_finance(
+                opened.context,
+                months_back=max(months_back, 2),
+                fallback_shop_ids=fallback_shop_ids,
+                customer_id=customer_id,
+            )
+        finally:
+            await opened.close()
+
+    out: dict[str, Any] = {}
     if finance_payloads:
         finance_result = await push_keeta_finance(finance_payloads)
         logger.info(
@@ -156,7 +212,6 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
     elif finance_note:
         logger.warning("keeta finance: %s", finance_note)
         out["finance_truncation_note"] = finance_note
-
     return out
 
 
@@ -234,7 +289,9 @@ async def pull_deliveroo_invoices_in_page(*, since_days: int = 45) -> dict[str, 
 
 __all__ = [
     "warm_channel",
+    "warm_keeta_orders",
     "pull_keeta_orders_in_page",
+    "pull_keeta_finance_in_page",
     "pull_deliveroo_invoices_in_page",
     "push_keeta_orders",
     "hydrate_then_warm",
