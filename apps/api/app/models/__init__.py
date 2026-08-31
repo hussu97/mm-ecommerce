@@ -38,7 +38,6 @@ from .cart import Cart, CartItem  # noqa: F401
 from .catalog_sync import (  # noqa: F401
     SYNC_TARGETS,
     AggregatorMenuSnapshot,
-    CatalogSyncMap,
 )
 from .category import Category  # noqa: F401
 from .charge import Charge, ChargeTypeEnum  # noqa: F401

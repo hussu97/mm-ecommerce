@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.permissions import require
+from app.models.category import Category
 from app.models.external_item_map import (
     EXTERNAL_SYSTEMS,
+    KIND_CATEGORY,
     KIND_OPTION,
     KIND_PRODUCT,
     METHOD_MANUAL,
@@ -53,6 +55,7 @@ async def _decorate(db: AsyncSession, rows: list[ExternalItemMap]) -> list[dict]
     """
     product_ids = [r.product_id for r in rows if r.product_id]
     option_ids = [r.modifier_option_id for r in rows if r.modifier_option_id]
+    category_ids = [r.category_id for r in rows if r.category_id]
 
     products: dict[uuid.UUID, str] = {}
     if product_ids:
@@ -60,6 +63,18 @@ async def _decorate(db: AsyncSession, rows: list[ExternalItemMap]) -> list[dict]
             (
                 await db.execute(
                     select(Product.id, Product.name).where(Product.id.in_(product_ids))
+                )
+            ).all()
+        )
+
+    categories: dict[uuid.UUID, str] = {}
+    if category_ids:
+        categories = dict(
+            (
+                await db.execute(
+                    select(Category.id, Category.name).where(
+                        Category.id.in_(category_ids)
+                    )
                 )
             ).all()
         )
@@ -101,6 +116,8 @@ async def _decorate(db: AsyncSession, rows: list[ExternalItemMap]) -> list[dict]
     for row in rows:
         if row.product_id:
             mm_name, parent = products.get(row.product_id), None
+        elif row.category_id:
+            mm_name, parent = categories.get(row.category_id), None
         else:
             mm_name, parent = options.get(row.modifier_option_id, (None, None))
         state = states.get(row.id)
@@ -114,6 +131,7 @@ async def _decorate(db: AsyncSession, rows: list[ExternalItemMap]) -> list[dict]
                         "mm_kind",
                         "product_id",
                         "modifier_option_id",
+                        "category_id",
                         "scope",
                         "external_ref",
                         "external_sub_ref",
@@ -160,6 +178,9 @@ async def list_mappings(
         .scalar_subquery(),
         select(ModifierOption.name)
         .where(ModifierOption.id == ExternalItemMap.modifier_option_id)
+        .scalar_subquery(),
+        select(Category.name)
+        .where(Category.id == ExternalItemMap.category_id)
         .scalar_subquery(),
     )
 
@@ -251,12 +272,21 @@ async def update_mapping(
         if row.product_id is not None:
             row.mm_kind = KIND_PRODUCT
             row.modifier_option_id = None
+            row.category_id = None
         edited = True
     if data.modifier_option_id is not None:
         row.modifier_option_id = data.modifier_option_id or None
         if row.modifier_option_id is not None:
             row.mm_kind = KIND_OPTION
             row.product_id = None
+            row.category_id = None
+        edited = True
+    if data.category_id is not None:
+        row.category_id = data.category_id or None
+        if row.category_id is not None:
+            row.mm_kind = KIND_CATEGORY
+            row.product_id = None
+            row.modifier_option_id = None
         edited = True
     if data.mm_kind is not None:
         row.mm_kind = data.mm_kind
@@ -284,10 +314,15 @@ async def update_mapping(
         row.approved = data.approved
         row.approved_by = user.email if data.approved else None
 
-    if row.approved and row.product_id is None and row.modifier_option_id is None:
+    if (
+        row.approved
+        and row.product_id is None
+        and row.modifier_option_id is None
+        and row.category_id is None
+    ):
         raise BadRequestError(
-            "This mapping points at no product or option, so there is nothing to "
-            "approve — set one first"
+            "This mapping points at no product, option or category, so there is "
+            "nothing to approve — set one first"
         )
     if row.external_ref is None or not str(row.external_ref).strip():
         raise BadRequestError("A mapping needs an external reference")

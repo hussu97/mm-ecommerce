@@ -27,6 +27,7 @@ outlets target the portal; hours fan out per portal for every outlet.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -37,7 +38,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core import advisory_lock
 from app.core.config import settings
-from app.core.exceptions import ServiceUnavailableError
+from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.models.aggregator import AGGREGATOR_CHANNELS
 from app.models.branch import Branch, BranchWeeklyHours
 from app.models.catalog_sync import (
@@ -68,6 +69,7 @@ from app.services.aggregators.menu_normalized import (
     NormalizedOption,
     NormalizedShift,
 )
+from app.services.catalog import external_item_map_service as eim
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,147 @@ async def build_mm_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
     )
 
 
+_TIME_RE = re.compile(r"^\d{2}:\d{2}$")
+
+
+async def get_weekly_hours(db: AsyncSession, branch_id: Any) -> list[BranchWeeklyHours]:
+    """The branch's canonical weekly shifts, ordered."""
+    return list(
+        (
+            await db.execute(
+                select(BranchWeeklyHours)
+                .where(BranchWeeklyHours.branch_id == branch_id)
+                .order_by(BranchWeeklyHours.weekday, BranchWeeklyHours.shift_index)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def set_weekly_hours(
+    db: AsyncSession, branch_id: Any, shifts: list[dict[str, Any]]
+) -> list[BranchWeeklyHours]:
+    """Replace a branch's whole weekly schedule (a weekday with no shift = closed).
+
+    Whole-list replace rather than per-row edits: a schedule is read and set as one
+    thing, and diffing sub-rows would be its own bug surface. Validates the shape MM
+    owns; each channel's writer later normalises it to that portal's limits.
+    """
+    cleaned: list[dict[str, Any]] = []
+    per_day: dict[int, int] = {}
+    for s in shifts:
+        weekday = int(s["weekday"])
+        opens = str(s["opens"])
+        closes = str(s["closes"])
+        if not (0 <= weekday <= 6):
+            raise BadRequestError(f"weekday {weekday} out of range 0..6")
+        if not _TIME_RE.match(opens) or not _TIME_RE.match(closes):
+            raise BadRequestError(f"times must be HH:MM, got {opens}-{closes}")
+        idx = per_day.get(weekday, 0)
+        per_day[weekday] = idx + 1
+        cleaned.append(
+            {"weekday": weekday, "shift_index": idx, "opens": opens, "closes": closes}
+        )
+
+    existing = await get_weekly_hours(db, branch_id)
+    for row in existing:
+        await db.delete(row)
+    await db.flush()
+    for c in cleaned:
+        db.add(BranchWeeklyHours(branch_id=branch_id, **c))
+    await db.flush()
+    return await get_weekly_hours(db, branch_id)
+
+
+# ── Mapping reuse (external_item_map, not a parallel table) ───────────────────
+
+
+async def propose_mappings_from_menu(
+    db: AsyncSession, *, target: str, menu: NormalizedMenu
+) -> dict[str, int]:
+    """Seed the shared `external_item_map` review queue from a fetched menu.
+
+    Reuse, not a parallel map: every category and item a read finds on `target`
+    is recorded as an *unapproved* proposal (guessing the MM id by exact
+    normalised-name match), so it surfaces in the one item-mappings admin queue
+    alongside the ingest's own proposals. Idempotent (ON CONFLICT DO NOTHING) —
+    an approved row or an operator's edit is never overwritten.
+    """
+    # MM name → id lookups, built once.
+    prod_rows = (
+        await db.execute(select(Product.id, Product.name).where(Product.is_active))
+    ).all()
+    cat_rows = (
+        await db.execute(select(Category.id, Category.name).where(Category.is_active))
+    ).all()
+    prod_by_name = {eim.normalize_ref(n): pid for pid, n in prod_rows}
+    cat_by_name = {eim.normalize_ref(n): cid for cid, n in cat_rows}
+
+    counts = {"categories": 0, "items": 0}
+    for cat in menu.categories:
+        await eim.record_category_proposal(
+            db,
+            target,
+            cat.name,
+            guess_category_id=cat_by_name.get(eim.normalize_ref(cat.name)),
+        )
+        counts["categories"] += 1
+        for item in cat.items:
+            await eim.record_proposal(
+                db,
+                target,
+                item.name,
+                guess_product_id=prod_by_name.get(eim.normalize_ref(item.name)),
+            )
+            counts["items"] += 1
+    await db.flush()
+    return counts
+
+
+# ── Hours normalisation per channel (for the writer) ──────────────────────────
+
+#: Each portal's cap on shifts per day (audit + operations map). Keeta tops out at
+#: 5 periods/day; the others take several slots. None = no known cap.
+_MAX_SHIFTS_PER_DAY: dict[str, int | None] = {
+    "keeta": 5,
+    "careem": None,
+    "talabat": None,
+    "deliveroo": None,
+    "noon": None,
+}
+
+
+def normalize_hours_for_channel(
+    hours: NormalizedHours, target: str
+) -> tuple[NormalizedHours, list[str]]:
+    """MM's weekly schedule reshaped to one portal's limits, with warnings.
+
+    Pure: caps shifts/day where a portal does (Keeta ≤5) and reports what it had
+    to drop, so the writer never silently loses a shift. Ordering per day so the
+    kept shifts are the earliest.
+    """
+    cap = _MAX_SHIFTS_PER_DAY.get(target)
+    warnings: list[str] = []
+    if cap is None:
+        return hours, warnings
+    by_day: dict[int, list] = {}
+    for s in hours.shifts:
+        by_day.setdefault(s.weekday, []).append(s)
+    kept = []
+    for day, shifts in by_day.items():
+        shifts.sort(key=lambda x: x.opens)
+        if len(shifts) > cap:
+            warnings.append(
+                f"{target}: weekday {day} has {len(shifts)} shifts; capped to {cap}"
+            )
+            shifts = shifts[:cap]
+        kept.extend(shifts)
+    return NormalizedHours(
+        source=hours.source, shifts=kept, closures=hours.closures
+    ), warnings
+
+
 # ── Snapshots ─────────────────────────────────────────────────────────────────
 
 
@@ -266,6 +409,9 @@ async def refresh_target(
                 normalized=hours.to_dict(),
             )
         menu = await menu_readers.fetch_menu(db, target=target, branch_id=branch_id)
+        # Reuse: feed what we read into the shared item-map review queue (guessing
+        # MM ids by exact name), so mapping review is one queue, not two.
+        proposed = await propose_mappings_from_menu(db, target=target, menu=menu)
         return await _upsert_snapshot(
             db,
             target=target,
@@ -274,7 +420,7 @@ async def refresh_target(
             source=menu_readers.source_for(target),
             status=SNAPSHOT_OK,
             normalized=menu.to_dict(),
-            stats={"categories": len(menu.categories)},
+            stats={"categories": len(menu.categories), "proposed": proposed},
         )
     except Exception as exc:  # noqa: BLE001 — record, never crash the sweep
         logger.warning("catalog-sync read failed for %s/%s: %s", target, kind, exc)
@@ -351,22 +497,74 @@ async def plan_push(
     reviewed; the actual writers land in a later phase behind this same flag.
     """
     _ensure_write_enabled()
+    warnings: list[str] = []
     if kind == SNAPSHOT_HOURS:
         drift = await compute_hours_drift(db, target=target, branch_id=branch_id)
+        deltas = drift.to_dict()["deltas"] if drift else []
+        # The concrete thing the writer would set: MM's schedule, normalised to
+        # this portal's limits (Keeta ≤5 periods/day).
+        desired = await build_mm_hours(db, branch_id)
+        shaped, warnings = normalize_hours_for_channel(desired, target)
+        ops = [
+            {
+                "op": "set_weekly_schedule",
+                "shifts": [s.to_dict() for s in shaped.shifts],
+            }
+        ]
     else:
         drift = await compute_menu_drift(db, target=target, branch_id=branch_id)
-    deltas = drift.to_dict()["deltas"] if drift else []
+        deltas = drift.to_dict()["deltas"] if drift else []
+        snap = await _get_snapshot(db, target, branch_id, SNAPSHOT_MENU)
+        actual = (
+            NormalizedMenu.from_dict(snap.normalized)
+            if snap and snap.normalized
+            else NormalizedMenu(source=target)
+        )
+        ops = _build_menu_ops(deltas, actual)
     return {
         "dry_run": True,
         "target": target,
         "route": _route_for(target),
         "kind": kind,
         "would_apply": deltas,
+        "operations": ops,
+        "warnings": warnings,
         "note": (
             "Phase-1 push is a dry run — no portal, Foodics group/price tag, or "
-            "hours were modified."
+            "hours were modified. `operations` is the concrete plan the writer "
+            "would execute (menu ops carry the channel id resolved from the last "
+            "read; the Foodics route targets the Grubtech group + price tag)."
         ),
     }
+
+
+def _build_menu_ops(
+    deltas: list[dict[str, Any]], actual: NormalizedMenu
+) -> list[dict[str, Any]]:
+    """Turn diff deltas into concrete write ops, resolving each channel id off the
+    last read (the snapshot's normalised menu) — pure, so it is unit-testable and
+    the writer just executes it."""
+    # name → channel external_id, from what we actually read.
+    ext_by_name: dict[str, str | None] = {}
+    for cat in actual.categories:
+        for item in cat.items:
+            ext_by_name[_norm(item.name)] = item.external_id
+    ops: list[dict[str, Any]] = []
+    for d in deltas:
+        op = {
+            "action": d["action"],
+            "kind": d["kind"],
+            "entity": d["entity"],
+            "channel_external_id": ext_by_name.get(_norm(d["entity"])),
+            "mm_value": d.get("mm_value"),
+            "channel_value": d.get("channel_value"),
+        }
+        ops.append(op)
+    return ops
+
+
+def _norm(name: str | None) -> str:
+    return " ".join((name or "").strip().lower().replace("&", " and ").split())
 
 
 def _route_for(target: str) -> str:

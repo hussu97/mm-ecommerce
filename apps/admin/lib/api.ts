@@ -237,6 +237,10 @@ export const catalogSyncApi = {
     api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/products/${productId}/sync`, data),
   setCategorySync: (categoryId: string, data: Schemas['SyncFlagUpdate']) =>
     api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/categories/${categoryId}/sync`, data),
+  getHours: (branchId: string) =>
+    api.get<Schemas['WeeklyHoursResponse']>(`/catalog-sync/branches/${branchId}/hours`),
+  setHours: (branchId: string, data: Schemas['WeeklyHoursUpdate']) =>
+    api.put<Schemas['WeeklyHoursResponse']>(`/catalog-sync/branches/${branchId}/hours`, data),
 };
 
 // ─── Menu groups ──────────────────────────────────────────────────────────────

@@ -12345,6 +12345,18 @@
             ],
             "title": "Approved By"
           },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
           "external_child_ref": {
             "anyOf": [
               {
@@ -12567,7 +12579,7 @@
         "type": "object"
       },
       "ItemMappingUpdate": {
-        "description": "Correct a guess or approve it. Any field left null is left unchanged.\n\nPoint the row at a catalogue entity with `product_id` **or**\n`modifier_option_id` (with `mm_kind`); edit the external identity with the\n`external_*` fields. Either kind of edit marks the row `manual`.",
+        "description": "Correct a guess or approve it. Any field left null is left unchanged.\n\nPoint the row at a catalogue entity with `product_id`, `modifier_option_id`\n**or** `category_id` (with `mm_kind`); edit the external identity with the\n`external_*` fields. Either kind of edit marks the row `manual`.",
         "properties": {
           "approved": {
             "anyOf": [
@@ -12579,6 +12591,18 @@
               }
             ],
             "title": "Approved"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
           },
           "external_child_ref": {
             "anyOf": [
@@ -29893,6 +29917,68 @@
         "title": "WebhookLogItem",
         "type": "object"
       },
+      "WeeklyHoursResponse": {
+        "properties": {
+          "branch_id": {
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "shifts": {
+            "items": {
+              "$ref": "#/components/schemas/WeeklyShift"
+            },
+            "title": "Shifts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "branch_id",
+          "shifts"
+        ],
+        "title": "WeeklyHoursResponse",
+        "type": "object"
+      },
+      "WeeklyHoursUpdate": {
+        "description": "Replace a branch's whole canonical weekly schedule (empty = fully closed).",
+        "properties": {
+          "shifts": {
+            "items": {
+              "$ref": "#/components/schemas/WeeklyShift"
+            },
+            "title": "Shifts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "shifts"
+        ],
+        "title": "WeeklyHoursUpdate",
+        "type": "object"
+      },
+      "WeeklyShift": {
+        "description": "One open shift. weekday 0=Sunday \u2026 6=Saturday; times HH:MM.",
+        "properties": {
+          "closes": {
+            "title": "Closes",
+            "type": "string"
+          },
+          "opens": {
+            "title": "Opens",
+            "type": "string"
+          },
+          "weekday": {
+            "title": "Weekday",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "weekday",
+          "opens",
+          "closes"
+        ],
+        "title": "WeeklyShift",
+        "type": "object"
+      },
       "ZoneData": {
         "properties": {
           "orders": {
@@ -36523,6 +36609,112 @@
         "summary": "Set Cart Promo",
         "tags": [
           "Cart"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/branches/{branch_id}/hours": {
+      "get": {
+        "description": "The branch's canonical per-day marketplace schedule (source of truth).",
+        "operationId": "get_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyHoursResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Weekly Hours",
+        "tags": [
+          "Catalog Sync"
+        ]
+      },
+      "put": {
+        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).",
+        "operationId": "set_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WeeklyHoursUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyHoursResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Weekly Hours",
+        "tags": [
+          "Catalog Sync"
         ]
       }
     },

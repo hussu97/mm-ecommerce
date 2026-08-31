@@ -23,7 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.category import Category
 from app.models.external_item_map import (
+    KIND_CATEGORY,
     KIND_OPTION,
     KIND_PRODUCT,
     METHOD_EXACT,
@@ -90,6 +92,61 @@ async def record_proposal(
             approved=False,
             match_method=METHOD_EXACT if guess_product_id is not None else METHOD_FUZZY,
             match_score=Decimal("100.00") if guess_product_id is not None else None,
+        )
+        .on_conflict_do_nothing(constraint="uq_external_item_map_identity")
+    )
+
+
+async def resolve_category(db: AsyncSession, system: str, name: str | None) -> tuple:
+    """The (category_id, name) an approved map row assigns this external category
+    name, or (None, "") if none. Approved category rows only — added for the
+    catalog sync, which maps a channel's category to an MM `Category`."""
+    ref = normalize_ref(name)
+    if ref is None:
+        return None, ""
+    row = (
+        await db.execute(
+            select(Category.id, Category.name)
+            .join(ExternalItemMap, ExternalItemMap.category_id == Category.id)
+            .where(
+                ExternalItemMap.system == system,
+                ExternalItemMap.external_ref == ref,
+                ExternalItemMap.mm_kind == KIND_CATEGORY,
+                ExternalItemMap.approved.is_(True),
+            )
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None, ""
+    return row[0], row[1] or ""
+
+
+async def record_category_proposal(
+    db: AsyncSession,
+    system: str,
+    name: str | None,
+    *,
+    guess_category_id=None,
+) -> None:
+    """Record a first sighting of an external category name as an unapproved
+    proposal — same ON CONFLICT DO NOTHING semantics as `record_proposal`."""
+    ref = normalize_ref(name)
+    if ref is None:
+        return
+    await db.execute(
+        pg_insert(ExternalItemMap)
+        .values(
+            system=system,
+            external_ref=ref,
+            external_name=(name or "").strip()[:255] or None,
+            mm_kind=KIND_CATEGORY,
+            category_id=guess_category_id,
+            approved=False,
+            match_method=METHOD_EXACT
+            if guess_category_id is not None
+            else METHOD_FUZZY,
+            match_score=Decimal("100.00") if guess_category_id is not None else None,
         )
         .on_conflict_do_nothing(constraint="uq_external_item_map_identity")
     )

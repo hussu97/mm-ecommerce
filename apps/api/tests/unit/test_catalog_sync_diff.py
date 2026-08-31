@@ -257,3 +257,56 @@ def test_route_for_integrated_is_foodics():
         "foodics_grubtech_group_and_price_tag"
     )
     assert catalog_sync._route_for("careem") == "channel_portal"
+
+
+# ── Hours normalisation per channel (writer) ──────────────────────────────────
+
+
+def test_keeta_caps_five_shifts_a_day_and_warns():
+    hours = NormalizedHours(
+        "mm",
+        shifts=[NormalizedShift(0, f"{h:02d}:00", f"{h + 1:02d}:00") for h in range(6)],
+    )
+    shaped, warnings = catalog_sync.normalize_hours_for_channel(hours, "keeta")
+    assert len([s for s in shaped.shifts if s.weekday == 0]) == 5
+    assert warnings and "keeta" in warnings[0]
+
+
+def test_uncapped_channels_keep_every_shift():
+    hours = NormalizedHours(
+        "mm",
+        shifts=[NormalizedShift(0, f"{h:02d}:00", f"{h + 1:02d}:00") for h in range(6)],
+    )
+    shaped, warnings = catalog_sync.normalize_hours_for_channel(hours, "careem")
+    assert len(shaped.shifts) == 6
+    assert warnings == []
+
+
+# ── Menu write-op resolution ──────────────────────────────────────────────────
+
+
+def test_menu_ops_resolve_channel_id_from_last_read():
+    # The snapshot (actual) carries each item's channel id; a delete op must carry
+    # that id so the writer knows what to remove.
+    actual = NormalizedMenu(
+        "careem",
+        [
+            NormalizedCategory(
+                "Brownies",
+                items=[NormalizedItem("Fudge Brownies", external_id="CAREEM-99")],
+            )
+        ],
+    )
+    deltas = [
+        {
+            "kind": "item_extra_on_channel",
+            "action": "delete",
+            "entity": "Fudge Brownies",
+            "mm_value": None,
+            "channel_value": None,
+            "detail": "",
+        }
+    ]
+    ops = catalog_sync._build_menu_ops(deltas, actual)
+    assert ops[0]["channel_external_id"] == "CAREEM-99"
+    assert ops[0]["action"] == "delete"

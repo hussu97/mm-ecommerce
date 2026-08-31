@@ -21,6 +21,7 @@ class ItemMappingResponse(BaseModel):
     mm_kind: str
     product_id: uuid.UUID | None = None
     modifier_option_id: uuid.UUID | None = None
+    category_id: uuid.UUID | None = None
     #: Our catalogue names, resolved for the review screen.
     mm_name: str | None = None
     mm_parent_name: str | None = None
@@ -51,13 +52,14 @@ class ItemMappingList(BaseModel):
 class ItemMappingUpdate(BaseModel):
     """Correct a guess or approve it. Any field left null is left unchanged.
 
-    Point the row at a catalogue entity with `product_id` **or**
-    `modifier_option_id` (with `mm_kind`); edit the external identity with the
+    Point the row at a catalogue entity with `product_id`, `modifier_option_id`
+    **or** `category_id` (with `mm_kind`); edit the external identity with the
     `external_*` fields. Either kind of edit marks the row `manual`.
     """
 
     product_id: uuid.UUID | None = None
     modifier_option_id: uuid.UUID | None = None
+    category_id: uuid.UUID | None = None
     mm_kind: str | None = None
     external_ref: str | None = None
     external_sub_ref: str | None = None

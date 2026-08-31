@@ -31,6 +31,9 @@ from app.schemas.catalog_sync import (
     PushPlan,
     SyncFlagResponse,
     SyncFlagUpdate,
+    WeeklyHoursResponse,
+    WeeklyHoursUpdate,
+    WeeklyShift,
 )
 from app.services import audit_service
 from app.services.aggregators import catalog_sync
@@ -199,4 +202,50 @@ async def set_category_sync(
         name=category.name,
         sync_to_aggregators=category.sync_to_aggregators,
         sync_channels=category.sync_channels,
+    )
+
+
+@router.get("/branches/{branch_id}/hours", response_model=WeeklyHoursResponse)
+async def get_weekly_hours(
+    branch_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+) -> WeeklyHoursResponse:
+    """The branch's canonical per-day marketplace schedule (source of truth)."""
+    rows = await catalog_sync.get_weekly_hours(db, branch_id)
+    return WeeklyHoursResponse(
+        branch_id=str(branch_id),
+        shifts=[
+            WeeklyShift(weekday=r.weekday, opens=r.opens, closes=r.closes) for r in rows
+        ],
+    )
+
+
+@router.put("/branches/{branch_id}/hours", response_model=WeeklyHoursResponse)
+async def set_weekly_hours(
+    branch_id: UUID,
+    payload: WeeklyHoursUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("catalogue.manage")),
+) -> WeeklyHoursResponse:
+    """Replace the branch's weekly schedule (a weekday with no shift = closed)."""
+    rows = await catalog_sync.set_weekly_hours(
+        db, branch_id, [s.model_dump() for s in payload.shifts]
+    )
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="branch",
+        entity_id=str(branch_id),
+        entity_label="marketplace weekly hours",
+        admin=admin,
+        changes={"shifts": [s.model_dump() for s in payload.shifts]},
+        request=request,
+    )
+    return WeeklyHoursResponse(
+        branch_id=str(branch_id),
+        shifts=[
+            WeeklyShift(weekday=r.weekday, opens=r.opens, closes=r.closes) for r in rows
+        ],
     )

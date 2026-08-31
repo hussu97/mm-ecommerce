@@ -129,3 +129,35 @@ both default false; `CATALOG_SYNC_ENFORCE_PRICE_PARITY` default true):
 readers (Foodics Grubtech group+price tag first), the hours writer, the menu writer,
 and wiring the sync toggle into the product/category edit pages. All slot into the
 scaffolding above behind the same flags.
+
+## Follow-up — architecture reuse + complete phases (goal: reuse mappings, no push)
+
+Per operator directive ("reuse existing mapping tables, don't create new ones; figure
+out the category/item/modifier/branch mappings; admin config to modify anything"):
+
+- **Dropped the redundant `catalog_sync_map`** (it was defined but never used). The
+  identity plumbing is now **reused, not duplicated**:
+  - items/options → `external_item_map` (extended with a `category_id` + `category`
+    kind so it's the one catalogue map; order reconciliation reads only product/option
+    rows and is untouched — verified).
+  - branch↔outlet → `aggregator_branch_map` / `foodics_branch_map` (already seeded).
+  - live channel item ids → read off `aggregator_menu_snapshot` at write time (no
+    stored per-outlet id map to drift).
+- Reader now **seeds the shared item-map review queue** (`propose_mappings_from_menu`
+  → `external_item_map` proposals for categories + items) — one mapping queue, not two.
+- **Phase 2 (hours):** `BranchWeeklyHours` model + **API + admin editor** (per-branch
+  weekly schedule) + per-channel normalization (`normalize_hours_for_channel`, Keeta
+  ≤5/day) + hours write-plan. Gated.
+- **Phase 3 (menu):** diff → concrete write ops resolving each channel id off the
+  snapshot (`_build_menu_ops`), Foodics-Grubtech vs portal routing. Gated dry-run.
+- **Admin config:** item-mappings queue extended to categories (view/edit/approve);
+  catalog-sync page gains the weekly-hours editor; sync toggles + drift already there.
+- **Verified locally (no push):** migration up/down/up on throwaway PG; a **real
+  DB-backed end-to-end** (build MM menu → set/read weekly hours → store snapshot →
+  compute menu+hours drift → dry-run menu & hours push) ran clean; full suite **2610
+  passed**; ruff format+lint clean; admin tsc+eslint clean; `@mm/types` regenerated.
+- **Still needs live sessions (can't be built/verified locally):** the live HTTP
+  readers/writers against Foodics + each portal. Their deterministic MM-side logic
+  (normalization, plan, mapping resolution) is implemented + tested; the portal I/O is
+  gated and is the production-integration step. Writing it blind would risk the exact
+  drift/bugs this refactor removes, so it is left as a clean interface.

@@ -1905,6 +1905,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog-sync/branches/{branch_id}/hours": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weekly Hours
+         * @description The branch's canonical per-day marketplace schedule (source of truth).
+         */
+        get: operations["get_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_get"];
+        /**
+         * Set Weekly Hours
+         * @description Replace the branch's weekly schedule (a weekday with no shift = closed).
+         */
+        put: operations["set_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog-sync/categories/{category_id}/sync": {
         parameters: {
             query?: never;
@@ -11820,6 +11844,8 @@ export interface components {
             approved: boolean;
             /** Approved By */
             approved_by?: string | null;
+            /** Category Id */
+            category_id?: string | null;
             /** External Child Ref */
             external_child_ref?: string | null;
             /** External Name */
@@ -11877,13 +11903,15 @@ export interface components {
          * ItemMappingUpdate
          * @description Correct a guess or approve it. Any field left null is left unchanged.
          *
-         *     Point the row at a catalogue entity with `product_id` **or**
-         *     `modifier_option_id` (with `mm_kind`); edit the external identity with the
+         *     Point the row at a catalogue entity with `product_id`, `modifier_option_id`
+         *     **or** `category_id` (with `mm_kind`); edit the external identity with the
          *     `external_*` fields. Either kind of edit marks the row `manual`.
          */
         ItemMappingUpdate: {
             /** Approved */
             approved?: boolean | null;
+            /** Category Id */
+            category_id?: string | null;
             /** External Child Ref */
             external_child_ref?: string | null;
             /** External Ref */
@@ -17620,6 +17648,33 @@ export interface components {
             /** Signature Valid */
             signature_valid?: boolean | null;
         };
+        /** WeeklyHoursResponse */
+        WeeklyHoursResponse: {
+            /** Branch Id */
+            branch_id: string;
+            /** Shifts */
+            shifts: components["schemas"]["WeeklyShift"][];
+        };
+        /**
+         * WeeklyHoursUpdate
+         * @description Replace a branch's whole canonical weekly schedule (empty = fully closed).
+         */
+        WeeklyHoursUpdate: {
+            /** Shifts */
+            shifts: components["schemas"]["WeeklyShift"][];
+        };
+        /**
+         * WeeklyShift
+         * @description One open shift. weekday 0=Sunday … 6=Saturday; times HH:MM.
+         */
+        WeeklyShift: {
+            /** Closes */
+            closes: string;
+            /** Opens */
+            opens: string;
+            /** Weekday */
+            weekday: number;
+        };
         /** ZoneData */
         ZoneData: {
             /** Orders */
@@ -21256,6 +21311,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyHoursResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeeklyHoursUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyHoursResponse"];
                 };
             };
             /** @description Validation Error */

@@ -53,7 +53,12 @@ _SYSTEMS_SQL = ", ".join(f"'{s}'" for s in EXTERNAL_SYSTEMS)
 
 KIND_PRODUCT = "product"
 KIND_OPTION = "option"
-MM_KINDS = (KIND_PRODUCT, KIND_OPTION)
+#: A menu category. Added for the catalog-&-hours sync, which needs to map an
+#: aggregator's category to an MM `Category` (order reconciliation only ever
+#: needed product/option). One map for the whole catalogue — categories,
+#: products and options — rather than a second table that could drift.
+KIND_CATEGORY = "category"
+MM_KINDS = (KIND_PRODUCT, KIND_OPTION, KIND_CATEGORY)
 
 METHOD_EXACT = "exact"
 METHOD_FUZZY = "fuzzy"
@@ -95,7 +100,9 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
     #: The verbatim external display name, for the review screen only.
     external_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    #: Which side of the catalogue this maps to; `product` today for aggregators.
+    #: Which side of the catalogue this maps to — `product`, `option` or (for the
+    #: catalog sync) `category`. Exactly one of the FKs below matches it, or none
+    #: for a proposal we have seen but not yet mapped.
     mm_kind: Mapped[str] = mapped_column(
         String(16), nullable=False, default=KIND_PRODUCT
     )
@@ -107,6 +114,12 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
     modifier_option_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("modifier_options.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    #: The MM category, when `mm_kind='category'`. Null otherwise.
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("categories.id", ondelete="CASCADE"),
         nullable=True,
     )
 
@@ -141,7 +154,8 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
             f"system IN ({_SYSTEMS_SQL})", name="ck_external_item_map_system"
         ),
         CheckConstraint(
-            "mm_kind IN ('product', 'option')", name="ck_external_item_map_kind"
+            "mm_kind IN ('product', 'option', 'category')",
+            name="ck_external_item_map_kind",
         ),
         CheckConstraint(
             "match_method IN ('exact', 'fuzzy', 'manual')",
@@ -153,11 +167,13 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
             name="ck_external_item_map_type",
         ),
         # At most one catalogue entity, and it must match `mm_kind` when set. A row
-        # with neither set is a proposal for a name we have seen but not yet mapped.
+        # with none set is a proposal for a name we have seen but not yet mapped.
         CheckConstraint(
-            "NOT (product_id IS NOT NULL AND modifier_option_id IS NOT NULL) "
+            "( (product_id IS NOT NULL)::int + (modifier_option_id IS NOT NULL)::int "
+            "+ (category_id IS NOT NULL)::int ) <= 1 "
             "AND (product_id IS NULL OR mm_kind = 'product') "
-            "AND (modifier_option_id IS NULL OR mm_kind = 'option')",
+            "AND (modifier_option_id IS NULL OR mm_kind = 'option') "
+            "AND (category_id IS NULL OR mm_kind = 'category')",
             name="ck_external_item_map_one_entity",
         ),
         Index("ix_external_item_map_system_approved", "system", "approved"),
