@@ -1575,7 +1575,10 @@ async def _finalize_run_coverage(
     `_order_coverage_stats` / `_finance_totals`. Only rows started at/after
     `not_before` (this pipeline's start) are touched, so a prior pass's row is never
     rewritten, and a channel skipped this pass (no live session → no new row) is
-    left alone. Never raises — stats finalisation must not fail a pass."""
+    left alone. Only COMPLETED runs are stamped — a run that FAILED (e.g. a 401)
+    retrieved nothing, so stamping it with the window's promotion coverage would show
+    a misleading "N/N promoted" on a run that did no work. Never raises — stats
+    finalisation must not fail a pass."""
     from_d, to_d = _window_business_dates(since, until)
     try:
         async with AsyncSessionFactory() as db:
@@ -1586,6 +1589,7 @@ async def _finalize_run_coverage(
                         AggregatorSyncRun.channel == channel,
                         AggregatorSyncRun.mode == mode,
                         AggregatorSyncRun.started_at >= not_before,
+                        AggregatorSyncRun.status == RUN_COMPLETED,
                     )
                     .order_by(AggregatorSyncRun.started_at.desc())
                     .limit(1)

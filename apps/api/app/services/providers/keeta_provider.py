@@ -229,6 +229,12 @@ def _abs_money(value: Decimal | None) -> Decimal | None:
     return abs(value) if value is not None else None
 
 
+def _add_optional(*values: Decimal | None) -> Decimal | None:
+    """Sum the non-None Decimals; None if all are None (unknown stays unknown)."""
+    present = [v for v in values if v is not None]
+    return sum(present, Decimal(0)) if present else None
+
+
 def _from_minor_units(value: Any) -> Decimal | None:
     """Convert an amount Keeta states in fils to AED, at a known-unit call site."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -1116,10 +1122,24 @@ class KeetaClient(BaseAggregatorClient):
             status_events=_status_events(row),
             gross_sales=gross_sales,
             net_sales=net_sales,
+            # Keeta's "Promotion funded by merchant" (delivery-fee discount) is a real
+            # marketplace cut charged back to us, so it is booked AS COMMISSION:
+            # commission_amount = base commission + the promotion. The order's
+            # commission (and everything downstream — the fees roll-up, the promoted
+            # MM order's actual commission, reconciliation) then reflects the true
+            # charge. `marketing_fee` keeps the promotion portion visible on its own.
             commission_amount=_abs_money(
-                _first_money(
-                    row,
-                    ("commission", "commissionAmount", "commissionFee", "brokerage"),
+                _add_optional(
+                    _first_money(
+                        row,
+                        (
+                            "commission",
+                            "commissionAmount",
+                            "commissionFee",
+                            "brokerage",
+                        ),
+                    ),
+                    _first_money(row, ("activityFee", "activity_fee")),
                 )
             ),
             payment_fee=_abs_money(
@@ -1127,10 +1147,6 @@ class KeetaClient(BaseAggregatorClient):
                     row, ("paymentFee", "transactionFee", "bankTransactionFee")
                 )
             ),
-            # "Promotion funded by merchant" (delivery-fee discounts) — Keeta charges
-            # this back to us. It is baked into `earnings`/`net_payable` but belongs in
-            # a fee bucket too, so the fees roll-up reports the true total cost. Kept
-            # out of commission so the effective rate stays commission-only.
             marketing_fee=_abs_money(
                 _first_money(row, ("activityFee", "activity_fee"))
             ),

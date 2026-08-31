@@ -766,23 +766,11 @@ async def fees_summary(
     order_rows = await _fees_from_orders(db, channel, date_from, date_to)
 
     # Statement lines win where present (settled + carry VAT); the order feed fills
-    # the channels that never reach a statement line (Talabat, Careem).
+    # the channels that never reach a statement line (Talabat, Careem). Keeta's
+    # merchant-funded promotion is folded into `commission_amount` at ingest, so it
+    # is already inside the commission bucket here — no separate add-on.
     chosen: dict[str, AggregatorFeesRow] = dict(order_rows)
     chosen.update(statement_rows)
-
-    # The merchant-funded promotion is a per-order fee neither source counts in its
-    # fee buckets (statement lines omit it; the order feed's other_fees is payment
-    # fee only), yet it reduces our earnings. Add it to the chosen row's other_fees
-    # for each channel — from the order feed, so it lands exactly once regardless of
-    # which source won.
-    marketing = await _marketing_by_channel(db, channel, date_from, date_to)
-    for ch, mk in marketing.items():
-        row = chosen.get(ch)
-        if row is None or not mk:
-            continue
-        chosen[ch] = row.model_copy(
-            update={"other_fees": Decimal(str(row.other_fees or 0)) + mk}
-        )
 
     by_channel = [chosen[ch] for ch in sorted(chosen)]
     totals = _fees_total(by_channel)
@@ -849,31 +837,6 @@ async def _fees_from_orders(
         stmt = stmt.where(o.business_date <= date_to)
     return {
         r.channel: _fees_row(r.channel, r, vat=None)
-        for r in (await db.execute(stmt)).all()
-    }
-
-
-async def _marketing_by_channel(
-    db: AsyncSession, channel: str | None, date_from: str | None, date_to: str | None
-) -> dict[str, Decimal]:
-    """Merchant-funded promotion (`aggregator_order.marketing_fee`) summed per channel
-    over `business_date`. It is a PER-ORDER fee that the settled statement lines never
-    carry (Keeta's "Promotion funded by merchant"), so `fees_summary` adds it to
-    whichever source it chose for a channel — counted exactly once, on top of the
-    commission/gross/net that source provides."""
-    o = AggregatorOrder
-    stmt = select(
-        o.channel.label("channel"),
-        func.coalesce(func.sum(func.abs(o.marketing_fee)), 0).label("marketing"),
-    ).group_by(o.channel)
-    if channel:
-        stmt = stmt.where(o.channel == channel)
-    if date_from:
-        stmt = stmt.where(o.business_date >= date_from)
-    if date_to:
-        stmt = stmt.where(o.business_date <= date_to)
-    return {
-        r.channel: Decimal(str(r.marketing or 0))
         for r in (await db.execute(stmt)).all()
     }
 

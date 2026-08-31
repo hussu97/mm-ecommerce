@@ -380,49 +380,6 @@ def test_retrieved_from_detail_is_mode_shaped():
     }
 
 
-async def test_fees_summary_adds_marketing_fee_once_to_other_fees(monkeypatch):
-    """The merchant-funded promotion (marketing_fee) is added to the chosen fee
-    source's other_fees exactly once — so a keeta row sourced from statement lines
-    (which never carry it) still reports the promotion, without double-counting."""
-    from decimal import Decimal
-
-    from app.api.v1 import aggregators as agg
-    from app.schemas.aggregator import AggregatorFeesRow
-
-    keeta_row = AggregatorFeesRow(
-        channel="keeta",
-        gross_sales=Decimal("40"),
-        commission=Decimal("9"),
-        vat=Decimal("0"),
-        other_fees=Decimal("0.80"),  # bank/payment fee only, from the source
-        net_payable=Decimal("26.20"),
-        orders=1,
-        effective_rate=0.225,
-    )
-
-    async def fake_stmt(db, ch, df, dt):
-        return {"keeta": keeta_row}
-
-    async def fake_orders(db, ch, df, dt):
-        return {"keeta": keeta_row}  # statement wins; same object is fine here
-
-    async def fake_marketing(db, ch, df, dt):
-        return {"keeta": Decimal("4.00")}  # the "Promotion funded by merchant"
-
-    monkeypatch.setattr(agg, "_fees_from_statement_lines", fake_stmt)
-    monkeypatch.setattr(agg, "_fees_from_orders", fake_orders)
-    monkeypatch.setattr(agg, "_marketing_by_channel", fake_marketing)
-
-    out = await agg.fees_summary(
-        channel="keeta", date_from=None, date_to=None, db=object()
-    )
-    row = {r.channel: r for r in out.by_channel}["keeta"]
-    # 0.80 (payment/bank) + 4.00 (promotion) = 4.80 — added once, commission unchanged.
-    assert row.other_fees == Decimal("4.80")
-    assert row.commission == Decimal("9")
-    assert out.totals.other_fees == Decimal("4.80")
-
-
 def test_window_business_dates_are_dubai_local():
     """A sweep window's UTC datetimes map to Dubai (+4) business dates, so the run
     coverage is scoped the way the backfill scopes its explicit range."""
