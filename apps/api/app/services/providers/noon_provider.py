@@ -390,6 +390,32 @@ class NoonClient(BaseAggregatorClient):
             "x-project": project,
         }
 
+    # ── menu (catalog sync) ──────────────────────────────────────────────────
+    # Verified live from the VM session 2026-09-01, RMS on _RMS with the same
+    # `n-restaurantcode`/`x-project` headers the finance reads use:
+    #   GET  /_food-restaurant/menu/list -> {data:[{menuCode, menuName, itemCount,
+    #        restaurantCode}]}  (the "Ext. grubtech" menus are the Foodics-fed ones)
+    #   POST /_food-restaurant/menu/details {menuCode} -> {data:{items:[{itemCode,
+    #        nameEn, nameAr, price, isActive, isOos, categoryCode, modifiers,
+    #        itemType}], categories:[{categoryCode, nameEn, items:[itemCode]}]}}
+
+    async def list_menus(self, session: LoadedSession) -> Any:
+        return await self.request_json(
+            session,
+            "GET",
+            f"{_RMS}/_food-restaurant/menu/list",
+            headers=self._rms_headers(session),
+        )
+
+    async def get_menu_details(self, session: LoadedSession, menu_code: str) -> Any:
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/menu/details",
+            headers=self._rms_headers(session),
+            json_body={"menuCode": menu_code},
+        )
+
     # ── anti-bot ─────────────────────────────────────────────────────────────
     def _is_auth_failure(self, response: Any) -> bool:
         """A dead cookie *or* an Akamai block. Both need a browser, not a retry."""

@@ -361,14 +361,83 @@ async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
     return parse_talabat_catalog(catalogs, products_by_cat)
 
 
+# ── Noon RMS menu reader ──────────────────────────────────────────────────────
+# Verified live from the VM session (2026-09-01). GET /menu/list -> the menus;
+# POST /menu/details {menuCode} -> {items:[{itemCode,nameEn,price,isActive,isOos,
+# categoryCode}], categories:[{categoryCode,nameEn,items:[itemCode]}]}. The
+# "Ext. grubtech" menus are Foodics-fed; the MM-managed one is read here. Availability
+# = isActive AND NOT isOos. Same RMS session/headers the finance ingest uses.
+
+
+def parse_noon_menu(details: Any) -> NormalizedMenu:
+    """Noon `/menu/details` data → a channel-neutral menu (pure, unit-tested).
+
+    Categories reference items by `itemCode`; the item objects live in `items`.
+    """
+    data = details.get("data") if isinstance(details, dict) else details
+    data = data or {}
+    by_code = {
+        it.get("itemCode"): it
+        for it in (data.get("items") or [])
+        if isinstance(it, dict)
+    }
+    cats: list[NormalizedCategory] = []
+    for cat in sorted(data.get("categories") or [], key=lambda c: c.get("position", 0)):
+        items: list[NormalizedItem] = []
+        for code in cat.get("items") or []:
+            it = by_code.get(code)
+            if not it or not it.get("nameEn"):
+                continue
+            price = it.get("price")
+            items.append(
+                NormalizedItem(
+                    name=it["nameEn"],
+                    external_id=str(it.get("itemCode")) if it.get("itemCode") else None,
+                    external_ref=it.get("posSku"),
+                    description=it.get("descEn"),
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=bool(it.get("isActive", True))
+                    and not bool(it.get("isOos", False)),
+                )
+            )
+        cats.append(
+            NormalizedCategory(
+                cat.get("nameEn", ""),
+                external_id=str(cat.get("categoryCode"))
+                if cat.get("categoryCode")
+                else None,
+                items=items,
+            )
+        )
+    return NormalizedMenu(source="noon", categories=cats)
+
+
+async def _read_noon_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
+    from app.services.aggregators import session_store
+    from app.services.providers import noon_provider as np
+
+    session = await session_store.load(db, "noon")
+    menus = await np.provider.list_menus(session)
+    rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
+    # The MM-managed menu is the one that is NOT the Foodics-fed "Ext. grubtech".
+    mm_menus = [m for m in rows if not str(m.get("menuName", "")).startswith("Ext.")]
+    chosen = mm_menus or rows
+    if not chosen:
+        raise AggregatorUnavailableError("noon returned no menu")
+    details = await np.provider.get_menu_details(session, chosen[0]["menuCode"])
+    return parse_noon_menu(details)
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
-# Foodics (Grubtech price tag), Careem (catalog REST) and Talabat (DeliveryHero
-# vendor-api) are verified live. Keeta (H5guard) / Noon (Akamai) / Deliveroo
-# (separate Menus login) menus need a headed VM capture — see the audit.
+# Foodics (Grubtech price tag), Careem (catalog REST), Talabat (DeliveryHero
+# vendor-api) and Noon (RMS /menu/details) are all verified live from the real
+# session. Keeta (H5guard) menu API can't be reached even server-side, and
+# Deliveroo's menu is behind a separate Menus login — both need a headed capture.
 _MENU_READERS: dict[str, Any] = {
     TARGET_FOODICS: _read_foodics_menu,
     "careem": _read_careem_menu,
     "talabat": _read_talabat_menu,
+    "noon": _read_noon_menu,
 }
 _HOURS_READERS: dict[str, Any] = {}

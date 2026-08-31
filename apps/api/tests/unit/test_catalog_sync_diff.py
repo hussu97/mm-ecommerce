@@ -444,6 +444,54 @@ def test_talabat_parser_uses_real_shapes():
     assert menu.categories[1].items[0].price == Decimal("55")
 
 
+def test_noon_parser_uses_real_shapes():
+    # Real Noon /menu/details shape (VM, 2026-09-01): categories reference items by
+    # code; a product's price is `price`, availability is `isActive AND NOT isOos`.
+    from app.services.aggregators.menu_readers import parse_noon_menu
+
+    details = {
+        "data": {
+            "items": [
+                {
+                    "itemCode": "I684688626A",
+                    "nameEn": "Pistachio Kunafa Chocolate Cake Slice",
+                    "price": 35.0,
+                    "isActive": True,
+                    "isOos": False,
+                    "posSku": "260898759",
+                },
+                {
+                    "itemCode": "I513758352A",
+                    "nameEn": "New Item",
+                    "price": 30.0,
+                    "isActive": True,
+                    "isOos": True,
+                },
+            ],
+            "categories": [
+                {
+                    "categoryCode": "C1",
+                    "nameEn": "Cakes",
+                    "position": 0,
+                    "items": ["I684688626A"],
+                },
+                {
+                    "categoryCode": "C2",
+                    "nameEn": "New In",
+                    "position": 1,
+                    "items": ["I513758352A"],
+                },
+            ],
+        }
+    }
+    menu = parse_noon_menu(details)
+    assert [c.name for c in menu.categories] == ["Cakes", "New In"]
+    assert menu.categories[0].items[0].price == Decimal("35.0")
+    assert menu.categories[0].items[0].is_available is True
+    # isOos=True -> unavailable even though isActive
+    assert menu.categories[1].items[0].is_available is False
+
+
 def test_menu_ops_resolve_channel_id_from_last_read():
     # The snapshot (actual) carries each item's channel id; a delete op must carry
     # that id so the writer knows what to remove.
