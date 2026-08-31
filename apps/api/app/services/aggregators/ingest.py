@@ -36,6 +36,12 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import String, and_, case, cast, func, not_, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import (
+    InterfaceError,
+    InternalError,
+    OperationalError,
+    ProgrammingError,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock
@@ -820,6 +826,19 @@ def _sweep_window(
     return since, until
 
 
+# DB errors that mean the connection/schema is wrong for every row, so a per-order
+# savepoint must NOT swallow them (that would silently write 0 and mark the run
+# completed). Everything else — IntegrityError, DataError, a parse ValueError —
+# is per-order and isolated. Kept narrow on purpose: only "the whole write path is
+# broken" classes belong here.
+_SYSTEMIC_DB_ERRORS = (
+    OperationalError,  # connection lost, pool timeout, server shutting down
+    InterfaceError,  # connection already closed / protocol error
+    InternalError,  # "current transaction is aborted" and peers
+    ProgrammingError,  # undefined column/table, bad SQL — a schema mismatch
+)
+
+
 async def _fetch_and_persist(
     db: AsyncSession,
     channel: str,
@@ -848,11 +867,24 @@ async def _fetch_and_persist(
         for order in result.orders:
             # One malformed order must not abort the whole channel's sweep and roll
             # back every good order with it — isolate it, like the reconcile/promote
-            # passes and the Keeta push path already do.
+            # passes and the Keeta push path already do. A bare try/except CANNOT do
+            # that here: asyncpg aborts the WHOLE transaction on the first failure,
+            # so every later upsert then fails "current transaction is aborted",
+            # `written` lands at 0, and the sweep rolls back — while the logs blame
+            # each order. A SAVEPOINT per order rolls back just the bad row and
+            # leaves the surrounding transaction usable.
             try:
-                await upsert_order(db, channel, order)
+                async with db.begin_nested():
+                    await upsert_order(db, channel, order)
                 written += 1
-            except Exception:  # noqa: BLE001 — one order must not stop the rest
+            except _SYSTEMIC_DB_ERRORS:
+                # Wrong for EVERY row, not just this one — a lost connection, a
+                # pool timeout, or a schema mismatch (e.g. a migration not yet
+                # applied: every upsert hits UndefinedColumn). Isolating it would
+                # write 0 and let `_sweep_channel` mark the run "completed",
+                # masking a real outage. Re-raise so the run fails honestly.
+                raise
+            except Exception:  # noqa: BLE001 — one malformed order must not stop the rest
                 logger.exception(
                     "aggregator %s sales: order %s failed to upsert",
                     channel,

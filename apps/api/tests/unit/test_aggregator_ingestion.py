@@ -1713,3 +1713,82 @@ async def test_renormalize_stored_noop_for_scraped_channel():
         object(), CHANNEL_TALABAT, date(2026, 8, 27), date(2026, 8, 28)
     )
     assert n == 0
+
+
+# ── sales upsert isolation: a SAVEPOINT per order, systemic errors re-raised ──
+class _FakeSavepoint:
+    """Stands in for `AsyncSession.begin_nested()` — an async context manager that
+    lets the exception propagate (returns False from __aexit__) so the caller's
+    per-order try/except sees it, exactly as a real savepoint rollback would."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _sales_provider(order_ids):
+    from unittest.mock import AsyncMock
+
+    orders = [SimpleNamespace(external_order_id=oid) for oid in order_ids]
+    result = SimpleNamespace(orders=orders, truncation_note=None)
+    return SimpleNamespace(fetch_sales=AsyncMock(return_value=result))
+
+
+async def test_fetch_and_persist_isolates_one_malformed_order(monkeypatch):
+    """A single bad order must not lose the good ones. Before the savepoint fix a
+    DB error poisoned the whole asyncpg transaction, so every later upsert failed
+    "current transaction is aborted" and `written` collapsed to 0."""
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.begin_nested = lambda: _FakeSavepoint()
+
+    async def fake_upsert(_db, _channel, order):
+        if order.external_order_id == "BAD":
+            raise ValueError("unparseable order")
+
+    monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
+
+    written, _truncation, detail = await ingest._fetch_and_persist(
+        db,
+        "deliveroo",
+        _sales_provider(["G1", "BAD", "G2"]),
+        ingest.RUN_MODE_SALES,
+        object(),
+        since=datetime(2026, 8, 31, tzinfo=timezone.utc),
+        until=datetime(2026, 8, 31, 23, tzinfo=timezone.utc),
+    )
+    assert written == 2  # both good orders persisted; the bad one was isolated
+    assert detail == {"orders": 2}
+
+
+async def test_fetch_and_persist_reraises_systemic_db_error(monkeypatch):
+    """A schema/connection error is wrong for EVERY row (e.g. a migration not yet
+    applied → UndefinedColumn). It must propagate so the run fails honestly, not
+    be swallowed per-order and leave the run marked "completed" with 0 written."""
+    from unittest.mock import MagicMock
+
+    from sqlalchemy.exc import ProgrammingError
+
+    db = MagicMock()
+    db.begin_nested = lambda: _FakeSavepoint()
+
+    async def fake_upsert(_db, _channel, _order):
+        raise ProgrammingError(
+            "INSERT ...", {}, Exception('column "marketing_fee" does not exist')
+        )
+
+    monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
+
+    with pytest.raises(ProgrammingError):
+        await ingest._fetch_and_persist(
+            db,
+            "deliveroo",
+            _sales_provider(["G1", "G2"]),
+            ingest.RUN_MODE_SALES,
+            object(),
+            since=datetime(2026, 8, 31, tzinfo=timezone.utc),
+            until=datetime(2026, 8, 31, 23, tzinfo=timezone.utc),
+        )
