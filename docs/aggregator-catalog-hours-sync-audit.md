@@ -346,3 +346,66 @@ already demonstrably broken — the right **first writer** once the model exists
   finding that MM lacks a per-day schedule is from the model, not a live read.
 - **No writes were made anywhere.** This document is the review gate before any code
   or schema lands.
+
+---
+
+# Per-aggregator verification + DB cross-check (2026-09-01)
+
+Everything below is from a **verified source** — the live portal API/DOM, or the
+**production database** (queried on the VM) — never assumed.
+
+## Production DB — mappings (queried on `mm-backend`)
+
+**Branches (4):** Al Karama (KRM), Barsha Heights (B001), Dubai Silicon Oasis (DSO),
+Sharjah Kitchen (K001).
+
+**`aggregator_branch_map` — 16 rows, COMPLETE, all verified against the live portal
+store-switchers:**
+
+| Channel | Outlets mapped (branch → outlet id) | Gaps (real, by design) |
+|---|---|---|
+| talabat | Sharjah 711571, Barsha 728173, Karama 793319 (brands 666733 / 666733 / 715778) | no DSO |
+| careem | Barsha 1067984, DSO 1069463 (company 1026653, brand 1029671) | no Sharjah (shut, statusId 3), no Karama |
+| keeta | Karama 1644336388, Sharjah 1644174206, DSO 1644170195, Barsha 1644189187 | — |
+| noon | Sharjah MLTNGM1GBF, Barsha MLTNGM9FCH, DSO MLTNGMG2B1, Karama MLTNGMTB9M (brand R5967…, company PRJ135208) | — |
+| deliveroo | Sharjah 693360, Barsha 693359, DSO 693361 | no Karama |
+
+⇒ **Branch mappings need no seeding — they are complete and correct.**
+
+**`external_item_map` — item mappings (products):**
+
+| System | Products | matched to MM | approved | Options | matched | approved |
+|---|--:|--:|--:|--:|--:|--:|
+| grubops (Foodics) | 45 | 45 | **45** | 147 | 147 | **147** |
+| keeta | 31 | 31 | 3 | 0 | — | — |
+| noon | 19 | 19 | 0 | 33 | 0 | 0 |
+| deliveroo | 16 | 15 | 1 | 8 | 0 | 0 |
+| careem | 7 | 6 | 0 | 10 | 0 | 0 |
+| talabat | 5 | 2 | 1 | 2 | 0 | 0 |
+
+⇒ **GrubOps (the integrated-branch path) is fully mapped + approved.** The aggregator
+product maps are the ingest's exact-name proposals — mostly *matched but unapproved*
+(the approval gate is deliberate; approve in the item-mappings console). Six product
+rows were unmatched name-variants; migration `172_agg_item_map_seed` resolves the
+three unambiguous ones (serves 3-5 = 500 g; "[1 3 pieces]" → Fudge Brownies) and
+leaves the three size-less Talabat cookie-melts for review. **All option maps are
+unmatched** and need the 3/6/9-piece variants placed by hand — the next seeding step.
+
+## Menu readers, per aggregator (verified source per channel)
+
+| Channel | Menu source | Reader status |
+|---|---|---|
+| **Foodics** (integrated: Barsha, Sharjah) | Console `core-api` — the **Grubtech price tag** | ✅ **Verified live** — parser tested against the real 46-item price tag; full MM-vs-Foodics diff run on real data (found 5 real price mismatches). |
+| **Careem** (Barsha, DSO) | REST `catalog-catalogs → catalog-categories → catalog-products` (bearer) | ✅ **Verified live** — real field shapes captured (`defaultPrice`, `status=="ACTIVE"`); parser tested against the real fixture. |
+| **Keeta** (all 4) | Portal `/m/web/product` | ⚠️ Menu API sits behind **H5guard** anti-tamper — in-browser capture blocked; items known from the ingest map. Needs a VM/worker headed capture to confirm the shape before its reader ships. |
+| **Talabat** (Sharjah, Barsha, Karama) | `menu-management-v2` | ⚠️ **PerimeterX** + the integrated outlets are availability-only (Foodics-fed). Karama menu is UI; needs headed automation. |
+| **Noon** (all 4) | Menu Maker | ⚠️ **Akamai**; two menu-makers (Foodics vs non-Foodics) + a QC-submit step. Needs headed automation. |
+| **Deliveroo** (Sharjah, Barsha, DSO) | separate **Menus** login | ⚠️ Menu is behind a second login the sales session does not hold. Needs its own headed capture. |
+
+**Honest status:** the two channels with a callable menu API (Foodics, Careem) have
+readers **verified against live data**. The other four gate their menus behind
+anti-bot / a separate login / UI-only editors — exactly what the audit's §"Recommended
+approach" flagged as "headed portal automation." Their **item sets are already known**
+(the ingest map above), so the drift/seed work proceeds; their live **menu readers**
+require a headed capture on the VM worker (the same engine the ingest uses) to confirm
+each shape with zero guessing before shipping — deliberately not hallucinated here.
