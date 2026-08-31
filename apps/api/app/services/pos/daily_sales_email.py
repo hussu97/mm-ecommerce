@@ -60,12 +60,20 @@ _ZERO = Decimal("0")
 #: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 5.
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4805
 
-#: How long after the last branch's configured close the mail goes out. The
+#: How long after the last branch's configured close the mail may go out. The
 #: report counts *delivered* trade, so a rider still out at close — a website or
 #: aggregator order handed over after we snapshot — would be undercounted. Forty
-#: five minutes lets that tail settle without pushing the mail deep into the
-#: night; shorten it for a faster but rougher send.
+#: five minutes lets that tail settle. It is now the *secondary* floor: the mail
+#: waits for whichever is later, this or `_SEND_HOUR` (below).
 _CLOSE_BUFFER = timedelta(minutes=45)
+
+#: The wall-clock hour, Dubai, the morning AFTER a trading day, before which its
+#: report is held. The aggregator sales scrape runs overnight and lands a day's
+#: marketplace orders in batches (Keeta especially lags — its orders promote on a
+#: 3-hourly pull), so a mail sent at close would undercount them and a later
+#: re-send would show more. Holding until 01:00 gives that scrape the night to
+#: catch up, so the numbers are settled the first time they go out.
+_SEND_HOUR = 1
 
 _TICK_SECONDS = 600
 
@@ -746,7 +754,15 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     for offset in range(_CATCHUP_DAYS, -1, -1):
         day = today - timedelta(days=offset)
         last_close = _last_close(branches, day)
-        if last_close is None or now < last_close + _CLOSE_BUFFER:
+        if last_close is None:
+            continue
+        # Due once the trading day has fully closed (last close + settle buffer)
+        # AND it is at least `_SEND_HOUR` the following morning — whichever is
+        # later — so the overnight aggregator scrape has landed before we send.
+        # `at_minute(day, 24*60 + hour*60)` is that hour on the next day, the same
+        # past-midnight reading `_branch_close` uses.
+        send_floor = trading_hours.at_minute(day, 24 * 60 + _SEND_HOUR * 60)
+        if now < max(last_close + _CLOSE_BUFFER, send_floor):
             continue
         business_date = day.isoformat()
         if not await _already_sent(db, business_date):
