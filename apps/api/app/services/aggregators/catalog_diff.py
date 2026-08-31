@@ -177,6 +177,21 @@ def _item_effective_prices(item: NormalizedItem) -> list[tuple[str, Decimal | No
 # ── Menu diff ─────────────────────────────────────────────────────────────────
 
 
+def _index_items(menu: NormalizedMenu) -> dict[str, tuple[NormalizedItem, str]]:
+    """normalised item name → (item, its category name), flattened across the menu.
+
+    Item identity is the name, not the (category, name) pair: channels regroup
+    categories constantly ("Boxes" vs "Mix Boxes", a "New In" shelf, Foodics'
+    flat price tag), so an item that moved category has NOT gone missing. Match
+    globally; report the category move as metadata.
+    """
+    out: dict[str, tuple[NormalizedItem, str]] = {}
+    for cat in menu.categories:
+        for item in cat.items:
+            out.setdefault(normalize_name(item.name), (item, cat.name))
+    return out
+
+
 def diff_menu(
     desired: NormalizedMenu,
     actual: NormalizedMenu,
@@ -184,34 +199,88 @@ def diff_menu(
     target: str,
     enforce_price_parity: bool = True,
 ) -> MenuDiff:
-    """Diff MM's desired menu against one integrator's actual menu."""
+    """Diff MM's desired menu against one integrator's actual menu.
+
+    Items match **globally by name** (a moved category is not a missing item);
+    category structure is reported as derived metadata (a rename, or a category
+    with nothing matched).
+    """
     out = MenuDiff(target=target)
-    desired_cats = {normalize_name(c.name): c for c in desired.categories}
-    actual_cats = {normalize_name(c.name): c for c in actual.categories}
+    d_index = _index_items(desired)
+    a_index = _index_items(actual)
+    matched: set[str] = set()
+    # For category-level reporting: which channel category each MM category's
+    # items landed in, and whether a category had any match at all.
+    cat_landing: dict[str, dict[str, int]] = {}
 
-    matched_actual: set[str] = set()
-
-    for dkey, dcat in desired_cats.items():
-        acat = actual_cats.get(dkey)
-        if acat is None:
-            # try a rename match against the un-matched actual categories
-            fuzzy = _fuzzy_match(
-                dcat.name,
-                [c.name for k, c in actual_cats.items() if k not in matched_actual],
-            )
+    for key, (ditem, dcat) in d_index.items():
+        aitem_cat = a_index.get(key)
+        if aitem_cat is None:
+            fuzzy = _fuzzy_match(ditem.name, [k for k in a_index if k not in matched])
             if fuzzy is not None:
-                acat = actual_cats[normalize_name(fuzzy)]
+                fkey = normalize_name(fuzzy)
+                aitem, acat = a_index[fkey]
+                matched.add(fkey)
                 out.deltas.append(
                     Delta(
-                        kind=K_CATEGORY_RENAME,
+                        kind=K_ITEM_RENAME,
                         action=ACTION_UPDATE,
-                        entity=dcat.name,
-                        mm_value=dcat.name,
-                        channel_value=acat.name,
-                        detail="category name differs",
+                        entity=ditem.name,
+                        mm_value=ditem.name,
+                        channel_value=aitem.name,
+                        detail=f"MM category {dcat}",
                     )
                 )
-        if acat is None:
+                _diff_one_item(out, ditem, aitem, dcat, enforce_price_parity)
+                cat_landing.setdefault(dcat, {})[acat] = (
+                    cat_landing.setdefault(dcat, {}).get(acat, 0) + 1
+                )
+                continue
+            out.deltas.append(
+                Delta(
+                    kind=K_ITEM_MISSING,
+                    action=ACTION_ADD,
+                    entity=ditem.name,
+                    detail=f"category {dcat}",
+                )
+            )
+            cat_landing.setdefault(dcat, {})
+            continue
+        aitem, acat = aitem_cat
+        matched.add(key)
+        _diff_one_item(out, ditem, aitem, dcat, enforce_price_parity)
+        cat_landing.setdefault(dcat, {})[acat] = (
+            cat_landing.setdefault(dcat, {}).get(acat, 0) + 1
+        )
+
+    # Leftover channel items — on the portal, not in MM. Deletion is allowed.
+    for key, (aitem, acat) in a_index.items():
+        if key in matched:
+            continue
+        out.deltas.append(
+            Delta(
+                kind=K_ITEM_EXTRA,
+                action=ACTION_DELETE,
+                entity=aitem.name,
+                detail=f"on channel, category {acat}; review before delete",
+            )
+        )
+
+    _category_deltas(out, desired, actual, cat_landing)
+    return out
+
+
+def _category_deltas(
+    out: MenuDiff,
+    desired: NormalizedMenu,
+    actual: NormalizedMenu,
+    cat_landing: dict[str, dict[str, int]],
+) -> None:
+    """Derive category-level deltas from where items actually landed."""
+    actual_cat_names = {normalize_name(c.name): c.name for c in actual.categories}
+    for dcat in desired.categories:
+        landed = cat_landing.get(dcat.name, {})
+        if not landed:
             out.deltas.append(
                 Delta(
                     kind=K_CATEGORY_MISSING,
@@ -220,99 +289,32 @@ def diff_menu(
                     detail=f"{len(dcat.items)} item(s) would be added",
                 )
             )
-            # every item under a missing category is missing too
-            for it in dcat.items:
-                out.deltas.append(
-                    Delta(
-                        kind=K_ITEM_MISSING,
-                        action=ACTION_ADD,
-                        entity=it.name,
-                        detail=f"category {dcat.name}",
-                    )
-                )
             continue
-        matched_actual.add(normalize_name(acat.name))
-        _diff_items(out, dcat, acat, enforce_price_parity)
-
-    for akey, acat in actual_cats.items():
-        if akey in matched_actual:
-            continue
-        out.deltas.append(
-            Delta(
-                kind=K_CATEGORY_EXTRA,
-                action=ACTION_DELETE,
-                entity=acat.name,
-                detail=(
-                    f"on {target} but not in MM — "
-                    f"{len(acat.items)} item(s); review before delete"
-                ),
-            )
-        )
-        for it in acat.items:
+        # The channel category most of this MM category's items sit in.
+        best = max(landed, key=lambda c: landed[c])
+        if normalize_name(best) != normalize_name(dcat.name):
             out.deltas.append(
                 Delta(
-                    kind=K_ITEM_EXTRA,
+                    kind=K_CATEGORY_RENAME,
+                    action=ACTION_UPDATE,
+                    entity=dcat.name,
+                    mm_value=dcat.name,
+                    channel_value=best,
+                    detail="MM category maps to a differently-named channel one",
+                )
+            )
+    # Channel categories whose items are entirely absent from MM.
+    landed_channel = {normalize_name(c) for cats in cat_landing.values() for c in cats}
+    for akey, aname in actual_cat_names.items():
+        if akey not in landed_channel:
+            out.deltas.append(
+                Delta(
+                    kind=K_CATEGORY_EXTRA,
                     action=ACTION_DELETE,
-                    entity=it.name,
-                    detail=f"category {acat.name}",
+                    entity=aname,
+                    detail="on channel, not in MM; review before delete",
                 )
             )
-    return out
-
-
-def _diff_items(
-    out: MenuDiff,
-    dcat: Any,
-    acat: Any,
-    enforce_price_parity: bool,
-) -> None:
-    desired_items = {normalize_name(i.name): i for i in dcat.items}
-    actual_items = {normalize_name(i.name): i for i in acat.items}
-    matched: set[str] = set()
-
-    for dkey, ditem in desired_items.items():
-        aitem = actual_items.get(dkey)
-        if aitem is None:
-            fuzzy = _fuzzy_match(
-                ditem.name,
-                [i.name for k, i in actual_items.items() if k not in matched],
-            )
-            if fuzzy is not None:
-                aitem = actual_items[normalize_name(fuzzy)]
-                out.deltas.append(
-                    Delta(
-                        kind=K_ITEM_RENAME,
-                        action=ACTION_UPDATE,
-                        entity=ditem.name,
-                        mm_value=ditem.name,
-                        channel_value=aitem.name,
-                        detail=f"category {acat.name}",
-                    )
-                )
-        if aitem is None:
-            out.deltas.append(
-                Delta(
-                    kind=K_ITEM_MISSING,
-                    action=ACTION_ADD,
-                    entity=ditem.name,
-                    detail=f"category {dcat.name}",
-                )
-            )
-            continue
-        matched.add(normalize_name(aitem.name))
-        _diff_one_item(out, ditem, aitem, dcat.name, enforce_price_parity)
-
-    for akey, aitem in actual_items.items():
-        if akey in matched:
-            continue
-        out.deltas.append(
-            Delta(
-                kind=K_ITEM_EXTRA,
-                action=ACTION_DELETE,
-                entity=aitem.name,
-                detail=f"on channel, category {acat.name}; review before delete",
-            )
-        )
 
 
 def _diff_one_item(
@@ -346,8 +348,11 @@ def _diff_one_item(
         )
 
     if enforce_price_parity:
-        # Flat-priced item: compare the item price directly.
-        if not ditem.modifier_groups and not aitem.modifier_groups:
+        if ditem.modifier_groups and aitem.modifier_groups:
+            # Both sides expose variant options — compare the priced ones.
+            _diff_option_prices(out, ditem, aitem, category)
+        elif not ditem.modifier_groups and not aitem.modifier_groups:
+            # Flat-priced on both sides — compare the item price directly.
             if _prices_disagree(ditem.price, aitem.price):
                 out.deltas.append(
                     Delta(
@@ -359,8 +364,9 @@ def _diff_one_item(
                         detail=f"category {category}",
                     )
                 )
-        else:
-            _diff_option_prices(out, ditem, aitem, category)
+        # else: one side is variant-priced and the other flat (e.g. a channel
+        # reader that lists products but not their options) — we cannot compare
+        # option prices we did not read, so we do not invent a "missing option".
 
 
 def _diff_option_prices(

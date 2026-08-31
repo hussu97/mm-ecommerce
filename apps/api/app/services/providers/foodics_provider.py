@@ -114,6 +114,16 @@ _LISTING = "/core-api/listing"
 _SELECT_LISTING = "/core-api/select-listing"
 _UPDATING = "/core-api/updating"
 
+#: The "Grubtech" price tag + menu group that define the aggregator menu for the
+#: two Foodics-integrated branches. Account-stable ids (not secrets, not
+#: environment-varying — the same Foodics account serves every deployment), so
+#: they live here as constants rather than as five-place env vars. The price tag
+#: is the authoritative aggregator product set + prices; the group is its
+#: membership mirror. Confirmed live 2026-08-31. See
+#: docs/aggregator-catalog-hours-sync-audit.md.
+FOODICS_GRUBTECH_PRICE_TAG_ID = "a056ee7e-5823-47af-9ab5-1029508c996b"
+FOODICS_GRUBTECH_GROUP_ID = "a062ba1a-70b6-4bd7-8dac-f7986f33727f"
+
 #: Laravel exposes the request CSRF token in a `<meta name="csrf-token">` tag on
 #: the login page; that is what the `x-csrf-token` header must echo. The form
 #: also posts it as `_token` — prefer the form value when both are present.
@@ -711,6 +721,61 @@ class FoodicsClient:
             "PUT",
             _UPDATING,
             json_body={"url": f"/orders/{order_id}", "payload": data},
+        )
+
+    # ── Menu / price tag (catalog sync) ──────────────────────────────────────
+    # Verified against the live console API 2026-08-31: the aggregator menu for
+    # the integrated branches IS the "Grubtech" price tag — its products carry the
+    # aggregator price in `pivot.price` (distinct from the product's own `price`),
+    # and its modifier_options the variant prices. `GET /core-api/listing?url=
+    # /price_tags/<id>/products&page=N` → `{data:[...], meta:{per_page, to, ...}}`.
+
+    async def _list_all(self, resource: str, *, cap_pages: int = 20) -> list[dict]:
+        """Every page of a `listing` resource. Meta carries per_page/to (no
+        last_page), so read until a short page ends it."""
+        rows: list[dict] = []
+        page = 1
+        while page <= cap_pages:
+            payload = await self._call(
+                "GET", _LISTING, params={"url": resource, "page": page}
+            )
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not data:
+                break
+            rows.extend(data)
+            per_page = (payload.get("meta") or {}).get("per_page") or 50
+            if len(data) < per_page:
+                break
+            page += 1
+        return rows
+
+    async def list_price_tag_products(self, price_tag_id: str) -> list[dict]:
+        """The price tag's products — each with `price`, `pivot.price`, `name`,
+        `name_localized`, `is_active`, `sku`, `id`."""
+        return await self._list_all(f"/price_tags/{price_tag_id}/products")
+
+    async def list_price_tag_modifier_options(self, price_tag_id: str) -> list[dict]:
+        """The price tag's modifier options (the variant/size prices), each with
+        `name`, `price`, `pivot.price`."""
+        return await self._list_all(f"/price_tags/{price_tag_id}/modifier_options")
+
+    async def set_price_tag_product_price(
+        self, price_tag_id: str, product_id: str, price: Any
+    ) -> Any:
+        """Set one product's aggregator price on the price tag (the `pivot.price`).
+
+        The write mirror of the read above. Same `PUT /core-api/updating` shape as
+        the order write; only ever called behind `CATALOG_SYNC_ENABLED`. The exact
+        payload key is confirmed at enablement against a live session — kept in one
+        place so that confirmation is a one-line change, not a hunt.
+        """
+        return await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/price_tags/{price_tag_id}/products/{product_id}",
+                "payload": {"price": price},
+            },
         )
 
 

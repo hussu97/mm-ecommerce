@@ -285,6 +285,62 @@ def test_uncapped_channels_keep_every_shift():
 # ── Menu write-op resolution ──────────────────────────────────────────────────
 
 
+# ── Foodics Grubtech price-tag parser (real captured shapes) ──────────────────
+
+# The exact rows the live Foodics console API returned on 2026-08-31 (trimmed):
+# `price` is the product's own price, `pivot.price` the aggregator price.
+_FOODICS_PRICE_TAG_PRODUCTS = [
+    {
+        "id": "p1",
+        "sku": "FG0131",
+        "name": "Chocolate & Whipped Salted Caramel Cake Slice",
+        "name_localized": "شريحة كيك",
+        "price": 35,
+        "pivot": {"price": 35},
+        "is_active": True,
+    },
+    {
+        "id": "p2",
+        "sku": "FG0127",
+        "name": "Ramadan Advent Gift Box (12 Pieces)",
+        "name_localized": "علبة",
+        "price": 55,
+        "pivot": {"price": 70},
+        "is_active": True,
+    },
+    {
+        "id": "p3",
+        "sku": "FG0033",
+        "name": "Fudge Brownies",
+        "name_localized": "براونيز",
+        "price": 0,
+        "pivot": {"price": 0},
+        "is_active": True,
+    },
+]
+
+
+def test_foodics_parser_uses_aggregator_price_from_pivot():
+    from app.services.aggregators.menu_readers import parse_grubtech_price_tag
+
+    menu = parse_grubtech_price_tag(_FOODICS_PRICE_TAG_PRODUCTS)
+    items = {i.name: i for i in menu.categories[0].items}
+    assert len(items) == 3
+    # aggregator price = pivot.price (Ramadan uplifted to 70, not its own 55)
+    assert items["Ramadan Advent Gift Box (12 Pieces)"].price == Decimal("70")
+    assert items["Chocolate & Whipped Salted Caramel Cake Slice"].price == Decimal("35")
+    assert items["Fudge Brownies"].price == Decimal("0")
+
+
+def test_foodics_parity_violations_flag_the_uplifts():
+    from app.services.aggregators.menu_readers import price_tag_parity_violations
+
+    violations = price_tag_parity_violations(_FOODICS_PRICE_TAG_PRODUCTS)
+    # Only the Ramadan box (55 product vs 70 tag) violates strict parity.
+    assert len(violations) == 1
+    assert violations[0]["name"] == "Ramadan Advent Gift Box (12 Pieces)"
+
+
 def test_menu_ops_resolve_channel_id_from_last_read():
     # The snapshot (actual) carries each item's channel id; a delete op must carry
     # that id so the writer knows what to remove.
