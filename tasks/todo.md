@@ -310,5 +310,30 @@ focused, live-browser session. Phases 6/7 not worth their complexity.
 ## Phase 9 — Deploy finalization [W]
 - [ ] deploy.yml: drop cron/flock, add compose pull+up; healthcheck; delete cron file
 
-## Review (redesign)
-_(filled in as phases land)_
+## Review (redesign) — 2026-08-31
+
+**Autonomous aggregator scraping now works.** Root cause was several layered bugs, not one:
+1. unescaped `%` silently truncated the every-2-min heal cron for hours (THE "warm cron runs but
+   auth 401s" cause); 2. heal ran headed Chrome with no display (couldn't re-login anti-bot); 3. a hung
+   login held the single shared flock ~8.5h, starving all healing; 4. deliveroo minted a wrong-scope
+   token + dropped its cf_clearance cookie; 5. both API slots ran the schedulers; 6. a `pull_policy:
+   missing` deploy bug meant worker image changes never reached the VM.
+
+**Shipped to main + verified on the VM:**
+- Phases 0-2 + `%` hotfix (heal under Xvfb, cron timeout guards, leader-elected schedulers, deliveroo
+  mint fix). All 5 channels live + autonomously self-healing; chaos test passed.
+- Phase 5: one per-channel `policy.py` (cookie-advisory + health-staleness + `next_backoff`).
+- Phase 3: the always-on worker daemon (priority queue, one Chrome at a time, hard per-job timeout →
+  kill_live_chrome, resident Xvfb, in-process scheduler; cutover stops+trap-restarts it; deploy pull+up
+  fixes the stale-image bug). DEPLOYED + VALIDATED live: daemon up+healthy, heal poll detected
+  talabat+deliveroo needing reauth and both headed relogins succeeded via the daemon; RAM within e2-small.
+
+**Dropped as over-engineering:** Phase 6 (liveness columns — would delay recovery; duplicates existing
+signals), Phase 7 (reauth-contract rewrite of a working path; careem coverage already works).
+
+**Follow-ups (not regressions, worth doing):**
+- Split keeta pull: KEETA_ORDERS every 3h (quick, capture-before-masking) vs KEETA_FINANCE nightly and
+  bounded to a RECENT window — it currently re-downloads months of finance xlsx every pull (~15-20min),
+  monopolizing the single consumer and delaying heal that whole time (the old cron had the same flaw).
+- Phase 4 (DB-as-truth profile) + Phase 8 (proactive alert for irreducible human-needed cases via the
+  daemon's NEEDS_HUMAN → API email funnel) — both need a live browser; do together in a focused session.
