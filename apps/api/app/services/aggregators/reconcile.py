@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -101,6 +101,23 @@ _GRUBOPS_SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def leading_zero_stripped(ref: str | None) -> str | None:
+    """A short numeric marketplace handoff code with its leading zeros removed, or
+    None when `ref` is not a short numeric code.
+
+    Deliveroo's pickup code is 4-digit zero-padded on GrubTech's side (its
+    `externalId` "0127", stored on `grubops_order_map`), but the direct Deliveroo
+    scrape reads the same code unpadded ("127") into `display_ref`. Matching them
+    verbatim fails on the leading zero, so `_find_mm_order`/`_find_convergence_order`
+    never link the scrape to its GrubOps order and file a duplicate standalone — the
+    Barsha Deliveroo double-count. Comparing both sides zero-stripped closes that.
+    Long ids (a UUID, Keeta's 16-digit `orderViewId`) return None and are matched
+    verbatim, so this never collapses two genuinely different ids."""
+    if ref and ref.isdigit() and len(ref) <= 6:
+        return ref.lstrip("0") or "0"
+    return None
+
+
 async def _find_mm_order(
     db: AsyncSession,
     channel: str,
@@ -124,10 +141,19 @@ async def _find_mm_order(
         if label
     ]
     refs = [r for r in (external_order_id, display_ref) if r]
+    # Also match a short numeric code against its zero-stripped form, so a scrape
+    # that dropped Deliveroo's leading-zero pad ("127") still finds GrubTech's
+    # padded externalId ("0127") — see `leading_zero_stripped`.
+    stripped = [s for r in refs if (s := leading_zero_stripped(r)) is not None]
+    id_match = GrubOpsOrderMap.external_id.in_(refs)
+    if stripped:
+        id_match = or_(
+            id_match, func.ltrim(GrubOpsOrderMap.external_id, "0").in_(stripped)
+        )
     map_row = await db.scalar(
         select(GrubOpsOrderMap).where(
             GrubOpsOrderMap.source_channel.in_(labels),
-            GrubOpsOrderMap.external_id.in_(refs),
+            id_match,
             GrubOpsOrderMap.mm_order_id.is_not(None),
         )
     )

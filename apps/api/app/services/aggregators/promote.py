@@ -168,9 +168,18 @@ async def _find_convergence_order(
         created_dubai_day = func.to_char(
             func.timezone("Asia/Dubai", Order.created_at), "YYYY-MM-DD"
         )
+        # Match the short code verbatim OR zero-stripped, so a GrubOps order filed
+        # under Deliveroo's padded externalId ("0127") is found by a scrape whose
+        # display_ref dropped the pad ("127") — see `reconcile.leading_zero_stripped`.
+        ref_match = Order.external_reference == agg.display_ref
+        stripped = reconcile.leading_zero_stripped(agg.display_ref)
+        if stripped is not None:
+            ref_match = or_(
+                ref_match, func.ltrim(Order.external_reference, "0") == stripped
+            )
         conds.append(
             and_(
-                Order.external_reference == agg.display_ref,
+                ref_match,
                 Order.branch_id == agg.branch_id,
                 created_dubai_day == agg.business_date,
             )
