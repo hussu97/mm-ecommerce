@@ -409,3 +409,30 @@ approach" flagged as "headed portal automation." Their **item sets are already k
 (the ingest map above), so the drift/seed work proceeds; their live **menu readers**
 require a headed capture on the VM worker (the same engine the ingest uses) to confirm
 each shape with zero guessing before shipping — deliberately not hallucinated here.
+
+## Option-map seeding — the honest finding
+
+The aggregator **option** maps (the 3/6/9-piece variants) are **not reliably seedable
+by name**, verified from the real prod rows:
+- **noon** options are opaque ids (`i265138907b`, `i314442935b`, …) — no name to match;
+  resolving them needs the noon menu read (id → name), which is Akamai-gated.
+- **talabat** options are gram sizes ("250 grams", "500 grams") — but MM models those
+  as separate *products* (Kinder Cookie Melt 250 g / 500 g), not modifier options, so
+  there is no MM option to point at.
+- the "N Pieces" options are shared across many products with **different prices**
+  ("9 Pieces" = 125 for a brownie, 145 for a mix box, 135 for cookies), so a
+  name-only match is ambiguous.
+
+⇒ Option seeding is **blocked on the per-portal menu reads** (to recover each option's
+product + price context). For the two channels with a menu reader (Foodics, Careem)
+that context is available; for the anti-bot channels it waits on the headed reader.
+This is stated rather than guessed — seeding options by name would map the wrong price.
+
+## Seed conclusion
+
+| Layer | State | Action |
+|---|---|---|
+| Branch maps (all 5) | Complete + verified | none needed |
+| Product item maps | Matched (unapproved) + 3 variants resolved | approve in console; migration 172 |
+| Ambiguous product maps (3 Talabat) | Size-less, ambiguous | human review |
+| Option item maps | Opaque / modeling-mismatch / ambiguous | needs the menu reads first |
