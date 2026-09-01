@@ -610,21 +610,34 @@ def _route_for(target: str) -> str:
 # half-built write.
 
 
+#: Where a create for each target actually happens. Foodics is the master for the
+#: two integrated branches (one create → every marketplace). Careem's own catalog
+#: create is verified live (create-then-delete). Talabat's per-item POST is 405 —
+#: its menu writes are import-based, not yet verified — and Noon's is an RMS menu
+#: document rewrite; both raise until a controlled create confirms them. Keeta and
+#: Deliveroo have no server-callable menu API at all (H5guard / separate login), so
+#: their create needs the headed worker.
+_DIRECT_CREATE_CHANNELS = ("careem",)
+_CREATE_NEEDS_VERIFY = ("talabat", "noon")
+_CREATE_NEEDS_WORKER = ("keeta", "deliveroo")
+
+
 async def create_menu_item(
     db: AsyncSession,
     *,
     product_id: Any,
+    target: str = TARGET_FOODICS,
+    branch_id: Any = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
-    """Create one MM product on the aggregators via Foodics (Grubtech).
+    """Create one MM product on a target. Hard-gated by `CATALOG_SYNC_ENABLED`.
 
-    Hard-gated by `CATALOG_SYNC_ENABLED`. Phase-1 default is `dry_run`: it resolves
-    the product, its Grubtech category subgroup and the price (parity-checked) and
-    returns exactly the create it *would* POST, mutating nothing. With
-    `dry_run=False` it creates the product in Foodics, then records the Foodics
-    `external_item_map` row (approved, keyed on the returned Foodics id) so the
-    mapping is stored the moment the item exists; the marketplace mappings follow
-    on the next read via `resolve_menu`.
+    `target=foodics` (default) is the master path for the two integrated branches —
+    one Foodics create places the product in its Grubtech subgroup at price parity,
+    and Foodics pushes it to every marketplace. `target=careem` creates directly on a
+    non-Foodics Careem outlet (needs `branch_id`). The other marketplaces are gated
+    with a clear reason until their create is verified/built. `dry_run` (the default)
+    resolves everything and returns the exact create it *would* POST, mutating nothing.
     """
     _ensure_write_enabled()
     product = (
@@ -636,6 +649,22 @@ async def create_menu_item(
     ).scalar_one_or_none()
     if product is None:
         raise BadRequestError(f"Product {product_id} not found")
+
+    if target in _CREATE_NEEDS_WORKER:
+        raise BadRequestError(
+            f"{target} has no server-callable menu API (H5guard / separate login) — "
+            f"its create runs through the headed worker, not here."
+        )
+    if target in _CREATE_NEEDS_VERIFY:
+        raise BadRequestError(
+            f"{target} create is not yet verified (its write path differs from a "
+            f"plain REST create) — use Foodics for the integrated branches, or run a "
+            f"controlled create to confirm the {target} endpoint before enabling."
+        )
+    if target in _DIRECT_CREATE_CHANNELS:
+        return await _create_on_careem(db, product, branch_id, dry_run)
+    if target != TARGET_FOODICS:
+        raise BadRequestError(f"Unknown create target {target!r}")
 
     from app.services.providers import foodics_provider as fp
 
@@ -707,6 +736,100 @@ async def create_menu_item(
         "Created in Foodics and mapped. The marketplaces sync from Foodics; their "
         "external_item_map rows record on the next menu read + resolve."
     )
+    return plan
+
+
+async def _create_on_careem(
+    db: AsyncSession, product: Product, branch_id: Any, dry_run: bool
+) -> dict[str, Any]:
+    """Create one product directly on a non-Foodics Careem outlet.
+
+    Verified surface (create-then-delete on a live outlet): POST catalog-products
+    with the product's MM category resolved to the Careem category id. Created
+    INACTIVE — a sync never makes an item live before review. Records the
+    `external_item_map` (careem) inline from the returned id.
+    """
+    from app.services.aggregators import session_store
+    from app.services.aggregators.menu_readers import _careem_ids
+    from app.services.providers import careem_provider as cp
+
+    if branch_id is None:
+        raise BadRequestError("careem create needs a branch_id (the outlet).")
+    cat_name = product.category.name if product.category else None
+    price = product.base_price
+    if price is None:
+        raise BadRequestError(f"Product {product.name!r} has no base price.")
+
+    company, brand, outlet = await _careem_ids(db, branch_id)
+    session = await session_store.load(db, "careem")
+    catalogs = await cp.provider.list_catalogs(session, company, brand, outlet)
+    catalog_list = (
+        catalogs if isinstance(catalogs, list) else (catalogs or {}).get("data", [])
+    )
+    if not catalog_list:
+        raise BadRequestError("careem returned no catalog for this outlet.")
+    catalog_id = catalog_list[0]["id"]
+    categories = await cp.provider.list_categories(
+        session, company, brand, outlet, str(catalog_id)
+    )
+    cat_rows = (
+        categories
+        if isinstance(categories, list)
+        else (categories.get("subCategories") or [])
+    )
+    careem_cat = next(
+        (c for c in cat_rows if _norm(c.get("name")) == _norm(cat_name)), None
+    )
+    if careem_cat is None:
+        raise BadRequestError(
+            f"No Careem category matching {cat_name!r} on this outlet — create it "
+            f"on the portal first."
+        )
+    plan: dict[str, Any] = {
+        "target": "careem",
+        "route": "channel_portal",
+        "product": {"id": str(product.id), "name": product.name},
+        "careem_create": {
+            "name": product.name,
+            "price": str(price),
+            "catalog_id": catalog_id,
+            "category_id": careem_cat.get("id"),
+            "status": "INACTIVE",
+        },
+    }
+    if dry_run:
+        plan["dry_run"] = True
+        plan["note"] = (
+            "Dry run — nothing created. This is the exact Careem catalog-products "
+            "create (INACTIVE) that would POST. Enable + dry_run=false to apply."
+        )
+        return plan
+
+    created = await cp.provider.create_product(
+        session,
+        company,
+        brand,
+        outlet,
+        name=product.name,
+        price=price,
+        catalog_id=catalog_id,
+        category_id=careem_cat.get("id"),
+        active=False,
+    )
+    careem_id = (created or {}).get("id") if isinstance(created, dict) else None
+    if careem_id:
+        await catalog_mapping._upsert(  # noqa: SLF001 — one recorder, reused
+            db,
+            system="careem",
+            external_ref=str(careem_id),
+            external_name=product.name,
+            mm_kind=catalog_mapping.KIND_PRODUCT,
+            product_id=product.id,
+            approve=True,
+        )
+    plan["dry_run"] = False
+    plan["careem_id"] = careem_id
+    plan["note"] = "Created on Careem (INACTIVE) and mapped."
     return plan
 
 

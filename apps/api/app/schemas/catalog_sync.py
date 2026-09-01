@@ -77,14 +77,17 @@ class PushPlan(BaseModel):
 
 
 class CreateItemRequest(BaseModel):
-    """Create one MM product on the aggregators (via Foodics Grubtech).
+    """Create one MM product on a target.
 
-    `dry_run` (the Phase-1 default) returns the exact create it would POST and
-    mutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED` and actually
-    creates the product in Foodics, storing the mapping.
+    `target=foodics` (default) is the master path for the integrated branches;
+    `target=careem` creates directly on a non-Foodics Careem outlet (needs
+    `branch_id`). `dry_run` (the default) returns the exact create it would POST and
+    mutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED`.
     """
 
     product_id: str
+    target: str = "foodics"
+    branch_id: str | None = None
     dry_run: bool = True
 
 

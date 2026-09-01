@@ -10355,13 +10355,16 @@ export interface components {
         };
         /**
          * CreateItemRequest
-         * @description Create one MM product on the aggregators (via Foodics Grubtech).
+         * @description Create one MM product on a target.
          *
-         *     `dry_run` (the Phase-1 default) returns the exact create it would POST and
-         *     mutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED` and actually
-         *     creates the product in Foodics, storing the mapping.
+         *     `target=foodics` (default) is the master path for the integrated branches;
+         *     `target=careem` creates directly on a non-Foodics Careem outlet (needs
+         *     `branch_id`). `dry_run` (the default) returns the exact create it would POST and
+         *     mutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED`.
          */
         CreateItemRequest: {
+            /** Branch Id */
+            branch_id?: string | null;
             /**
              * Dry Run
              * @default true
@@ -10369,6 +10372,11 @@ export interface components {
             dry_run: boolean;
             /** Product Id */
             product_id: string;
+            /**
+             * Target
+             * @default foodics
+             */
+            target: string;
         };
         /** CreateSessionRequest */
         CreateSessionRequest: {

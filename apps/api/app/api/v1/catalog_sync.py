@@ -175,7 +175,11 @@ async def create_item(
     the Foodics mapping; marketplace mappings record on the next menu read.
     """
     result = await catalog_sync.create_menu_item(
-        db, product_id=UUID(payload.product_id), dry_run=payload.dry_run
+        db,
+        product_id=UUID(payload.product_id),
+        target=payload.target,
+        branch_id=UUID(payload.branch_id) if payload.branch_id else None,
+        dry_run=payload.dry_run,
     )
     if not payload.dry_run:
         await audit_service.log_action(

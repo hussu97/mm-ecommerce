@@ -534,6 +534,31 @@ async def test_create_item_is_gated_off_by_default(mock_db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_create_dispatch_gates_unverified_and_worker_channels(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.core.exceptions import BadRequestError
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+
+    # A product must resolve first; mock_db returns one.
+    class _P:
+        id = "p1"
+        name = "X"
+        sku = "s"
+        base_price = Decimal("10")
+        category = None
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _P()
+    # Keeta/Deliveroo → headed worker; Talabat/Noon → not yet verified.
+    for target in ("keeta", "deliveroo"):
+        with pytest.raises(BadRequestError, match="headed worker"):
+            await catalog_sync.create_menu_item(mock_db, product_id="p1", target=target)
+    for target in ("talabat", "noon"):
+        with pytest.raises(BadRequestError, match="not yet verified"):
+            await catalog_sync.create_menu_item(mock_db, product_id="p1", target=target)
+
+
+@pytest.mark.asyncio
 async def test_foodics_create_product_enforces_parity_and_grubtech(monkeypatch):
     from app.services.providers import foodics_provider as fp
 
