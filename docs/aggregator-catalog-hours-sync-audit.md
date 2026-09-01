@@ -511,3 +511,59 @@ id → product, approved). No parallel table, no per-channel create.
 **Non-Foodics outlets** (Al Karama, Silicon Oasis) still need a direct-portal create —
 a later phase. `create_menu_item` refuses those targets with a clear message rather than
 POSTing an unverified payload.
+
+# Autonomy + the remaining open points (2026-09-01)
+
+## Autonomous sweep — DONE (commit bc913b95)
+
+The catalog sync now runs unattended on the **same infrastructure as the ingest** —
+no new scheduler, no cron, no second worker. `run_catalog_sync_scheduler_forever`
+mirrors the rolling-sales loop (wall-clock honest, DB-backed boot catch-up off the
+freshest snapshot's `fetched_at`, per-tick isolation) and is registered as a third
+child under the ingest's leader election, so exactly one API slot ticks and blue/green
+hands it over for free. `run_catalog_sync_once` refreshes each target's menu/hours,
+refreshes the mapping proposals, and stores the drift — per-target isolated,
+commit-per-target. It approves mappings only when writes are on; reads-only leaves them
+proposals. Gated by `CATALOG_SYNC_SWEEP_MINUTES` (0 = off default; W9 five-place).
+
+## Creation, per channel — the honest state
+
+| Channel | Create path | State |
+|---|---|---|
+| **Foodics** (→ all 5, integrated branches) | `POST /core-api/creating` product + Grubtech subgroup + price-tag | **Built + verified** (verb, subgroups, methods read live); dry-run gated |
+| **Careem / Talabat / Noon** (non-Foodics outlets) | Extend the reader's session-replay to a **POST** (reuse TLS-impersonation, no browser) | Endpoint is the POST sibling of the read; **exact payload unverified** — confirming it needs one controlled create, so not shipped as a guess |
+| **Keeta / Deliveroo** | Headed-worker browser action (Keeta H5guard, Deliveroo separate login) | Needs a new worker `JobKind` + dispatch + trigger (the worker's action set is a fixed enum — recon-confirmed); not built |
+
+The two integrated branches — where automated sync actually matters — are fully covered
+by the Foodics master path. Direct-portal creation only affects the non-Foodics outlets,
+which are hand-edited today.
+
+## Hours readers — Careem shape verified, day-origin is the open question
+
+`_HOURS_READERS` is still empty. Careem's `food-outlet-operational-hours` was read live
+2026-09-01 and returns a clean weekly shape:
+```
+[ {"day": 1..7, "active": 0|1, "shifts": [{"start_time":"HH:MM:SS","end_time":"HH:MM:SS"}]} , ... ]
+```
+`active:0` = closed that day; split shifts are multiple entries. **The one thing not
+yet pinned is the day-origin** (is `day 1` Saturday, Sunday or Monday?). MM stores only a
+single daily `opening_from`/`opening_to` — no per-weekday closed day — so our own data
+can't disambiguate it, and the live data only *hints* (a late `12:05` open on `day 7`
+looks like a UAE Friday, which would make `day 1` = Saturday). Mapping `day → weekday`
+(MM's `0=Sun…6=Sat`) on a hunch is exactly the silent bug the canon warns against — a
+wrong origin would eventually close a branch on the wrong day — so the reader waits on a
+one-time confirmation of the origin (the Careem portal labels the days, or the operator
+states their trading week).
+
+## The decision that unblocks the rest
+
+Everything left forks on a choice that is genuinely the operator's, because it touches a
+live production menu or is a large build:
+1. **Direct-portal creates (Careem/Talabat/Noon):** confirm the create payload by one
+   controlled *create-then-immediately-delete* per channel (a brief live mutation), which
+   captures the exact request — then the gated writers ship verified. Reuses the existing
+   session replay; no browser.
+2. **Keeta/Deliveroo creates + Keeta/Deliveroo menu reads:** build the headed-worker
+   action (new `JobKind`), the only way past H5guard / the separate Deliveroo login.
+3. **Hours:** confirm the Careem day-origin, then the hours readers (Careem, then
+   Talabat/Noon) ship and feed the same autonomous sweep.
