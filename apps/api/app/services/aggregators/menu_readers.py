@@ -683,12 +683,76 @@ def parse_keeta_today_hours(shop: Any, weekday: int) -> NormalizedHours:
     return NormalizedHours(source="keeta", shifts=shifts)
 
 
+# ── Deliveroo menu + hours parsers ────────────────────────────────────────────
+# Discovered live 2026-09-01 from the hub session (which auto-exchanges a webrom
+# token — no separate credentials): the menu is
+# `GET api.webrom.restaurants.deliveroo.com/rom/{rst}/menu` →
+#   {categories:[{name, items:[{id, name, description, price, status}]}]}
+# and hours are `GET partner-hub.deliveroo.com/api/restaurants/{rst}/opening_hours` →
+#   {hours:[{day_of_week, local_start_time, local_end_time}]}.
+# Money: `price` is in MAJOR AED units (cake slice 35, 9-piece box 145 — matched to
+# the real MM prices), so no minor-unit scaling. Availability: status == "ACTIVE".
+# Day origin: `day_of_week` 0=Sunday…6=Saturday (the Fri=12:00 / Sat=14:00 / Sun=17:00
+# progression only fits 0=Sunday) — which IS MM's weekday, so no shift.
+
+
+def parse_deliveroo_menu(raw: Any) -> NormalizedMenu:
+    """The webrom `/rom/{rst}/menu` payload → the channel-neutral menu. Pure,
+    unit-tested against the real captured shape."""
+    cats: list[NormalizedCategory] = []
+    categories = raw.get("categories") if isinstance(raw, dict) else raw
+    for cat in categories or []:
+        if not isinstance(cat, dict):
+            continue
+        items: list[NormalizedItem] = []
+        for it in cat.get("items") or []:
+            if not isinstance(it, dict) or not it.get("name"):
+                continue
+            price = it.get("price")
+            items.append(
+                NormalizedItem(
+                    name=it["name"],
+                    external_id=str(it["id"]) if it.get("id") is not None else None,
+                    description=it.get("description"),
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=str(it.get("status", "ACTIVE")).upper() == "ACTIVE",
+                )
+            )
+        cats.append(
+            NormalizedCategory(
+                cat.get("name", ""),
+                external_id=str(cat["id"]) if cat.get("id") is not None else None,
+                items=items,
+            )
+        )
+    return NormalizedMenu(source="deliveroo", categories=cats)
+
+
+def parse_deliveroo_hours(raw: Any) -> NormalizedHours:
+    """The `opening_hours` payload → the channel-neutral schedule. `day_of_week`
+    0=Sunday…6=Saturday is MM's weekday exactly (no shift)."""
+    shifts: list[NormalizedShift] = []
+    rows = raw.get("hours") if isinstance(raw, dict) else raw
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        day = row.get("day_of_week")
+        if not isinstance(day, int) or not (0 <= day <= 6):
+            continue
+        opens, closes = row.get("local_start_time"), row.get("local_end_time")
+        if opens and closes:
+            shifts.append(NormalizedShift(day, _hhmm(opens), _hhmm(closes)))
+    shifts.sort(key=lambda s: (s.weekday, s.opens))
+    return NormalizedHours(source="deliveroo", shifts=shifts)
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
 # Foodics (Grubtech price tag), Careem (catalog REST), Talabat (DeliveryHero
 # vendor-api) and Noon (RMS /menu/details) are read live from the real session.
-# Keeta is parsed from the headed worker's push (H5guard blocks a server call);
-# Deliveroo's menu is behind a separate Menus login — still a headed capture.
+# Keeta and Deliveroo are parsed from the headed worker's push (anti-bot blocks a
+# server call) — Deliveroo's menu/hours endpoints are verified (parsers above);
+# the worker fetch + push pipeline is the remaining wiring.
 _MENU_READERS: dict[str, Any] = {
     TARGET_FOODICS: _read_foodics_menu,
     "careem": _read_careem_menu,

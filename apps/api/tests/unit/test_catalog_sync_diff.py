@@ -759,3 +759,80 @@ def test_keeta_today_hours_parser_converts_seconds():
         weekday=3,
     )
     assert closed.shifts == []
+
+
+# ── Deliveroo menu + hours parsers (real captured shapes, 2026-09-01) ──────────
+
+
+def test_deliveroo_menu_parser_real_shape():
+    from app.services.aggregators.menu_readers import parse_deliveroo_menu
+
+    raw = {
+        "categories": [
+            {
+                "id": 967061056,
+                "name": "New In",
+                "items": [
+                    {
+                        "id": 2773044565,
+                        "name": "Chocolate & Whipped Salted Caramel Cake Slice",
+                        "description": "Chocolate cake…",
+                        "price": 35,
+                        "status": "ACTIVE",
+                    },
+                    {
+                        "id": 111,
+                        "name": "9 Pieces",
+                        "price": 145,
+                        "status": "ACTIVE",
+                    },
+                    {
+                        "id": 222,
+                        "name": "Snoozed Slice",
+                        "price": 35,
+                        "status": "SNOOZED",
+                    },
+                ],
+            }
+        ]
+    }
+    menu = parse_deliveroo_menu(raw)
+    assert menu.source == "deliveroo"
+    items = {i.name: i for i in menu.categories[0].items}
+    # price is MAJOR AED units — 35 stays 35, never 0.35 or 3500 (money-bug guard).
+    assert items["Chocolate & Whipped Salted Caramel Cake Slice"].price == Decimal("35")
+    assert items["9 Pieces"].price == Decimal("145")
+    assert items["Chocolate & Whipped Salted Caramel Cake Slice"].is_available is True
+    # status != ACTIVE (snoozed) reads as unavailable.
+    assert items["Snoozed Slice"].is_available is False
+
+
+def test_deliveroo_hours_parser_day_origin():
+    from app.services.aggregators.menu_readers import parse_deliveroo_hours
+
+    # Real shape: day_of_week 0=Sunday…6=Saturday (= MM weekday, no shift).
+    raw = {
+        "hours": [
+            {
+                "day_of_week": 0,
+                "local_start_time": "17:00:00",
+                "local_end_time": "22:00:00",
+            },
+            {
+                "day_of_week": 1,
+                "local_start_time": "08:00:00",
+                "local_end_time": "22:00:00",
+            },
+            {
+                "day_of_week": 5,
+                "local_start_time": "12:00:00",
+                "local_end_time": "22:00:00",
+            },
+        ]
+    }
+    hours = parse_deliveroo_hours(raw)
+    assert hours.source == "deliveroo"
+    by_weekday = {s.weekday: (s.opens, s.closes) for s in hours.shifts}
+    assert by_weekday[0] == ("17:00", "22:00")  # Sunday
+    assert by_weekday[1] == ("08:00", "22:00")  # Monday
+    assert by_weekday[5] == ("12:00", "22:00")  # Friday (later start, prayer day)
