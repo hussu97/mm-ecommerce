@@ -423,9 +423,7 @@ class NoonClient(BaseAggregatorClient):
     #   {"0,1,2,3":[["08:00:00","22:00:00"]], "4":[["12:01:00","22:00:00"]], ...}
     # Keys are day indices (comma-joined for shared schedules); the response's own
     # `periodsDesc` proves the origin — day 0=Mon … 6=Sun.
-    async def get_outlet_details(
-        self, session: LoadedSession, outlet_code: str
-    ) -> Any:
+    async def get_outlet_details(self, session: LoadedSession, outlet_code: str) -> Any:
         return await self.request_json(
             session,
             "POST",
