@@ -416,6 +416,24 @@ class NoonClient(BaseAggregatorClient):
             json_body={"menuCode": menu_code},
         )
 
+    # ── hours (catalog sync) ─────────────────────────────────────────────────
+    # Verified live 2026-09-01 from the portal: the outlet detail carries the
+    # weekly schedule. POST /_food-restaurant/restaurant/outlet/details
+    # {outletCode, version:0} -> data.schedule.periods:
+    #   {"0,1,2,3":[["08:00:00","22:00:00"]], "4":[["12:01:00","22:00:00"]], ...}
+    # Keys are day indices (comma-joined for shared schedules); the response's own
+    # `periodsDesc` proves the origin — day 0=Mon … 6=Sun.
+    async def get_outlet_details(
+        self, session: LoadedSession, outlet_code: str
+    ) -> Any:
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/restaurant/outlet/details",
+            headers=self._rms_headers(session),
+            json_body={"outletCode": outlet_code, "version": 0},
+        )
+
     # ── anti-bot ─────────────────────────────────────────────────────────────
     def _is_auth_failure(self, response: Any) -> bool:
         """A dead cookie *or* an Akamai block. Both need a browser, not a retry."""

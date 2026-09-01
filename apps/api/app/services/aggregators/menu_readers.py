@@ -31,6 +31,7 @@ readers land newest-value-first:
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 
@@ -50,6 +51,8 @@ from app.services.aggregators.menu_normalized import (
     NormalizedShift,
 )
 from app.services.providers.aggregator_base import AggregatorUnavailableError
+
+logger = logging.getLogger(__name__)
 
 #: How each target's read is obtained, stamped onto the snapshot. The
 #: TLS-impersonated channels answer over http; noon/talabat menu pages may need the
@@ -265,10 +268,18 @@ async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     products_by_cat: dict[str, Any] = {}
     for cat in subs:
         cid = str(cat.get("id")) if cat.get("id") is not None else ""
-        if cid:
+        if not cid:
+            continue
+        try:
             products_by_cat[cid] = await cp.provider.list_catalog_products(
                 session, company, brand, outlet, cid
             )
+        except AggregatorUnavailableError as exc:
+            # A parent/promo category can 404 on `catalog-products` ("unable to
+            # find entity") — verified live on the Barsha outlet. One such category
+            # must not abort the whole outlet's menu read; it contributes no items.
+            logger.warning("careem: category %s has no products (%s)", cid, exc)
+            products_by_cat[cid] = {"products": []}
     return parse_careem_catalog(categories, products_by_cat)
 
 
@@ -479,6 +490,73 @@ async def _read_noon_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     return parse_noon_menu(details)
 
 
+# ── Noon hours reader ─────────────────────────────────────────────────────────
+# `restaurant/outlet/details` → `data.schedule.periods`: {dayIdxKey: [[open,close]]}.
+# Keys are day indices, comma-joined for a shared schedule ("0,1,2,3"). The
+# response's own `periodsDesc` proves the origin: day 0=Mon … 6=Sun. MM weekday is
+# 0=Sun…6=Sat, so MM weekday = (noon_day + 1) % 7. Verified live 2026-09-01.
+
+
+def parse_noon_hours(details: Any) -> NormalizedHours:
+    """Noon outlet-detail `schedule.periods` → the channel-neutral weekly schedule."""
+    data = details.get("data") if isinstance(details, dict) else details
+    schedule = (data or {}).get("schedule") if isinstance(data, dict) else None
+    periods = (schedule or {}).get("periods") if isinstance(schedule, dict) else None
+    shifts: list[NormalizedShift] = []
+    if isinstance(periods, dict):
+        for key, ranges in periods.items():
+            # A key is one or more comma-joined noon day indices (0=Mon…6=Sun).
+            days = []
+            for part in str(key).split(","):
+                part = part.strip()
+                if part.isdigit() and 0 <= int(part) <= 6:
+                    days.append((int(part) + 1) % 7)  # → MM weekday (0=Sun…6=Sat)
+            for weekday in days:
+                for rng in ranges or []:
+                    if (
+                        isinstance(rng, (list, tuple))
+                        and len(rng) >= 2
+                        and rng[0]
+                        and rng[1]
+                    ):
+                        shifts.append(
+                            NormalizedShift(weekday, _hhmm(rng[0]), _hhmm(rng[1]))
+                        )
+    shifts.sort(key=lambda s: (s.weekday, s.opens))
+    return NormalizedHours(source="noon", shifts=shifts)
+
+
+async def _noon_outlet_code(db: AsyncSession, branch_id: Any) -> str:
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorBranchMap
+
+    row = (
+        await db.execute(
+            select(AggregatorBranchMap).where(
+                AggregatorBranchMap.channel == "noon",
+                AggregatorBranchMap.branch_id == branch_id,
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.external_outlet_id:
+        raise AggregatorUnavailableError(
+            f"no active noon outlet map for branch {branch_id}"
+        )
+    return row.external_outlet_id
+
+
+async def _read_noon_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
+    from app.services.aggregators import session_store
+    from app.services.providers import noon_provider as np
+
+    session = await session_store.load(db, "noon")
+    outlet_code = await _noon_outlet_code(db, branch_id)
+    details = await np.provider.get_outlet_details(session, outlet_code)
+    return parse_noon_hours(details)
+
+
 # ── Keeta menu (via the headed worker's snapshot) ─────────────────────────────
 # Keeta signs every menu XHR with an in-browser `mtgsig` (H5guard), so the menu
 # API cannot be called server-side — the headed worker fetches it and pushes the
@@ -587,4 +665,5 @@ _MENU_READERS: dict[str, Any] = {
 #: same way before they can be trusted to open/close a branch on the right day.
 _HOURS_READERS: dict[str, Any] = {
     "careem": _read_careem_hours,
+    "noon": _read_noon_hours,
 }

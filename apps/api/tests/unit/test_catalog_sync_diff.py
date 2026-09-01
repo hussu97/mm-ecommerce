@@ -662,6 +662,35 @@ def test_careem_hours_maps_day_origin_and_closed_days():
     assert hours.source == "careem"
 
 
+# ── Noon hours parser (real captured shape, day origin from periodsDesc) ──────
+
+
+def test_noon_hours_parser_maps_day_origin():
+    from app.services.aggregators.menu_readers import parse_noon_hours
+
+    # Real shape (captured live 2026-09-01): periods keyed by day index, comma-joined
+    # for shared schedules; periodsDesc proves day 0=Mon … 6=Sun.
+    details = {
+        "data": {
+            "schedule": {
+                "periods": {
+                    "0,1,2,3": [["08:00:00", "22:00:00"]],  # Mon-Thu
+                    "4": [["12:01:00", "22:00:00"]],  # Fri
+                    "6": [["17:00:00", "22:00:00"]],  # Sun
+                }
+            }
+        }
+    }
+    hours = parse_noon_hours(details)
+    by_weekday = {s.weekday: (s.opens, s.closes) for s in hours.shifts}
+    # Noon 0=Mon → MM weekday 1; Noon 4=Fri → MM 5; Noon 6=Sun → MM 0.
+    assert by_weekday[1] == ("08:00", "22:00")  # Monday
+    assert by_weekday[5] == ("12:01", "22:00")  # Friday
+    assert by_weekday[0] == ("17:00", "22:00")  # Sunday
+    assert 6 not in by_weekday  # Saturday (noon day 5) not listed → closed
+    assert hours.source == "noon"
+
+
 # ── Keeta menu parser (real captured shapes) ──────────────────────────────────
 
 
