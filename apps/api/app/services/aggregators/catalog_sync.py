@@ -26,18 +26,20 @@ outlets target the portal; hours fan out per portal for every outlet.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import advisory_lock
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.models.aggregator import AGGREGATOR_CHANNELS
 from app.models.branch import Branch, BranchWeeklyHours
@@ -795,6 +797,114 @@ async def integrated_branches(db: AsyncSession) -> list[Branch]:
     return [b for b in branches if b.has_foodics]
 
 
+# ── Autonomous sweep (reuses the ingest's cron + isolation + locking) ──────────
+
+
+async def run_catalog_sync_once(
+    db: AsyncSession, *, branch_ids: list[Any] | None = None
+) -> dict[str, Any]:
+    """One unattended pass: read every target's menu/hours, refresh the mapping
+    proposals, store the drift — and, only when writes are enabled, approve the
+    confident mappings. The autonomous counterpart to the admin's Refresh + Resolve
+    buttons, built to be dropped onto the same scheduler the ingest uses.
+
+    Safe by construction: it 503-guards on `CATALOG_SYNC_READ_ENABLED` (via
+    `refresh_all`), is per-target isolated (one dead marketplace session never
+    blocks the rest — `refresh_all`/`compute_drift_all` already swallow and record),
+    and never writes a portal. The mapping *approval* step is gated behind
+    `CATALOG_SYNC_ENABLED`: approving an exact match changes order reconciliation, so
+    with only reads on it stays proposals for a human; with writes on the sweep also
+    approves the definitionally-correct matches. Idempotent; returns a per-branch,
+    per-target summary for the cron log.
+    """
+    if not settings.CATALOG_SYNC_READ_ENABLED:
+        return {"skipped": "reads disabled (CATALOG_SYNC_READ_ENABLED)"}
+    if branch_ids:
+        branches = [
+            b
+            for b in await integrated_branches(db)
+            if str(b.id) in {str(x) for x in branch_ids}
+        ]
+    else:
+        branches = await integrated_branches(db)
+
+    out: dict[str, Any] = {"branches": {}, "mappings": {}}
+    for branch in branches:
+        read = await refresh_all(db, branch_id=branch.id)
+        drift = await compute_drift_all(db, branch_id=branch.id)
+        # compute_drift_all writes onto the snapshots; persist alongside the reads.
+        await db.commit()
+        out["branches"][str(branch.id)] = {"read": read, "drift_targets": list(drift)}
+
+    if settings.CATALOG_SYNC_ENABLED:
+        # Writes on ⇒ approve the confident mappings from the freshest snapshots.
+        for target in SYNC_TARGETS:
+            try:
+                out["mappings"][target] = await resolve_and_approve_mappings(
+                    db, target=target
+                )
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001 — one target must not stop the rest
+                await db.rollback()
+                logger.warning("catalog-sync resolve %s: %s", target, exc)
+                out["mappings"][target] = {"error": str(exc)}
+    else:
+        out["mappings"] = {"skipped": "writes off — mappings left as proposals"}
+    return out
+
+
+async def _last_sweep_at(db: AsyncSession) -> datetime | None:
+    """The freshest snapshot's `fetched_at` — the durable trail for boot catch-up.
+
+    Catalog sync has no `aggregator_sync_run` row of its own; the snapshots ARE its
+    trail. Reading the max fetched_at from the DB (not an in-memory timer) is what
+    lets the sweep's boot catch-up survive a redeploy — an in-memory timer resets to
+    a full interval on every restart, starving a sleep-first loop."""
+    return await db.scalar(select(func.max(AggregatorMenuSnapshot.fetched_at)))
+
+
+async def run_catalog_sync_scheduler_forever() -> None:
+    """The autonomous catalog-sync sweep, every `CATALOG_SYNC_SWEEP_MINUTES`.
+
+    A carbon copy of the rolling-sales scheduler's shape (wall-clock honest, with a
+    DB-backed boot catch-up so a redeploy cannot push the next run a full interval
+    into the future), pointed at `run_catalog_sync_once`. `<= 0` disables it.
+    Registered under the aggregator scheduler leader, so exactly one API slot ticks
+    and a blue/green cutover hands it over for free. Cancellation-safe; one bad tick
+    is logged and the loop lives on.
+    """
+    interval = settings.CATALOG_SYNC_SWEEP_MINUTES
+    if interval <= 0:
+        logger.info("catalog-sync sweep disabled (CATALOG_SYNC_SWEEP_MINUTES <= 0)")
+        return
+    logger.info("catalog-sync sweep started (every %dm)", interval)
+    try:
+        if settings.CATALOG_SYNC_READ_ENABLED:
+            async with AsyncSessionFactory() as db:
+                last = await _last_sweep_at(db)
+            if last is None or _utcnow() - last >= timedelta(minutes=interval):
+                logger.info(
+                    "catalog-sync sweep: last run older than interval — catching up"
+                )
+                async with AsyncSessionFactory() as db:
+                    await run_catalog_sync_once(db)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — a failed catch-up must not kill the loop
+        logger.exception("catalog-sync sweep catch-up failed")
+
+    while True:
+        try:
+            await asyncio.sleep(interval * 60)
+            if settings.CATALOG_SYNC_READ_ENABLED:
+                async with AsyncSessionFactory() as db:
+                    await run_catalog_sync_once(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one bad tick must not stop them all
+            logger.exception("catalog-sync sweep tick failed")
+
+
 __all__ = [
     "build_mm_menu",
     "build_mm_hours",
@@ -806,6 +916,8 @@ __all__ = [
     "plan_push",
     "create_menu_item",
     "resolve_and_approve_mappings",
+    "run_catalog_sync_once",
+    "run_catalog_sync_scheduler_forever",
     "integrated_branches",
     "AGGREGATOR_CHANNELS",
 ]

@@ -581,3 +581,24 @@ async def test_foodics_category_id_by_name_is_case_insensitive(monkeypatch):
     assert await client.category_id_by_name("cakes") == "C1"
     assert await client.category_id_by_name("BROWNIES") == "C2"
     assert await client.category_id_by_name("Nope") is None
+
+
+# ── Autonomous sweep ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_when_reads_disabled(mock_db, monkeypatch):
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_READ_ENABLED", False)
+    out = await catalog_sync.run_catalog_sync_once(mock_db)
+    assert "skipped" in out
+
+
+@pytest.mark.asyncio
+async def test_sweep_scheduler_returns_immediately_when_disabled(monkeypatch):
+    import app.core.config as cfg
+
+    # <= 0 disables the loop — it must return, not spin.
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_SWEEP_MINUTES", 0)
+    await catalog_sync.run_catalog_sync_scheduler_forever()

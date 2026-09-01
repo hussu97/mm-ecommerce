@@ -528,6 +528,13 @@ class Settings(BaseSettings):
     #: drift to reconcile (no seasonal-uplift exceptions). Kept as a dial so the
     #: policy is one edit, not scattered through the diff.
     CATALOG_SYNC_ENFORCE_PRICE_PARITY: bool = True
+    #: Cadence (minutes) of the autonomous catalog-sync sweep — the unattended
+    #: read → mapping-propose → drift pass, mirroring the rolling sales refresh.
+    #: `<= 0` disables it (the default), so the feature is opt-in even once reads
+    #: are on. The sweep is still separately gated: it no-ops unless
+    #: `CATALOG_SYNC_READ_ENABLED`, and only approves mappings when
+    #: `CATALOG_SYNC_ENABLED`. Runs on the leader API slot only.
+    CATALOG_SYNC_SWEEP_MINUTES: int = 0
 
     # ── Slider (courier) ──────────────────────────────────────────────────────
     #: The third courier, and the same contract as the other two: an empty key

@@ -148,6 +148,7 @@ x-api-environment: &api-environment
   CATALOG_SYNC_READ_ENABLED: ${CATALOG_SYNC_READ_ENABLED:-false}
   CATALOG_SYNC_ENABLED: ${CATALOG_SYNC_ENABLED:-false}
   CATALOG_SYNC_ENFORCE_PRICE_PARITY: ${CATALOG_SYNC_ENFORCE_PRICE_PARITY:-true}
+  CATALOG_SYNC_SWEEP_MINUTES: ${CATALOG_SYNC_SWEEP_MINUTES:-0}
   # ── Slider ──────────────────────────────────────────────────────────
   # The third courier. Every one of these has to be here and not only in
   # `.env`: this block is an allow-list, and a variable the VM holds but

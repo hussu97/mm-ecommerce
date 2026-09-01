@@ -2224,9 +2224,19 @@ async def run_aggregator_schedulers_forever() -> None:
                     continue
                 announced_standby = False
                 logger.info("aggregator scheduler: leadership acquired on this slot")
+                # Late import: the catalog sweep lives in its own module and is a
+                # peer scheduler, not part of the ingest core — a top-level import
+                # would couple ingest to the whole catalog-sync graph.
+                from app.services.aggregators.catalog_sync import (
+                    run_catalog_sync_scheduler_forever,
+                )
+
                 children = [
                     asyncio.create_task(run_scheduler_forever()),
                     asyncio.create_task(run_sales_refresh_scheduler_forever()),
+                    # Catalog & hours sweep — self-disabling unless
+                    # CATALOG_SYNC_SWEEP_MINUTES > 0, so it is inert by default.
+                    asyncio.create_task(run_catalog_sync_scheduler_forever()),
                 ]
                 try:
                     # The child loops never return on their own; this blocks until

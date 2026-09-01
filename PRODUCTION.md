@@ -953,6 +953,7 @@ it here and redeploying.
 | `CATALOG_SYNC_READ_ENABLED` | `false` | Gate on the catalog-sync **read** side (fetch each integrator's live menu/hours + compute drift). Off until watched — it opens marketplace sessions. Storefront only |
 | `CATALOG_SYNC_ENABLED` | `false` | Master gate on every catalog-sync **write** (Foodics Grubtech group/price tag, per-portal menu, hours fan-out). Off keeps the push endpoints 503; even on, Phase-1 push is a dry run |
 | `CATALOG_SYNC_ENFORCE_PRICE_PARITY` | `true` | Policy: the Foodics Grubtech price-tag price must equal the product price — any difference is flagged drift (no seasonal-uplift exceptions) |
+| `CATALOG_SYNC_SWEEP_MINUTES` | `0` | Cadence (minutes) of the autonomous catalog-sync sweep (read → propose → drift). `0` disables it; still no-ops unless `CATALOG_SYNC_READ_ENABLED`, and only approves mappings when `CATALOG_SYNC_ENABLED`. Leader API slot only |
 
 **Keeta daily browser pull.** Keeta is the only channel that needs a browser (its
 requests are `mtgsig`-signed in-page). Deliveroo and the other httpx channels

@@ -159,6 +159,7 @@ jobs:
           CATALOG_SYNC_READ_ENABLED=${{ secrets.CATALOG_SYNC_READ_ENABLED || 'false' }}
           CATALOG_SYNC_ENABLED=${{ secrets.CATALOG_SYNC_ENABLED || 'false' }}
           CATALOG_SYNC_ENFORCE_PRICE_PARITY=${{ secrets.CATALOG_SYNC_ENFORCE_PRICE_PARITY || 'true' }}
+          CATALOG_SYNC_SWEEP_MINUTES=${{ secrets.CATALOG_SYNC_SWEEP_MINUTES || '0' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}
           SLIDER_ACCOUNT_ID=${{ secrets.SLIDER_ACCOUNT_ID }}
           SLIDER_TIMEOUT_SECONDS=${{ secrets.SLIDER_TIMEOUT_SECONDS || '8' }}
