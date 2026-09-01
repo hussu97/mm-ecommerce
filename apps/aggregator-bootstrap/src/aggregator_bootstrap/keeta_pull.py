@@ -337,7 +337,13 @@ async def fetch_keeta_menu(context: Any) -> list[dict]:
     page = await context.new_page()
     payloads: list[dict] = []
     try:
-        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded")
+        await page.goto(
+            KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        # Give the SPA a beat to boot and populate LOGIN_ACCOUNTID + SHOP_IDS —
+        # exactly like fetch_keeta_orders. Without this the read fires before the
+        # portal JS sets them and looks "signed out" (seen on the first live run).
+        await page.wait_for_timeout(6_000)
         account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
         if not account_id:
             logger.error("keeta menu: in-page session signed out (no LOGIN_ACCOUNTID)")
