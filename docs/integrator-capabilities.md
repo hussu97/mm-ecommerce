@@ -27,7 +27,7 @@ not just captured shapes.
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
 | **Noon** | ✅ verified | ✅ verified⁵ | ✅ verified⁸ | ✅ verified⁸ | ✅ (existing) |
 | **Keeta** | ✅ built⁴ | ✅ verified⁹ | ✅ verified⁷ | ✅ verified¹⁰ | ✅ (existing) |
-| **Deliveroo** | ⏸ headed⁶ | ⏸ headed | ⏸ headed | ⏸ | ✅ (existing) |
+| **Deliveroo** | ⚙ coded⁶ | ⚙ coded⁶ | ⏸ headed | ⏸ | ✅ (existing) |
 
 ¹ Foodics carries no aggregator hours — hours are per-marketplace.
 ² Careem menu read was **fixed twice**: it omitted the required `merchantId` (400),
@@ -44,9 +44,23 @@ not just captured shapes.
   `{outletCode, version:0}` → `data.schedule.periods` (day-index keys, comma-joined
   for shared days). Day origin **proven by the response's own `periodsDesc`**:
   0=Mon…6=Sun, so MM weekday = `(noon_day+1)%7`. `parse_noon_hours`, unit-tested.
-⁶ Deliveroo's menu editor is a separate login **and** behind Cloudflare (bot
-  challenge — not bypassed); its endpoint must be captured on the worker's real
-  Chrome (§6).
+⁶ **Deliveroo menu + hours — DECODED (2026-09-01), coded + tested, not yet deployed.**
+  Earlier belief (separate menu login) was wrong: the Partner Hub session
+  **auto-exchanges a webrom token** (`partner-hub.deliveroo.com/api-gw/webrom/logon-pass`),
+  so both reads work through the existing headed session (which already passes
+  Cloudflare for finance):
+  • menu `GET api.webrom.restaurants.deliveroo.com/rom/{rst}/menu`
+    → `{categories:[{name, items:[{id,name,description,price,status}]}]}`
+  • hours `GET partner-hub.deliveroo.com/api/restaurants/{rst}/opening_hours`
+    → `{hours:[{day_of_week, local_start_time, local_end_time}]}`.
+  Money: `price` is MAJOR AED units (cake slice 35, 9-piece box 145 — matched to real
+  MM prices), no minor-unit scaling. Day origin: `day_of_week` 0=Sunday = MM weekday.
+  `parse_deliveroo_menu` / `parse_deliveroo_hours` + unit tests (pass);
+  `deliveroo_pull.fetch_deliveroo_menu_hours` (captures both on the Opening-Hours page).
+  Read path proven live. **Not deployed** — held during the GrubOps/Cognito incident (a
+  deploy restarts the API container). Remaining: push endpoint + snapshot store +
+  `_read_deliveroo_*` registration, then one deploy ships it. Create/delete still need
+  the write endpoint (a live save capture on the menu editor).
 ⁷ **Keeta create — VERIFIED end-to-end.** `POST /api/sailorProduct/spu/w/saveSpu`,
   proven through the wired `create_keeta_spu` + `delete_keeta_spu`: create `code 0`,
   item found in the menu read, `deleteSpu code 0`, re-read gone — **no orphan** (clean
@@ -371,13 +385,17 @@ Every channel's items/options/categories map to MM through the single
 | **Talabat create/delete** | Import-based (per-item POST 405s); no portal/write access here | Capture the DH catalog-import from the portal; implement + create-then-delete |
 | **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
 | **Keeta weekly hours** | Today's window is read + verified (§footnote 9); a full 7-day schedule isn't exposed to this portal account | Only if a weekly schedule is needed: find the settings-page schedule endpoint (headed) — else today's window stands |
-| **Deliveroo** (menu/hours/create) | Separate login + Cloudflare | Capture the menu-editor session on the worker's real Chrome; `DELIVEROO_MENU`/create jobs (§6) |
+| **Deliveroo menu + hours** | Decoded, parsers + worker fetch coded & tested; NOT deployed (held for the GrubOps incident) | Add the push endpoint + snapshot store + `_read_deliveroo_*` registration; one deploy ships it |
+| **Deliveroo create/delete** | Read decoded; the write (menu-editor save) endpoint not captured | Capture one live save on the `rs-hub.deliveroo.com` menu editor → implement + verify |
 
-**Keeta is now complete** (menu + hours + create + delete, all verified live). The two
-remaining integrators are blocked by their own architecture, not by more engineering
-here: **Talabat** create/hours live on DirectHub's separate service (no per-item API for
-this account), and **Deliveroo** needs its separate menu-editor credentials behind a
-Cloudflare challenge. Both need an external input (DH access / Deliveroo creds), not a
-harder headless attempt.
+**Keeta is now complete** (menu + hours + create + delete, all verified live and
+deployed). **Deliveroo menu + hours** turned out reachable after all — decoded, coded,
+and tested; only the deploy is pending (held during the GrubOps/Cognito incident, since
+a deploy restarts the API container). **Talabat** create/hours are the one genuinely
+external-gated area: its product API is read-only (`OPTIONS`→GET-only, `POST`→405) and
+its writes/hours live behind the partner-app SPA (`/menu-management-v2`,
+`/opening_times_global` — Next.js `.data` + `vagw-api` GraphQL) with no safe off-shelf
+test path like Keeta/Deliveroo had.
 
-Everything not in this table is verified, shipped, and deployed to production.
+Everything marked ✅ is verified, shipped, and deployed to production; ⚙ is coded +
+tested and awaiting the post-incident deploy.
