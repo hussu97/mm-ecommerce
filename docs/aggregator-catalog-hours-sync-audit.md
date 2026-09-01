@@ -531,7 +531,8 @@ proposals. Gated by `CATALOG_SYNC_SWEEP_MINUTES` (0 = off default; W9 five-place
 | Channel | Create path | State |
 |---|---|---|
 | **Foodics** (→ all 5, integrated branches) | `POST /core-api/creating` product + Grubtech subgroup + price-tag | **Built + verified** (verb, subgroups, methods read live); dry-run gated |
-| **Careem / Talabat / Noon** (non-Foodics outlets) | Extend the reader's session-replay to a **POST** (reuse TLS-impersonation, no browser) | Endpoint is the POST sibling of the read; **exact payload unverified** — confirming it needs one controlled create, so not shipped as a guess |
+| **Careem** (non-Foodics outlets) | `POST /catalog-products` + `DELETE /catalog-products/{id}` via the session replay (no browser) | **Verified** by a controlled create-then-delete on a live outlet 2026-09-01 (created INACTIVE, deleted, re-read confirmed gone); `create_product`/`delete_product` shipped |
+| **Talabat / Noon** (non-Foodics outlets) | POST sibling of the read | Same approach as Careem; each still needs its own controlled create-then-delete to confirm the payload before shipping |
 | **Keeta / Deliveroo** | Headed-worker browser action (Keeta H5guard, Deliveroo separate login) | Needs a new worker `JobKind` + dispatch + trigger (the worker's action set is a fixed enum — recon-confirmed); not built |
 
 The two integrated branches — where automated sync actually matters — are fully covered

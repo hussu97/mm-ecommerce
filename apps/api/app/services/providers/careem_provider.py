@@ -363,6 +363,64 @@ class CareemClient(BaseAggregatorClient):
             f"{self._outlet_base(company, brand, outlet)}/food-outlet-operational-hours",
         )
 
+    # ── create / delete (catalog sync writer, non-Foodics outlets) ───────────
+    # The create/delete surface, confirmed by a controlled create-then-delete on a
+    # live outlet 2026-09-01 (created INACTIVE so never customer-visible, deleted,
+    # and the delete verified by re-read):
+    #   POST   {base}/catalog-products  {name, nameLocalized:{en,ar}, defaultPrice,
+    #          status:"INACTIVE"|"ACTIVE", catalogId, categories:[<categoryId int>]}
+    #          -> 201 {id, name, groups:[]}
+    #   DELETE {base}/catalog-products/{productId}  -> 204
+    # `categories` is a list of integer category ids (NOT objects — the API 400s on
+    # `{id: …}` with "cannot unmarshal object … of type int64"). Only reached behind
+    # `CATALOG_SYNC_ENABLED`.
+
+    async def create_product(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        *,
+        name: str,
+        price: Any,
+        catalog_id: int,
+        category_id: int,
+        name_ar: str | None = None,
+        active: bool = False,
+    ) -> Any:
+        """Create one product on a Careem outlet's catalog. Defaults to INACTIVE so
+        a sync never makes an item live before it has been reviewed."""
+        payload = {
+            "name": name,
+            "nameLocalized": {"en": name, "ar": name_ar or name},
+            "defaultPrice": price,
+            "status": "ACTIVE" if active else "INACTIVE",
+            "catalogId": catalog_id,
+            "categories": [category_id],
+        }
+        return await self.request_json(
+            session,
+            "POST",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-products",
+            json_body=payload,
+        )
+
+    async def delete_product(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        product_id: Any,
+    ) -> Any:
+        """Delete one product from a Careem outlet's catalog (204, no body)."""
+        return await self.request_raw(
+            session,
+            "DELETE",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-products/{product_id}",
+        )
+
     def _billing_accounts(self, outlets: list[dict[str, Any]]) -> list[dict[str, str]]:
         """The `billableId`/`billableType` list the billing endpoints expect —
         the company, the brand, and every merchant, deduped."""
