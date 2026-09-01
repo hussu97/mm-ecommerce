@@ -25,7 +25,7 @@ not just captured shapes.
 | **Foodics** (master) | ✅ verified | n/a¹ | ✅ verified | via Foodics | ✅ (existing) |
 | **Careem** | ✅ verified² | ✅ verified | ✅ verified³ | ✅ verified³ | ✅ (existing) |
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
-| **Noon** | ✅ verified | ✅ verified⁵ | ⏸ RMS-doc | ⏸ | ✅ (existing) |
+| **Noon** | ✅ verified | ✅ verified⁵ | ✅ verified⁸ | ✅ verified⁸ | ✅ (existing) |
 | **Keeta** | ✅ built⁴ | ⏸ endpoint elusive | ⚙ built⁷ | ⏸ | ✅ (existing) |
 | **Deliveroo** | ⏸ headed⁶ | ⏸ headed | ⏸ headed | ⏸ | ✅ (existing) |
 
@@ -57,6 +57,11 @@ not just captured shapes.
   VM shell, and the portal's own UI "Save" click); it needs a settings permission
   rule or the operator running one create-then-delete. Same for Noon (Menu Maker
   save)/Talabat (import) create discovery.
+
+⁸ **Noon create/delete — verified.** The menu is per-item (not a document rewrite):
+  `POST /_food-restaurant/menu/item/create` + `/menu/item/delete`. Confirmed by a
+  controlled create-then-delete on the MM menu (off-shelf, deleted, re-read gone).
+  `noon_provider.create_menu_item`/`delete_menu_item`; `catalog_sync._create_on_noon`.
 
 ⚙ = writer built + deployed; live create-then-delete verification pending the
 write-guard being lifted.
@@ -234,11 +239,21 @@ Verified server-side with the RMS session (2026-09-01). Reader: `_read_noon_hour
 `_HOURS_READERS['noon']`; unit-tested on the real shape. Noon outlets:
 `MLTNGM1GBF`/`MLTNGM9FCH`/`MLTNGMTB9M`/`MLTNGMG2B1` (branch map).
 
-**Create (⏸ pending — document rewrite).** Noon's menu is edited as a **document**
-(the whole menu is saved back), not a per-item REST create, so a create is riskier
-than Careem's and was not live-verified. The dispatch raises "not yet verified" for
-Noon. **To finish:** capture the RMS menu-save request from the portal, implement
-the item-add against the menu document, verify with a controlled create-then-delete.
+**Create + delete (✅ verified by controlled create-then-delete).** Noon's menu is
+**per-item**, not a whole-document rewrite (the earlier assumption was wrong).
+Confirmed live on the MM menu 2026-09-01 — created an off-shelf `ZZ_PROBE` item,
+deleted it, re-read confirmed gone (zero customer impact):
+- <span class="path">POST /_food-restaurant/menu/item/create {menuCode, itemType:"main",
+  nameEn, nameAr, price, categoryCode, isActive:false}</span> → `{status:"success"}`.
+- <span class="path">POST /_food-restaurant/menu/item/delete {menuCode, itemCode}</span>
+  → `{status:"success"}` (needs the `n-restaurantcode` header, which `_rms_headers`
+  supplies; the create tolerates its absence, delete does not).
+- Code: `noon_provider.create_menu_item` / `delete_menu_item`;
+  `catalog_sync._create_on_noon` resolves the MM-managed menu + the noon category by
+  name and creates off-shelf, recording the mapping from the returned item code.
+
+**How to create.** `POST /api/v1/catalog-sync/items {product_id, target:"noon"}`
+(dry-run by default).
 
 ---
 
@@ -321,8 +336,7 @@ Every channel's items/options/categories map to MM through the single
 | Item | Blocker | How to finish |
 |---|---|---|
 | **Keeta create** exec | Writer built + **invocable via CLI**; live write from this session blocked by the write-guard | Operator runs `aggregator-bootstrap create-keeta-item …` (create-then-delete), or lift the write-guard |
-| **Noon create/delete** | Menu is a document rewrite; write-probe blocked | Lift the write-guard; capture the RMS menu-save; implement + create-then-delete |
-| **Talabat create/delete** | Import-based (per-item POST 405s); write-probe blocked | Lift the write-guard; capture the DH catalog-import; implement + create-then-delete |
+| **Talabat create/delete** | Import-based (per-item POST 405s); no portal/write access here | Capture the DH catalog-import from the portal; implement + create-then-delete |
 | **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
 | **Keeta hours read** | Shop-schedule endpoint SPA-resistant | Capture it on the opening-hours sub-tab (VM headed) |
 | **Deliveroo** (menu/hours/create) | Separate login + Cloudflare | Capture the menu-editor session on the worker's real Chrome; `DELIVEROO_MENU`/create jobs (§6) |
