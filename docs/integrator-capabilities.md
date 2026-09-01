@@ -224,11 +224,15 @@ categories:[…], modifiers:[{options:[{itemCode, price}]}]}`. avail = `isActive
 NOT isOos`; options resolve by (name, price). Reader: `_read_noon_menu` /
 `parse_noon_menu`.
 
-**Hours read (⏸ candidate only).** Read-discovery 2026-09-01: `restaurant/list` →
-200 (partner list); `restaurant/details` → **405 on GET (exists, POST-only)** — a
-candidate for the hours/timing but its body + payload are unconfirmed; every plain
-`store/hours|timing|schedule` path 404s. **To finish:** confirm `restaurant/details`
-(POST) contents (or the OMS host) — likely needs the portal network capture.
+**Hours read (✅ verified server-side).** `POST /_food-restaurant/restaurant/outlet/details`
+`{outletCode, version:0}` → `data.schedule.periods`: a map of day-index keys →
+`[[open,close]]` ranges, keys comma-joined for a shared schedule (e.g. `"0,1,2,3"`).
+**The day origin is proven by the response's own `periodsDesc`** — `0=Mon … 6=Sun`
+across two outlets — so MM `weekday = (noon_day + 1) % 7`. Times are `HH:MM:SS`.
+Verified server-side with the RMS session (2026-09-01). Reader: `_read_noon_hours`
+/ `parse_noon_hours` (`noon_provider.get_outlet_details`), registered in
+`_HOURS_READERS['noon']`; unit-tested on the real shape. Noon outlets:
+`MLTNGM1GBF`/`MLTNGM9FCH`/`MLTNGMTB9M`/`MLTNGMG2B1` (branch map).
 
 **Create (⏸ pending — document rewrite).** Noon's menu is edited as a **document**
 (the whole menu is saved back), not a per-item REST create, so a create is riskier
@@ -264,13 +268,25 @@ The parser is unit-tested against the real shapes; the browser step follows the
 proven `keeta_pull` pattern and awaits a live worker run to execute-verify — the
 same status `keeta_pull` itself had when authored.
 
-**Keeta hours / create — the remaining path.** Hours: the shop-level weekly
-schedule endpoint wasn't isolated (the settings page is telemetry-flooded); the
-category `availableTimeDTO.values` (7 per-day ranges, already in the menu push) is
-a candidate but its day-origin/semantics need confirming before it drives a
-branch's open/close. Create is a menu **write** (`sailorProduct` mutation) —
-discoverable the same in-page way, but a live storefront write is not shipped
-unverified.
+**Keeta create — writer BUILT (endpoint + payload verified from reads).** The
+create/update verb is `POST /api/sailorProduct/spu/w/saveSpu` (an empty POST returns
+validation `"Please enter the item name"` — endpoint confirmed non-destructively;
+the Edit form saves through the same verb, so it both creates and updates).
+`build_keeta_spu_payload` builds the body from the verified `listSpu` shape +
+the Edit form fields (name EN/AR, category, `skuList` price/currency, `availableTime`
+Mon–Sun `00:00-23:59`), **off-shelf (`status=0`) by default** so a sync never makes an
+item live unreviewed; `create_keeta_spu` runs it in-page (mtgsig). Payload builder
+unit-tested. Only the **live create-then-delete execution** is pending — the
+storefront write-guard blocks a live write from this session (four paths confirmed:
+API POST, VM shell, the portal's UI "Save" click, and editor navigation); it needs a
+settings permission rule or the operator running one create-then-delete.
+
+**Keeta hours — endpoint elusive.** The shop-level weekly schedule endpoint wasn't
+isolated (the settings SPA route resists capture and `scm/shop/base/info` carries
+only current status, not the weekly schedule). The category `availableTimeDTO`
+(7 per-day ranges, day origin confirmed `0=Mon…6=Sun` from the Edit form) is
+**item-availability, not shop opening hours** — deliberately not used as a hours
+reader because it would misreport shop-hours drift.
 
 ### Deliveroo — separate login + Cloudflare
 
@@ -302,15 +318,17 @@ Every channel's items/options/categories map to MM through the single
 
 | Item | Blocker | How to finish |
 |---|---|---|
-| Talabat create/delete | Import-based; per-item POST 405s | Capture the DH catalog-import job; implement + controlled create-then-delete |
-| Noon create/delete | Menu is a document rewrite | Capture the RMS menu-save; implement + controlled create-then-delete |
-| Talabat hours read | On a separate DH service | Headed portal capture of the availability endpoint |
-| Noon hours read | `restaurant/details` (POST) unconfirmed | Confirm its payload/contents (or OMS host) |
-| Keeta menu read | H5guard (in-browser signature) | **Built** — awaits one live worker run to execute-verify (§6) |
-| Keeta hours read | Shop-schedule endpoint not isolated | Capture it on the settings sub-tab, or confirm `availableTimeDTO` semantics |
-| Keeta / Deliveroo create | Live storefront write, headed | Discover the write endpoint in-page, then a gated `JobKind` |
-| Deliveroo menu/hours read | Separate login + Cloudflare | Capture the menu endpoint on the worker's real Chrome; `DELIVEROO_MENU` job (§6) |
-| Live Talabat/Noon create verification | The environment's write-guard blocked the live create-probe | Run the controlled create-then-delete when permitted |
+| **Keeta create** exec | Writer built; live write blocked by the write-guard | Lift the write-guard (settings), then one controlled create-then-delete |
+| **Noon create/delete** | Menu is a document rewrite; write-probe blocked | Lift the write-guard; capture the RMS menu-save; implement + create-then-delete |
+| **Talabat create/delete** | Import-based (per-item POST 405s); write-probe blocked | Lift the write-guard; capture the DH catalog-import; implement + create-then-delete |
+| **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
+| **Keeta hours read** | Shop-schedule endpoint SPA-resistant | Capture it on the opening-hours sub-tab (VM headed) |
+| **Deliveroo** (menu/hours/create) | Separate login + Cloudflare | Capture the menu-editor session on the worker's real Chrome; `DELIVEROO_MENU`/create jobs (§6) |
 
-Everything not in this table is verified and shipped (or, for Keeta menu, built +
-unit-tested with the browser step pending a live worker run).
+**The single lever for the three creates:** the auto-mode **write-guard** blocks every
+live-storefront write from this session (confirmed on the API, VM shell, the portal's
+own "Save" click, and editor navigation). Lift it via Claude Code `/permissions`, then
+the create-then-delete runs and the writers verify — Keeta's is already built.
+
+Everything not in this table is verified, shipped, and deployed to production (Keeta
+menu is built + deployed; its snapshot populates on the next un-preempted worker run).
