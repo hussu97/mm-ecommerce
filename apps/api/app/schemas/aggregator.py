@@ -212,6 +212,21 @@ class KeetaOrdersResult(BaseModel):
     ingested: int
 
 
+class KeetaMenuPush(BaseModel):
+    """The in-page-fetched Keeta menu (one payload per shop), pushed for the
+    catalog sync. Keeta's menu API is mtgsig-signed in-page, so the worker reads it
+    and pushes it here; it is stored as the keeta menu snapshot."""
+
+    payloads: list[dict] = Field(default_factory=list)
+
+
+class KeetaMenuResult(BaseModel):
+    """Confirmation the pushed Keeta menu was stored."""
+
+    stored: bool
+    shops: int
+
+
 class KeetaFinancePush(BaseModel):
     """A batch of in-page-fetched Keeta finance payloads, pushed in for ingest.
 

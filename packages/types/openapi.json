@@ -12792,6 +12792,40 @@
         "title": "KeetaFinanceResult",
         "type": "object"
       },
+      "KeetaMenuPush": {
+        "description": "The in-page-fetched Keeta menu (one payload per shop), pushed for the\ncatalog sync. Keeta's menu API is mtgsig-signed in-page, so the worker reads it\nand pushes it here; it is stored as the keeta menu snapshot.",
+        "properties": {
+          "payloads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Payloads",
+            "type": "array"
+          }
+        },
+        "title": "KeetaMenuPush",
+        "type": "object"
+      },
+      "KeetaMenuResult": {
+        "description": "Confirmation the pushed Keeta menu was stored.",
+        "properties": {
+          "shops": {
+            "title": "Shops",
+            "type": "integer"
+          },
+          "stored": {
+            "title": "Stored",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stored",
+          "shops"
+        ],
+        "title": "KeetaMenuResult",
+        "type": "object"
+      },
       "KeetaOrdersPush": {
         "description": "A batch of in-page-fetched Keeta order payloads, pushed in for ingest.\n\nKeeta cannot be swept over httpx (its `mtgsig` request signing lives in the\npage), so the bootstrap worker fetches each `getOrders` response in-page and\nhands the raw payloads here. Each payload is parsed by `keeta_provider` into\nchannel-neutral orders and upserted, exactly as the httpx sweep does for the\nother four channels \u2014 this endpoint is simply Keeta's transport.",
         "properties": {
@@ -31664,6 +31698,66 @@
           }
         },
         "summary": "Push Keeta Finance",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/keeta/menu": {
+      "post": {
+        "description": "Store the in-page-fetched Keeta menu for the catalog sync.\n\nKeeta's menu API is mtgsig-signed in-page, so the worker reads it in the browser\nand pushes it here; it is stored as the keeta menu snapshot that\n`menu_readers._read_keeta_menu` parses for drift + mapping. Push transport only \u2014\nlike the orders/finance pushes.",
+        "operationId": "push_keeta_menu_api_v1_aggregators_keeta_menu_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeetaMenuPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaMenuResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Keeta Menu",
         "tags": [
           "Aggregators"
         ]

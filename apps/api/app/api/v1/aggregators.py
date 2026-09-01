@@ -72,6 +72,8 @@ from app.schemas.aggregator import (
     DeliverooFinanceResult,
     KeetaFinancePush,
     KeetaFinanceResult,
+    KeetaMenuPush,
+    KeetaMenuResult,
     KeetaOrdersPush,
     KeetaOrdersResult,
     ReconSummaryOut,
@@ -446,6 +448,24 @@ async def push_keeta_finance(
     """
     statements, payouts = await ingest.ingest_keeta_finance_payloads(db, body.payloads)
     return KeetaFinanceResult(statements=statements, payouts=payouts)
+
+
+@router.post("/keeta/menu", response_model=KeetaMenuResult)
+async def push_keeta_menu(
+    body: KeetaMenuPush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> KeetaMenuResult:
+    """Store the in-page-fetched Keeta menu for the catalog sync.
+
+    Keeta's menu API is mtgsig-signed in-page, so the worker reads it in the browser
+    and pushes it here; it is stored as the keeta menu snapshot that
+    `menu_readers._read_keeta_menu` parses for drift + mapping. Push transport only —
+    like the orders/finance pushes."""
+    from app.services.aggregators import catalog_sync
+
+    await catalog_sync.store_worker_menu(db, target="keeta", payloads=body.payloads)
+    return KeetaMenuResult(stored=True, shops=len(body.payloads))
 
 
 @router.post("/deliveroo/finance", response_model=DeliverooFinanceResult)

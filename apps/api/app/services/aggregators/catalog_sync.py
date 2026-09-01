@@ -396,6 +396,35 @@ async def _upsert_snapshot(
     return snap
 
 
+async def store_worker_menu(
+    db: AsyncSession, *, target: str, payloads: list[dict[str, Any]]
+) -> AggregatorMenuSnapshot:
+    """Store a headed-worker menu push (Keeta today) as the target's menu snapshot.
+
+    Keeta/Deliveroo cannot be read server-side, so the worker fetches the menu
+    in-page and pushes it here; this records it as the same
+    `aggregator_menu_snapshot` the live readers write, so drift + mapping run off it
+    unchanged. The worker sends one payload per shop and the catalogue is the same
+    across shops, so the first non-empty payload is the snapshot raw that
+    `menu_readers._read_<target>_menu` parses. Unconditional (not read-gated): the
+    worker only runs when the operator has turned its job on."""
+    raw: Any = {}
+    for p in payloads or []:
+        if isinstance(p, dict) and (p.get("categories") or p.get("spus")):
+            raw = p
+            break
+    return await _upsert_snapshot(
+        db,
+        target=target,
+        branch_id=None,
+        kind=SNAPSHOT_MENU,
+        source=menu_readers.source_for(target),
+        status=SNAPSHOT_OK,
+        raw=raw,
+        stats={"shops": len(payloads or [])},
+    )
+
+
 # ── Read side (gated) ─────────────────────────────────────────────────────────
 
 

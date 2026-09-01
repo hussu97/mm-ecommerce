@@ -277,6 +277,97 @@ async def fetch_keeta_orders(context: Any, *, months_back: int = 1) -> list[dict
 
 
 # ── finance (real LIST endpoints + presigned-S3 download) ───────────────────
+# ── Menu (catalog sync) ──────────────────────────────────────────────────────
+# The menu, like orders, is mtgsig-signed and must be read in-page. Endpoints +
+# shapes verified live from the portal 2026-09-01 (merchant.mykeeta.com/m/web/product):
+#   POST /api/sailorProduct/shopCategory/r/listShopCategory {shopId}
+#       -> {code:0, data:[{id, name, status, availableTimeDTO:{values:[...]}}]}
+#   POST /api/sailorProduct/spu/r/listSpu {shopId, pageNum, pageSize}
+#       -> {code:0, data:{spuList:[{id, name, status, shopCategoryIdList:[catId],
+#                        skuList:[{price, currency}]}]}}
+# The API side (`menu_readers.parse_keeta_menu`) turns the pushed
+# {shopId, categories, spus} into a NormalizedMenu.
+
+#: The menu-manager SPA page — navigating here primes the session on
+#: merchant.mykeeta.com and populates SHOP_IDS + LOGIN_ACCOUNTID in sessionStorage.
+KEETA_MENU_ROUTE = "https://merchant.mykeeta.com/m/web/product"
+KEETA_CATEGORY_ENDPOINT = "/api/sailorProduct/shopCategory/r/listShopCategory"
+KEETA_SPU_ENDPOINT = "/api/sailorProduct/spu/r/listSpu"
+#: Products per listSpu page; one big page covers a bakery menu (≈45 items).
+_MENU_PAGE_SIZE = 500
+
+# The in-page menu read: two of the page's own signed fetches (mtgsig). Headers
+# mirror the getOrders fetch so the signed session is recognised.
+_GET_MENU_JS = """
+async ({ catEndpoint, spuEndpoint, shopId, pageSize }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  async function post(endpoint, body) {
+    const response = await fetch(endpoint, {
+      method: "POST", credentials: "include", headers, body: JSON.stringify(body)
+    });
+    const text = await response.text();
+    try { return JSON.parse(text); } catch (e) { return { status: response.status, text }; }
+  }
+  const cat = await post(catEndpoint, { shopId });
+  const spu = await post(spuEndpoint, { shopId, pageNum: 1, pageSize });
+  return {
+    shopId: String(shopId),
+    categories: (cat && cat.data) || [],
+    spus: (spu && spu.data && spu.data.spuList) || []
+  };
+}
+"""
+
+
+async def fetch_keeta_menu(context: Any) -> list[dict]:
+    """The Keeta menu for every shop, read in-page (mtgsig) — one payload per shop.
+
+    Mirrors `fetch_keeta_orders`: open the menu page (primes SHOP_IDS +
+    LOGIN_ACCOUNTID), assert the session is signed in, then run the two signed menu
+    fetches per shop. Each payload is `{shopId, categories, spus}` for the API's
+    `parse_keeta_menu`. Playwright imported lazily by the caller's context."""
+    page = await context.new_page()
+    payloads: list[dict] = []
+    try:
+        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded")
+        account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+        if not account_id:
+            logger.error("keeta menu: in-page session signed out (no LOGIN_ACCOUNTID)")
+            return []
+        shop_ids = await _read_shop_ids(page)
+        if not shop_ids:
+            logger.warning("keeta menu: no SHOP_IDS in sessionStorage")
+            return []
+        for shop_id in shop_ids:
+            try:
+                result = await evaluate_in_page(
+                    page,
+                    _GET_MENU_JS,
+                    {
+                        "catEndpoint": KEETA_CATEGORY_ENDPOINT,
+                        "spuEndpoint": KEETA_SPU_ENDPOINT,
+                        "shopId": int(shop_id),
+                        "pageSize": _MENU_PAGE_SIZE,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — one shop must not abort the rest
+                logger.warning("keeta menu: fetch failed for shop %s", shop_id)
+                continue
+            if isinstance(result, dict) and (result.get("categories") or result.get("spus")):
+                payloads.append(result)
+    finally:
+        await page.close()
+    return payloads
+
+
 # Keeta's finance figures are NOT in a JSON bill list — the merchant portal only
 # exposes them as downloadable files: a monthly VAT commission-invoice PDF (in a
 # zip) and a per-shop weekly billing-report XLSX. The three LIST endpoints below

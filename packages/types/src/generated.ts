@@ -373,6 +373,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/keeta/menu": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Keeta Menu
+         * @description Store the in-page-fetched Keeta menu for the catalog sync.
+         *
+         *     Keeta's menu API is mtgsig-signed in-page, so the worker reads it in the browser
+         *     and pushes it here; it is stored as the keeta menu snapshot that
+         *     `menu_readers._read_keeta_menu` parses for drift + mapping. Push transport only —
+         *     like the orders/finance pushes.
+         */
+        post: operations["push_keeta_menu_api_v1_aggregators_keeta_menu_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/orders": {
         parameters: {
             query?: never;
@@ -12044,6 +12069,28 @@ export interface components {
             truncation_note?: string | null;
         };
         /**
+         * KeetaMenuPush
+         * @description The in-page-fetched Keeta menu (one payload per shop), pushed for the
+         *     catalog sync. Keeta's menu API is mtgsig-signed in-page, so the worker reads it
+         *     and pushes it here; it is stored as the keeta menu snapshot.
+         */
+        KeetaMenuPush: {
+            /** Payloads */
+            payloads?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * KeetaMenuResult
+         * @description Confirmation the pushed Keeta menu was stored.
+         */
+        KeetaMenuResult: {
+            /** Shops */
+            shops: number;
+            /** Stored */
+            stored: boolean;
+        };
+        /**
          * KeetaOrdersPush
          * @description A batch of in-page-fetched Keeta order payloads, pushed in for ingest.
          *
@@ -18631,6 +18678,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KeetaFinanceResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_keeta_menu_api_v1_aggregators_keeta_menu_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeetaMenuPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaMenuResult"];
                 };
             };
             /** @description Validation Error */

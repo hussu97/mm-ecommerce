@@ -479,17 +479,108 @@ async def _read_noon_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     return parse_noon_menu(details)
 
 
+# ── Keeta menu (via the headed worker's snapshot) ─────────────────────────────
+# Keeta signs every menu XHR with an in-browser `mtgsig` (H5guard), so the menu
+# API cannot be called server-side — the headed worker fetches it and pushes the
+# raw payload, which we parse here. Endpoints + shapes verified live from the
+# portal 2026-09-01 (merchant.mykeeta.com/m/web/product):
+#   POST /api/sailorProduct/shopCategory/r/listShopCategory {shopId}
+#     -> {data:[{id, name, status, availableTimeDTO:{values:[...]}}]}
+#   POST /api/sailorProduct/spu/r/listSpu {shopId, pageNum, pageSize}
+#     -> {data:{spuList:[{id, name, status, shopCategoryIdList:[catId],
+#               skuList:[{price:"0", currency:"AED"}]}]}}
+# Price is the first SKU's price; sizes are separate SPUs (like Careem/Talabat).
+
+
+def parse_keeta_menu(raw: Any) -> NormalizedMenu:
+    """The worker's Keeta menu push (`{categories:[...], spus:[...]}`) → a menu.
+
+    Pure + unit-tested against the real captured shapes. `status == 1` is
+    available; a product's category is its first `shopCategoryIdList` entry; price
+    is the first SKU's `price` in its `currency`."""
+    if not isinstance(raw, dict):
+        raw = {}
+    cats_raw = raw.get("categories") or []
+    spus_raw = raw.get("spus") or raw.get("spuList") or []
+    cat_name = {
+        str(c.get("id")): c.get("name", "")
+        for c in cats_raw
+        if isinstance(c, dict) and c.get("id") is not None
+    }
+    by_cat: dict[str, NormalizedCategory] = {}
+    order: list[str] = []
+    for spu in spus_raw:
+        if not isinstance(spu, dict) or not spu.get("name"):
+            continue
+        cat_ids = spu.get("shopCategoryIdList") or []
+        cid = str(cat_ids[0]) if cat_ids else ""
+        cname = cat_name.get(cid, "Uncategorised")
+        skus = spu.get("skuList") or []
+        price = None
+        if (
+            skus
+            and isinstance(skus[0], dict)
+            and skus[0].get("price") not in (None, "")
+        ):
+            try:
+                price = Decimal(str(skus[0]["price"]))
+            except Exception:  # noqa: BLE001 — a bad price is "unknown", not a crash
+                price = None
+        item = NormalizedItem(
+            name=spu["name"],
+            external_id=str(spu["id"]) if spu.get("id") is not None else None,
+            price=price,
+            is_available=spu.get("status") == 1,
+            category_ref=cid or None,
+        )
+        if cid not in by_cat:
+            by_cat[cid] = NormalizedCategory(cname, external_id=cid or None)
+            order.append(cid)
+        by_cat[cid].items.append(item)
+    return NormalizedMenu(source="keeta", categories=[by_cat[k] for k in order])
+
+
+async def _read_keeta_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
+    """Parse the latest Keeta menu the headed worker pushed into the snapshot.
+
+    Keeta cannot be read server-side (H5guard); the worker's `MENU` job fetches it
+    and pushes the raw payload, stored as the keeta menu snapshot's `raw`. This
+    reads that — so a Keeta refresh is 'reparse the last worker push', not a live
+    call. Raises until the worker has pushed at least once."""
+    from sqlalchemy import select
+
+    from app.models.catalog_sync import SNAPSHOT_MENU, AggregatorMenuSnapshot
+
+    snap = (
+        await db.execute(
+            select(AggregatorMenuSnapshot)
+            .where(
+                AggregatorMenuSnapshot.target == "keeta",
+                AggregatorMenuSnapshot.kind == SNAPSHOT_MENU,
+            )
+            .order_by(AggregatorMenuSnapshot.fetched_at.desc().nullslast())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if snap is None or not snap.raw:
+        raise AggregatorUnavailableError(
+            "no keeta menu pushed yet — the headed worker's MENU job must run first"
+        )
+    return parse_keeta_menu(snap.raw)
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
 # Foodics (Grubtech price tag), Careem (catalog REST), Talabat (DeliveryHero
-# vendor-api) and Noon (RMS /menu/details) are all verified live from the real
-# session. Keeta (H5guard) menu API can't be reached even server-side, and
-# Deliveroo's menu is behind a separate Menus login — both need a headed capture.
+# vendor-api) and Noon (RMS /menu/details) are read live from the real session.
+# Keeta is parsed from the headed worker's push (H5guard blocks a server call);
+# Deliveroo's menu is behind a separate Menus login — still a headed capture.
 _MENU_READERS: dict[str, Any] = {
     TARGET_FOODICS: _read_foodics_menu,
     "careem": _read_careem_menu,
     "talabat": _read_talabat_menu,
     "noon": _read_noon_menu,
+    "keeta": _read_keeta_menu,
 }
 #: Hours readers. Careem verified live (day origin confirmed against the portal
 #: bundle's own day labels). The others need their hours endpoint captured the

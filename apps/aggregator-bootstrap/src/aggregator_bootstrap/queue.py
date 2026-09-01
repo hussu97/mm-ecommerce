@@ -37,6 +37,9 @@ class JobKind(IntEnum):
     KEETA_ORDERS = 2
     DELIVEROO_FINANCE = 3
     KEETA_FINANCE = 4
+    #: The catalog-sync menu read — not time-critical (the menu changes rarely), so
+    #: it sits at the lowest priority, never blocking a heal or an orders pull.
+    KEETA_MENU = 5
 
 
 @dataclass(order=True)

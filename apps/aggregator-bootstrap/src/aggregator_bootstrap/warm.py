@@ -159,6 +159,32 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
     return out
 
 
+async def pull_keeta_menu_in_page() -> dict[str, Any]:
+    """Fetch the Keeta menu in-page and push it to the API (the catalog-sync feed).
+
+    Mirrors `pull_keeta_orders_in_page`: open the hydrated state, read the menu
+    in-page (mtgsig-signed), push one payload per shop. The API stores it as the
+    keeta menu snapshot that `menu_readers._read_keeta_menu` parses."""
+    from .browser import _open_storage_state_context
+    from .engine import async_playwright
+    from .keeta_pull import fetch_keeta_menu
+    from .push import push_keeta_menu
+
+    _keeta_state_or_raise()
+    async with async_playwright() as pw:
+        opened = await _open_storage_state_context(pw, "keeta")
+        try:
+            payloads = await fetch_keeta_menu(opened.context)
+        finally:
+            await opened.close()
+    if not payloads:
+        logger.warning("keeta: no menu payloads fetched; nothing to push")
+        return {"payloads": 0}
+    result = await push_keeta_menu(payloads)
+    logger.info("pushed %d keeta menu payload(s): %s", len(payloads), result)
+    return {"payloads": len(payloads), **(result or {})}
+
+
 async def pull_keeta_finance_in_page(
     *, months_back: int | None = None
 ) -> dict[str, Any]:

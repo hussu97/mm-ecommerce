@@ -534,7 +534,9 @@ async def test_create_item_is_gated_off_by_default(mock_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_create_dispatch_gates_unverified_and_worker_channels(mock_db, monkeypatch):
+async def test_create_dispatch_gates_unverified_and_worker_channels(
+    mock_db, monkeypatch
+):
     import app.core.config as cfg
     from app.core.exceptions import BadRequestError
 
@@ -658,3 +660,41 @@ def test_careem_hours_maps_day_origin_and_closed_days():
     # A closed day (Wednesday = day 4 → weekday 3) contributes no shift.
     assert 3 not in by_weekday
     assert hours.source == "careem"
+
+
+# ── Keeta menu parser (real captured shapes) ──────────────────────────────────
+
+
+def test_keeta_menu_parser_uses_real_shapes():
+    from app.services.aggregators.menu_readers import parse_keeta_menu
+
+    # The real listShopCategory + listSpu shapes (captured live 2026-09-01).
+    raw = {
+        "categories": [
+            {"id": 24975776, "name": "Brownies", "status": 1},
+            {"id": 24225090, "name": "New In", "status": 1},
+        ],
+        "spus": [
+            {
+                "id": 116377820,
+                "name": "Eggless Fudge Brownies",
+                "status": 1,
+                "shopCategoryIdList": [24975776],
+                "skuList": [{"id": 113254318, "price": "35", "currency": "AED"}],
+            },
+            {
+                "id": 116377999,
+                "name": "Snoozed Item",
+                "status": 0,  # off-shelf
+                "shopCategoryIdList": [24975776],
+                "skuList": [{"price": "40"}],
+            },
+        ],
+    }
+    menu = parse_keeta_menu(raw)
+    assert menu.source == "keeta"
+    brownies = next(c for c in menu.categories if c.name == "Brownies")
+    names = {i.name: i for i in brownies.items}
+    assert names["Eggless Fudge Brownies"].price == Decimal("35")
+    assert names["Eggless Fudge Brownies"].is_available is True
+    assert names["Snoozed Item"].is_available is False  # status 0

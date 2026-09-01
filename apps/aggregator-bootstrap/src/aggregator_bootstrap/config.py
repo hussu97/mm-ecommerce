@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     #: runs once nightly at lowest priority, so it gets the long budget.
     WORKER_KEETA_FINANCE_TIMEOUT_SECONDS: int = 1500
     WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS: int = 900
+    #: Keeta MENU pull (catalog sync) — two signed reads per shop, quick.
+    WORKER_KEETA_MENU_TIMEOUT_SECONDS: int = 300
 
     #: Channels warmed nightly to rotate their decaying anti-bot cookie (Noon's
     #: Akamai bm_sv/_abck, Talabat's PerimeterX _px3). Careem/Deliveroo self-heal in
@@ -113,6 +115,9 @@ class Settings(BaseSettings):
     #: separate nightly job (below) so the long finance download never blocks a heal
     #: or an orders pull behind it on the single consumer.
     WORKER_KEETA_PULL_INTERVAL_HOURS: int = 3
+    #: Keeta MENU-pull cadence (hours). The menu changes rarely, so a slow cadence;
+    #: `<= 0` disables it. The API's catalog sync reads the pushed snapshot.
+    WORKER_KEETA_MENU_INTERVAL_HOURS: int = 12
     #: Dubai wall-clock hour for the nightly Keeta FINANCE pull (settled statement
     #: files). Split from the orders pull because it re-downloads settled files and
     #: is slow; nightly + lowest priority keeps it off the hot path.
