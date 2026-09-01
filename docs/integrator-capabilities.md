@@ -276,10 +276,12 @@ the Edit form saves through the same verb, so it both creates and updates).
 the Edit form fields (name EN/AR, category, `skuList` price/currency, `availableTime`
 Mon–Sun `00:00-23:59`), **off-shelf (`status=0`) by default** so a sync never makes an
 item live unreviewed; `create_keeta_spu` runs it in-page (mtgsig). Payload builder
-unit-tested. Only the **live create-then-delete execution** is pending — the
-storefront write-guard blocks a live write from this session (four paths confirmed:
-API POST, VM shell, the portal's UI "Save" click, and editor navigation); it needs a
-settings permission rule or the operator running one create-then-delete.
+unit-tested. **Invocable now** via the worker CLI:
+`aggregator-bootstrap create-keeta-item --shop-id <id> --name "<name>" --category-id <id> --price <n>`
+— the operator's entry point and the way to run the controlled create-then-delete.
+Only a live write from *this* automated session is pending — the storefront
+write-guard blocks it (four paths confirmed: API POST, VM shell, the portal's UI
+"Save" click, and editor navigation).
 
 **Keeta hours — endpoint elusive.** The shop-level weekly schedule endpoint wasn't
 isolated (the settings SPA route resists capture and `scm/shop/base/info` carries
@@ -318,7 +320,7 @@ Every channel's items/options/categories map to MM through the single
 
 | Item | Blocker | How to finish |
 |---|---|---|
-| **Keeta create** exec | Writer built; live write blocked by the write-guard | Lift the write-guard (settings), then one controlled create-then-delete |
+| **Keeta create** exec | Writer built + **invocable via CLI**; live write from this session blocked by the write-guard | Operator runs `aggregator-bootstrap create-keeta-item …` (create-then-delete), or lift the write-guard |
 | **Noon create/delete** | Menu is a document rewrite; write-probe blocked | Lift the write-guard; capture the RMS menu-save; implement + create-then-delete |
 | **Talabat create/delete** | Import-based (per-item POST 405s); write-probe blocked | Lift the write-guard; capture the DH catalog-import; implement + create-then-delete |
 | **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
