@@ -346,9 +346,13 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
     `parse_deliveroo_hours`. Mirrors `fetch_deliveroo_invoices`' context use; the
     menu is captured (not re-fetched) because it is cross-origin (webrom) and the
     hub's own request already carries the exchanged webrom bearer."""
+    import asyncio
+
     grabbed: dict[str, Any] = {}
 
     async def _on_response(resp: Any) -> None:
+        # Read the body AT RESPONSE TIME — Playwright evicts it after navigation, so
+        # collecting the objects and reading later comes back empty (seen live).
         url = resp.url
         try:
             if _WEBROM_MENU_MARK in url and url.rstrip("/").endswith("menu"):
@@ -359,8 +363,17 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
         except Exception:  # noqa: BLE001 — a body we can't read is simply skipped
             pass
 
-    page = await context.new_page()
-    page.on("response", lambda r: _schedule(_on_response(r)))
+    # REUSE the context's existing page — the caller's re-login already cleared
+    # Cloudflare and holds cf_clearance on it. A fresh `new_page()` faces the
+    # Cloudflare challenge from scratch and its goto hangs to the timeout (seen live).
+    existing = context.pages
+    page = existing[0] if existing else await context.new_page()
+    opened_here = not existing
+
+    def _handler(resp: Any) -> None:
+        asyncio.create_task(_on_response(resp))  # noqa: RUF006 — fire-and-forget
+
+    page.on("response", _handler)
     try:
         await page.goto(
             DELIVEROO_HUB_ROUTE, wait_until="domcontentloaded", timeout=60_000
@@ -372,7 +385,9 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
         )
         await page.wait_for_timeout(14_000)
     finally:
-        await page.close()
+        page.remove_listener("response", _handler)
+        if opened_here:
+            await page.close()
 
     if not grabbed.get("menu") and not grabbed.get("hours"):
         logger.warning("deliveroo: no menu/hours captured on the opening-hours page")
@@ -384,16 +399,3 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
             "hours": grabbed.get("hours"),
         }
     ]
-
-
-def _schedule(coro: Any) -> None:
-    """Fire-and-forget a response handler on the running loop (kept in a set so it
-    is not garbage-collected mid-await), mirroring the tracked-task convention."""
-    import asyncio
-
-    task = asyncio.ensure_future(coro)
-    _RESPONSE_TASKS.add(task)
-    task.add_done_callback(_RESPONSE_TASKS.discard)
-
-
-_RESPONSE_TASKS: set[Any] = set()
