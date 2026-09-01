@@ -55,12 +55,15 @@ not just captured shapes.
     → `{hours:[{day_of_week, local_start_time, local_end_time}]}`.
   Money: `price` is MAJOR AED units (cake slice 35, 9-piece box 145 — matched to real
   MM prices), no minor-unit scaling. Day origin: `day_of_week` 0=Sunday = MM weekday.
-  `parse_deliveroo_menu` / `parse_deliveroo_hours` + unit tests (pass);
-  `deliveroo_pull.fetch_deliveroo_menu_hours` (captures both on the Opening-Hours page).
-  Read path proven live. **Not deployed** — held during the GrubOps/Cognito incident (a
-  deploy restarts the API container). Remaining: push endpoint + snapshot store +
-  `_read_deliveroo_*` registration, then one deploy ships it. Create/delete still need
-  the write endpoint (a live save capture on the menu editor).
+  **The full read pipeline is coded + tested** (all green: 90 worker + 30 API tests):
+  worker `fetch_deliveroo_menu_hours` → `pull_deliveroo_menu_hours_in_page` →
+  `push_deliveroo_menu`; daemon `JobKind.DELIVEROO_MENU` (+ `WORKER_DELIVEROO_MENU_INTERVAL_HOURS`,
+  default off); API `POST /aggregators/deliveroo/menu` → `store_worker_menu_and_hours`
+  (menu + hours snapshots); `_read_deliveroo_menu` / `_read_deliveroo_hours` registered;
+  `parse_deliveroo_menu` / `parse_deliveroo_hours` unit-tested. **Only the deploy is
+  pending** — held during the GrubOps/Cognito incident (a deploy restarts the API
+  container); it's a single push away. Create/delete still need the write endpoint (a
+  live save capture on the `rs-hub.deliveroo.com` menu editor).
 ⁷ **Keeta create — VERIFIED end-to-end.** `POST /api/sailorProduct/spu/w/saveSpu`,
   proven through the wired `create_keeta_spu` + `delete_keeta_spu`: create `code 0`,
   item found in the menu read, `deleteSpu code 0`, re-read gone — **no orphan** (clean
@@ -385,7 +388,7 @@ Every channel's items/options/categories map to MM through the single
 | **Talabat create/delete** | Import-based (per-item POST 405s); no portal/write access here | Capture the DH catalog-import from the portal; implement + create-then-delete |
 | **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
 | **Keeta weekly hours** | Today's window is read + verified (§footnote 9); a full 7-day schedule isn't exposed to this portal account | Only if a weekly schedule is needed: find the settings-page schedule endpoint (headed) — else today's window stands |
-| **Deliveroo menu + hours** | Decoded, parsers + worker fetch coded & tested; NOT deployed (held for the GrubOps incident) | Add the push endpoint + snapshot store + `_read_deliveroo_*` registration; one deploy ships it |
+| **Deliveroo menu + hours** | Full pipeline coded & tested (90 worker + 30 API tests green); NOT deployed — held for the GrubOps incident | One push (set `WORKER_DELIVEROO_MENU_INTERVAL_HOURS > 0` + `CATALOG_SYNC_READ_ENABLED`) once the incident clears |
 | **Deliveroo create/delete** | Read decoded; the write (menu-editor save) endpoint not captured | Capture one live save on the `rs-hub.deliveroo.com` menu editor → implement + verify |
 
 **Keeta is now complete** (menu + hours + create + delete, all verified live and
