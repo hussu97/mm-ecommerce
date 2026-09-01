@@ -15,26 +15,38 @@ under `apps/api/app/services/aggregators/` + `apps/api/app/services/providers/`.
 
 ## 0. Capability matrix (at a glance)
 
+**Deployed to production (main) + verified live on the VM 2026-09-01.** Migration
+head 172; the aggregator-worker image carries the Keeta menu job. The menu/hours
+readers below marked ✅ were run against the **deployed** VM against real sessions,
+not just captured shapes.
+
 | Integrator | Menu read | Hours read | Item create | Item delete | Order/sales ingest |
 |---|---|---|---|---|---|
 | **Foodics** (master) | ✅ verified | n/a¹ | ✅ verified | via Foodics | ✅ (existing) |
 | **Careem** | ✅ verified² | ✅ verified | ✅ verified³ | ✅ verified³ | ✅ (existing) |
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
-| **Noon** | ✅ verified | ⏸ candidate only | ⏸ RMS-doc | ⏸ | ✅ (existing) |
-| **Keeta** | ✅ built⁴ | ⏸ candidate⁵ | ⏸ write | ⏸ | ✅ (existing) |
+| **Noon** | ✅ verified | ✅ verified⁵ | ⏸ RMS-doc | ⏸ | ✅ (existing) |
+| **Keeta** | ✅ built⁴ | ⏸ endpoint elusive | ⏸ write | ⏸ | ✅ (existing) |
 | **Deliveroo** | ⏸ headed⁶ | ⏸ headed | ⏸ headed | ⏸ | ✅ (existing) |
 
 ¹ Foodics carries no aggregator hours — hours are per-marketplace.
-² Careem menu read was **fixed** (it omitted the required `merchantId`; see §Careem).
+² Careem menu read was **fixed twice**: it omitted the required `merchantId` (400),
+  and a parent/promo category 404 was aborting the whole read — now isolated
+  per-category (found running the deployed reader vs Barsha live).
 ³ Verified by a controlled create-then-delete on a live outlet (created INACTIVE,
   deleted, re-read confirmed gone).
 ⁴ Keeta menu is read by the **headed worker** (H5guard/mtgsig — no server call):
   endpoints + shapes verified live; parser unit-tested; worker fetch + API ingest
-  wired. Awaits a live worker run to execute-verify the browser step (§6).
-⁵ Keeta category reads carry `availableTimeDTO` (a per-day schedule) — a candidate
-  hours source in the same push; the shop-level schedule endpoint wasn't isolated.
-⁶ Deliveroo's menu editor is a separate login **and** behind Cloudflare; its
-  endpoint must be captured on the worker's real Chrome (§6).
+  built and **deployed**. The KEETA_MENU job runs on the VM (execute-verified — the
+  first run surfaced a LOGIN_ACCOUNTID timing bug, now fixed with a 6s SPA-boot wait
+  like the orders job); the menu snapshot populates on its next un-preempted run.
+⁵ **Noon hours — verified server-side.** `POST /_food-restaurant/restaurant/outlet/details`
+  `{outletCode, version:0}` → `data.schedule.periods` (day-index keys, comma-joined
+  for shared days). Day origin **proven by the response's own `periodsDesc`**:
+  0=Mon…6=Sun, so MM weekday = `(noon_day+1)%7`. `parse_noon_hours`, unit-tested.
+⁶ Deliveroo's menu editor is a separate login **and** behind Cloudflare (bot
+  challenge — not bypassed); its endpoint must be captured on the worker's real
+  Chrome (§6).
 
 ✅ = verified live and shipped · ⏸ = not yet, with the exact reason + path below.
 
