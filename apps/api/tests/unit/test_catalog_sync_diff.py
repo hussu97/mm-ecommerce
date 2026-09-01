@@ -551,13 +551,13 @@ async def test_create_dispatch_gates_unverified_and_worker_channels(
         category = None
 
     mock_db.execute.return_value.scalar_one_or_none.return_value = _P()
-    # Keeta/Deliveroo → headed worker; Talabat/Noon → not yet verified.
+    # Keeta/Deliveroo → headed worker; Talabat → not yet verified (import-based).
+    # Careem + Noon are wired (verified create-then-delete) so they don't gate here.
     for target in ("keeta", "deliveroo"):
         with pytest.raises(BadRequestError, match="headed worker"):
             await catalog_sync.create_menu_item(mock_db, product_id="p1", target=target)
-    for target in ("talabat", "noon"):
-        with pytest.raises(BadRequestError, match="not yet verified"):
-            await catalog_sync.create_menu_item(mock_db, product_id="p1", target=target)
+    with pytest.raises(BadRequestError, match="not yet verified"):
+        await catalog_sync.create_menu_item(mock_db, product_id="p1", target="talabat")
 
 
 @pytest.mark.asyncio

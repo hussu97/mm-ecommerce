@@ -432,6 +432,57 @@ class NoonClient(BaseAggregatorClient):
             json_body={"outletCode": outlet_code, "version": 0},
         )
 
+    # ── menu create/delete (catalog sync writer) ─────────────────────────────
+    # VERIFIED live by a controlled create-then-delete on the MM menu 2026-09-01:
+    # noon's menu is per-item (NOT a whole-document rewrite as first assumed).
+    #   POST /_food-restaurant/menu/item/create
+    #     {menuCode, itemType:"main", nameEn, nameAr, price, categoryCode, isActive}
+    #     -> {status:"success", data:{…menu…}}  (created off-shelf when isActive=false)
+    #   POST /_food-restaurant/menu/item/delete {menuCode, itemCode}
+    #     -> {status:"success"}  (needs the n-restaurantcode header, which _rms_headers
+    #        supplies; the create tolerates its absence but delete does not)
+    # Only reached behind CATALOG_SYNC_ENABLED.
+    async def create_menu_item(
+        self,
+        session: LoadedSession,
+        *,
+        menu_code: str,
+        name: str,
+        category_code: str,
+        price: Any,
+        name_ar: str | None = None,
+        active: bool = False,
+    ) -> Any:
+        """Create one item on a noon menu. Off-shelf (`isActive=false`) by default so
+        a sync never makes an item live before review."""
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/menu/item/create",
+            headers=self._rms_headers(session),
+            json_body={
+                "menuCode": menu_code,
+                "itemType": "main",
+                "nameEn": name,
+                "nameAr": name_ar or name,
+                "price": price,
+                "categoryCode": category_code,
+                "isActive": active,
+            },
+        )
+
+    async def delete_menu_item(
+        self, session: LoadedSession, *, menu_code: str, item_code: str
+    ) -> Any:
+        """Delete one item from a noon menu (needs the RMS restaurant header)."""
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/menu/item/delete",
+            headers=self._rms_headers(session),
+            json_body={"menuCode": menu_code, "itemCode": item_code},
+        )
+
     # ── anti-bot ─────────────────────────────────────────────────────────────
     def _is_auth_failure(self, response: Any) -> bool:
         """A dead cookie *or* an Akamai block. Both need a browser, not a retry."""

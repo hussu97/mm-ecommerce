@@ -646,8 +646,8 @@ def _route_for(target: str) -> str:
 #: document rewrite; both raise until a controlled create confirms them. Keeta and
 #: Deliveroo have no server-callable menu API at all (H5guard / separate login), so
 #: their create needs the headed worker.
-_DIRECT_CREATE_CHANNELS = ("careem",)
-_CREATE_NEEDS_VERIFY = ("talabat", "noon")
+_DIRECT_CREATE_CHANNELS = ("careem", "noon")
+_CREATE_NEEDS_VERIFY = ("talabat",)
 _CREATE_NEEDS_WORKER = ("keeta", "deliveroo")
 
 
@@ -690,8 +690,10 @@ async def create_menu_item(
             f"plain REST create) — use Foodics for the integrated branches, or run a "
             f"controlled create to confirm the {target} endpoint before enabling."
         )
-    if target in _DIRECT_CREATE_CHANNELS:
+    if target == "careem":
         return await _create_on_careem(db, product, branch_id, dry_run)
+    if target == "noon":
+        return await _create_on_noon(db, product, dry_run)
     if target != TARGET_FOODICS:
         raise BadRequestError(f"Unknown create target {target!r}")
 
@@ -859,6 +861,93 @@ async def _create_on_careem(
     plan["dry_run"] = False
     plan["careem_id"] = careem_id
     plan["note"] = "Created on Careem (INACTIVE) and mapped."
+    return plan
+
+
+async def _create_on_noon(
+    db: AsyncSession, product: Product, dry_run: bool
+) -> dict[str, Any]:
+    """Create one product on the MM-managed noon menu (verified per-item create).
+
+    Resolves the MM-managed menu (the one not fed by Foodics) and the noon category
+    code matching the product's MM category (by name), then creates the item
+    off-shelf. Records the noon `external_item_map` from the returned item code.
+    Verified live by a controlled create-then-delete (2026-09-01)."""
+    from app.services.aggregators import session_store
+    from app.services.providers import noon_provider as np
+
+    cat_name = product.category.name if product.category else None
+    price = product.base_price
+    if price is None:
+        raise BadRequestError(f"Product {product.name!r} has no base price.")
+
+    session = await session_store.load(db, "noon")
+    menus = await np.provider.list_menus(session)
+    rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
+    mm_menus = [m for m in rows if not str(m.get("menuName", "")).startswith("Ext.")]
+    if not (mm_menus or rows):
+        raise BadRequestError("noon returned no menu to create into.")
+    menu_code = (mm_menus or rows)[0]["menuCode"]
+
+    details = await np.provider.get_menu_details(session, menu_code)
+    cats = (details.get("data") or {}).get("categories") or []
+    noon_cat = next(
+        (c for c in cats if _norm(c.get("nameEn")) == _norm(cat_name)), None
+    )
+    if noon_cat is None:
+        raise BadRequestError(
+            f"No noon category matching {cat_name!r} on menu {menu_code} — create it "
+            f"on the portal first."
+        )
+    category_code = noon_cat.get("categoryCode")
+
+    plan: dict[str, Any] = {
+        "target": "noon",
+        "route": "channel_portal",
+        "product": {"id": str(product.id), "name": product.name},
+        "noon_create": {
+            "menu_code": menu_code,
+            "category_code": category_code,
+            "name": product.name,
+            "price": str(price),
+            "isActive": False,
+        },
+    }
+    if dry_run:
+        plan["dry_run"] = True
+        plan["note"] = (
+            "Dry run — nothing created. This is the exact noon menu/item/create "
+            "(off-shelf) that would POST. Enable + dry_run=false to apply."
+        )
+        return plan
+
+    created = await np.provider.create_menu_item(
+        session,
+        menu_code=menu_code,
+        name=product.name,
+        category_code=category_code,
+        price=price,
+        active=False,
+    )
+    # The create returns the whole menu; the new item is the one matching our name.
+    new_item = None
+    for it in ((created or {}).get("data") or {}).get("items") or []:
+        if _norm(it.get("nameEn")) == _norm(product.name):
+            new_item = it
+    noon_id = new_item.get("itemCode") if new_item else None
+    if noon_id:
+        await catalog_mapping._upsert(  # noqa: SLF001 — one recorder, reused
+            db,
+            system="noon",
+            external_ref=str(noon_id),
+            external_name=product.name,
+            mm_kind=catalog_mapping.KIND_PRODUCT,
+            product_id=product.id,
+            approve=True,
+        )
+    plan["dry_run"] = False
+    plan["noon_item_code"] = noon_id
+    plan["note"] = "Created on noon (off-shelf) and mapped."
     return plan
 
 
