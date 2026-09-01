@@ -21,13 +21,20 @@ under `apps/api/app/services/aggregators/` + `apps/api/app/services/providers/`.
 | **Careem** | ✅ verified² | ✅ verified | ✅ verified³ | ✅ verified³ | ✅ (existing) |
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
 | **Noon** | ✅ verified | ⏸ candidate only | ⏸ RMS-doc | ⏸ | ✅ (existing) |
-| **Keeta** | ⏸ headed only | ⏸ headed only | ⏸ headed only | ⏸ | ✅ (existing) |
-| **Deliveroo** | ⏸ headed only | ⏸ headed only | ⏸ headed only | ⏸ | ✅ (existing) |
+| **Keeta** | ✅ built⁴ | ⏸ candidate⁵ | ⏸ write | ⏸ | ✅ (existing) |
+| **Deliveroo** | ⏸ headed⁶ | ⏸ headed | ⏸ headed | ⏸ | ✅ (existing) |
 
 ¹ Foodics carries no aggregator hours — hours are per-marketplace.
 ² Careem menu read was **fixed** (it omitted the required `merchantId`; see §Careem).
 ³ Verified by a controlled create-then-delete on a live outlet (created INACTIVE,
   deleted, re-read confirmed gone).
+⁴ Keeta menu is read by the **headed worker** (H5guard/mtgsig — no server call):
+  endpoints + shapes verified live; parser unit-tested; worker fetch + API ingest
+  wired. Awaits a live worker run to execute-verify the browser step (§6).
+⁵ Keeta category reads carry `availableTimeDTO` (a per-day schedule) — a candidate
+  hours source in the same push; the shop-level schedule endpoint wasn't isolated.
+⁶ Deliveroo's menu editor is a separate login **and** behind Cloudflare; its
+  endpoint must be captured on the worker's real Chrome (§6).
 
 ✅ = verified live and shipped · ⏸ = not yet, with the exact reason + path below.
 
@@ -206,34 +213,47 @@ the item-add against the menu document, verify with a controlled create-then-del
 
 ---
 
-## 6. Keeta & Deliveroo — headed-worker only
+## 6. Keeta & Deliveroo — the headed worker (Keeta menu now built)
 
-Neither exposes a server-callable menu API:
-- **Keeta** loads `msp.mykeeta.net/h5guard/H5guard.js`; the menu API needs an
-  in-browser `mtgsig` signature per request, so a replayed cookie cannot call it
-  server-side.
-- **Deliveroo**'s menu editor is a **separate login** (`/login?return_to=/menus/…`);
-  the sales session's hub token does not reach the menus host.
+Neither exposes a server-callable menu API, so they run in the **headed
+aggregator-worker** (headed Chrome under Xvfb, `apps/aggregator-bootstrap`) — the
+same worker that already reads Keeta orders and Deliveroo finance in-page.
 
-So menu read, hours read, and create for these two must run in the **headed
-aggregator-worker** (headed Chrome under Xvfb, `apps/aggregator-bootstrap`). The
-worker's action set is a **fixed `JobKind` enum** with hard-coded `_dispatch`
-handlers (`daemon.py`) — there is no generic "do a browser action" surface.
+### Keeta menu read — BUILT (endpoints verified, parser tested)
 
-**To finish (the defined build):**
-1. Add a `JobKind` (e.g. `MENU_READ` / `MENU_WRITE`) in `queue.py`, a
-   `_TIMEOUT_FIELDS` entry + `WORKER_*_TIMEOUT_SECONDS` in the worker config, and a
-   `_dispatch` branch in `daemon.py`.
-2. Add the browser handler (navigate the Keeta/Deliveroo menu editor, sign
-   H5guard / complete the Deliveroo menus login, read or write the item).
-3. Trigger it either on a cadence in `_run_scheduler` or via a DB signal the daemon
-   polls (mirroring the `needs_bootstrap` → `_heal_poll` mechanism the API already
-   uses to ask the worker to re-login).
+Keeta signs every menu XHR with an in-page `mtgsig` (H5guard), so it is read the
+identical way `keeta_pull.fetch_keeta_orders` reads orders — the page's own signed
+`fetch` via `evaluate_in_page`. Verified live 2026-09-01 (merchant.mykeeta.com/m/web/product):
+- `POST /api/sailorProduct/shopCategory/r/listShopCategory {shopId}` → categories
+  (each with `availableTimeDTO`);
+- `POST /api/sailorProduct/spu/r/listSpu {shopId, pageNum, pageSize}` →
+  `{spuList:[{id, name, status, shopCategoryIdList, skuList:[{price, currency}]}]}`.
+  45 products matched MM's catalogue; sizes are separate SPUs.
 
-This is **not shipped** because headed-browser automation (H5guard signing, the
-Deliveroo login) cannot be verified outside the live headed environment, and
-shipping an unverified menu-write for a live storefront is the exact risk this
-project refuses to take. The plumbing above is the reviewed path to build it.
+Shipped: `keeta_pull.fetch_keeta_menu`, `warm.pull_keeta_menu_in_page`,
+`push.push_keeta_menu`, `JobKind.KEETA_MENU` (+ timeout +
+`WORKER_KEETA_MENU_INTERVAL_HOURS` cadence in the daemon), the API's
+`POST /aggregators/keeta/menu` → `catalog_sync.store_worker_menu` (keeta menu
+snapshot), and `menu_readers.parse_keeta_menu` / `_read_keeta_menu` (registered).
+The parser is unit-tested against the real shapes; the browser step follows the
+proven `keeta_pull` pattern and awaits a live worker run to execute-verify — the
+same status `keeta_pull` itself had when authored.
+
+**Keeta hours / create — the remaining path.** Hours: the shop-level weekly
+schedule endpoint wasn't isolated (the settings page is telemetry-flooded); the
+category `availableTimeDTO.values` (7 per-day ranges, already in the menu push) is
+a candidate but its day-origin/semantics need confirming before it drives a
+branch's open/close. Create is a menu **write** (`sailorProduct` mutation) —
+discoverable the same in-page way, but a live storefront write is not shipped
+unverified.
+
+### Deliveroo — separate login + Cloudflare
+
+Deliveroo's menu editor is a **separate login** (`/login?return_to=/menus/…`) and
+the hub is behind a **Cloudflare bot challenge** that does not clear in this
+environment. So its menu endpoint must be captured on the worker's real Chrome
+(where `deliveroo_pull` already carries `cf_clearance` for finance), then a
+`DELIVEROO_MENU` job built exactly like the Keeta one above.
 
 ---
 
@@ -261,8 +281,11 @@ Every channel's items/options/categories map to MM through the single
 | Noon create/delete | Menu is a document rewrite | Capture the RMS menu-save; implement + controlled create-then-delete |
 | Talabat hours read | On a separate DH service | Headed portal capture of the availability endpoint |
 | Noon hours read | `restaurant/details` (POST) unconfirmed | Confirm its payload/contents (or OMS host) |
-| Keeta menu/hours/create | H5guard (in-browser signature) | Headed-worker `JobKind` + handler (§6) |
-| Deliveroo menu/hours/create | Separate menus login | Headed-worker `JobKind` + handler (§6) |
+| Keeta menu read | H5guard (in-browser signature) | **Built** — awaits one live worker run to execute-verify (§6) |
+| Keeta hours read | Shop-schedule endpoint not isolated | Capture it on the settings sub-tab, or confirm `availableTimeDTO` semantics |
+| Keeta / Deliveroo create | Live storefront write, headed | Discover the write endpoint in-page, then a gated `JobKind` |
+| Deliveroo menu/hours read | Separate login + Cloudflare | Capture the menu endpoint on the worker's real Chrome; `DELIVEROO_MENU` job (§6) |
 | Live Talabat/Noon create verification | The environment's write-guard blocked the live create-probe | Run the controlled create-then-delete when permitted |
 
-Everything not in this table is verified and shipped.
+Everything not in this table is verified and shipped (or, for Keeta menu, built +
+unit-tested with the browser step pending a live worker run).
