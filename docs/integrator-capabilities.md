@@ -402,3 +402,88 @@ test path like Keeta/Deliveroo had.
 
 Everything marked ✅ is verified, shipped, and deployed to production; ⚙ is coded +
 tested and awaiting the post-incident deploy.
+
+---
+
+## 9. Operator runbook — how to run each functionality
+
+The concrete "how to do it" per integrator × functionality. Two invocation surfaces:
+**Admin** (`apps/admin` → Catalog Sync, calling `/api/v1/catalog-sync/*`) for API-side
+reads/creates, and the **worker CLI** (`aggregator-bootstrap …`, run in the
+`aggregator-worker` container on the VM) for the anti-bot channels. All reads need
+`CATALOG_SYNC_READ_ENABLED=true`; all writes need `CATALOG_SYNC_ENABLED=true` (both
+default off). A write is only ever run deliberately.
+
+### Prerequisites (once)
+- **Enable reads**: set `CATALOG_SYNC_READ_ENABLED=true` (W9 five-place). Off ⇒ the
+  drift report is served from the last snapshot and `POST /refresh` returns 503.
+- **Enable writes**: set `CATALOG_SYNC_ENABLED=true`. Off ⇒ every writer returns 503.
+- **Autonomous sweep** (optional): `CATALOG_SYNC_SWEEP_MINUTES > 0` runs
+  `run_catalog_sync_scheduler_forever` on the leader API slot.
+- **VM shell**: `gcloud compute ssh mm-backend --zone=me-central1-a`; the live worker is
+  `melting-moments-cakes-aggregator-worker-1`; the live API is `…-api-1` / `…-api-green-1`.
+
+### Foodics (master for the two integrated branches: Sharjah, Barsha)
+- **Menu read** — Admin → Catalog Sync → target Foodics → **Refresh** (`POST /refresh`
+  `{target:"foodics", branch_id, kind:"menu"}`). Reads the `Grubtech` group membership
+  and the `Grubtech` price tag via the Foodics console API.
+- **Item create/delete** — Admin → **Create item** (`POST /items` `{target:"foodics", …}`).
+  Creates the product in the `Grubtech` group with the `Grubtech` price tag; GrubTech
+  then propagates it to all five marketplaces. There is no separate Foodics hours read —
+  hours are managed in Foodics directly.
+
+### Careem
+- **Menu read** — Admin → Refresh `{target:"careem", kind:"menu"}` (`list_catalogs` +
+  per-category products; needs `merchantId`, handled by the reader).
+- **Hours read** — Admin → Refresh `{target:"careem", kind:"hours"}`
+  (`food-outlet-operational-hours`, day 1=Sun…7=Sat).
+- **Item create / delete** — Admin → Create item `{target:"careem", …}` →
+  `careem_provider.create_product` / `delete_product`. Verified by a controlled
+  create-then-delete.
+
+### Noon
+- **Menu read** — Admin → Refresh `{target:"noon", kind:"menu"}` (`menu/list` →
+  `menu/details`).
+- **Hours read** — Admin → Refresh `{target:"noon", kind:"hours"}`
+  (`restaurant/outlet/details`; period day 0=Mon → MM weekday `(day+1)%7`).
+- **Item create / delete** — Admin → Create item `{target:"noon", …}` → per-item
+  `_food-restaurant/menu/item/create` + `/item/delete` (delete needs the
+  `n-restaurantcode` header). Off-shelf (`isActive:false`) by default.
+
+### Talabat
+- **Menu read** — Admin → Refresh `{target:"talabat", kind:"menu"}` (DeliveryHero
+  vendor-api `/api/5/…/vendors/{v}/catalogs`).
+- **Hours read / item create / delete — NOT available.** The vendor product API is
+  read-only (`OPTIONS`→`GET,HEAD,OPTIONS`, `POST`→405) and menu writes + opening hours
+  live on DirectHub's separate partner-app SPA (`/menu-management-v2`,
+  `/opening_times_global`) with no per-item API for this account. Finishing these needs
+  DirectHub catalog/availability access or a portal-side capture of a live save.
+
+### Keeta (anti-bot — runs on the worker, not server-side)
+- **Menu read** — enable the worker job: `WORKER_KEETA_MENU_INTERVAL_HOURS > 0` (it pushes
+  a snapshot every N hours), or run it once on the VM:
+  `docker exec <worker> aggregator-bootstrap … ` (the daemon's `KEETA_MENU` job calls
+  `warm.pull_keeta_menu_in_page`). The API's Refresh then parses the pushed snapshot.
+- **Hours read** — today's open/close window per shop, from
+  `fetch_keeta_today_hours` (`/api/scm/gw/shop/base/summary/list`, seconds-from-midnight).
+  Keeta exposes only *today's* window, not a weekly schedule.
+- **Item create** — on the VM worker:
+  ```
+  aggregator-bootstrap create-keeta-item --shop-id <SHOP_ID> --name "<name>" \
+      --category-id <SHOP_CATEGORY_ID> --price <n> [--backend-category-id 6669]
+  ```
+  Off-shelf (`status=0`) by default. The backend category auto-resolves from `listConfig`;
+  pass `--backend-category-id 6669` (MM's) to be certain. Shop ids: Karama 1644336388,
+  Sharjah-Al Majaz 1644174206, DSO 1644170195, Barsha Heights 1644189187.
+- **Item delete** — on the VM worker:
+  `aggregator-bootstrap delete-keeta-item --shop-id <SHOP_ID> --spu-id <SPU_ID>`.
+
+### Deliveroo (anti-bot — runs on the worker; reads coded + tested, deploy pending)
+- **Menu + hours read** — enable the worker job: `WORKER_DELIVEROO_MENU_INTERVAL_HOURS > 0`
+  (default 0/off). The daemon's `DELIVEROO_MENU` job runs `warm.pull_deliveroo_menu_hours_in_page`,
+  which sits on the Partner Hub Opening-Hours page (the hub auto-exchanges a webrom token,
+  so no separate login) and pushes `{rst_id, menu, hours}` to `POST /aggregators/deliveroo/menu`.
+  The API stores the menu + hours snapshots; Admin → Refresh parses them
+  (`_read_deliveroo_menu` / `_read_deliveroo_hours`). Ships on one push post-incident.
+- **Item create / delete — not yet.** The read path is decoded; the write (a save on the
+  `rs-hub.deliveroo.com` menu editor) needs one live-save capture to learn the endpoint.
