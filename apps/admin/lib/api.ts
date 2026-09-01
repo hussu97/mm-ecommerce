@@ -233,6 +233,12 @@ export const catalogSyncApi = {
     api.post<Schemas['PushPlan']>(
       `/catalog-sync/push${buildQs({ target, branch_id: branchId, kind })}`,
     ),
+  resolveMappings: (target: string) =>
+    api.post<Schemas['MappingResolveResult']>(
+      `/catalog-sync/mappings/resolve${buildQs({ target })}`,
+    ),
+  createItem: (data: Schemas['CreateItemRequest']) =>
+    api.post<Record<string, unknown>>('/catalog-sync/items', data),
   setProductSync: (productId: string, data: Schemas['SyncFlagUpdate']) =>
     api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/products/${productId}/sync`, data),
   setCategorySync: (categoryId: string, data: Schemas['SyncFlagUpdate']) =>

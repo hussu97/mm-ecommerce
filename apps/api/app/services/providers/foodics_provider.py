@@ -113,6 +113,13 @@ _GETTING = "/core-api/getting"
 _LISTING = "/core-api/listing"
 _SELECT_LISTING = "/core-api/select-listing"
 _UPDATING = "/core-api/updating"
+#: Create. Verified 2026-09-01 by reading the console's own API client, which
+#: declares the verb→method map verbatim: `{name:'creating',method:'post'}` next
+#: to `getting`(get)/`updating`(put)/`deleting`(delete). NOT `inserting` — that
+#: string is absent from every bundle; `creating` is the create verb. Same
+#: `{url, payload}` envelope as `_UPDATING`, so the resource is named in the
+#: body, not the path.
+_CREATING = "/core-api/creating"
 
 #: The "Grubtech" price tag + menu group that define the aggregator menu for the
 #: two Foodics-integrated branches. Account-stable ids (not secrets, not
@@ -123,6 +130,32 @@ _UPDATING = "/core-api/updating"
 #: docs/aggregator-catalog-hours-sync-audit.md.
 FOODICS_GRUBTECH_PRICE_TAG_ID = "a056ee7e-5823-47af-9ab5-1029508c996b"
 FOODICS_GRUBTECH_GROUP_ID = "a062ba1a-70b6-4bd7-8dac-f7986f33727f"
+
+#: The Grubtech parent group's nine category subgroups — a new aggregator product
+#: joins the one matching its MM category, and that subgroup already rolls into
+#: Grubtech, so the product syncs to every marketplace. Read live from the group
+#: record 2026-09-01 (`/core-api/getting?url=/groups&id=<Grubtech>` → `subgroups`).
+#: Keyed by the subgroup name, which mirrors the MM category name.
+FOODICS_GRUBTECH_SUBGROUPS: dict[str, str] = {
+    "Cookie Melt": "a05d8155-d43b-469d-953b-aeaefed7b326",
+    "Cakes": "a05d8176-5a8b-480f-862f-bfe40b4bc8d3",
+    "Extras": "a05d8188-9809-4e1d-8314-cf647f867de4",
+    "Cookies": "a063495f-292d-40af-9fcf-faca7a5d0c88",
+    "Mix Boxes": "a0634a0f-96c9-4050-9e7e-65680d9c807b",
+    "Brownies": "a0634a39-10f9-4c93-bdb8-00fb02767be4",
+    "Eggless": "a0634a85-aa22-4fa8-98ca-377a202521e1",
+    "Desserts": "a0634b49-3245-4749-8efd-73109b696769",
+    "New In": "a1887db1-b3cc-48b6-a395-5de8ebf5b2b7",
+}
+
+#: The account's UAE VAT tax group and the product method codes every menu
+#: product on this account carries. Read live from an existing Grubtech product
+#: 2026-09-01 (`tax_group`, `pricing_method`, `selling_method`, `costing_method`).
+#: A create must echo them or Foodics rejects the product.
+FOODICS_VAT_TAX_GROUP_ID = "a03ed56a-9f3f-44ff-9c49-bfe3b25d55b9"
+FOODICS_PRICING_METHOD = 1
+FOODICS_SELLING_METHOD = 1
+FOODICS_COSTING_METHOD = 2
 
 #: Laravel exposes the request CSRF token in a `<meta name="csrf-token">` tag on
 #: the login page; that is what the `x-csrf-token` header must echo. The form
@@ -759,6 +792,20 @@ class FoodicsClient:
         `name`, `price`, `pivot.price`."""
         return await self._list_all(f"/price_tags/{price_tag_id}/modifier_options")
 
+    async def list_categories(self) -> list[dict]:
+        """The menu categories (`{id, name, ...}`) — a product create needs the
+        `category_id`, which is the menu category (distinct from the Grubtech
+        subgroup a product also joins)."""
+        return await self._list_all("/categories")
+
+    async def category_id_by_name(self, name: str) -> str | None:
+        """Resolve a menu-category name to its Foodics id (case-insensitive)."""
+        target = (name or "").strip().casefold()
+        for cat in await self.list_categories():
+            if str(cat.get("name", "")).strip().casefold() == target:
+                return cat.get("id")
+        return None
+
     async def set_price_tag_product_price(
         self, price_tag_id: str, product_id: str, price: Any
     ) -> Any:
@@ -777,6 +824,88 @@ class FoodicsClient:
                 "payload": {"price": price},
             },
         )
+
+    # ── create (catalog sync writer) ─────────────────────────────────────────
+    # Foodics is the master for the two integrated branches: a product created
+    # here, added to its Grubtech category subgroup and given a Grubtech price-tag
+    # price, is pushed by Foodics to *every* marketplace — so "create an item on
+    # the aggregators" is one Foodics create, not five portal creates. The verb is
+    # `creating` (verified 2026-09-01, see `_CREATING`); the envelope is the
+    # `{url, payload}` the console uses for `updating`. Every method here is only
+    # ever reached behind `CATALOG_SYNC_ENABLED`; the exact create-payload keys are
+    # confirmed against one controlled create at enablement (same discipline as
+    # `set_price_tag_product_price`), kept in one place so that is a one-line change.
+
+    async def _create(self, resource: str, payload: dict[str, Any]) -> Any:
+        """`POST /core-api/creating` with `{url: <resource>, payload}` — the create
+        mirror of `_update`."""
+        return await self._call(
+            "POST", _CREATING, json_body={"url": resource, "payload": payload}
+        )
+
+    async def create_product(
+        self,
+        *,
+        name: str,
+        price: Any,
+        category_id: str,
+        name_localized: str | None = None,
+        sku: str | None = None,
+        subgroup_id: str | None = None,
+        aggregator_price: Any | None = None,
+        tax_group_id: str = FOODICS_VAT_TAX_GROUP_ID,
+    ) -> Any:
+        """Create a menu product and, in the same call, place it in a Grubtech
+        subgroup and give it the Grubtech price-tag price — so Foodics syncs it to
+        the marketplaces.
+
+        `aggregator_price` defaults to `price`: strict parity is the rule, and the
+        price tag must never quote a figure the product itself does not. The
+        method/tax constants are the account's own (read live), echoed because a
+        create that omits them is rejected.
+        """
+        agg_price = price if aggregator_price is None else aggregator_price
+        payload: dict[str, Any] = {
+            "name": name,
+            "name_localized": name_localized or name,
+            "price": price,
+            "category_id": category_id,
+            "tax_group_id": tax_group_id,
+            "pricing_method": FOODICS_PRICING_METHOD,
+            "selling_method": FOODICS_SELLING_METHOD,
+            "costing_method": FOODICS_COSTING_METHOD,
+            "is_active": True,
+            "is_ready": True,
+        }
+        if sku:
+            payload["sku"] = sku
+        if subgroup_id:
+            payload["groups"] = [{"id": subgroup_id, "is_active": True}]
+        payload["price_tags"] = [
+            {"id": FOODICS_GRUBTECH_PRICE_TAG_ID, "price": agg_price}
+        ]
+        return await self._create("/products", payload)
+
+    async def add_product_to_grubtech(self, product_id: str, subgroup_id: str) -> Any:
+        """Attach an existing product to a Grubtech category subgroup (its
+        membership pivot) — for a product that already exists but is not yet on the
+        aggregator menu. Read shape: `groups:[{id, pivot:{is_active}}]`."""
+        return await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/products/{product_id}",
+                "payload": {"groups": [{"id": subgroup_id, "is_active": True}]},
+            },
+        )
+
+    async def get_product(self, product_id: str) -> dict | None:
+        """One product's full record (`category`, `groups`, `price_tags`, …) — used
+        to confirm a create landed and to read back the id the mapping stores."""
+        payload = await self._call(
+            "GET", _GETTING, params={"url": "/products", "id": product_id}
+        )
+        return _order_of(payload)
 
 
 def _order_of(payload: Any) -> dict | None:

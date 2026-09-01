@@ -76,6 +76,30 @@ class PushPlan(BaseModel):
     note: str
 
 
+class CreateItemRequest(BaseModel):
+    """Create one MM product on the aggregators (via Foodics Grubtech).
+
+    `dry_run` (the Phase-1 default) returns the exact create it would POST and
+    mutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED` and actually
+    creates the product in Foodics, storing the mapping.
+    """
+
+    product_id: str
+    dry_run: bool = True
+
+
+class MappingResolveResult(BaseModel):
+    """What `resolve` approved from a target's last menu read."""
+
+    system: str
+    products_matched: int
+    products_unmatched: list[str] = []
+    options_matched: int
+    options_unmatched: list[str] = []
+    categories_matched: int
+    approved: int
+
+
 class WeeklyShift(BaseModel):
     """One open shift. weekday 0=Sunday … 6=Saturday; times HH:MM."""
 

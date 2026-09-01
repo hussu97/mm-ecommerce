@@ -28,6 +28,8 @@ from app.models.user import User
 from app.schemas.catalog_sync import (
     BranchDriftReport,
     CatalogSyncStatus,
+    CreateItemRequest,
+    MappingResolveResult,
     PushPlan,
     SyncFlagResponse,
     SyncFlagUpdate,
@@ -125,6 +127,68 @@ async def push(
         db, target=target, branch_id=branch_id, kind=kind
     )
     return PushPlan(**plan)
+
+
+@router.post("/mappings/resolve", response_model=MappingResolveResult)
+async def resolve_mappings(
+    target: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("catalogue.manage")),
+) -> MappingResolveResult:
+    """Approve the confident item/option/category mappings from a target's last
+    menu read — the "figure out the mapping" action.
+
+    Reads the stored snapshot (no marketplace session): products matching an MM
+    product by exact name and options matching by name+price are approved in the
+    shared `external_item_map`; genuine variants stay as unapproved proposals for a
+    human. Idempotent; never overrides a manual mapping.
+    """
+    if target not in SYNC_TARGETS:
+        raise NotFoundError(f"Unknown target {target!r}")
+    result = await catalog_sync.resolve_and_approve_mappings(db, target=target)
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="external_item_map",
+        entity_id=target,
+        entity_label=f"{target} — resolve mappings",
+        admin=admin,
+        changes=result,
+        request=request,
+    )
+    return MappingResolveResult(**result)
+
+
+@router.post("/items", response_model=dict)
+async def create_item(
+    payload: CreateItemRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("catalogue.manage")),
+) -> dict:
+    """Create one MM product on the aggregators via Foodics. Hard-gated; dry-run.
+
+    503s unless `CATALOG_SYNC_ENABLED`. Phase-1 default `dry_run=true` returns the
+    exact Foodics create it would POST and mutates nothing. With `dry_run=false` it
+    creates the product in Foodics (which syncs it to every marketplace) and stores
+    the Foodics mapping; marketplace mappings record on the next menu read.
+    """
+    result = await catalog_sync.create_menu_item(
+        db, product_id=UUID(payload.product_id), dry_run=payload.dry_run
+    )
+    if not payload.dry_run:
+        await audit_service.log_action(
+            db,
+            action="CREATE",
+            entity_type="product",
+            entity_id=payload.product_id,
+            entity_label=f"{result.get('product', {}).get('name')} — aggregator create",
+            admin=admin,
+            changes=result,
+            request=request,
+        )
+    return result
 
 
 @router.put("/products/{product_id}/sync", response_model=SyncFlagResponse)

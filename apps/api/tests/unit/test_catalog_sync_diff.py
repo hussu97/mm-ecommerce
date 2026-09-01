@@ -517,3 +517,67 @@ def test_menu_ops_resolve_channel_id_from_last_read():
     ops = catalog_sync._build_menu_ops(deltas, actual)
     assert ops[0]["channel_external_id"] == "CAREEM-99"
     assert ops[0]["action"] == "delete"
+
+
+# ── Create (the Foodics master write path) ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_item_is_gated_off_by_default(mock_db, monkeypatch):
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", False)
+    with pytest.raises(ServiceUnavailableError):
+        await catalog_sync.create_menu_item(
+            mock_db, product_id="00000000-0000-0000-0000-000000000001"
+        )
+
+
+@pytest.mark.asyncio
+async def test_foodics_create_product_enforces_parity_and_grubtech(monkeypatch):
+    from app.services.providers import foodics_provider as fp
+
+    captured = {}
+
+    async def fake_create(self, resource, payload):
+        captured["resource"] = resource
+        captured["payload"] = payload
+        return {"data": {"id": "FOODICS-NEW"}}
+
+    monkeypatch.setattr(fp.FoodicsClient, "_create", fake_create)
+    client = fp.FoodicsClient()
+    subgroup = fp.FOODICS_GRUBTECH_SUBGROUPS["Cakes"]
+    out = await client.create_product(
+        name="New Cake",
+        price=Decimal("40"),
+        category_id="CAT-CAKES",
+        subgroup_id=subgroup,
+    )
+
+    assert captured["resource"] == "/products"
+    p = captured["payload"]
+    # Strict parity: the price-tag price it would sync equals the product price.
+    assert p["price"] == Decimal("40")
+    assert p["price_tags"] == [
+        {"id": fp.FOODICS_GRUBTECH_PRICE_TAG_ID, "price": Decimal("40")}
+    ]
+    # Placed in the Grubtech subgroup so Foodics pushes it to the marketplaces.
+    assert p["groups"] == [{"id": subgroup, "is_active": True}]
+    # The account's own method/tax codes are echoed (a create without them fails).
+    assert p["tax_group_id"] == fp.FOODICS_VAT_TAX_GROUP_ID
+    assert p["pricing_method"] == fp.FOODICS_PRICING_METHOD
+    assert out["data"]["id"] == "FOODICS-NEW"
+
+
+@pytest.mark.asyncio
+async def test_foodics_category_id_by_name_is_case_insensitive(monkeypatch):
+    from app.services.providers import foodics_provider as fp
+
+    async def fake_list(self):
+        return [{"id": "C1", "name": "Cakes"}, {"id": "C2", "name": "Brownies"}]
+
+    monkeypatch.setattr(fp.FoodicsClient, "list_categories", fake_list)
+    client = fp.FoodicsClient()
+    assert await client.category_id_by_name("cakes") == "C1"
+    assert await client.category_id_by_name("BROWNIES") == "C2"
+    assert await client.category_id_by_name("Nope") is None

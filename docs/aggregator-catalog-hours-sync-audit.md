@@ -440,3 +440,74 @@ This is stated rather than guessed — seeding options by name would map the wro
 | Product item maps | Matched (unapproved) + 3 variants resolved | approve in console; migration 172 |
 | Ambiguous product maps (3 Talabat) | Size-less, ambiguous | human review |
 | Option item maps | Opaque / modeling-mismatch / ambiguous | needs the menu reads first |
+
+# Noon + Talabat mapping — resolved against the live menus (2026-09-01)
+
+Ran the mapping resolver (`catalog_mapping.resolve_menu`, mirrored in a read-only VM
+probe) over the **live** Noon and Talabat menus against the prod catalogue
+(131 products, 19 categories, 46 option rows). Zero hallucination — every number
+below is from the live read, not a guess.
+
+**Talabat** (vendor 711571, the same catalogue on every outlet):
+- **46 / 46 products matched** by exact name — fully resolvable, nothing ambiguous.
+- 8 / 9 categories matched; the one miss is **"New In"**, a merchandising rail with
+  no MM category (its items still map) — leave unmapped.
+- **0 options** — Talabat models each size as its own top-level product, so there is
+  no option layer to map. This retires the earlier "talabat gram-size options" worry:
+  they are products, and they matched.
+
+**Noon** (MM-managed menu `M3497661938091593085106254A`, 45 items):
+- **43 / 45 products matched**. The two misses, both real variants:
+  - `Kinder Cookie Melt (Serves 3-5)` → MM **`Kinder Cookie Melt (500 grams)`** (the
+    same "serves 3-5 = 500 g" rule migration 172 applied for Careem/Deliveroo).
+  - `Chocolate Caramel Crunch Cake` → MM **`Chocolate Caramel Crunch Cake Slice`**
+    (MM carries only the slice; a human confirms slice-vs-whole in the console).
+- 7 / 9 categories matched; misses are **"New In"** (merch rail) and **"Cake"** →
+  MM **"Cakes"** (singular/plural).
+- **90 / 108 option instances matched** by (name, price). The 18 misses are all the
+  box-filling flavours where **Noon uses the plural** ("Cookies and Cream Cookies")
+  and MM the singular ("Cookies and Cream Cookie"), both at price 0.00 — the same
+  option, name-drifted. They surface as proposals for a one-click console map.
+
+The earlier "options are not seedable by name" finding stands for the anti-bot
+channels *without* a reader; now that Noon and Talabat both read live, `resolve_menu`
+matches options by **name + price** and only the plural/singular drift is left. The
+`resolve` admin action approves every exact match and leaves the genuine variants as
+proposals — the mapping is figured out, not guessed.
+
+# Creating menu items — the mechanism, and how the mapping is stored (2026-09-01)
+
+**Discovered, not assumed.** Read the Foodics console's own API client live: the
+CRUD verbs are `getting`(GET) / **`creating`(POST)** / `updating`(PUT) /
+`deleting`(DELETE) — *not* `inserting` (absent from every bundle). Create is
+`POST /core-api/creating` with the same `{url, payload}` envelope as `updating`.
+
+**Foodics is the create path for the two integrated branches — one create, not five.**
+A product created in Foodics, placed in its **Grubtech category subgroup** and given a
+**Grubtech price-tag price**, is pushed by Foodics to *every* marketplace. Verified
+structure (read live):
+- Grubtech parent group → **9 category subgroups** (Cakes `a05d8176…`, Cookies
+  `a063495f…`, Brownies `a0634a39…`, Cookie Melt `a05d8155…`, Mix Boxes, Eggless,
+  Desserts, Extras, New In) — mirroring the MM categories.
+- A product carries `groups:[{id, pivot:{is_active}}]` (membership) and
+  `price_tags:[{id, pivot:{price}}]`. On a live Grubtech product the price-tag price
+  equalled the base price — **strict parity, confirmed in the wild**.
+- A create needs `category_id` (the menu category, distinct from the subgroup),
+  `tax_group_id` (UAE VAT `a03ed56a…`) and `pricing/selling/costing_method` (1/1/2) —
+  read live and echoed, or Foodics rejects the product.
+
+`foodics_provider.create_product(...)` builds exactly this (price-tag price defaults to
+the product price — parity is not optional); `catalog_sync.create_menu_item(...)` is the
+gated entry point (`CATALOG_SYNC_ENABLED`), **dry-run by default** — it returns the
+exact create it would POST and mutates nothing.
+
+**Storing the mapping once created.** The same `resolve_menu` that figured out the
+existing mappings is the storage mechanism: after a Foodics create, the marketplaces
+show the item under the same name on their next menu read, and `resolve_menu` records
+each channel's `external_item_map` (name → product) automatically. For Foodics itself,
+`create_menu_item` records the row inline from the create response (the returned Foodics
+id → product, approved). No parallel table, no per-channel create.
+
+**Non-Foodics outlets** (Al Karama, Silicon Oasis) still need a direct-portal create —
+a later phase. `create_menu_item` refuses those targets with a clear message rather than
+POSTing an unverified payload.

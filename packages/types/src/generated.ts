@@ -1973,6 +1973,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog-sync/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Item
+         * @description Create one MM product on the aggregators via Foodics. Hard-gated; dry-run.
+         *
+         *     503s unless `CATALOG_SYNC_ENABLED`. Phase-1 default `dry_run=true` returns the
+         *     exact Foodics create it would POST and mutates nothing. With `dry_run=false` it
+         *     creates the product in Foodics (which syncs it to every marketplace) and stores
+         *     the Foodics mapping; marketplace mappings record on the next menu read.
+         */
+        post: operations["create_item_api_v1_catalog_sync_items_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog-sync/mappings/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Mappings
+         * @description Approve the confident item/option/category mappings from a target's last
+         *     menu read — the "figure out the mapping" action.
+         *
+         *     Reads the stored snapshot (no marketplace session): products matching an MM
+         *     product by exact name and options matching by name+price are approved in the
+         *     shared `external_item_map`; genuine variants stay as unapproved proposals for a
+         *     human. Idempotent; never overrides a manual mapping.
+         */
+        post: operations["resolve_mappings_api_v1_catalog_sync_mappings_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog-sync/products/{product_id}/sync": {
         parameters: {
             query?: never;
@@ -10302,6 +10353,23 @@ export interface components {
                 };
             } | null;
         };
+        /**
+         * CreateItemRequest
+         * @description Create one MM product on the aggregators (via Foodics Grubtech).
+         *
+         *     `dry_run` (the Phase-1 default) returns the exact create it would POST and
+         *     mutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED` and actually
+         *     creates the product in Foodics, storing the mapping.
+         */
+        CreateItemRequest: {
+            /**
+             * Dry Run
+             * @default true
+             */
+            dry_run: boolean;
+            /** Product Id */
+            product_id: string;
+        };
         /** CreateSessionRequest */
         CreateSessionRequest: {
             /** Method */
@@ -12402,6 +12470,32 @@ export interface components {
         LogoutRequest: {
             /** Refresh Token */
             refresh_token?: string | null;
+        };
+        /**
+         * MappingResolveResult
+         * @description What `resolve` approved from a target's last menu read.
+         */
+        MappingResolveResult: {
+            /** Approved */
+            approved: number;
+            /** Categories Matched */
+            categories_matched: number;
+            /** Options Matched */
+            options_matched: number;
+            /**
+             * Options Unmatched
+             * @default []
+             */
+            options_unmatched: string[];
+            /** Products Matched */
+            products_matched: number;
+            /**
+             * Products Unmatched
+             * @default []
+             */
+            products_unmatched: string[];
+            /** System */
+            system: string;
         };
         /** MenuGroupCreate */
         MenuGroupCreate: {
@@ -21445,6 +21539,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BranchDriftReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_item_api_v1_catalog_sync_items_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateItemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_mappings_api_v1_catalog_sync_mappings_resolve_post: {
+        parameters: {
+            query: {
+                target: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingResolveResult"];
                 };
             };
             /** @description Validation Error */

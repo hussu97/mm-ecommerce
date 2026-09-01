@@ -53,7 +53,7 @@ from app.models.catalog_sync import (
 from app.models.category import Category
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
-from app.services.aggregators import menu_readers
+from app.services.aggregators import catalog_mapping, menu_readers
 from app.services.aggregators.catalog_diff import (
     HoursDiff,
     MenuDiff,
@@ -69,7 +69,6 @@ from app.services.aggregators.menu_normalized import (
     NormalizedOption,
     NormalizedShift,
 )
-from app.services.catalog import external_item_map_service as eim
 
 logger = logging.getLogger(__name__)
 
@@ -240,41 +239,62 @@ async def propose_mappings_from_menu(
 ) -> dict[str, int]:
     """Seed the shared `external_item_map` review queue from a fetched menu.
 
-    Reuse, not a parallel map: every category and item a read finds on `target`
-    is recorded as an *unapproved* proposal (guessing the MM id by exact
-    normalised-name match), so it surfaces in the one item-mappings admin queue
-    alongside the ingest's own proposals. Idempotent (ON CONFLICT DO NOTHING) —
-    an approved row or an operator's edit is never overwritten.
+    Reuse, not a parallel map: every category, item **and option** a read finds on
+    `target` is recorded as an *unapproved* proposal, matched to its MM id (item by
+    exact normalised name, option by name+price — a bare option name is ambiguous
+    across products), so it surfaces in the one item-mappings admin queue alongside
+    the ingest's own proposals. Delegates to `catalog_mapping.resolve_menu` with
+    `approve_exact=False`: it never approves, and never touches a row a human owns.
     """
-    # MM name → id lookups, built once.
-    prod_rows = (
-        await db.execute(select(Product.id, Product.name).where(Product.is_active))
-    ).all()
-    cat_rows = (
-        await db.execute(select(Category.id, Category.name).where(Category.is_active))
-    ).all()
-    prod_by_name = {eim.normalize_ref(n): pid for pid, n in prod_rows}
-    cat_by_name = {eim.normalize_ref(n): cid for cid, n in cat_rows}
+    rep = await catalog_mapping.resolve_menu(db, target, menu, approve_exact=False)
+    return {
+        "categories": rep.categories_matched + len(menu.categories),
+        "items": rep.products_matched + len(rep.products_unmatched),
+        "options": rep.options_matched + len(rep.options_unmatched),
+    }
 
-    counts = {"categories": 0, "items": 0}
-    for cat in menu.categories:
-        await eim.record_category_proposal(
-            db,
-            target,
-            cat.name,
-            guess_category_id=cat_by_name.get(eim.normalize_ref(cat.name)),
+
+async def resolve_and_approve_mappings(
+    db: AsyncSession, *, target: str
+) -> dict[str, Any]:
+    """Approve the confident matches for `target` from its last menu read.
+
+    The deliberate "figure out the mapping" action behind the admin button: it
+    reads the stored snapshot (no marketplace session needed) and, via
+    `catalog_mapping.resolve_menu(approve_exact=True)`, approves every item that
+    matches an MM product by exact name and every option that matches by name+price
+    — leaving the genuine variants (a "(Serves 3-5)" size, a plural/singular
+    option) as unapproved proposals for a human. Idempotent; never overrides a
+    human's manual mapping. Returns the report so the console can show what landed.
+    """
+    snap = await _latest_menu_snapshot(db, target)
+    if snap is None or snap.normalized is None:
+        raise BadRequestError(
+            f"No menu snapshot for {target} yet — refresh its menu first."
         )
-        counts["categories"] += 1
-        for item in cat.items:
-            await eim.record_proposal(
-                db,
-                target,
-                item.name,
-                guess_product_id=prod_by_name.get(eim.normalize_ref(item.name)),
+    menu = NormalizedMenu.from_dict(snap.normalized)
+    rep = await catalog_mapping.resolve_menu(db, target, menu, approve_exact=True)
+    return rep.to_dict()
+
+
+async def _latest_menu_snapshot(
+    db: AsyncSession, target: str
+) -> AggregatorMenuSnapshot | None:
+    """The newest menu snapshot for a target across all outlets. A marketplace's
+    menu is the same catalogue on every outlet, so any recent read is a valid
+    mapping source; Foodics has a single account-level snapshot regardless."""
+    return (
+        await db.execute(
+            select(AggregatorMenuSnapshot)
+            .where(
+                AggregatorMenuSnapshot.target == target,
+                AggregatorMenuSnapshot.kind == SNAPSHOT_MENU,
+                AggregatorMenuSnapshot.normalized.isnot(None),
             )
-            counts["items"] += 1
-    await db.flush()
-    return counts
+            .order_by(AggregatorMenuSnapshot.fetched_at.desc().nullslast())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 # ── Hours normalisation per channel (for the writer) ──────────────────────────
@@ -574,6 +594,120 @@ def _route_for(target: str) -> str:
     return "channel_portal"
 
 
+# ── Create a menu item (the Foodics master path) ──────────────────────────────
+#
+# Creating an aggregator item for the two integrated branches is one Foodics
+# create — a product placed in its Grubtech category subgroup and given the
+# Grubtech price-tag price — which Foodics then pushes to every marketplace. So
+# the create target is Foodics, not each portal; the marketplaces pick the item
+# up on their next menu read, and `resolve_menu` records the name→product mapping
+# for each channel automatically (no per-channel create). The mapping for Foodics
+# itself is stored inline here from the create response. Non-Foodics outlets
+# (Al Karama, Silicon Oasis) still need a direct-portal create — a later phase;
+# `create_menu_item` returns a clear "unsupported target" for them rather than a
+# half-built write.
+
+
+async def create_menu_item(
+    db: AsyncSession,
+    *,
+    product_id: Any,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Create one MM product on the aggregators via Foodics (Grubtech).
+
+    Hard-gated by `CATALOG_SYNC_ENABLED`. Phase-1 default is `dry_run`: it resolves
+    the product, its Grubtech category subgroup and the price (parity-checked) and
+    returns exactly the create it *would* POST, mutating nothing. With
+    `dry_run=False` it creates the product in Foodics, then records the Foodics
+    `external_item_map` row (approved, keyed on the returned Foodics id) so the
+    mapping is stored the moment the item exists; the marketplace mappings follow
+    on the next read via `resolve_menu`.
+    """
+    _ensure_write_enabled()
+    product = (
+        await db.execute(
+            select(Product)
+            .where(Product.id == product_id)
+            .options(selectinload(Product.category))
+        )
+    ).scalar_one_or_none()
+    if product is None:
+        raise BadRequestError(f"Product {product_id} not found")
+
+    from app.services.providers import foodics_provider as fp
+
+    cat_name = product.category.name if product.category else None
+    subgroup_id = fp.FOODICS_GRUBTECH_SUBGROUPS.get(cat_name or "")
+    price = product.base_price
+    if price is None:
+        raise BadRequestError(
+            f"Product {product.name!r} has no base price; set one before syncing."
+        )
+    if subgroup_id is None:
+        raise BadRequestError(
+            f"Product {product.name!r} is in category {cat_name!r}, which has no "
+            f"Grubtech subgroup — add the subgroup in Foodics first, or move the "
+            f"product to a synced category."
+        )
+
+    plan = {
+        "target": TARGET_FOODICS,
+        "route": _route_for(TARGET_FOODICS),
+        "product": {"id": str(product.id), "name": product.name, "sku": product.sku},
+        "foodics_create": {
+            "name": product.name,
+            "price": str(price),
+            "aggregator_price": str(price),  # strict parity
+            "category": cat_name,
+            "grubtech_subgroup_id": subgroup_id,
+            "price_tag_id": fp.FOODICS_GRUBTECH_PRICE_TAG_ID,
+        },
+    }
+    if dry_run:
+        plan["dry_run"] = True
+        plan["note"] = (
+            "Dry run — nothing created. This is the exact Foodics product create "
+            "(product + Grubtech subgroup membership + price-tag price at parity) "
+            "that CATALOG_SYNC_ENABLED with dry_run=False would POST. Marketplaces "
+            "sync from Foodics; their mappings record on the next menu read."
+        )
+        return plan
+
+    foodics_category_id = await fp.provider.category_id_by_name(cat_name)
+    if foodics_category_id is None:
+        raise BadRequestError(
+            f"No Foodics menu category named {cat_name!r} — create it in Foodics "
+            f"first (a product needs a category_id)."
+        )
+    created = await fp.provider.create_product(
+        name=product.name,
+        price=price,
+        category_id=foodics_category_id,
+        sku=product.sku,
+        subgroup_id=subgroup_id,
+        aggregator_price=price,
+    )
+    foodics_id = (created or {}).get("data", {}).get("id") or (created or {}).get("id")
+    if foodics_id:
+        await catalog_mapping._upsert(  # noqa: SLF001 — one recorder, reused
+            db,
+            system=TARGET_FOODICS,
+            external_ref=str(foodics_id),
+            external_name=product.name,
+            mm_kind=catalog_mapping.KIND_PRODUCT,
+            product_id=product.id,
+            approve=True,
+        )
+    plan["dry_run"] = False
+    plan["foodics_id"] = foodics_id
+    plan["note"] = (
+        "Created in Foodics and mapped. The marketplaces sync from Foodics; their "
+        "external_item_map rows record on the next menu read + resolve."
+    )
+    return plan
+
+
 # ── Sweeps (per-target isolation, the ingest's pattern) ───────────────────────
 
 
@@ -670,6 +804,8 @@ __all__ = [
     "compute_hours_drift",
     "compute_drift_all",
     "plan_push",
+    "create_menu_item",
+    "resolve_and_approve_mappings",
     "integrated_branches",
     "AGGREGATOR_CHANNELS",
 ]

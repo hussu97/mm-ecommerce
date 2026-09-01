@@ -252,6 +252,23 @@ export default function CatalogSyncPage() {
     }
   };
 
+  const [resolving, setResolving] = useState<string | null>(null);
+  const onResolve = async (target: string) => {
+    setResolving(target);
+    try {
+      const r = await catalogSyncApi.resolveMappings(target);
+      toast.success(
+        `${titleCase(target)}: approved ${r.approved} mapping(s) — ` +
+          `${r.products_matched} product(s), ${r.options_matched} option(s). ` +
+          `${(r.products_unmatched ?? []).length} product(s) left for review.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Resolve failed');
+    } finally {
+      setResolving(null);
+    }
+  };
+
   if (loading) return <div className="p-8 flex justify-center"><Spinner /></div>;
   if (error) return <div className="p-8"><LoadError message={error} onRetry={loadBase} /></div>;
 
@@ -310,7 +327,18 @@ export default function CatalogSyncPage() {
         <div className="space-y-4">
           {Object.entries(targets).map(([target, data]) => (
             <div key={target} className="border border-gray-200 rounded-sm p-4">
-              <h2 className="text-lg font-display mb-1">{titleCase(target)}</h2>
+              <div className="flex items-center justify-between mb-1 gap-2">
+                <h2 className="text-lg font-display">{titleCase(target)}</h2>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={resolving === target}
+                  onClick={() => onResolve(target)}
+                  title="Approve item/option/category mappings that match MM exactly (by name, and by name+price for options) from the last menu read."
+                >
+                  Resolve mappings
+                </Button>
+              </div>
               {data.error ? (
                 <div className="text-sm text-red-600">{data.error}</div>
               ) : (

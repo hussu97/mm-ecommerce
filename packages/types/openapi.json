@@ -7533,6 +7533,25 @@
         "title": "CourseUpdate",
         "type": "object"
       },
+      "CreateItemRequest": {
+        "description": "Create one MM product on the aggregators (via Foodics Grubtech).\n\n`dry_run` (the Phase-1 default) returns the exact create it would POST and\nmutates nothing; `dry_run=False` needs `CATALOG_SYNC_ENABLED` and actually\ncreates the product in Foodics, storing the mapping.",
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "product_id": {
+            "title": "Product Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id"
+        ],
+        "title": "CreateItemRequest",
+        "type": "object"
+      },
       "CreateSessionRequest": {
         "properties": {
           "method": {
@@ -13918,6 +13937,56 @@
           }
         },
         "title": "LogoutRequest",
+        "type": "object"
+      },
+      "MappingResolveResult": {
+        "description": "What `resolve` approved from a target's last menu read.",
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "categories_matched": {
+            "title": "Categories Matched",
+            "type": "integer"
+          },
+          "options_matched": {
+            "title": "Options Matched",
+            "type": "integer"
+          },
+          "options_unmatched": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Options Unmatched",
+            "type": "array"
+          },
+          "products_matched": {
+            "title": "Products Matched",
+            "type": "integer"
+          },
+          "products_unmatched": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Products Unmatched",
+            "type": "array"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "system",
+          "products_matched",
+          "options_matched",
+          "categories_matched",
+          "approved"
+        ],
+        "title": "MappingResolveResult",
         "type": "object"
       },
       "MenuGroupCreate": {
@@ -36839,6 +36908,103 @@
           }
         ],
         "summary": "Branch Drift",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/items": {
+      "post": {
+        "description": "Create one MM product on the aggregators via Foodics. Hard-gated; dry-run.\n\n503s unless `CATALOG_SYNC_ENABLED`. Phase-1 default `dry_run=true` returns the\nexact Foodics create it would POST and mutates nothing. With `dry_run=false` it\ncreates the product in Foodics (which syncs it to every marketplace) and stores\nthe Foodics mapping; marketplace mappings record on the next menu read.",
+        "operationId": "create_item_api_v1_catalog_sync_items_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateItemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Item Api V1 Catalog Sync Items Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Item",
+        "tags": [
+          "Catalog Sync"
+        ]
+      }
+    },
+    "/api/v1/catalog-sync/mappings/resolve": {
+      "post": {
+        "description": "Approve the confident item/option/category mappings from a target's last\nmenu read \u2014 the \"figure out the mapping\" action.\n\nReads the stored snapshot (no marketplace session): products matching an MM\nproduct by exact name and options matching by name+price are approved in the\nshared `external_item_map`; genuine variants stay as unapproved proposals for a\nhuman. Idempotent; never overrides a manual mapping.",
+        "operationId": "resolve_mappings_api_v1_catalog_sync_mappings_resolve_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "title": "Target",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingResolveResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Resolve Mappings",
         "tags": [
           "Catalog Sync"
         ]
