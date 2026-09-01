@@ -647,10 +647,46 @@ def _body_html(label: str, detail: ReportDetail) -> str:
     )
 
 
+async def _settle_aggregator_orders() -> None:
+    """Promote every scraped aggregator order into its MM order (and reconcile)
+    before the report counts them.
+
+    The report reads *promoted* MM orders, but a channel is often scraped promptly
+    and promoted only in a later background batch — Keeta is the standing case: its
+    orders land in `aggregator_order` within minutes of the in-page pull, yet become
+    delivered MM orders only when the promote sweep next runs, which after a deploy
+    or a stalled scheduler can be hours later. A report sent in that gap under-reports
+    the channel, and a re-send then disagrees — the recurring "shown less on report"
+    discrepancy.
+
+    Settling here makes the report materialise its own data first, so its numbers no
+    longer depend on when the background batch happens to run. Both sweeps are
+    idempotent, hold their own advisory locks and open their own sessions, so this
+    never double-counts and never fights the scheduled sweep. Best-effort: a failure
+    is logged and the mail still goes out with whatever is already promoted (the prior
+    behaviour) — the aggregator side must never block the report.
+    """
+    try:
+        from app.services.aggregators import ingest
+
+        promoted = await ingest.sweep_promote_once()
+        await ingest.sweep_reconcile_once()
+        if promoted:
+            logger.info(
+                "daily report: promoted %s aggregator order(s) before send", promoted
+            )
+    except Exception:  # noqa: BLE001 — the aggregator side must never block the mail
+        logger.exception("daily report: pre-send promote/reconcile failed")
+
+
 async def send(
     db: AsyncSession, *, date_from: str, date_to: str, recipients: list[str]
 ) -> dict:
     """Build the report and mail it, once per recipient, journalled."""
+    # Settle the day's marketplace orders into MM orders before counting, so the
+    # report is complete regardless of the background promote batch's timing — the
+    # fix for a channel (Keeta) scraped promptly but promoted hours later.
+    await _settle_aggregator_orders()
     report = await build(db, date_from=date_from, date_to=date_to)
     detail = await build_detail(db, date_from=date_from, date_to=date_to)
     xlsx = to_xlsx(report, detail)

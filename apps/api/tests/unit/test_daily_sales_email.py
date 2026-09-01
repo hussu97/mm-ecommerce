@@ -453,3 +453,82 @@ async def test_a_past_midnight_branch_holds_its_day_until_it_actually_closes():
         already_sent={"2026-08-22", "2026-08-23"},
     )
     assert due == ["2026-08-24"]
+
+
+@pytest.mark.asyncio
+async def test_send_settles_aggregator_orders_before_counting(monkeypatch):
+    """send() promotes scraped aggregator orders into MM orders BEFORE it builds,
+    so a channel promoted only in a later background batch (Keeta is scraped
+    promptly but promoted hours later) is counted in full rather than under-
+    reported. Promote must run before build, and reconcile must run too."""
+    from app.services.aggregators import ingest as agg_ingest
+
+    calls: list[str] = []
+
+    async def _promote():
+        calls.append("promote")
+        return 3
+
+    async def _reconcile():
+        calls.append("reconcile")
+        return 0
+
+    async def _build(_db, *, date_from, date_to):
+        calls.append("build")
+        return dse.DailySalesReport(
+            date_from=date_from, date_to=date_to, columns=[], rows=[]
+        )
+
+    async def _build_detail(_db, *, date_from, date_to):
+        return dse.ReportDetail()
+
+    async def _send_attachment(*_a, **_k):
+        return {"status": "sent"}
+
+    monkeypatch.setattr(agg_ingest, "sweep_promote_once", _promote)
+    monkeypatch.setattr(agg_ingest, "sweep_reconcile_once", _reconcile)
+    monkeypatch.setattr(dse, "build", _build)
+    monkeypatch.setattr(dse, "build_detail", _build_detail)
+    monkeypatch.setattr(dse.email_service, "send_with_attachment", _send_attachment)
+
+    await dse.send(
+        None, date_from="2026-08-31", date_to="2026-08-31", recipients=["x@example.com"]
+    )
+    assert "promote" in calls and "build" in calls
+    assert calls.index("promote") < calls.index("build")  # settle, then count
+    assert "reconcile" in calls
+
+
+@pytest.mark.asyncio
+async def test_send_still_mails_when_settling_fails(monkeypatch):
+    """A promote/reconcile failure must never block the mail — the report still
+    goes out with whatever is already promoted."""
+    from app.services.aggregators import ingest as agg_ingest
+
+    async def _boom():
+        raise RuntimeError("promote pool exhausted")
+
+    async def _build(_db, *, date_from, date_to):
+        return dse.DailySalesReport(
+            date_from=date_from, date_to=date_to, columns=[], rows=[]
+        )
+
+    async def _build_detail(_db, *, date_from, date_to):
+        return dse.ReportDetail()
+
+    sent: list[str] = []
+
+    async def _send_attachment(recipient, *_a, **_k):
+        sent.append(recipient)
+        return {"status": "sent"}
+
+    monkeypatch.setattr(agg_ingest, "sweep_promote_once", _boom)
+    monkeypatch.setattr(dse, "build", _build)
+    monkeypatch.setattr(dse, "build_detail", _build_detail)
+    monkeypatch.setattr(dse.email_service, "send_with_attachment", _send_attachment)
+
+    out = await dse.send(
+        None, date_from="2026-08-31", date_to="2026-08-31", recipients=["x@example.com"]
+    )
+    assert sent == ["x@example.com"]
+    assert out["sent"][0]["status"] == "sent"
