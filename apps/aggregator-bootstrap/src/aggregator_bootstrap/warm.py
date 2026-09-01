@@ -318,9 +318,28 @@ async def pull_deliveroo_menu_hours_in_page() -> dict[str, Any]:
         raise NotLoggedInError(
             f"deliveroo session state missing at {state}; run a login/bootstrap first"
         )
+    account = await pull_account("deliveroo")
     async with async_playwright() as pw:
         opened = await _open_storage_state_context(pw, "deliveroo")
         try:
+            # Refresh the browser token FIRST — the hydrated web session goes stale
+            # fast and the hub redirects to /login (so the capture sees nothing).
+            # Deliveroo has no OTP, so an email/password re-login mints a fresh
+            # `token` cookie context-wide. Best-effort, exactly like the invoice pull.
+            if account and account.email and account.password:
+                try:
+                    from .channels.login import login_deliveroo
+
+                    await login_deliveroo(
+                        opened.context,
+                        email=account.email,
+                        password=account.password,
+                    )
+                except Exception:  # noqa: BLE001 — try the capture with what we have
+                    logger.warning(
+                        "deliveroo: in-page re-login failed; attempting the "
+                        "menu/hours capture with the hydrated session anyway"
+                    )
             payloads = await fetch_deliveroo_menu_hours(opened.context)
         finally:
             await opened.close()
