@@ -35,6 +35,7 @@ and adding one to sign an unsigned public call would be a dependency for nothing
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -60,6 +61,19 @@ _ITEM_SEARCH = "/item-search"
 #: alternative is a token that was valid when the request was built and expired
 #: while it was in flight.
 _EXPIRY_SKEW = timedelta(seconds=120)
+
+#: After Cognito answers TooManyRequests, stop attempting auth for this long so the
+#: throttle can reset. Without it, the 30s orders sweep re-logs-in on every failed
+#: tick (the failed login never caches a token), which keeps Cognito's rate limit hot
+#: forever — the self-sustaining storm behind the 2026-09-01 GrubOps→POS outage. Must
+#: comfortably exceed Cognito's throttle window; the sweep just fails fast meanwhile.
+_AUTH_COOLDOWN = timedelta(seconds=120)
+
+
+def _is_throttle(exc: Exception) -> bool:
+    """Whether a Cognito refusal is its rate limit (`TooManyRequestsException`)."""
+    return "TooManyRequests" in str(exc)
+
 
 #: What GrubOps calls a menu line. Mirrored from `models.grubops` rather than
 #: imported, so the transport layer stays free of the ORM.
@@ -154,6 +168,19 @@ class GrubOpsClient:
         self._id_token: str | None = None
         self._refresh_token: str | None = None
         self._expires_at: datetime | None = None
+        #: Single-flight auth: concurrent callers (the orders + reconcile sweeps) must
+        #: not each fire their own Cognito login on a cold cache — that burst is what
+        #: trips the rate limit on a restart. Lazily created so the module-level
+        #: singleton can be constructed without a running loop.
+        self._auth_lock: asyncio.Lock | None = None
+        #: While set (and in the future), auth is in a post-throttle cooldown: token()
+        #: fails fast without calling Cognito, so the throttle can reset.
+        self._cooldown_until: datetime | None = None
+
+    def _lock(self) -> asyncio.Lock:
+        if self._auth_lock is None:
+            self._auth_lock = asyncio.Lock()
+        return self._auth_lock
 
     @property
     def config(self) -> GrubOpsConfig:
@@ -211,6 +238,7 @@ class GrubOpsClient:
         return result
 
     def _store(self, result: dict[str, Any]) -> None:
+        self._cooldown_until = None  # a live token clears any throttle cooldown
         self._id_token = result["IdToken"]
         # Absent on a refresh — the original refresh token stays valid, so only
         # overwrite when a new one is actually offered.
@@ -260,16 +288,46 @@ class GrubOpsClient:
             self.reset()
             await self._login()
 
+    def _token_is_live(self) -> bool:
+        return self._id_token is not None and (
+            self._expires_at is None or _now() < self._expires_at
+        )
+
     async def token(self, *, force: bool = False) -> str:
-        """The current id token, minted or refreshed as needed."""
+        """The current id token, minted or refreshed as needed.
+
+        Single-flighted and throttle-aware: concurrent callers coalesce behind one
+        auth, and after Cognito answers TooManyRequests we back off for
+        `_AUTH_COOLDOWN` rather than re-logging-in on every 30s sweep tick (which is
+        what kept the throttle hot in the 2026-09-01 outage).
+        """
         if not self.is_configured:
             raise GrubOpsError("GrubOps is not configured")
-        if force:
-            await self._refresh()
-        elif self._id_token is None:
-            await self._login()
-        elif self._expires_at is not None and _now() >= self._expires_at:
-            await self._refresh()
+        # Fast path: a live cached token, no lock contention on the hot path.
+        if not force and self._token_is_live():
+            return self._id_token  # type: ignore[return-value]
+        async with self._lock():
+            # Re-check under the lock — another caller may have just authed.
+            if not force and self._token_is_live():
+                return self._id_token  # type: ignore[return-value]
+            if self._cooldown_until is not None and _now() < self._cooldown_until:
+                raise GrubOpsError(
+                    "GrubOps auth is cooling down after Cognito throttling; "
+                    f"next attempt after {self._cooldown_until:%H:%M:%S}Z"
+                )
+            try:
+                if force or self._id_token is None:
+                    await (self._refresh() if force else self._login())
+                elif self._expires_at is not None and _now() >= self._expires_at:
+                    await self._refresh()
+            except GrubOpsError as exc:
+                if _is_throttle(exc):
+                    self._cooldown_until = _now() + _AUTH_COOLDOWN
+                    logger.warning(
+                        "GrubOps: Cognito throttled the login; pausing auth until %s",
+                        self._cooldown_until,
+                    )
+                raise
         assert self._id_token is not None  # noqa: S101 — narrowed by the branches
         return self._id_token
 
