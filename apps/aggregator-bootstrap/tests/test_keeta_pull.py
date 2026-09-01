@@ -273,20 +273,29 @@ def test_build_keeta_spu_payload_off_shelf_and_priced():
     from aggregator_bootstrap.keeta_pull import build_keeta_spu_payload
 
     p = build_keeta_spu_payload(
-        123, name="ZZ Test", category_id=456, price=Decimal("35"), currency="AED"
+        123,
+        name="ZZ Test",
+        category_id=456,
+        backend_category_id=6669,
+        price=Decimal("35"),
+        currency="AED",
     )
     assert p["shopId"] == 123
     assert p["name"] == "ZZ Test"
     assert p["status"] == 0  # off-shelf by default — never live before review
     assert p["shopCategoryIdList"] == [456]
+    # The two fields the live create-then-delete proved are required:
+    assert p["categoryId"] == 6669  # platform backend category (后台类目)
+    assert p["sourceLanguageType"] == "en"  # else 107000632 "original language empty"
     assert p["skuList"][0]["price"] == "35"
     assert p["skuList"][0]["currency"] == "AED"
+    assert p["skuList"][0]["sourceLanguageType"] == "en"
     # available all week (the Edit form's default), 7 day-slots.
     assert len(p["availableTime"]["values"]) == 7
     # active=True flips the shelf status.
     assert (
-        build_keeta_spu_payload(1, name="x", category_id=2, price=1, active=True)[
-            "status"
-        ]
+        build_keeta_spu_payload(
+            1, name="x", category_id=2, backend_category_id=6669, price=1, active=True
+        )["status"]
         == 1
     )

@@ -394,18 +394,23 @@ def heal_sessions(
 def create_keeta_item(
     shop_id: str = typer.Option(..., help="Keeta shop id (from SHOP_IDS)"),
     name: str = typer.Option(..., help="Item name"),
-    category_id: str = typer.Option(..., help="Keeta shopCategory id"),
+    category_id: str = typer.Option(..., help="Keeta shopCategory id (menu section)"),
     price: str = typer.Option(..., help="Price, e.g. 35"),
+    backend_category_id: str = typer.Option(
+        "",
+        "--backend-category-id",
+        help="Platform backend category (后台类目); default: read from listConfig.",
+    ),
     active: bool = typer.Option(
         False, "--active", help="Put it on-shelf immediately (default: off-shelf)."
     ),
 ) -> None:
     """Create one Keeta menu item in-page (mtgsig `saveSpu`), off-shelf by default.
 
-    A live storefront WRITE — deliberate, never part of a sweep. This is the entry
-    point for the catalog-sync create and for the controlled create-then-delete that
-    confirms the exact `saveSpu` payload. Reads the hydrated Keeta session; open a
-    headed `login --channel keeta` first if the session is dead.
+    A live storefront WRITE — deliberate, never part of a sweep. The `saveSpu` payload
+    is verified live (create-then-delete, code 0). The backend category is resolved
+    from `listConfig` unless you pass `--backend-category-id`. Reads the hydrated Keeta
+    session; open a headed `login --channel keeta` first if the session is dead.
     """
     from .warm import create_keeta_item_in_page
 
@@ -417,6 +422,7 @@ def create_keeta_item(
                 category_id=category_id,
                 price=price,
                 active=active,
+                backend_category_id=backend_category_id or None,
             )
         )
     except (NeedsHumanLogin, NotLoggedInError) as exc:

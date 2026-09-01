@@ -192,12 +192,14 @@ async def create_keeta_item_in_page(
     category_id: str,
     price: str,
     active: bool = False,
+    backend_category_id: str | None = None,
 ) -> dict[str, Any]:
     """Create one Keeta menu item in-page (mtgsig `saveSpu`) and return the raw
     response. Mirrors `pull_keeta_menu_in_page`'s context setup. Off-shelf by
-    default. The operator's entry point for the create (and the controlled
-    create-then-delete verification) — a live storefront write, so it is a
-    deliberate command, not part of any automatic sweep."""
+    default. The backend category is resolved from `listConfig` unless supplied.
+    The operator's entry point for the create (and the controlled create-then-delete
+    verification) — a live storefront write, so it is a deliberate command, not part
+    of any automatic sweep."""
     from .browser import _open_storage_state_context
     from .engine import async_playwright
     from .keeta_pull import create_keeta_spu
@@ -213,6 +215,7 @@ async def create_keeta_item_in_page(
                 category_id=category_id,
                 price=price,
                 active=active,
+                backend_category_id=backend_category_id,
             )
         finally:
             await opened.close()

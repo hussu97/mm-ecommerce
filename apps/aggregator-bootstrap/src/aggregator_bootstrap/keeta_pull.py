@@ -375,27 +375,23 @@ async def fetch_keeta_menu(context: Any) -> list[dict]:
 
 
 # ── Menu create (catalog sync writer) ────────────────────────────────────────
-# The Keeta item create/update endpoint, discovered live 2026-09-01: an empty POST
-# returns validation "Please enter the item name" (endpoint exists, non-destructive),
-# and the Edit form saves through the SAME verb — so `saveSpu` both creates (no id)
-# and updates. The payload structure is the SPU object the `listSpu` read returns
-# (name, shopCategoryIdList, skuList[{price,currency}], availableTime, status), plus
-# the Edit form's fields (name EN/AR, category, available time Mon–Sun 00:00-23:59).
-# A sync-created item is written `status=0` (off-shelf) so it is never live before
-# review. Only reached behind CATALOG_SYNC_ENABLED; the live create is confirmed by
-# one controlled create-then-delete at enablement (the write path is guarded).
-#
-# OPEN (verified live 2026-09-01 by create-then-delete on shop 1644170195/DSO): the
-# session + endpoint + this payload validate, but saveSpu rejects with code 107000901
-# "The backend category information is not filled" — an item also needs a PLATFORM
-# backend category (后台类目, a leaf of the shop's `primaryCategoryList` in
-# `/api/scm/shop/base/info`, e.g. "Cookies" 30310 for DSO). That field is NOT in the
-# `listSpu` read and is not any of {spuCategoryId, backendCategoryId, secondCategoryId,
-# categoryId, backCategoryId, stdCategoryId, *IdList, categoryList} (all probed, still
-# "not filled"). Its exact key lives only in the edit-detail response, which the
-# headless SPA does not expose by URL — capture it from the editor's own `saveSpu`
-# request (headed, interactive) to finish the create. No orphan is ever left: the
-# create validates-and-rejects before persisting.
+# The Keeta item create/update endpoint. `saveSpu` both creates (no id) and updates
+# (the Edit form uses the same verb). VERIFIED live 2026-09-01 end-to-end through the
+# wired `create_keeta_spu` + `delete_keeta_spu` on shop 1644170195/DSO: create `code 0`,
+# item found in the menu read, `deleteSpu code 0`, re-read gone — no orphan.
+# NOTE: saveSpu/deleteSpu/listConfig run via `page.evaluate` (MAIN world), not
+# `evaluate_in_page` — they need the page's own restaurant context; the isolated call
+# answers 107000106 "Restaurant ID required". Two non-obvious fields are REQUIRED (each surfaced as the next
+# validation error while walking the chain):
+#   • `categoryId` — the PLATFORM backend category (后台类目). Without it → 107000901
+#     "backend category information is not filled". Value = the shop's `categoryId`
+#     from `common/r/listConfig` (`_keeta_backend_category_id` reads it per shop).
+#   • `sourceLanguageType` ("en") + the translate-type fields. Without them → 107000632
+#     "The original language type is empty".
+# (The nine name-guesses spuCategoryId/backendCategoryId/secondCategoryId/… all failed;
+# the real field is plain `categoryId` with the listConfig value — found by walking the
+# validation chain, not the read shape.) A sync-created item is `status=0` (off-shelf)
+# so it is never live before review. Only reached behind CATALOG_SYNC_ENABLED.
 KEETA_SPU_SAVE_ENDPOINT = "/api/sailorProduct/spu/w/saveSpu"
 
 
@@ -404,21 +400,38 @@ def build_keeta_spu_payload(
     *,
     name: str,
     category_id: Any,
+    backend_category_id: Any,
     price: Any,
     currency: str = "AED",
     name_ar: str | None = None,
     active: bool = False,
 ) -> dict:
-    """The saveSpu body for a NEW item, built from the verified SPU read shape. Pure
-    + unit-tested. `active=False` writes it off-shelf (status 0) so a sync never
-    makes an item live unreviewed; `availableTime` is the form default (always
-    available, Mon–Sun 00:00-23:59)."""
+    """The saveSpu body for a NEW item — the exact shape a live create-then-delete
+    accepted (code 0) on 2026-09-01. Pure + unit-tested.
+
+    Two fields beyond the obvious ones are REQUIRED or saveSpu rejects:
+      • ``categoryId`` — the platform **backend category** (后台类目). Without it →
+        `107000901 "backend category information is not filled"`. This is
+        ``backend_category_id`` (the shop's `categoryId` from `common/r/listConfig`;
+        `create_keeta_spu` fetches it when not supplied).
+      • ``sourceLanguageType`` (+ the translate-type fields) — without it →
+        `107000632 "The original language type is empty"`.
+    ``category_id`` is the shop menu section (`shopCategoryIdList`). `active=False`
+    writes it off-shelf (status 0) so a sync never makes an item live unreviewed;
+    `availableTime` is the form default (always available, Mon–Sun 00:00-23:59)."""
     return {
         "shopId": int(shop_id),
         "name": name,
         "nameI18n": {"en": name, "ar": name_ar or name},
         "status": 1 if active else 0,
+        "categoryId": int(backend_category_id),
         "shopCategoryIdList": [int(category_id)],
+        "type": 1,
+        "sourceLanguageType": "en",
+        "targetLanguageType": None,
+        "nameTranslateType": 0,
+        "descriptionTranslateType": 0,
+        "descSourceLanguageType": "en",
         "skuList": [
             {
                 "spec": "",
@@ -426,6 +439,8 @@ def build_keeta_spu_payload(
                 "currency": currency,
                 "status": 1,
                 "sequence": 1,
+                "sourceLanguageType": "en",
+                "specTranslateType": 0,
             }
         ],
         "availableTime": {"code": 1, "values": ["00:00-23:59"] * 7},
@@ -454,6 +469,56 @@ async ({ endpoint, shopId, payload }) => {
 """
 
 
+#: The item-editor config — its `data.categoryId` is the shop's platform backend
+#: category (后台类目) that saveSpu requires. Suffix appended at call time.
+KEETA_LISTCONFIG_PATH = "/api/sailorProduct/common/r/listConfig"
+
+#: The order-LIST route. Priming on it sets the "restaurant" context that `listConfig`
+#: and `saveSpu` need — the order-HISTORY route does NOT (listConfig then 107000106
+#: "Restaurant ID required"). Verified live: create works from this route, not history.
+KEETA_ORDER_LIST_ROUTE = (
+    "https://merchant.mykeeta.com/order-manager/m/web/mach/"
+    "b_pc_order_list?containerType=orderManager"
+)
+
+# A generic signed in-page POST (mtgsig), for the config read the create needs.
+_POST_JSON_JS = """
+async ({ endpoint, shopId, body }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const r = await fetch(endpoint, { method: "POST", credentials: "include", headers,
+    body: JSON.stringify(body || {}) });
+  const t = await r.text();
+  try { return JSON.parse(t); } catch (e) { return { status: r.status, text: t }; }
+}
+"""
+
+
+async def _keeta_backend_category_id(page: Any, shop_id: Any) -> int | None:
+    """The shop's platform backend category id (`listConfig.data.categoryId`) — the
+    `categoryId` saveSpu requires. Read in-page (signed)."""
+    # page.evaluate (main world) — listConfig needs the page's own restaurant context;
+    # via evaluate_in_page's isolated call it returns 107000106 "Restaurant ID required".
+    cfg = await page.evaluate(
+        _POST_JSON_JS,
+        {
+            "endpoint": KEETA_LISTCONFIG_PATH + KEETA_QUERY_SUFFIX,
+            "shopId": int(shop_id),
+            "body": {"shopId": int(shop_id)},
+        },
+    )
+    data = cfg.get("data") if isinstance(cfg, dict) else None
+    cat = (data or {}).get("categoryId") if isinstance(data, dict) else None
+    return int(cat) if cat is not None else None
+
+
 async def create_keeta_spu(
     context: Any,
     *,
@@ -463,32 +528,63 @@ async def create_keeta_spu(
     price: Any,
     currency: str = "AED",
     active: bool = False,
+    backend_category_id: Any | None = None,
 ) -> dict:
     """Create one Keeta menu item in-page (mtgsig-signed saveSpu). Returns the raw
     response (`{code, message, data}`; code 0 = success). Off-shelf by default.
 
-    Mirrors `fetch_keeta_menu`'s page setup. Only invoked behind CATALOG_SYNC_ENABLED
-    — a live create; the payload's exact required-field set is confirmed by one
-    controlled create-then-delete when the write path is enabled."""
-    payload = build_keeta_spu_payload(
-        shop_id,
-        name=name,
-        category_id=category_id,
-        price=price,
-        currency=currency,
-        active=active,
-    )
+    Payload confirmed live 2026-09-01 by a controlled create-then-delete (code 0,
+    then deleted, no orphan). The **backend category** (`categoryId`) is required —
+    if not supplied it is read from `listConfig`. Only invoked behind
+    CATALOG_SYNC_ENABLED. Primes on the order-LIST route — it sets both LOGIN_ACCOUNTID
+    and the "restaurant" context that listConfig + saveSpu require (the product route
+    alone leaves LOGIN_ACCOUNTID unset; the order-HISTORY route leaves listConfig with
+    "Restaurant ID required"). All verified live."""
     page = await context.new_page()
     try:
-        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000)
-        await page.wait_for_timeout(6_000)
-        account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+        await page.goto(
+            KEETA_ORDER_LIST_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        account_id = ""
+        for _ in range(12):  # poll up to ~24s for the SPA to prime the session
+            await page.wait_for_timeout(2_000)
+            account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+            if account_id:
+                break
         if not account_id:
             from .browser import NeedsHumanLogin
 
             raise NeedsHumanLogin("keeta create: in-page session signed out")
-        return await evaluate_in_page(
-            page,
+        if backend_category_id is None:
+            # Best-effort auto-resolve. listConfig needs the page's "restaurant"
+            # context, which the hydrated session does not always carry headlessly
+            # (it then answers 107000106 "Restaurant ID required"). A couple of
+            # product-page reloads usually settle it; if not, the caller must pass it.
+            for _ in range(3):
+                backend_category_id = await _keeta_backend_category_id(page, shop_id)
+                if backend_category_id is not None:
+                    break
+                await page.goto(
+                    KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000
+                )
+                await page.wait_for_timeout(4_000)
+            if backend_category_id is None:
+                raise ValueError(
+                    "keeta create: could not resolve the backend categoryId from "
+                    "listConfig — pass backend_category_id explicitly (the shop's "
+                    "`listConfig.data.categoryId`; 6669 for MM's Keeta shops)."
+                )
+        payload = build_keeta_spu_payload(
+            shop_id,
+            name=name,
+            category_id=category_id,
+            backend_category_id=backend_category_id,
+            price=price,
+            currency=currency,
+            active=active,
+        )
+        # page.evaluate (main world) — saveSpu needs the page's restaurant context.
+        return await page.evaluate(
             _SAVE_SPU_JS,
             {
                 "endpoint": KEETA_SPU_SAVE_ENDPOINT,
@@ -533,15 +629,23 @@ async def delete_keeta_spu(context: Any, *, shop_id: Any, spu_id: Any) -> dict:
     that confirms the create payload, so a verification run never leaves an orphan."""
     page = await context.new_page()
     try:
-        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000)
-        await page.wait_for_timeout(6_000)
-        account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+        # Prime on the order-LIST route (sets LOGIN_ACCOUNTID + restaurant context),
+        # the same as create — the product route alone leaves LOGIN_ACCOUNTID unset.
+        await page.goto(
+            KEETA_ORDER_LIST_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        account_id = ""
+        for _ in range(12):  # poll up to ~24s for the SPA to prime the session
+            await page.wait_for_timeout(2_000)
+            account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+            if account_id:
+                break
         if not account_id:
             from .browser import NeedsHumanLogin
 
             raise NeedsHumanLogin("keeta delete: in-page session signed out")
-        return await evaluate_in_page(
-            page,
+        # page.evaluate (main world) — deleteSpu needs the page's restaurant context.
+        return await page.evaluate(
             _DELETE_SPU_JS,
             {
                 "endpoint": KEETA_SPU_DELETE_ENDPOINT,
