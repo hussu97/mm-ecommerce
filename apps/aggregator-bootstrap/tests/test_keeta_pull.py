@@ -265,3 +265,28 @@ async def test_empty_login_accountid_raises_needs_login_not_a_silent_pull():
         await fetch_keeta_orders(_FakeContext(page), months_back=0)
     # It must fail BEFORE firing a single risk-controlled getOrders fetch.
     assert page.get_orders_calls == 0
+
+
+def test_build_keeta_spu_payload_off_shelf_and_priced():
+    from decimal import Decimal
+
+    from aggregator_bootstrap.keeta_pull import build_keeta_spu_payload
+
+    p = build_keeta_spu_payload(
+        123, name="ZZ Test", category_id=456, price=Decimal("35"), currency="AED"
+    )
+    assert p["shopId"] == 123
+    assert p["name"] == "ZZ Test"
+    assert p["status"] == 0  # off-shelf by default — never live before review
+    assert p["shopCategoryIdList"] == [456]
+    assert p["skuList"][0]["price"] == "35"
+    assert p["skuList"][0]["currency"] == "AED"
+    # available all week (the Edit form's default), 7 day-slots.
+    assert len(p["availableTime"]["values"]) == 7
+    # active=True flips the shelf status.
+    assert (
+        build_keeta_spu_payload(1, name="x", category_id=2, price=1, active=True)[
+            "status"
+        ]
+        == 1
+    )

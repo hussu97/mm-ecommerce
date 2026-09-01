@@ -337,9 +337,7 @@ async def fetch_keeta_menu(context: Any) -> list[dict]:
     page = await context.new_page()
     payloads: list[dict] = []
     try:
-        await page.goto(
-            KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000
-        )
+        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000)
         # Give the SPA a beat to boot and populate LOGIN_ACCOUNTID + SHOP_IDS —
         # exactly like fetch_keeta_orders. Without this the read fires before the
         # portal JS sets them and looks "signed out" (seen on the first live run).
@@ -367,11 +365,127 @@ async def fetch_keeta_menu(context: Any) -> list[dict]:
             except Exception:  # noqa: BLE001 — one shop must not abort the rest
                 logger.warning("keeta menu: fetch failed for shop %s", shop_id)
                 continue
-            if isinstance(result, dict) and (result.get("categories") or result.get("spus")):
+            if isinstance(result, dict) and (
+                result.get("categories") or result.get("spus")
+            ):
                 payloads.append(result)
     finally:
         await page.close()
     return payloads
+
+
+# ── Menu create (catalog sync writer) ────────────────────────────────────────
+# The Keeta item create/update endpoint, discovered live 2026-09-01: an empty POST
+# returns validation "Please enter the item name" (endpoint exists, non-destructive),
+# and the Edit form saves through the SAME verb — so `saveSpu` both creates (no id)
+# and updates. The payload structure is the SPU object the `listSpu` read returns
+# (name, shopCategoryIdList, skuList[{price,currency}], availableTime, status), plus
+# the Edit form's fields (name EN/AR, category, available time Mon–Sun 00:00-23:59).
+# A sync-created item is written `status=0` (off-shelf) so it is never live before
+# review. Only reached behind CATALOG_SYNC_ENABLED; the live create is confirmed by
+# one controlled create-then-delete at enablement (the write path is guarded).
+KEETA_SPU_SAVE_ENDPOINT = "/api/sailorProduct/spu/w/saveSpu"
+
+
+def build_keeta_spu_payload(
+    shop_id: Any,
+    *,
+    name: str,
+    category_id: Any,
+    price: Any,
+    currency: str = "AED",
+    name_ar: str | None = None,
+    active: bool = False,
+) -> dict:
+    """The saveSpu body for a NEW item, built from the verified SPU read shape. Pure
+    + unit-tested. `active=False` writes it off-shelf (status 0) so a sync never
+    makes an item live unreviewed; `availableTime` is the form default (always
+    available, Mon–Sun 00:00-23:59)."""
+    return {
+        "shopId": int(shop_id),
+        "name": name,
+        "nameI18n": {"en": name, "ar": name_ar or name},
+        "status": 1 if active else 0,
+        "shopCategoryIdList": [int(category_id)],
+        "skuList": [
+            {
+                "spec": "",
+                "price": str(price),
+                "currency": currency,
+                "status": 1,
+                "sequence": 1,
+            }
+        ],
+        "availableTime": {"code": 1, "values": ["00:00-23:59"] * 7},
+    }
+
+
+# The in-page signed create — the page's own `fetch` (mtgsig), same headers as the
+# menu read. Kept identical so the signed session is recognised.
+_SAVE_SPU_JS = """
+async ({ endpoint, shopId, payload }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const response = await fetch(endpoint, {
+    method: "POST", credentials: "include", headers, body: JSON.stringify(payload)
+  });
+  const text = await response.text();
+  try { return JSON.parse(text); } catch (e) { return { status: response.status, text }; }
+}
+"""
+
+
+async def create_keeta_spu(
+    context: Any,
+    *,
+    shop_id: Any,
+    name: str,
+    category_id: Any,
+    price: Any,
+    currency: str = "AED",
+    active: bool = False,
+) -> dict:
+    """Create one Keeta menu item in-page (mtgsig-signed saveSpu). Returns the raw
+    response (`{code, message, data}`; code 0 = success). Off-shelf by default.
+
+    Mirrors `fetch_keeta_menu`'s page setup. Only invoked behind CATALOG_SYNC_ENABLED
+    — a live create; the payload's exact required-field set is confirmed by one
+    controlled create-then-delete when the write path is enabled."""
+    payload = build_keeta_spu_payload(
+        shop_id,
+        name=name,
+        category_id=category_id,
+        price=price,
+        currency=currency,
+        active=active,
+    )
+    page = await context.new_page()
+    try:
+        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(6_000)
+        account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+        if not account_id:
+            from .browser import NeedsHumanLogin
+
+            raise NeedsHumanLogin("keeta create: in-page session signed out")
+        return await evaluate_in_page(
+            page,
+            _SAVE_SPU_JS,
+            {
+                "endpoint": KEETA_SPU_SAVE_ENDPOINT,
+                "shopId": int(shop_id),
+                "payload": payload,
+            },
+        )
+    finally:
+        await page.close()
 
 
 # Keeta's finance figures are NOT in a JSON bill list — the merchant portal only
