@@ -309,11 +309,17 @@ class CareemClient(BaseAggregatorClient):
     async def list_catalogs(
         self, session: LoadedSession, company: str, brand: str, outlet: str
     ) -> Any:
-        """The outlet's catalog(s) — an array; `[0].id` is the catalog id."""
+        """The outlet's catalog(s) — an array; `[0].id` is the catalog id.
+
+        `catalog-catalogs` requires the `merchantId` query param (the outlet id);
+        without it the endpoint 400s (`MerchantID … failed on the 'required' tag`),
+        confirmed live 2026-09-01.
+        """
         return await self.request_json(
             session,
             "GET",
             f"{self._outlet_base(company, brand, outlet)}/catalog-catalogs",
+            params={"merchantId": outlet},
         )
 
     async def list_categories(
