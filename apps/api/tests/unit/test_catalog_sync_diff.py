@@ -602,3 +602,34 @@ async def test_sweep_scheduler_returns_immediately_when_disabled(monkeypatch):
     # <= 0 disables the loop — it must return, not spin.
     monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_SWEEP_MINUTES", 0)
     await catalog_sync.run_catalog_sync_scheduler_forever()
+
+
+# ── Careem hours reader (real shape, verified day origin) ─────────────────────
+
+
+def test_careem_hours_maps_day_origin_and_closed_days():
+    from app.services.aggregators.menu_readers import parse_careem_hours
+
+    # The real response shape (read live 2026-09-01): day 1=Sunday … 7=Saturday,
+    # active:0 = closed, times are HH:MM:SS.
+    rows = [
+        {
+            "day": 1,
+            "active": 1,
+            "shifts": [{"start_time": "08:00:00", "end_time": "21:45:00"}],
+        },
+        {"day": 4, "active": 0, "shifts": []},  # Wednesday closed
+        {
+            "day": 7,
+            "active": 1,
+            "shifts": [{"start_time": "12:05:00", "end_time": "21:45:00"}],
+        },
+    ]
+    hours = parse_careem_hours(rows)
+    by_weekday = {s.weekday: (s.opens, s.closes) for s in hours.shifts}
+    # day 1 (Sunday) → MM weekday 0; day 7 (Saturday) → MM weekday 6.
+    assert by_weekday[0] == ("08:00", "21:45")
+    assert by_weekday[6] == ("12:05", "21:45")
+    # A closed day (Wednesday = day 4 → weekday 3) contributes no shift.
+    assert 3 not in by_weekday
+    assert hours.source == "careem"

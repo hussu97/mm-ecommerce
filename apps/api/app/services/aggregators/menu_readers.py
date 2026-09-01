@@ -47,6 +47,7 @@ from app.services.aggregators.menu_normalized import (
     NormalizedHours,
     NormalizedItem,
     NormalizedMenu,
+    NormalizedShift,
 )
 from app.services.providers.aggregator_base import AggregatorUnavailableError
 
@@ -271,6 +272,51 @@ async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     return parse_careem_catalog(categories, products_by_cat)
 
 
+# ── Careem hours reader ───────────────────────────────────────────────────────
+# `food-outlet-operational-hours` (read live 2026-09-01) returns a 7-element list:
+#   [{day:1..7, active:0|1, shifts:[{start_time:"HH:MM:SS", end_time:"HH:MM:SS"}]}]
+# `active:0` = closed that weekday; split shifts are multiple entries. The day
+# origin is Careem's own: verified against the Store Manager bundle's day labels
+# (`day1label:"Sunday" … day7:"Saturday"`), so day 1 = Sunday … day 7 = Saturday,
+# which is MM's `weekday` (0=Sunday…6=Saturday) shifted by one: weekday = day - 1.
+
+
+def _hhmm(value: Any) -> str:
+    """`"08:00:00"` → `"08:00"`. Tolerates a value already in HH:MM."""
+    s = str(value or "")
+    parts = s.split(":")
+    return f"{parts[0]:0>2}:{parts[1]:0>2}" if len(parts) >= 2 else s
+
+
+def parse_careem_hours(rows: Any) -> NormalizedHours:
+    """Careem's weekly operational hours → the channel-neutral schedule."""
+    shifts: list[NormalizedShift] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not row.get("active"):
+            continue  # active:0 (or missing) = closed that day → no shifts
+        day = row.get("day")
+        if not isinstance(day, int) or not (1 <= day <= 7):
+            continue
+        weekday = day - 1  # Careem day 1=Sunday → MM weekday 0=Sunday
+        for shift in row.get("shifts") or []:
+            if not isinstance(shift, dict):
+                continue
+            opens, closes = shift.get("start_time"), shift.get("end_time")
+            if opens and closes:
+                shifts.append(NormalizedShift(weekday, _hhmm(opens), _hhmm(closes)))
+    return NormalizedHours(source="careem", shifts=shifts)
+
+
+async def _read_careem_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
+    from app.services.aggregators import session_store
+    from app.services.providers import careem_provider as cp
+
+    session = await session_store.load(db, "careem")
+    company, brand, outlet = await _careem_ids(db, branch_id)
+    rows = await cp.provider.get_operational_hours(session, company, brand, outlet)
+    return parse_careem_hours(rows)
+
+
 # ── Talabat catalog reader ────────────────────────────────────────────────────
 # Verified live from the VM session (2026-09-01). The DeliveryHero vendor-api backs
 # the menu console: /catalogs -> {catalogs:[{id,name,categories:[{id,name}]}]};
@@ -445,4 +491,9 @@ _MENU_READERS: dict[str, Any] = {
     "talabat": _read_talabat_menu,
     "noon": _read_noon_menu,
 }
-_HOURS_READERS: dict[str, Any] = {}
+#: Hours readers. Careem verified live (day origin confirmed against the portal
+#: bundle's own day labels). The others need their hours endpoint captured the
+#: same way before they can be trusted to open/close a branch on the right day.
+_HOURS_READERS: dict[str, Any] = {
+    "careem": _read_careem_hours,
+}
