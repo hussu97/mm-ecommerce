@@ -425,6 +425,55 @@ async def store_worker_menu(
     )
 
 
+async def store_worker_menu_and_hours(
+    db: AsyncSession, *, target: str, payloads: list[dict[str, Any]]
+) -> AggregatorMenuSnapshot:
+    """Store a headed-worker push that carries BOTH menu and hours in one payload
+    (Deliveroo: `[{rst_id, menu, hours}]`) as two snapshots — SNAPSHOT_MENU (raw =
+    `menu`) and SNAPSHOT_HOURS (raw = `hours`) — so `_read_deliveroo_menu` and
+    `_read_deliveroo_hours` each parse the piece they need. Mirrors
+    `store_worker_menu`; unconditional (the worker only runs when its job is on).
+    Returns the menu snapshot (the primary of the pair)."""
+    menu_raw: Any = {}
+    hours_raw: Any = {}
+    for p in payloads or []:
+        if not isinstance(p, dict):
+            continue
+        if (
+            not menu_raw
+            and isinstance(p.get("menu"), dict)
+            and p["menu"].get("categories")
+        ):
+            menu_raw = p["menu"]
+        if (
+            not hours_raw
+            and isinstance(p.get("hours"), dict)
+            and p["hours"].get("hours")
+        ):
+            hours_raw = p["hours"]
+    source = menu_readers.source_for(target)
+    if hours_raw:
+        await _upsert_snapshot(
+            db,
+            target=target,
+            branch_id=None,
+            kind=SNAPSHOT_HOURS,
+            source=source,
+            status=SNAPSHOT_OK,
+            raw=hours_raw,
+        )
+    return await _upsert_snapshot(
+        db,
+        target=target,
+        branch_id=None,
+        kind=SNAPSHOT_MENU,
+        source=source,
+        status=SNAPSHOT_OK,
+        raw=menu_raw,
+        stats={"restaurants": len(payloads or [])},
+    )
+
+
 # ── Read side (gated) ─────────────────────────────────────────────────────────
 
 

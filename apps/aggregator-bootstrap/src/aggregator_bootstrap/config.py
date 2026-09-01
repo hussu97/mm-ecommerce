@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS: int = 900
     #: Keeta MENU pull (catalog sync) — two signed reads per shop, quick.
     WORKER_KEETA_MENU_TIMEOUT_SECONDS: int = 300
+    #: Deliveroo MENU+HOURS pull (catalog sync) — one headed page capture through
+    #: the Cloudflare wall, so it gets the same budget as the finance page.
+    WORKER_DELIVEROO_MENU_TIMEOUT_SECONDS: int = 300
 
     #: Channels warmed nightly to rotate their decaying anti-bot cookie (Noon's
     #: Akamai bm_sv/_abck, Talabat's PerimeterX _px3). Careem/Deliveroo self-heal in
@@ -118,6 +121,10 @@ class Settings(BaseSettings):
     #: Keeta MENU-pull cadence (hours). The menu changes rarely, so a slow cadence;
     #: `<= 0` disables it. The API's catalog sync reads the pushed snapshot.
     WORKER_KEETA_MENU_INTERVAL_HOURS: int = 12
+    #: Deliveroo MENU+HOURS-pull cadence (hours). `<= 0` disables it (default OFF —
+    #: the catalog-sync read feature is opt-in). Set > 0 to push the snapshot the
+    #: API's `_read_deliveroo_menu`/`_read_deliveroo_hours` parse.
+    WORKER_DELIVEROO_MENU_INTERVAL_HOURS: int = 0
     #: Dubai wall-clock hour for the nightly Keeta FINANCE pull (settled statement
     #: files). Split from the orders pull because it re-downloads settled files and
     #: is slow; nightly + lowest priority keeps it off the hot path.

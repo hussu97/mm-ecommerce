@@ -746,19 +746,54 @@ def parse_deliveroo_hours(raw: Any) -> NormalizedHours:
     return NormalizedHours(source="deliveroo", shifts=shifts)
 
 
+async def _deliveroo_snapshot(db: AsyncSession, kind: str) -> Any:
+    """The latest Deliveroo snapshot raw of `kind`, or raise until the worker pushed."""
+    from sqlalchemy import select
+
+    from app.models.catalog_sync import AggregatorMenuSnapshot
+
+    snap = (
+        await db.execute(
+            select(AggregatorMenuSnapshot)
+            .where(
+                AggregatorMenuSnapshot.target == "deliveroo",
+                AggregatorMenuSnapshot.kind == kind,
+            )
+            .order_by(AggregatorMenuSnapshot.fetched_at.desc().nullslast())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if snap is None or not snap.raw:
+        raise AggregatorUnavailableError(
+            f"no deliveroo {kind} pushed yet — the headed worker's job must run first"
+        )
+    return snap.raw
+
+
+async def _read_deliveroo_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
+    """Parse the latest Deliveroo menu the headed worker pushed (webrom is behind
+    Cloudflare + a webrom token, so it can't be read server-side)."""
+    return parse_deliveroo_menu(await _deliveroo_snapshot(db, "menu"))
+
+
+async def _read_deliveroo_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
+    """Parse the latest Deliveroo opening hours the headed worker pushed."""
+    return parse_deliveroo_hours(await _deliveroo_snapshot(db, "hours"))
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
 # Foodics (Grubtech price tag), Careem (catalog REST), Talabat (DeliveryHero
 # vendor-api) and Noon (RMS /menu/details) are read live from the real session.
 # Keeta and Deliveroo are parsed from the headed worker's push (anti-bot blocks a
-# server call) — Deliveroo's menu/hours endpoints are verified (parsers above);
-# the worker fetch + push pipeline is the remaining wiring.
+# server call) — both endpoints + parsers verified live 2026-09-01.
 _MENU_READERS: dict[str, Any] = {
     TARGET_FOODICS: _read_foodics_menu,
     "careem": _read_careem_menu,
     "talabat": _read_talabat_menu,
     "noon": _read_noon_menu,
     "keeta": _read_keeta_menu,
+    "deliveroo": _read_deliveroo_menu,
 }
 #: Hours readers. Careem verified live (day origin confirmed against the portal
 #: bundle's own day labels). The others need their hours endpoint captured the
@@ -766,4 +801,5 @@ _MENU_READERS: dict[str, Any] = {
 _HOURS_READERS: dict[str, Any] = {
     "careem": _read_careem_hours,
     "noon": _read_noon_hours,
+    "deliveroo": _read_deliveroo_hours,
 }

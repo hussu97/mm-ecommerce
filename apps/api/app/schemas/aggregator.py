@@ -227,6 +227,22 @@ class KeetaMenuResult(BaseModel):
     shops: int
 
 
+class DeliverooMenuPush(BaseModel):
+    """The in-page-captured Deliveroo menu + opening hours (one payload per
+    restaurant: `{rst_id, menu, hours}`), pushed for the catalog sync. Deliveroo's
+    menu is behind Cloudflare + a webrom token, so the worker captures it in the
+    browser and pushes it here; stored as the deliveroo menu + hours snapshots."""
+
+    payloads: list[dict] = Field(default_factory=list)
+
+
+class DeliverooMenuResult(BaseModel):
+    """Confirmation the pushed Deliveroo menu + hours were stored."""
+
+    stored: bool
+    restaurants: int
+
+
 class KeetaFinancePush(BaseModel):
     """A batch of in-page-fetched Keeta finance payloads, pushed in for ingest.
 

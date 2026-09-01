@@ -46,6 +46,7 @@ _TIMEOUT_FIELDS: dict[JobKind, str] = {
     JobKind.KEETA_FINANCE: "WORKER_KEETA_FINANCE_TIMEOUT_SECONDS",
     JobKind.DELIVEROO_FINANCE: "WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS",
     JobKind.KEETA_MENU: "WORKER_KEETA_MENU_TIMEOUT_SECONDS",
+    JobKind.DELIVEROO_MENU: "WORKER_DELIVEROO_MENU_TIMEOUT_SECONDS",
 }
 
 
@@ -140,6 +141,10 @@ async def _dispatch(job: Job) -> None:
         return
     if job.kind is JobKind.DELIVEROO_FINANCE:
         await warm.pull_deliveroo_invoices_in_page()
+        return
+    if job.kind is JobKind.DELIVEROO_MENU:
+        # Capture the Deliveroo menu + hours in-page and push them for catalog sync.
+        await warm.pull_deliveroo_menu_hours_in_page()
         return
     raise ValueError(f"unknown job kind {job.kind!r}")  # pragma: no cover
 
@@ -260,6 +265,10 @@ async def _run_scheduler(queue: JobQueue) -> None:
     menu_hours = settings.WORKER_KEETA_MENU_INTERVAL_HOURS
     menu_delta = timedelta(hours=menu_hours) if menu_hours > 0 else None
     menu_next = now
+    #: Deliveroo MENU+HOURS cadence — disabled when the interval is <= 0.
+    del_menu_hours = settings.WORKER_DELIVEROO_MENU_INTERVAL_HOURS
+    del_menu_delta = timedelta(hours=del_menu_hours) if del_menu_hours > 0 else None
+    del_menu_next = now
     tick = max(settings.WORKER_SCHEDULER_TICK_SECONDS, 1)
 
     logger.info(
@@ -284,6 +293,9 @@ async def _run_scheduler(queue: JobQueue) -> None:
         if menu_delta is not None and now >= menu_next:
             await queue.put(JobKind.KEETA_MENU, "keeta")
             menu_next = now + menu_delta
+        if del_menu_delta is not None and now >= del_menu_next:
+            await queue.put(JobKind.DELIVEROO_MENU, "deliveroo")
+            del_menu_next = now + del_menu_delta
         if now >= heal_next:
             await _heal_poll(queue)
             heal_next = now + heal_delta

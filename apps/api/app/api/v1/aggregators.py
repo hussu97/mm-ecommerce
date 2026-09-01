@@ -70,6 +70,8 @@ from app.schemas.aggregator import (
     AggregatorWorkerSession,
     DeliverooFinancePush,
     DeliverooFinanceResult,
+    DeliverooMenuPush,
+    DeliverooMenuResult,
     KeetaFinancePush,
     KeetaFinanceResult,
     KeetaMenuPush,
@@ -466,6 +468,26 @@ async def push_keeta_menu(
 
     await catalog_sync.store_worker_menu(db, target="keeta", payloads=body.payloads)
     return KeetaMenuResult(stored=True, shops=len(body.payloads))
+
+
+@router.post("/deliveroo/menu", response_model=DeliverooMenuResult)
+async def push_deliveroo_menu(
+    body: DeliverooMenuPush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> DeliverooMenuResult:
+    """Store the in-page-captured Deliveroo menu + opening hours for the catalog sync.
+
+    Deliveroo's webrom menu is behind Cloudflare + a webrom token, so the worker
+    captures it (and the hours) in the browser and pushes them here; stored as the
+    deliveroo menu + hours snapshots that `menu_readers._read_deliveroo_menu` /
+    `_read_deliveroo_hours` parse. Push transport only — like the keeta menu push."""
+    from app.services.aggregators import catalog_sync
+
+    await catalog_sync.store_worker_menu_and_hours(
+        db, target="deliveroo", payloads=body.payloads
+    )
+    return DeliverooMenuResult(stored=True, restaurants=len(body.payloads))
 
 
 @router.post("/deliveroo/finance", response_model=DeliverooFinanceResult)

@@ -301,6 +301,37 @@ async def pull_keeta_finance_in_page(
     return out
 
 
+async def pull_deliveroo_menu_hours_in_page() -> dict[str, Any]:
+    """Capture the Deliveroo menu + opening hours in-page and push them (the
+    catalog-sync feed). Mirrors `pull_keeta_menu_in_page`: open the hydrated
+    storage_state (headed real Chrome under Xvfb, which passes Cloudflare), capture
+    the two JSON responses the Opening-Hours page fires, and push
+    `[{rst_id, menu, hours}]` to the API's `/deliveroo/menu`. Playwright imported
+    lazily by the context helper."""
+    from .browser import _open_storage_state_context
+    from .deliveroo_pull import fetch_deliveroo_menu_hours
+    from .engine import async_playwright
+    from .push import push_deliveroo_menu
+
+    state = _storage_state_path("deliveroo")
+    if not state.exists():
+        raise NotLoggedInError(
+            f"deliveroo session state missing at {state}; run a login/bootstrap first"
+        )
+    async with async_playwright() as pw:
+        opened = await _open_storage_state_context(pw, "deliveroo")
+        try:
+            payloads = await fetch_deliveroo_menu_hours(opened.context)
+        finally:
+            await opened.close()
+    if not payloads:
+        logger.warning("deliveroo: no menu/hours captured; nothing to push")
+        return {"payloads": 0}
+    result = await push_deliveroo_menu(payloads)
+    logger.info("pushed %d deliveroo menu/hours payload(s): %s", len(payloads), result)
+    return {"payloads": len(payloads), **(result or {})}
+
+
 async def pull_deliveroo_invoices_in_page(*, since_days: int = 45) -> dict[str, Any]:
     """Fetch Deliveroo invoices (CSV + PDF) in-page and push the payloads.
 
