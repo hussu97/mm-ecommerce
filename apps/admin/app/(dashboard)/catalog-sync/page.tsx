@@ -190,6 +190,87 @@ function HoursEditor({ branchId }: { branchId: string }) {
   );
 }
 
+function CreateItemPanel({ branches }: { branches: Branch[] }) {
+  const toast = useToast();
+  const [productId, setProductId] = useState('');
+  const [target, setTarget] = useState('foodics');
+  const [branchId, setBranchId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [plan, setPlan] = useState<string | null>(null);
+
+  const preview = async () => {
+    if (!productId.trim()) {
+      toast.error('Enter a product id');
+      return;
+    }
+    setBusy(true);
+    setPlan(null);
+    try {
+      const res = await catalogSyncApi.createItem({
+        product_id: productId.trim(),
+        target,
+        branch_id: branchId || null,
+        dry_run: true,
+      });
+      setPlan(JSON.stringify(res, null, 2));
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Preview failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-sm p-4 mb-6">
+      <h2 className="text-lg font-display mb-1">Create item (preview)</h2>
+      <p className="text-sm text-gray-500 mb-3">
+        Dry-run only — shows the exact create the sync would POST. Foodics is the master
+        for the integrated branches; Careem creates directly on an outlet (pick a branch).
+      </p>
+      <div className="flex flex-wrap gap-3 items-end">
+        <label className="text-sm">
+          <span className="block text-gray-600 mb-1">Product id</span>
+          <input
+            className="border border-gray-300 rounded-sm px-2 py-1 w-72"
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+            placeholder="MM product UUID"
+          />
+        </label>
+        <div className="w-40">
+          <Select
+            label="Target"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            options={['foodics', 'careem', 'talabat', 'noon', 'keeta', 'deliveroo'].map(
+              (t) => ({ value: t, label: titleCase(t) }),
+            )}
+          />
+        </div>
+        <div className="w-48">
+          <Select
+            label="Branch (careem)"
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+            options={[
+              { value: '', label: '—' },
+              ...branches.map((b) => ({ value: b.id, label: b.name })),
+            ]}
+          />
+        </div>
+        <Button size="sm" onClick={preview} loading={busy}>
+          Preview create
+        </Button>
+      </div>
+      {plan && (
+        <pre className="mt-3 text-xs bg-gray-50 border border-gray-200 rounded-sm p-3 overflow-x-auto">
+          {plan}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 export default function CatalogSyncPage() {
   const toast = useToast();
   const [status, setStatus] = useState<Status | null>(null);
@@ -316,6 +397,8 @@ export default function CatalogSyncPage() {
           options={branches.map((b) => ({ value: b.id, label: b.name }))}
         />
       </div>
+
+      <CreateItemPanel branches={branches} />
 
       {branchId && <HoursEditor branchId={branchId} />}
 
