@@ -322,3 +322,78 @@ async def _download_pdf(page: Any, statement_id: str) -> tuple[str | None, int]:
     if not data or data[:16].lstrip().startswith(b"<!"):
         return None, 0
     return base64.b64encode(data).decode("ascii"), len(data)
+
+
+# ── Menu + hours (catalog sync feed) ──────────────────────────────────────────
+# Discovered live 2026-09-01: the Partner Hub's Opening-Hours page loads BOTH the
+# webrom menu and the opening-hours in one go — the hub auto-exchanges a webrom
+# token (`/api-gw/webrom/logon-pass`), so no separate menu login is needed. We sit
+# on that page and capture the two responses (the menu is a cross-origin webrom
+# host an in-page fetch cannot reach without the webrom bearer, so capture beats
+# re-issuing it). One `{rst_id, menu, hours}` payload per restaurant the hub holds.
+DELIVEROO_OPENING_HOURS_ROUTE = f"{_HUB}/opening-hours"
+
+#: webrom menu — `.../rom/{rst}/menu`; hub hours — `.../api/restaurants/{rst}/opening_hours`.
+_WEBROM_MENU_MARK = "/rom/"
+_OPENING_HOURS_MARK = "/opening_hours"
+
+
+async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
+    """The Deliveroo menu + opening hours for the hub's restaurant, read by sitting
+    on the Opening-Hours page and capturing the two JSON responses it fires.
+
+    Returns `[{rst_id, menu, hours}]` for the API's `parse_deliveroo_menu` /
+    `parse_deliveroo_hours`. Mirrors `fetch_deliveroo_invoices`' context use; the
+    menu is captured (not re-fetched) because it is cross-origin (webrom) and the
+    hub's own request already carries the exchanged webrom bearer."""
+    grabbed: dict[str, Any] = {}
+
+    async def _on_response(resp: Any) -> None:
+        url = resp.url
+        try:
+            if _WEBROM_MENU_MARK in url and url.rstrip("/").endswith("menu"):
+                grabbed["menu"] = await resp.json()
+            elif _OPENING_HOURS_MARK in url and "restaurants/" in url:
+                grabbed["rst_id"] = url.split("restaurants/")[1].split("/")[0]
+                grabbed["hours"] = await resp.json()
+        except Exception:  # noqa: BLE001 — a body we can't read is simply skipped
+            pass
+
+    page = await context.new_page()
+    page.on("response", lambda r: _schedule(_on_response(r)))
+    try:
+        await page.goto(
+            DELIVEROO_HUB_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        # Let the Cloudflare challenge settle so cf_clearance is in place.
+        await page.wait_for_timeout(9_000)
+        await page.goto(
+            DELIVEROO_OPENING_HOURS_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        await page.wait_for_timeout(14_000)
+    finally:
+        await page.close()
+
+    if not grabbed.get("menu") and not grabbed.get("hours"):
+        logger.warning("deliveroo: no menu/hours captured on the opening-hours page")
+        return []
+    return [
+        {
+            "rst_id": grabbed.get("rst_id"),
+            "menu": grabbed.get("menu"),
+            "hours": grabbed.get("hours"),
+        }
+    ]
+
+
+def _schedule(coro: Any) -> None:
+    """Fire-and-forget a response handler on the running loop (kept in a set so it
+    is not garbage-collected mid-await), mirroring the tracked-task convention."""
+    import asyncio
+
+    task = asyncio.ensure_future(coro)
+    _RESPONSE_TASKS.add(task)
+    task.add_done_callback(_RESPONSE_TASKS.discard)
+
+
+_RESPONSE_TASKS: set[Any] = set()
