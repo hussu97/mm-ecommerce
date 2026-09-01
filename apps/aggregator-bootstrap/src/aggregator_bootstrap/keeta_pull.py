@@ -384,6 +384,18 @@ async def fetch_keeta_menu(context: Any) -> list[dict]:
 # A sync-created item is written `status=0` (off-shelf) so it is never live before
 # review. Only reached behind CATALOG_SYNC_ENABLED; the live create is confirmed by
 # one controlled create-then-delete at enablement (the write path is guarded).
+#
+# OPEN (verified live 2026-09-01 by create-then-delete on shop 1644170195/DSO): the
+# session + endpoint + this payload validate, but saveSpu rejects with code 107000901
+# "The backend category information is not filled" — an item also needs a PLATFORM
+# backend category (后台类目, a leaf of the shop's `primaryCategoryList` in
+# `/api/scm/shop/base/info`, e.g. "Cookies" 30310 for DSO). That field is NOT in the
+# `listSpu` read and is not any of {spuCategoryId, backendCategoryId, secondCategoryId,
+# categoryId, backCategoryId, stdCategoryId, *IdList, categoryList} (all probed, still
+# "not filled"). Its exact key lives only in the edit-detail response, which the
+# headless SPA does not expose by URL — capture it from the editor's own `saveSpu`
+# request (headed, interactive) to finish the create. No orphan is ever left: the
+# create validates-and-rejects before persisting.
 KEETA_SPU_SAVE_ENDPOINT = "/api/sailorProduct/spu/w/saveSpu"
 
 
@@ -484,6 +496,126 @@ async def create_keeta_spu(
                 "payload": payload,
             },
         )
+    finally:
+        await page.close()
+
+
+#: Item delete — verified live 2026-09-01: `deleteSpu` returns a *validation* error
+#: ("shopId not exist!") for a bad id, while `delSpu`/`removeSpu`/`offShelf` return
+#: "no matched api config found". So this is the real remove verb; it de-lists the
+#: item entirely (used to reverse the controlled create-then-delete).
+KEETA_SPU_DELETE_ENDPOINT = "/api/sailorProduct/spu/w/deleteSpu"
+
+_DELETE_SPU_JS = """
+async ({ endpoint, shopId, spuId }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const response = await fetch(endpoint, {
+    method: "POST", credentials: "include", headers,
+    body: JSON.stringify({ shopId: Number(shopId), spuId: Number(spuId) })
+  });
+  const text = await response.text();
+  try { return JSON.parse(text); } catch (e) { return { status: response.status, text }; }
+}
+"""
+
+
+async def delete_keeta_spu(context: Any, *, shop_id: Any, spu_id: Any) -> dict:
+    """Delete one Keeta menu item in-page (mtgsig-signed `deleteSpu`). Returns the
+    raw response (`code` 0 = success). This reverses the controlled create-then-delete
+    that confirms the create payload, so a verification run never leaves an orphan."""
+    page = await context.new_page()
+    try:
+        await page.goto(KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(6_000)
+        account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+        if not account_id:
+            from .browser import NeedsHumanLogin
+
+            raise NeedsHumanLogin("keeta delete: in-page session signed out")
+        return await evaluate_in_page(
+            page,
+            _DELETE_SPU_JS,
+            {
+                "endpoint": KEETA_SPU_DELETE_ENDPOINT,
+                "shopId": int(shop_id),
+                "spuId": int(spu_id),
+            },
+        )
+    finally:
+        await page.close()
+
+
+# ── Business hours (catalog-sync hours read) ─────────────────────────────────
+# Verified live 2026-09-01: the merchant portal exposes shop hours through the SCM
+# summary endpoint the order page calls — `POST shop/base/summary/list {shopIdList}`
+# returns, per shop, `businessStatus` (1=open) and `todayBusinessHours`
+# [{startTime,endTime}] in SECONDS-from-midnight (28800=08:00, 84600=23:30). This is
+# TODAY's window only — the portal does not expose a full weekly schedule on this
+# account, so a Keeta hours read is "open/closed + today's window", not a 7-day
+# schedule. The signed fetch must run from a primed page (LOGIN_ACCOUNTID is set by
+# the ORDER route, not the product route — see fetch_keeta_menu).
+# Suffix appended at call time — KEETA_QUERY_SUFFIX is defined lower (finance block).
+KEETA_SHOP_SUMMARY_PATH = "/api/scm/gw/shop/base/summary/list"
+KEETA_ORDER_ROUTE_HOURS = KEETA_ORDER_HISTORY_ROUTE  # primes LOGIN_ACCOUNTID
+
+_SHOP_SUMMARY_JS = """
+async ({ endpoint, shopIdList }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const r = await fetch(endpoint, { method: "POST", credentials: "include", headers,
+    body: JSON.stringify({ shopIdList }) });
+  const t = await r.text();
+  try { return JSON.parse(t); } catch (e) { return { status: r.status, text: t }; }
+}
+"""
+
+
+async def fetch_keeta_today_hours(context: Any, shop_ids: list[str]) -> list[dict]:
+    """Per-shop `{shopId, businessStatus, todayBusinessHours}` read in-page (signed).
+
+    `todayBusinessHours` is `[{startTime,endTime}]` in seconds-from-midnight (today
+    only — see the endpoint note above). Returns the raw `shopList` for the API's
+    `parse_keeta_today_hours`. Navigates the ORDER route first: it primes
+    LOGIN_ACCOUNTID, which the product route alone does not (verified live)."""
+    page = await context.new_page()
+    try:
+        await page.goto(
+            KEETA_ORDER_ROUTE_HOURS, wait_until="domcontentloaded", timeout=60_000
+        )
+        account_id = ""
+        for _ in range(12):  # poll up to ~24s for the SPA to prime the session
+            await page.wait_for_timeout(2_000)
+            account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+            if account_id:
+                break
+        if not account_id:
+            logger.error("keeta hours: in-page session signed out (no LOGIN_ACCOUNTID)")
+            return []
+        result = await evaluate_in_page(
+            page,
+            _SHOP_SUMMARY_JS,
+            {
+                "endpoint": KEETA_SHOP_SUMMARY_PATH + KEETA_QUERY_SUFFIX,
+                "shopIdList": [str(s) for s in shop_ids],
+            },
+        )
+        data = result.get("data") if isinstance(result, dict) else None
+        shops = (data or {}).get("shopList") if isinstance(data, dict) else None
+        return shops if isinstance(shops, list) else []
     finally:
         await page.close()
 

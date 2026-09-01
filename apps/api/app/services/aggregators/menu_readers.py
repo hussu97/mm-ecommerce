@@ -647,6 +647,42 @@ async def _read_keeta_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
     return parse_keeta_menu(snap.raw)
 
 
+# ── Keeta hours reader ────────────────────────────────────────────────────────
+# The worker's `fetch_keeta_today_hours` returns the SCM summary `shopList`: per shop
+# `{shopId, businessStatus, todayBusinessHours:[{startTime,endTime}]}` where the times
+# are SECONDS-from-midnight (verified live 2026-09-01). This is TODAY's window only —
+# Keeta does not expose a weekly schedule on this account — so the reader yields shifts
+# for the given `weekday` (MM 0=Sun…6=Sat) rather than a full week. `businessStatus!=1`
+# (temporarily closed) yields no shift for the day.
+
+
+def _seconds_to_hhmm(seconds: Any) -> str:
+    """`28800` → `"08:00"` (seconds-from-midnight, clamped to a 24h clock)."""
+    try:
+        total = int(seconds)
+    except (TypeError, ValueError):
+        return ""
+    total = max(0, min(total, 24 * 3600))
+    return f"{total // 3600:02d}:{(total % 3600) // 60:02d}"
+
+
+def parse_keeta_today_hours(shop: Any, weekday: int) -> NormalizedHours:
+    """One Keeta shop's TODAY window → the channel-neutral schedule for `weekday`.
+
+    `shop` is one element of the SCM summary `shopList`. Only today's window is
+    exposed, so the result carries shifts for `weekday` alone."""
+    shifts: list[NormalizedShift] = []
+    if isinstance(shop, dict) and shop.get("businessStatus") == 1:
+        for win in shop.get("todayBusinessHours") or []:
+            if not isinstance(win, dict):
+                continue
+            opens = _seconds_to_hhmm(win.get("startTime"))
+            closes = _seconds_to_hhmm(win.get("endTime"))
+            if opens and closes:
+                shifts.append(NormalizedShift(weekday, opens, closes))
+    return NormalizedHours(source="keeta", shifts=shifts)
+
+
 # ── Reader registries ─────────────────────────────────────────────────────────
 # A new reader is a single entry here plus its `async def _read_<target>_...`.
 # Foodics (Grubtech price tag), Careem (catalog REST), Talabat (DeliveryHero

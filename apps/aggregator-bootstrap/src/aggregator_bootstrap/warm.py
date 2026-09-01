@@ -220,6 +220,28 @@ async def create_keeta_item_in_page(
     return result if isinstance(result, dict) else {"raw": result}
 
 
+async def delete_keeta_item_in_page(*, shop_id: str, spu_id: str) -> dict[str, Any]:
+    """Delete one Keeta menu item in-page (mtgsig `deleteSpu`) and return the raw
+    response. The reverse of `create_keeta_item_in_page` — the second half of the
+    controlled create-then-delete verification, and the operator's cleanup entry
+    point. A live storefront write, so it is a deliberate command, never a sweep."""
+    from .browser import _open_storage_state_context
+    from .engine import async_playwright
+    from .keeta_pull import delete_keeta_spu
+
+    _keeta_state_or_raise()
+    async with async_playwright() as pw:
+        opened = await _open_storage_state_context(pw, "keeta")
+        try:
+            result = await delete_keeta_spu(
+                opened.context, shop_id=shop_id, spu_id=spu_id
+            )
+        finally:
+            await opened.close()
+    logger.info("keeta deleteSpu result: %s", result)
+    return result if isinstance(result, dict) else {"raw": result}
+
+
 async def pull_keeta_finance_in_page(
     *, months_back: int | None = None
 ) -> dict[str, Any]:

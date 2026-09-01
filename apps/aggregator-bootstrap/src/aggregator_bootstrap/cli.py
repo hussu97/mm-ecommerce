@@ -430,6 +430,33 @@ def create_keeta_item(
         raise typer.Exit(code=1)
 
 
+@app.command("delete-keeta-item")
+def delete_keeta_item(
+    shop_id: str = typer.Option(..., help="Keeta shop id (from SHOP_IDS)"),
+    spu_id: str = typer.Option(..., help="Keeta spuId to delete (from listSpu)"),
+) -> None:
+    """Delete one Keeta menu item in-page (mtgsig `deleteSpu`).
+
+    The reverse of `create-keeta-item` — the cleanup half of the controlled
+    create-then-delete verification, and the operator's remove entry point.
+    Endpoint verified live 2026-09-01 (a bad id returns a *validation* error, not
+    path-not-found). A live storefront WRITE, deliberate, never part of a sweep.
+    """
+    from .warm import delete_keeta_item_in_page
+
+    try:
+        result = asyncio.run(delete_keeta_item_in_page(shop_id=shop_id, spu_id=spu_id))
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta delete needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    code = result.get("code") if isinstance(result, dict) else None
+    if code == 0:
+        logger.info("keeta item deleted (code 0): %s", spu_id)
+    else:
+        logger.error("keeta delete did not succeed: %s", result)
+        raise typer.Exit(code=1)
+
+
 @app.command("serve")
 def serve() -> None:
     """Run the always-on worker daemon (compose `serve`).

@@ -727,3 +727,35 @@ def test_keeta_menu_parser_uses_real_shapes():
     assert names["Eggless Fudge Brownies"].price == Decimal("35")
     assert names["Eggless Fudge Brownies"].is_available is True
     assert names["Snoozed Item"].is_available is False  # status 0
+
+
+# ── Keeta hours parser (real captured SCM summary shape) ──────────────────────
+
+
+def test_keeta_today_hours_parser_converts_seconds():
+    from app.services.aggregators.menu_readers import (
+        _seconds_to_hhmm,
+        parse_keeta_today_hours,
+    )
+
+    # Real per-shop shape captured live 2026-09-01 from
+    # `POST /api/scm/gw/shop/base/summary/list` — times are seconds-from-midnight.
+    assert _seconds_to_hhmm(28800) == "08:00"
+    assert _seconds_to_hhmm(84600) == "23:30"
+
+    shop = {
+        "businessStatus": 1,
+        "todayBusinessHours": [{"startTime": 28800, "endTime": 84600}],
+    }
+    hours = parse_keeta_today_hours(shop, weekday=3)  # e.g. a Wednesday
+    assert hours.source == "keeta"
+    assert [(s.weekday, s.opens, s.closes) for s in hours.shifts] == [
+        (3, "08:00", "23:30")
+    ]
+
+    # A temporarily-closed shop (businessStatus != 1) yields no shift.
+    closed = parse_keeta_today_hours(
+        {"businessStatus": 2, "todayBusinessHours": [{"startTime": 0, "endTime": 100}]},
+        weekday=3,
+    )
+    assert closed.shifts == []
