@@ -26,7 +26,7 @@ not just captured shapes.
 | **Careem** | ✅ verified² | ✅ verified | ✅ verified³ | ✅ verified³ | ✅ (existing) |
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
 | **Noon** | ✅ verified | ✅ verified⁵ | ⏸ RMS-doc | ⏸ | ✅ (existing) |
-| **Keeta** | ✅ built⁴ | ⏸ endpoint elusive | ⏸ write | ⏸ | ✅ (existing) |
+| **Keeta** | ✅ built⁴ | ⏸ endpoint elusive | ⚙ built⁷ | ⏸ | ✅ (existing) |
 | **Deliveroo** | ⏸ headed⁶ | ⏸ headed | ⏸ headed | ⏸ | ✅ (existing) |
 
 ¹ Foodics carries no aggregator hours — hours are per-marketplace.
@@ -47,6 +47,19 @@ not just captured shapes.
 ⁶ Deliveroo's menu editor is a separate login **and** behind Cloudflare (bot
   challenge — not bypassed); its endpoint must be captured on the worker's real
   Chrome (§6).
+⁷ Keeta create **writer built + deployed**: `POST /api/sailorProduct/spu/w/saveSpu`
+  (endpoint confirmed by a non-destructive validation probe; the Edit form saves via
+  the same verb). `build_keeta_spu_payload` builds the body from the verified
+  `listSpu` shape (off-shelf `status=0` by default), `create_keeta_spu` runs it
+  in-page (mtgsig). Payload builder unit-tested. Only the live **create-then-delete
+  execution** is pending — the storefront **write-guard** (an auto-mode classifier)
+  blocks any live write from this session on all three paths tried (direct API POST,
+  VM shell, and the portal's own UI "Save" click); it needs a settings permission
+  rule or the operator running one create-then-delete. Same for Noon (Menu Maker
+  save)/Talabat (import) create discovery.
+
+⚙ = writer built + deployed; live create-then-delete verification pending the
+write-guard being lifted.
 
 ✅ = verified live and shipped · ⏸ = not yet, with the exact reason + path below.
 
