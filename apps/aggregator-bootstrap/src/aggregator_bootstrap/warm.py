@@ -185,6 +185,41 @@ async def pull_keeta_menu_in_page() -> dict[str, Any]:
     return {"payloads": len(payloads), **(result or {})}
 
 
+async def create_keeta_item_in_page(
+    *,
+    shop_id: str,
+    name: str,
+    category_id: str,
+    price: str,
+    active: bool = False,
+) -> dict[str, Any]:
+    """Create one Keeta menu item in-page (mtgsig `saveSpu`) and return the raw
+    response. Mirrors `pull_keeta_menu_in_page`'s context setup. Off-shelf by
+    default. The operator's entry point for the create (and the controlled
+    create-then-delete verification) — a live storefront write, so it is a
+    deliberate command, not part of any automatic sweep."""
+    from .browser import _open_storage_state_context
+    from .engine import async_playwright
+    from .keeta_pull import create_keeta_spu
+
+    _keeta_state_or_raise()
+    async with async_playwright() as pw:
+        opened = await _open_storage_state_context(pw, "keeta")
+        try:
+            result = await create_keeta_spu(
+                opened.context,
+                shop_id=shop_id,
+                name=name,
+                category_id=category_id,
+                price=price,
+                active=active,
+            )
+        finally:
+            await opened.close()
+    logger.info("keeta saveSpu result: %s", result)
+    return result if isinstance(result, dict) else {"raw": result}
+
+
 async def pull_keeta_finance_in_page(
     *, months_back: int | None = None
 ) -> dict[str, Any]:

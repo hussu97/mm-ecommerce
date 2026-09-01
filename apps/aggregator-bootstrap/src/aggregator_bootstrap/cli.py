@@ -390,6 +390,46 @@ def heal_sessions(
         logger.info("heal-sessions: nothing to heal")
 
 
+@app.command("create-keeta-item")
+def create_keeta_item(
+    shop_id: str = typer.Option(..., help="Keeta shop id (from SHOP_IDS)"),
+    name: str = typer.Option(..., help="Item name"),
+    category_id: str = typer.Option(..., help="Keeta shopCategory id"),
+    price: str = typer.Option(..., help="Price, e.g. 35"),
+    active: bool = typer.Option(
+        False, "--active", help="Put it on-shelf immediately (default: off-shelf)."
+    ),
+) -> None:
+    """Create one Keeta menu item in-page (mtgsig `saveSpu`), off-shelf by default.
+
+    A live storefront WRITE — deliberate, never part of a sweep. This is the entry
+    point for the catalog-sync create and for the controlled create-then-delete that
+    confirms the exact `saveSpu` payload. Reads the hydrated Keeta session; open a
+    headed `login --channel keeta` first if the session is dead.
+    """
+    from .warm import create_keeta_item_in_page
+
+    try:
+        result = asyncio.run(
+            create_keeta_item_in_page(
+                shop_id=shop_id,
+                name=name,
+                category_id=category_id,
+                price=price,
+                active=active,
+            )
+        )
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta create needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    code = result.get("code") if isinstance(result, dict) else None
+    if code == 0:
+        logger.info("keeta item created (code 0): %s", result.get("data"))
+    else:
+        logger.error("keeta create did not succeed: %s", result)
+        raise typer.Exit(code=1)
+
+
 @app.command("serve")
 def serve() -> None:
     """Run the always-on worker daemon (compose `serve`).
