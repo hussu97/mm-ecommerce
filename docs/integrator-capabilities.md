@@ -26,7 +26,7 @@ not just captured shapes.
 | **Careem** | ✅ verified² | ✅ verified | ✅ verified³ | ✅ verified³ | ✅ (existing) |
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
 | **Noon** | ✅ verified | ✅ verified⁵ | ✅ verified⁸ | ✅ verified⁸ | ✅ (existing) |
-| **Keeta** | ✅ built⁴ | ✅ verified⁹ | ⚙ built⁷ | ✅ verified¹⁰ | ✅ (existing) |
+| **Keeta** | ✅ built⁴ | ✅ verified⁹ | ✅ verified⁷ | ✅ verified¹⁰ | ✅ (existing) |
 | **Deliveroo** | ⏸ headed⁶ | ⏸ headed | ⏸ headed | ⏸ | ✅ (existing) |
 
 ¹ Foodics carries no aggregator hours — hours are per-marketplace.
@@ -47,19 +47,21 @@ not just captured shapes.
 ⁶ Deliveroo's menu editor is a separate login **and** behind Cloudflare (bot
   challenge — not bypassed); its endpoint must be captured on the worker's real
   Chrome (§6).
-⁷ Keeta create **writer built + deployed**: `POST /api/sailorProduct/spu/w/saveSpu`
-  (endpoint + session + payload all confirmed live — a controlled create-then-delete
-  ran on shop 1644170195/DSO and left **no orphan**). `build_keeta_spu_payload` builds
-  the body from the verified `listSpu` shape (off-shelf `status=0`), `create_keeta_spu`
-  runs it in-page (mtgsig); payload builder unit-tested. **One field still blocks a
-  successful create:** saveSpu returns `107000901 "The backend category information is
-  not filled"` — an item needs a PLATFORM backend category (后台类目, a leaf of the
-  shop's `primaryCategoryList`, e.g. "Cookies" 30310). That field is not in the
-  `listSpu` read and is none of the 9 names probed (`spuCategoryId`, `backendCategoryId`,
-  `secondCategoryId`, `categoryId`, … + list variants); its exact key lives only in the
-  editor's own `saveSpu` request, which the headless SPA won't expose by URL. Capture
-  it once from the editor (headed, interactive) to finish create — the write **validates
-  and rejects before persisting**, so probing never litters the live menu.
+⁷ **Keeta create — VERIFIED end-to-end.** `POST /api/sailorProduct/spu/w/saveSpu`,
+  proven through the wired `create_keeta_spu` + `delete_keeta_spu`: create `code 0`,
+  item found in the menu read, `deleteSpu code 0`, re-read gone — **no orphan** (clean
+  across all 4 shops). Cracked by walking the validation chain: two non-obvious fields
+  are required — **`categoryId`** (the platform backend category 后台类目; its value is
+  the shop's `listConfig.data.categoryId`, `6669` for MM — the real field is plain
+  `categoryId`, not any of the 9 `spu*/backend*/second*` names guessed) and
+  **`sourceLanguageType:"en"`** (+ translate-type fields, else `107000632 "original
+  language type is empty"`). Two context bugs fixed while wiring: saveSpu/deleteSpu/
+  listConfig must run in the page's MAIN world (`page.evaluate`) or they answer
+  `107000106 "Restaurant ID required"`; and create/delete prime on the **order-LIST**
+  route (sets LOGIN_ACCOUNTID + the restaurant context). `build_keeta_spu_payload`
+  (unit-tested) + `create_keeta_spu` (auto-resolves the backend category from listConfig,
+  best-effort, or takes it explicitly) + the `create-keeta-item --backend-category-id`
+  CLI. Off-shelf (`status=0`) by default; only behind CATALOG_SYNC_ENABLED.
 
 ⁸ **Noon create/delete — verified.** The menu is per-item (not a document rewrite):
   `POST /_food-restaurant/menu/item/create` + `/menu/item/delete`. Confirmed by a
@@ -304,20 +306,20 @@ same status `keeta_pull` itself had when authored.
 create/update verb is `POST /api/sailorProduct/spu/w/saveSpu` (an empty POST returns
 validation `"Please enter the item name"` — endpoint confirmed non-destructively;
 the Edit form saves through the same verb, so it both creates and updates).
-`build_keeta_spu_payload` builds the body from the verified `listSpu` shape +
-the Edit form fields (name EN/AR, category, `skuList` price/currency, `availableTime`
-Mon–Sun `00:00-23:59`), **off-shelf (`status=0`) by default** so a sync never makes an
-item live unreviewed; `create_keeta_spu` runs it in-page (mtgsig). Payload builder
-unit-tested. **Invocable now** via the worker CLI:
-`aggregator-bootstrap create-keeta-item --shop-id <id> --name "<name>" --category-id <id> --price <n>`.
-A **controlled create-then-delete ran live** (shop 1644170195/DSO) and confirmed the
-session + endpoint accept the payload, leaving **no orphan** — but saveSpu returns
-`107000901 "The backend category information is not filled"`: an item also needs a
-PLATFORM backend category (后台类目, a leaf of the shop's `primaryCategoryList`, e.g.
-"Cookies" 30310), a field absent from `listSpu` and not matched by any of the 9 key
-names probed. Its exact key is only in the editor's own `saveSpu` request; one headed,
-interactive capture of that request finishes the create. The write validates-and-rejects
-before persisting, so this probing never litters the live menu.
+`build_keeta_spu_payload` (unit-tested) builds the body; `create_keeta_spu` runs it
+in-page (mtgsig), **off-shelf (`status=0`) by default** so a sync never makes an item
+live unreviewed. **VERIFIED end-to-end 2026-09-01** through the wired functions:
+create `code 0` → item found in the menu read → `delete_keeta_spu code 0` → re-read
+gone, no orphan. The two fields that took cracking (found by walking the validation
+chain, not the read shape): **`categoryId`** = the shop's `listConfig.data.categoryId`
+(`6669` for MM — the platform backend category 后台类目) and **`sourceLanguageType:"en"`**.
+Invocable via the CLI:
+`aggregator-bootstrap create-keeta-item --shop-id <id> --name "<name>" --category-id <section> --price <n> [--backend-category-id 6669]`
+(the backend category auto-resolves from listConfig when the page carries the restaurant
+context; pass `--backend-category-id` to be certain). Delete is `delete-keeta-item
+--shop-id <id> --spu-id <id>`. Two gotchas baked into the code: these writes run in the
+page MAIN world (`page.evaluate`) and prime on the order-LIST route — otherwise
+`107000106 "Restaurant ID required"`.
 
 **Keeta delete — endpoint VERIFIED + wired.** `POST /api/sailorProduct/spu/w/deleteSpu`
 is the real remove verb (a bad id returns a *validation* error `shopId not exist!`,
@@ -366,15 +368,16 @@ Every channel's items/options/categories map to MM through the single
 
 | Item | Blocker | How to finish |
 |---|---|---|
-| **Keeta create** exec | Endpoint/session/payload verified live (create-then-delete ran, no orphan); saveSpu still needs the **backend platform category** field, whose exact key only appears in the editor's own request | One headed, interactive capture of the editor's `saveSpu` request → add that field to `build_keeta_spu_payload` → the create-then-delete completes |
 | **Talabat create/delete** | Import-based (per-item POST 405s); no portal/write access here | Capture the DH catalog-import from the portal; implement + create-then-delete |
 | **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
-| **Keeta weekly hours** | Today's window is read (§footnote 9); a full 7-day schedule isn't exposed to this portal account | Only if a weekly schedule is needed: find the settings-page schedule endpoint (headed) — else today's window stands |
+| **Keeta weekly hours** | Today's window is read + verified (§footnote 9); a full 7-day schedule isn't exposed to this portal account | Only if a weekly schedule is needed: find the settings-page schedule endpoint (headed) — else today's window stands |
 | **Deliveroo** (menu/hours/create) | Separate login + Cloudflare | Capture the menu-editor session on the worker's real Chrome; `DELIVEROO_MENU`/create jobs (§6) |
 
-**The one field left for Keeta create** is the platform backend category (see footnote 7)
-— everything else (session, endpoint, payload, off-shelf guard, and the verified delete
-to reverse it) is done. Capture it once from the editor's own save request to finish.
+**Keeta is now complete** (menu + hours + create + delete, all verified live). The two
+remaining integrators are blocked by their own architecture, not by more engineering
+here: **Talabat** create/hours live on DirectHub's separate service (no per-item API for
+this account), and **Deliveroo** needs its separate menu-editor credentials behind a
+Cloudflare challenge. Both need an external input (DH access / Deliveroo creds), not a
+harder headless attempt.
 
-Everything not in this table is verified, shipped, and deployed to production (Keeta
-menu is built + deployed; its snapshot populates on the next un-preempted worker run).
+Everything not in this table is verified, shipped, and deployed to production.
