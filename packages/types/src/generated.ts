@@ -311,6 +311,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/deliveroo/menu": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push Deliveroo Menu
+         * @description Store the in-page-captured Deliveroo menu + opening hours for the catalog sync.
+         *
+         *     Deliveroo's webrom menu is behind Cloudflare + a webrom token, so the worker
+         *     captures it (and the hours) in the browser and pushes them here; stored as the
+         *     deliveroo menu + hours snapshots that `menu_readers._read_deliveroo_menu` /
+         *     `_read_deliveroo_hours` parse. Push transport only — like the keeta menu push.
+         */
+        post: operations["push_deliveroo_menu_api_v1_aggregators_deliveroo_menu_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/fees/summary": {
         parameters: {
             query?: never;
@@ -10748,6 +10773,29 @@ export interface components {
             truncation_note?: string | null;
         };
         /**
+         * DeliverooMenuPush
+         * @description The in-page-captured Deliveroo menu + opening hours (one payload per
+         *     restaurant: `{rst_id, menu, hours}`), pushed for the catalog sync. Deliveroo's
+         *     menu is behind Cloudflare + a webrom token, so the worker captures it in the
+         *     browser and pushes it here; stored as the deliveroo menu + hours snapshots.
+         */
+        DeliverooMenuPush: {
+            /** Payloads */
+            payloads?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * DeliverooMenuResult
+         * @description Confirmation the pushed Deliveroo menu + hours were stored.
+         */
+        DeliverooMenuResult: {
+            /** Restaurants */
+            restaurants: number;
+            /** Stored */
+            stored: boolean;
+        };
+        /**
          * DeliveryAreaResponse
          * @description What delivery looks like at a pin, before there is a basket.
          *
@@ -18610,6 +18658,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeliverooFinanceResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_deliveroo_menu_api_v1_aggregators_deliveroo_menu_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliverooMenuPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliverooMenuResult"];
                 };
             };
             /** @description Validation Error */

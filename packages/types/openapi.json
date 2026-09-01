@@ -8652,6 +8652,40 @@
         "title": "DeliverooFinanceResult",
         "type": "object"
       },
+      "DeliverooMenuPush": {
+        "description": "The in-page-captured Deliveroo menu + opening hours (one payload per\nrestaurant: `{rst_id, menu, hours}`), pushed for the catalog sync. Deliveroo's\nmenu is behind Cloudflare + a webrom token, so the worker captures it in the\nbrowser and pushes it here; stored as the deliveroo menu + hours snapshots.",
+        "properties": {
+          "payloads": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Payloads",
+            "type": "array"
+          }
+        },
+        "title": "DeliverooMenuPush",
+        "type": "object"
+      },
+      "DeliverooMenuResult": {
+        "description": "Confirmation the pushed Deliveroo menu + hours were stored.",
+        "properties": {
+          "restaurants": {
+            "title": "Restaurants",
+            "type": "integer"
+          },
+          "stored": {
+            "title": "Stored",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stored",
+          "restaurants"
+        ],
+        "title": "DeliverooMenuResult",
+        "type": "object"
+      },
       "DeliveryAreaResponse": {
         "description": "What delivery looks like at a pin, before there is a basket.\n\nSeparate from `/quote` because the questions are different. A quote needs a\ncart, a subtotal and a live courier estimate, and it exists to put a number\non one order. This answers \"what is delivery like where I live\" for a banner\non the homepage and a line on a product card \u2014 pages a customer reaches long\nbefore a cart exists.\n\nCheap on purpose: a point-in-polygon lookup against the cached map and\nnothing else. No courier is called, so it costs no money and adds no latency\nto a page that is mostly images.",
         "properties": {
@@ -31549,6 +31583,66 @@
           }
         },
         "summary": "Push Deliveroo Finance",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/deliveroo/menu": {
+      "post": {
+        "description": "Store the in-page-captured Deliveroo menu + opening hours for the catalog sync.\n\nDeliveroo's webrom menu is behind Cloudflare + a webrom token, so the worker\ncaptures it (and the hours) in the browser and pushes them here; stored as the\ndeliveroo menu + hours snapshots that `menu_readers._read_deliveroo_menu` /\n`_read_deliveroo_hours` parse. Push transport only \u2014 like the keeta menu push.",
+        "operationId": "push_deliveroo_menu_api_v1_aggregators_deliveroo_menu_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliverooMenuPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliverooMenuResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Deliveroo Menu",
         "tags": [
           "Aggregators"
         ]
