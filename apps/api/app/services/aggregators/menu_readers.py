@@ -809,9 +809,13 @@ async def _read_deliveroo_hours(db: AsyncSession, branch_id: Any) -> NormalizedH
     from app.services.providers import deliveroo_provider as dp
 
     session = await session_store.load(db, "deliveroo")
+    # prepare_session RETURNS the prepared session — a NEW object when it refreshes
+    # or re-logs-in a stale token (and it augments org_id / outlet ids onto it). Use
+    # the return value: the passed-in `session` stays stale, which 401s on an expired
+    # token and loses the org_id augmentation.
+    session = await dp.provider.prepare_session(db, session)
     if session is None:
         raise AggregatorUnavailableError("no deliveroo session")
-    await dp.provider.prepare_session(db, session)
     outlet = await _deliveroo_outlet_id(db, branch_id)
     raw = await dp.provider.get_opening_hours(session, outlet)
     return parse_deliveroo_hours(raw)

@@ -391,10 +391,13 @@ class DeliverooClient(BaseAggregatorClient):
             and self._token_is_fresh(session)
         ):
             return session
-        if session is not None and session.status == SESSION_LIVE:
-            refreshed = await self._refresh(db, session)
-            if refreshed is not None:
-                return refreshed
+        # A stale token: mint a fresh one with the stored email/password. We do NOT
+        # use `/api/session/refresh` here: verified live 2026-09-02, it returns a token
+        # with a fresh `exp` that the data endpoints still 401, and worse it persists
+        # that dead token so the next load reads it as "fresh" and every call 401s.
+        # A full `_login` is proven to authenticate (200 on the same request), there is
+        # no OTP on this channel, and it runs at most once per ~hour token life, so it
+        # is both cheaper in failures and simpler than validating a refresh result.
         return await self._login(db, session)
 
     async def _augment_from_db(
