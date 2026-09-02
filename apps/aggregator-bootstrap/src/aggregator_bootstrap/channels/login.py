@@ -157,6 +157,55 @@ async def _talabat_is_authenticated_app(page) -> bool:
     )
 
 
+def _jwt_exp(token: str) -> int:
+    """The `exp` claim of a JWT, or 0 if it can't be read."""
+    import base64
+    import json
+
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        return int(json.loads(base64.urlsafe_b64decode(part)).get("exp", 0))
+    except Exception:  # noqa: BLE001 — an opaque/garbled token has no usable exp
+        return 0
+
+
+async def _ensure_fresh_talabat_token(page) -> None:
+    """Force the SPA to mint a fresh `accessToken` before the session is captured.
+
+    The portal PERSISTS the `accessToken` cookie in the Chrome profile, so a heal
+    that lands on an already-authenticated `/dashboard` (the common case) returns the
+    OLD token — frequently already expired — and the vendor-api menu read then 401s
+    ~1h later with the session still marked `live` (found 2026-09-02: a relogin at
+    14:09 kept a token that expired at 13:11). Navigating to the menu console makes
+    the SPA fetch the catalog with that token; on an expired one it exchanges the
+    `refreshToken` and rewrites the `accessToken` cookie. Best-effort and fail-safe:
+    if it does not refresh, the session is captured exactly as before."""
+    import time
+
+    ctx = page.context
+
+    async def _access_exp() -> int:
+        for c in await ctx.cookies():
+            if c.get("name") == "accessToken" and c.get("value"):
+                return _jwt_exp(c["value"])
+        return 0
+
+    for _ in range(3):
+        if await _access_exp() > time.time() + 300:  # >5 min of life left = fresh
+            return
+        try:
+            await page.goto(
+                "https://partner-app.talabat.com/menu-management-v2",
+                wait_until="domcontentloaded",
+                timeout=45_000,
+            )
+            await page.wait_for_timeout(7_000)
+        except Exception:  # noqa: BLE001 — never let a refresh nudge break the login
+            break
+    logger.info("talabat: accessToken still stale after refresh nudge; proceeding")
+
+
 async def _talabat_debug_shot(page, tag: str) -> None:
     """Best-effort screenshot to the sessions volume for post-mortem inspection."""
     try:
@@ -192,6 +241,9 @@ async def login_talabat(
 
     if await _talabat_is_authenticated_app(page):
         logger.info("talabat: already authenticated on load")
+        # The persisted accessToken is often stale on this path — refresh it before
+        # the caller captures the session, or the vendor-api read 401s an hour later.
+        await _ensure_fresh_talabat_token(page)
         # RETURN THE PAGE, not None: login_with_account does
         # `page = await login_talabat(...)`, so a bare `return` set page=None and
         # the heal then timed out even though the profile was already logged in —
@@ -277,6 +329,7 @@ async def login_talabat(
             f"Talabat did not reach the dashboard after the OTP (still at {page.url})"
         ) from exc
     await page.wait_for_timeout(5_000)
+    await _ensure_fresh_talabat_token(page)
     logger.info("talabat: login complete, url=%s", page.url)
     if owned_page:
         return
