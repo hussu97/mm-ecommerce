@@ -253,6 +253,45 @@ def _record_reauth_failure(channel: str, *, transient: bool = False) -> None:
         logger.warning("reauth: could not publish %s backoff to the API", channel)
 
 
+# ── success cooldown (guardrail: a healthy-but-short-lived session must not be
+#    re-driven on every tick either) ─────────────────────────────────────────────
+# The backoff above paces FAILURES. It does nothing for a channel that re-logs in
+# *successfully* and then dies again minutes later — Talabat's PerimeterX `_px3`
+# rotates and expires hourly, so every heal poll that finds it dead would spawn a
+# fresh headed Chrome, and each headed login pegs both of this e2-small's vCPUs
+# (15 talabat re-logins in one observed day). A success stamps the channel here; it
+# is not re-driven until `WORKER_MIN_RELOGIN_INTERVAL_SECONDS` passes. Stamped ONLY
+# on success (not on failure), so a transient blip's short backoff still retries
+# promptly — this floor targets the wasteful *repeat of healthy work*, not recovery.
+def _relogin_stamp_path(channel: str) -> Path:
+    return Path(settings.STORAGE_STATE_DIR) / f"{channel}.last_relogin.json"
+
+
+def _record_relogin_success(channel: str) -> None:
+    """Stamp the time of a successful re-login, on the persisted sessions volume so
+    a daemon restart (or a one-shot heal's fresh container) does not forget it."""
+    path = _relogin_stamp_path(channel)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"at": time.time()}), encoding="utf-8")
+    except OSError:  # pragma: no cover — a write failure just means no cooldown
+        logger.warning("reauth: could not persist %s relogin stamp", channel)
+
+
+def _success_cooldown_remaining(channel: str) -> float:
+    """Seconds until `channel` may be re-driven after its last SUCCESSFUL re-login,
+    or 0 if eligible now — 0 also when the floor is disabled (<=0) or no success is
+    on file, so a channel that has never healed is never blocked from its first try."""
+    interval = settings.WORKER_MIN_RELOGIN_INTERVAL_SECONDS
+    if interval <= 0:
+        return 0.0
+    try:
+        data = json.loads(_relogin_stamp_path(channel).read_text(encoding="utf-8"))
+        return max(0.0, float(data.get("at", 0)) + interval - time.time())
+    except (OSError, ValueError, TypeError):
+        return 0.0  # no/unreadable stamp → not in cooldown
+
+
 def _clear_reauth_backoff(channel: str) -> None:
     """Reset the backoff — the channel is healthy again."""
     existed = False
@@ -302,9 +341,19 @@ def _heal_once(only: set[str] | None = None) -> int:
                 int(remaining // 60) + 1,
             )
             continue
+        cooldown = _success_cooldown_remaining(ch)
+        if cooldown > 0:
+            logger.info(
+                "reauth: %s is %s but was refreshed recently — skipping for ~%d min",
+                ch,
+                reason,
+                int(cooldown // 60) + 1,
+            )
+            continue
         logger.warning("reauth: %s is %s — re-logging in", ch, reason)
         outcome = _try_auto_relogin(ch)
         if outcome is ReloginOutcome.OK:
+            _record_relogin_success(ch)
             _clear_reauth_backoff(ch)
             healed += 1
         else:

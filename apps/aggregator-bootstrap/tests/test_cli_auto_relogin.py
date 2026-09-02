@@ -210,6 +210,93 @@ def _async_return(value):
     return _f
 
 
+# ── success cooldown (guardrail: a healthy-but-short-lived session — Talabat's
+#    rotating cookie — must not spawn a headed Chrome on every heal tick) ──────────
+def test_success_cooldown_blocks_a_recently_refreshed_channel(monkeypatch, tmp_path):
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(reauth.settings, "WORKER_MIN_RELOGIN_INTERVAL_SECONDS", 900)
+    ch = "talabat"
+    # No stamp → eligible immediately.
+    assert reauth._success_cooldown_remaining(ch) == 0.0
+    # A recorded success arms the floor for ~the configured interval.
+    reauth._record_relogin_success(ch)
+    remaining = reauth._success_cooldown_remaining(ch)
+    assert 0 < remaining <= 900 + 1
+    # Disabling the floor (<=0) makes the channel eligible again at once.
+    monkeypatch.setattr(reauth.settings, "WORKER_MIN_RELOGIN_INTERVAL_SECONDS", 0)
+    assert reauth._success_cooldown_remaining(ch) == 0.0
+
+
+def test_heal_once_skips_a_channel_refreshed_within_the_floor(monkeypatch, tmp_path):
+    """A channel that just re-logged in successfully is NOT re-driven again while it
+    is inside WORKER_MIN_RELOGIN_INTERVAL_SECONDS, even though the API reports it
+    dead — this is the talabat headed-Chrome storm that pinned the e2-small's CPU."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(reauth.settings, "WORKER_MIN_RELOGIN_INTERVAL_SECONDS", 900)
+    _stub_backoff_report(monkeypatch)
+    monkeypatch.setattr(
+        reauth.push,
+        "pull_sessions",
+        _async_return([{"channel": "talabat", "status": "needs_bootstrap"}]),
+    )
+    reauth._record_relogin_success("talabat")  # just refreshed
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        reauth, "_try_auto_relogin", lambda ch: attempts.append(ch) or True
+    )
+    healed = reauth._heal_once()
+    assert attempts == []  # skipped — inside the success floor
+    assert healed == 0
+
+
+def test_heal_once_stamps_success_so_the_next_tick_is_paced(monkeypatch, tmp_path):
+    """A successful heal records the success stamp, so an immediate second heal that
+    still finds the channel dead skips it instead of re-driving a headed Chrome."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(reauth.settings, "WORKER_MIN_RELOGIN_INTERVAL_SECONDS", 900)
+    _stub_backoff_report(monkeypatch)
+    monkeypatch.setattr(
+        reauth.push,
+        "pull_sessions",
+        _async_return([{"channel": "talabat", "status": "needs_bootstrap"}]),
+    )
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        reauth,
+        "_try_auto_relogin",
+        lambda ch: attempts.append(ch) or reauth.ReloginOutcome.OK,
+    )
+    assert reauth._heal_once() == 1  # first heal drives it and succeeds
+    assert reauth._heal_once() == 0  # second heal is paced by the success stamp
+    assert attempts == ["talabat"]  # driven exactly once, not on every tick
+
+
+def test_success_stamp_does_not_block_a_transient_failure_retry(monkeypatch, tmp_path):
+    """The floor is stamped ONLY on success: a channel whose relogin FAILS leaves no
+    stamp, so the short transient backoff still governs a prompt retry — recovery
+    from a real blip is not slowed by this CPU guard."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(reauth.settings, "WORKER_MIN_RELOGIN_INTERVAL_SECONDS", 900)
+    _stub_backoff_report(monkeypatch)
+    monkeypatch.setattr(
+        reauth.push,
+        "pull_sessions",
+        _async_return([{"channel": "careem", "status": "needs_bootstrap"}]),
+    )
+    monkeypatch.setattr(
+        reauth, "_try_auto_relogin", lambda ch: reauth.ReloginOutcome.TRANSIENT
+    )
+    reauth._heal_once()
+    # No success stamp was written, so the success floor is not engaged; only the
+    # short transient backoff paces the retry.
+    assert reauth._success_cooldown_remaining("careem") == 0.0
+    assert (
+        0
+        < reauth._reauth_cooldown_remaining("careem")
+        <= reauth._REAUTH_TRANSIENT_MAX_SECONDS
+    )
+
+
 def test_try_auto_relogin_returns_transient_on_a_flaky_error(monkeypatch):
     """A network blip / marketplace 5xx (any non-NeedsHumanLogin error) is TRANSIENT:
     a retry will likely succeed, so it must NOT be treated like a human-needed wall."""

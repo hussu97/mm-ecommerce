@@ -138,6 +138,19 @@ class Settings(BaseSettings):
     #: How often the daemon asks the API which sessions are dead and enqueues a
     #: RELOGIN for each (respecting the per-channel reauth backoff).
     WORKER_HEAL_POLL_SECONDS: int = 120
+    #: Floor (seconds) on how often a channel is re-driven *after a SUCCESSFUL
+    #: re-login*. The reauth backoff above only paces FAILURES; a channel whose
+    #: anti-bot cookie legitimately rotates and dies again minutes after a healthy
+    #: refresh (Talabat's PerimeterX `_px3`, which re-logged in 15× in one day and
+    #: kept a headed Chrome pegging this e2-small's 2 vCPUs) would otherwise spawn a
+    #: full headed Chrome on every heal poll it looked dead. A success stamps the
+    #: channel; it is not re-driven again until this interval passes, even if it
+    #: looks dead. Stamped ONLY on success, so a transient-failure retry (the short
+    #: reauth backoff) is unaffected and recovery from a real blip is not slowed.
+    #: Talabat's cookie expiry is advisory API-side (the token is still honoured), so
+    #: a session refreshed at most this often still serves the sweep. 0 disables the
+    #: floor. Tunable without a deploy.
+    WORKER_MIN_RELOGIN_INTERVAL_SECONDS: int = 900
     #: How often the scheduler wakes to enqueue what is due (and beats the heartbeat
     #: the container healthcheck watches).
     WORKER_SCHEDULER_TICK_SECONDS: int = 30

@@ -716,6 +716,15 @@ services:
           # Chrome is spawned per job and torn down after (never two at once), so
           # the ceiling is one browser, as under the old one-shot model.
           memory: 900m
+          # Cap the worker at one of the e2-small's two vCPUs. A headed Chrome
+          # login (PerimeterX/Cloudflare/OTP) pegs 2-3 cores, and with no cap the
+          # anti-bot re-login churn (talabat re-logs in ~15×/day) drove the load
+          # average past 5 and starved the customer-facing `api` on this 2-vCPU
+          # box. One core is a hard guarantee the other half stays for api +
+          # postgres + pos-api; Chrome logins are mostly network/OTP wait, so the
+          # extra wall-clock stays well inside the 480s RELOGIN budget. Raise this
+          # (with the memory cap and a VM resize) if login timeouts climb.
+          cpus: "1.0"
 
 networks:
   mm_network:

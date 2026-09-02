@@ -112,6 +112,10 @@ async def _dispatch(job: Job) -> None:
     if job.kind is JobKind.RELOGIN:
         outcome = await asyncio.to_thread(reauth._try_auto_relogin, job.channel)
         if outcome is reauth.ReloginOutcome.OK:
+            # Stamp the success so `_heal_poll` will not re-drive a healthy-but-
+            # short-lived session (Talabat's rotating cookie) again for
+            # WORKER_MIN_RELOGIN_INTERVAL_SECONDS — the headed-Chrome CPU floor.
+            await asyncio.to_thread(reauth._record_relogin_success, job.channel)
             await asyncio.to_thread(reauth._clear_reauth_backoff, job.channel)
         else:
             await asyncio.to_thread(
@@ -207,6 +211,11 @@ async def _heal_poll(queue: JobQueue) -> None:
             await asyncio.to_thread(reauth._clear_reauth_backoff, ch)
             continue
         if reauth._reauth_cooldown_remaining(ch) > 0:
+            continue
+        # A channel that re-logged in successfully within the floor is not re-driven
+        # again yet, even if it looks dead — this is what stops Talabat's hourly
+        # cookie rotation from spawning a headed Chrome on every 2-minute heal poll.
+        if reauth._success_cooldown_remaining(ch) > 0:
             continue
         if await queue.put(JobKind.RELOGIN, ch):
             logger.info("daemon: %s is dead — enqueued RELOGIN", ch)
