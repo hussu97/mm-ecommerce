@@ -27,7 +27,7 @@ not just captured shapes.
 | **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
 | **Noon** | ✅ verified | ✅ verified⁵ | ✅ verified⁸ | ✅ verified⁸ | ✅ (existing) |
 | **Keeta** | ✅ built⁴ | ✅ verified⁹ | ✅ verified⁷ | ✅ verified¹⁰ | ✅ (existing) |
-| **Deliveroo** | ⚙ coded⁶ | ⚙ coded⁶ | ⏸ headed | ⏸ | ✅ (existing) |
+| **Deliveroo** | ⚙ deployed⁶ | ⚙ deployed⁶ | ⏸ headed | ⏸ | ✅ (existing) |
 
 ¹ Foodics carries no aggregator hours — hours are per-marketplace.
 ² Careem menu read was **fixed twice**: it omitted the required `merchantId` (400),
@@ -60,10 +60,18 @@ not just captured shapes.
   `push_deliveroo_menu`; daemon `JobKind.DELIVEROO_MENU` (+ `WORKER_DELIVEROO_MENU_INTERVAL_HOURS`,
   default off); API `POST /aggregators/deliveroo/menu` → `store_worker_menu_and_hours`
   (menu + hours snapshots); `_read_deliveroo_menu` / `_read_deliveroo_hours` registered;
-  `parse_deliveroo_menu` / `parse_deliveroo_hours` unit-tested. **Only the deploy is
-  pending** — held during the GrubOps/Cognito incident (a deploy restarts the API
-  container); it's a single push away. Create/delete still need the write endpoint (a
-  live save capture on the `rs-hub.deliveroo.com` menu editor).
+  `parse_deliveroo_menu` / `parse_deliveroo_hours` unit-tested. **DEPLOYED + ACTIVATED
+  2026-09-02** (`WORKER_DELIVEROO_MENU_INTERVAL_HOURS=12`); the daemon re-logs-in
+  (session `live`, Cloudflare cleared) and runs `DELIVEROO_MENU` on cadence.
+  **⚠️ But the live capture now returns 0 payloads: Deliveroo has restructured the
+  Partner Hub onto an `/api-gw/` gateway, and the two endpoints this parser waits for
+  (`/rom/{rst}/menu`, `/api/restaurants/{rst}/opening_hours`) NO LONGER FIRE on the
+  Opening-Hours page** (confirmed by a live network-capture on 2026-09-02: 23 responses,
+  all `api-gw/*` + telemetry, none matching). The pipeline is sound end-to-end; it needs
+  the menu/hours endpoints **re-mapped to the new `api-gw` surface** (careful headed
+  re-discovery, minding Deliveroo's login rate-limit). A diagnostic log line now prints
+  the candidate response URLs whenever a capture comes back empty, to seed that re-map.
+  Create/delete still need the write endpoint (a live save capture on the menu editor).
 ⁷ **Keeta create — VERIFIED end-to-end.** `POST /api/sailorProduct/spu/w/saveSpu`,
   proven through the wired `create_keeta_spu` + `delete_keeta_spu`: create `code 0`,
   item found in the menu read, `deleteSpu code 0`, re-read gone — **no orphan** (clean
@@ -388,7 +396,7 @@ Every channel's items/options/categories map to MM through the single
 | **Talabat create/delete** | Import-based (per-item POST 405s); no portal/write access here | Capture the DH catalog-import from the portal; implement + create-then-delete |
 | **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
 | **Keeta weekly hours** | Today's window is read + verified (§footnote 9); a full 7-day schedule isn't exposed to this portal account | Only if a weekly schedule is needed: find the settings-page schedule endpoint (headed) — else today's window stands |
-| **Deliveroo menu + hours** | Full pipeline coded & tested (90 worker + 30 API tests green); NOT deployed — held for the GrubOps incident | One push (set `WORKER_DELIVEROO_MENU_INTERVAL_HOURS > 0` + `CATALOG_SYNC_READ_ENABLED`) once the incident clears |
+| **Deliveroo menu + hours** | Pipeline deployed + activated (cadence 12h, session live); **live capture returns 0** — Deliveroo moved the Partner Hub to an `/api-gw/` gateway so the old `/rom/{rst}/menu` + `/api/restaurants/{rst}/opening_hours` no longer fire | Re-map the two feeds to the new `api-gw` endpoints (headed re-discovery; the empty-capture log now prints candidate URLs) — mind Deliveroo's login rate-limit |
 | **Deliveroo create/delete** | Read decoded; the write (menu-editor save) endpoint not captured | Capture one live save on the `rs-hub.deliveroo.com` menu editor → implement + verify |
 
 **Keeta is now complete** (menu + hours + create + delete, all verified live and

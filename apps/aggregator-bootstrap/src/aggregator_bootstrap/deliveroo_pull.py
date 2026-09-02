@@ -350,10 +350,21 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
 
     grabbed: dict[str, Any] = {}
 
+    seen_urls: list[str] = []
+
     async def _on_response(resp: Any) -> None:
         # Read the body AT RESPONSE TIME — Playwright evicts it after navigation, so
         # collecting the objects and reading later comes back empty (seen live).
         url = resp.url
+        # Diagnostic: record request URLs that could be the menu/hours feeds so a
+        # run that captures nothing shows what the page actually fired (webrom token,
+        # a restaurant picker, a changed path, or a Cloudflare gate).
+        low = url.lower()
+        if any(
+            m in low
+            for m in ("webrom", "rom/", "opening_hours", "restaurants/", "/menu")
+        ):
+            seen_urls.append(f"{resp.status} {url}")
         try:
             if _WEBROM_MENU_MARK in url and url.rstrip("/").endswith("menu"):
                 grabbed["menu"] = await resp.json()
@@ -390,7 +401,12 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
             await page.close()
 
     if not grabbed.get("menu") and not grabbed.get("hours"):
-        logger.warning("deliveroo: no menu/hours captured on the opening-hours page")
+        logger.warning(
+            "deliveroo: no menu/hours captured on the opening-hours page; final url=%s; "
+            "candidate responses seen=%s",
+            page.url,
+            seen_urls[:20] or "(none — page fired no menu/hours/restaurant requests)",
+        )
         return []
     return [
         {
