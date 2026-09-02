@@ -360,11 +360,56 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
         # run that captures nothing shows what the page actually fired (webrom token,
         # a restaurant picker, a changed path, or a Cloudflare gate).
         low = url.lower()
-        if any(
-            m in low
-            for m in ("webrom", "rom/", "opening_hours", "restaurants/", "/menu")
+        # Broad diagnostic: log the whole non-noise API surface the page fires, so a
+        # run that captures nothing reveals where Deliveroo moved the menu/hours feeds
+        # (the Partner Hub was restructured onto an /api-gw/ gateway — the old
+        # /rom/{rst}/menu + /api/restaurants/{rst}/opening_hours no longer fire).
+        _noise = (
+            "sentry",
+            "/track",
+            "intercom",
+            "sierra.chat",
+            "/events",
+            "segment",
+            "datadog",
+            "launchdarkly",
+            "fullstory",
+            "google",
+            "gstatic",
+            "hotjar",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".css",
+            ".js",
+            ".woff",
+            ".svg",
+            ".ico",
+            "cloudflareinsights",
+            "doubleclick",
+        )
+        _keys = (
+            "menu",
+            "item",
+            "catalog",
+            "hour",
+            "schedul",
+            "open",
+            "availab",
+            "rom",
+            "webrom",
+            "site",
+            "restaurant",
+            "brand",
+            "graphql",
+            "query",
+        )
+        if not any(n in low for n in _noise) and (
+            ("/api" in low and "deliveroo.com" in low) or any(k in low for k in _keys)
         ):
-            seen_urls.append(f"{resp.status} {url}")
+            entry = f"{resp.status} {getattr(resp.request, 'method', '?')} {url.split('?')[0]}"
+            if entry not in seen_urls:
+                seen_urls.append(entry)
         try:
             if _WEBROM_MENU_MARK in url and url.rstrip("/").endswith("menu"):
                 grabbed["menu"] = await resp.json()
@@ -405,7 +450,7 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
             "deliveroo: no menu/hours captured on the opening-hours page; final url=%s; "
             "candidate responses seen=%s",
             page.url,
-            seen_urls[:20] or "(none — page fired no menu/hours/restaurant requests)",
+            seen_urls[:30] or "(none — page fired no menu/hours/restaurant requests)",
         )
         return []
     return [

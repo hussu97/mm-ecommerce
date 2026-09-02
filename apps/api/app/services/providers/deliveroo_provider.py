@@ -344,6 +344,22 @@ class DeliverooClient(BaseAggregatorClient):
             "deliveroo: no outlet ids (seed aggregator_branch_map for deliveroo)"
         )
 
+    async def get_opening_hours(self, session: LoadedSession, outlet_id: str) -> Any:
+        """One outlet's weekly opening hours, read server-side (no headed worker).
+
+        `GET /api/restaurants/{id}/opening_hours` -> `{hours:[{day_of_week,
+        local_start_time, local_end_time}]}`. The Partner Hub SPA stopped *firing*
+        this on page load (it was restructured onto an /api-gw/ gateway, 2026-09),
+        so the passive page-capture returned nothing — but the endpoint itself is
+        live and replays fine over the TLS-impersonating transport with the session's
+        cf_clearance (verified on the VM: 200 for all three MM outlets). So hours are
+        a direct read like Careem/Noon, not a worker push. The menu still needs the
+        headed worker: its webrom host wants a `logon-pass` token the SPA mints with
+        context this server call cannot reproduce (`403 Invalid access check`)."""
+        return await self.request_json(
+            session, "GET", f"{_API}/restaurants/{outlet_id}/opening_hours"
+        )
+
     def _token_is_fresh(self, session: LoadedSession) -> bool:
         exp = session.token_expires_at
         if exp is None:

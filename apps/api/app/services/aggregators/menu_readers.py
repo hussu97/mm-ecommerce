@@ -776,9 +776,45 @@ async def _read_deliveroo_menu(db: AsyncSession, branch_id: Any) -> NormalizedMe
     return parse_deliveroo_menu(await _deliveroo_snapshot(db, "menu"))
 
 
+async def _deliveroo_outlet_id(db: AsyncSession, branch_id: Any) -> str:
+    """The Deliveroo restaurant id mapped to this MM branch."""
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorBranchMap
+
+    row = (
+        await db.execute(
+            select(AggregatorBranchMap).where(
+                AggregatorBranchMap.channel == "deliveroo",
+                AggregatorBranchMap.branch_id == branch_id,
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.external_outlet_id:
+        raise AggregatorUnavailableError(
+            f"no deliveroo outlet mapped for branch {branch_id}"
+        )
+    return row.external_outlet_id
+
+
 async def _read_deliveroo_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
-    """Parse the latest Deliveroo opening hours the headed worker pushed."""
-    return parse_deliveroo_hours(await _deliveroo_snapshot(db, "hours"))
+    """Deliveroo opening hours, read live server-side (not the worker push).
+
+    `GET /api/restaurants/{id}/opening_hours` replays fine over the provider's
+    TLS-impersonating transport with the session's cf_clearance — the SPA just
+    stopped firing it on page load after the Partner Hub's /api-gw/ restructure, so
+    a direct fetch is both correct and more robust than the passive page-capture."""
+    from app.services.aggregators import session_store
+    from app.services.providers import deliveroo_provider as dp
+
+    session = await session_store.load(db, "deliveroo")
+    if session is None:
+        raise AggregatorUnavailableError("no deliveroo session")
+    await dp.provider.prepare_session(db, session)
+    outlet = await _deliveroo_outlet_id(db, branch_id)
+    raw = await dp.provider.get_opening_hours(session, outlet)
+    return parse_deliveroo_hours(raw)
 
 
 # ── Reader registries ─────────────────────────────────────────────────────────
