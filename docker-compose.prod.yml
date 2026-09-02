@@ -681,6 +681,11 @@ services:
       # image's `ENV HEADLESS=false`; a "true" here silently reverts every warm to
       # headless and the sessions stop rotating (verified on the VM).
       HEADLESS: "false"
+      # Deliveroo menu+hours catalog-sync capture cadence (hours). Default 12h ON
+      # here (config.py's default is 0/off); the daemon's DELIVEROO_MENU job then
+      # re-logs-in, captures the menu + opening hours, and pushes the snapshot the
+      # API's `_read_deliveroo_menu`/`_read_deliveroo_hours` parse. Override per env.
+      WORKER_DELIVEROO_MENU_INTERVAL_HOURS: ${WORKER_DELIVEROO_MENU_INTERVAL_HOURS:-12}
     volumes:
       - aggregator_sessions:/data
     # The daemon touches /data/worker.heartbeat every scheduler tick (~30s). If it
