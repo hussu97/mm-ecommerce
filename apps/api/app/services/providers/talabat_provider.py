@@ -582,6 +582,27 @@ class TalabatClient(BaseAggregatorClient):
         )
         return any(marker in body for marker in markers)
 
+    def build_headers(
+        self, session: LoadedSession, extra: dict[str, str] | None = None
+    ) -> dict[str, str]:
+        """Base headers, but with a FRESH `Authorization` bearer.
+
+        The captured `header_profile` carries an `Authorization: Bearer <token>` from
+        login time, and the base sends it verbatim. A heal that refreshes the
+        `accessToken` cookie but not the profile then leaves the REST menu read
+        replaying a stale bearer — the vendor-api answers `401 Authentication failed`
+        with the session still marked `live` (found 2026-09-03: a fresh-cookie token
+        as the bearer returns 200 on the same call). So overwrite any profiled
+        Authorization with the current cookie token; the GraphQL path already did this
+        per-call, this makes the REST path do it too."""
+        headers = super().build_headers(session, extra)
+        token = self._access_token(session)
+        if token:
+            for key in [k for k in headers if k.lower() == "authorization"]:
+                del headers[key]
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
     # ── session-sourced credentials ───────────────────────────────────────────
     @staticmethod
     def _global_entity_id(session: LoadedSession) -> str:
