@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     HEADLESS: bool = True
     PROBE_TIMEOUT_MS: int = 30000
 
+    #: Sentry, so the browser half is not a blind spot. Empty DSN ⇒ Sentry off
+    #: (local/dev). The DSN is shared with the API but every event is tagged
+    #: `service=aggregator-worker`, so a scraper login-fail / needs-human /
+    #: reauth-exhausted / zero-capture is distinguishable from an API error.
+    #: NOTE (W9): this must ALSO be named in the worker's docker-compose
+    #: `environment:` allow-list or the container never sees it (it does not use
+    #: the api-environment anchor).
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "development"
+
     #: IMAP mailbox — unused on the default path. Kept so a last-resort OTP
     #: helper still has somewhere to read from if an operator opts in.
     OTP_IMAP_HOST: str = ""

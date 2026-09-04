@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import browser, push, reauth, warm
+from . import browser, observability, push, reauth, warm
 from .browser import NeedsHumanLogin, NotLoggedInError
 from .channels.probes import CHANNEL_PROBES
 from .config import settings
@@ -169,6 +169,7 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
         await asyncio.wait_for(_dispatch(job), timeout=budget)
     except (asyncio.TimeoutError, TimeoutError):
         logger.error("daemon: %s exceeded %ss — killing Chrome", label, budget)
+        observability.note_job_timeout(job.kind.name, job.channel, budget)
         browser.kill_live_chrome()
         if job.channel:
             await asyncio.to_thread(
@@ -184,8 +185,11 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
             await queue.put(JobKind.RELOGIN, job.channel)
         else:
             logger.warning("daemon: %s needs a human login: %s", label, exc)
-    except Exception:  # noqa: BLE001 — one job must never kill the consumer
+    except Exception as exc:  # noqa: BLE001 — one job must never kill the consumer
         logger.exception("daemon: %s failed", label)
+        observability.capture_exception(
+            exc, tags={"kind": job.kind.name, "channel": job.channel or "-"}
+        )
     else:
         logger.info("daemon: finished %s", label)
 

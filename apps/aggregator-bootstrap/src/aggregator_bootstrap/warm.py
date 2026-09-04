@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from . import observability
 from .accounts import pull_account
 from .browser import NeedsHumanLogin, NotLoggedInError, _storage_state_path
 from .config import settings
@@ -156,6 +157,7 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
         out["payloads"] = len(payloads)
     else:
         logger.warning("keeta: no getOrders payloads fetched; nothing to push")
+        observability.note_empty_capture("keeta", "orders")
     return out
 
 
@@ -179,6 +181,7 @@ async def pull_keeta_menu_in_page() -> dict[str, Any]:
             await opened.close()
     if not payloads:
         logger.warning("keeta: no menu payloads fetched; nothing to push")
+        observability.note_empty_capture("keeta", "menu")
         return {"payloads": 0}
     result = await push_keeta_menu(payloads)
     logger.info("pushed %d keeta menu payload(s): %s", len(payloads), result)
@@ -381,6 +384,7 @@ async def pull_deliveroo_menu_hours_in_page() -> dict[str, Any]:
             await opened.close()
     if not payloads:
         logger.warning("deliveroo: no menu/hours captured; nothing to push")
+        observability.note_empty_capture("deliveroo", "menu_hours")
         return {"payloads": 0}
     result = await push_deliveroo_menu(payloads)
     logger.info("pushed %d deliveroo menu/hours payload(s): %s", len(payloads), result)
@@ -453,6 +457,7 @@ async def pull_deliveroo_invoices_in_page(*, since_days: int = 45) -> dict[str, 
         out.update(result)
     else:
         logger.warning("deliveroo: no invoice payloads fetched; nothing to push")
+        observability.note_empty_capture("deliveroo", "invoices")
     if note:
         logger.warning("deliveroo finance: %s", note)
         out["truncation_note"] = note
