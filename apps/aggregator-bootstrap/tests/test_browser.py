@@ -153,3 +153,52 @@ def test_await_bearer_reloads_until_the_header_lands(monkeypatch):
 
 async def _done():
     return None
+
+
+# ── the settle window, and saying which capture failure it was ─────────────────
+# The 2026-09-04 careem recovery ended here: the login finally authenticated
+# (partners.careem.com/home, authed=True) and then the bearer capture came back
+# empty. The surfaces are SPA page URLs and the bearer rides the /api/saturn-ext/
+# call the bundle fires AFTER boot, but `wait_until="commit"` returns long before
+# that — so a 4s settle navigated away mid-boot, every round, on a box that had
+# just needed 45-90s to render a login form.
+
+
+def test_bearer_settle_is_polled_so_a_fast_capture_returns_at_once(monkeypatch):
+    """Widening the window must not slow the good case: a bearer landing two
+    ticks in returns then, not `settle_seconds` later."""
+    ticks = {"n": 0}
+    captured: dict[str, str] = {}
+
+    async def _sleep(_s):
+        ticks["n"] += 1
+        if ticks["n"] == 2:
+            captured["authorization"] = "Bearer tok"
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+    page = _FakePage(captured, arrive_on_goto=99)
+    asyncio.run(_await_careem_bearer(page, captured, rounds=6, settle_seconds=30))
+    assert ticks["n"] == 2, "returned on the tick the bearer arrived"
+    assert page.gotos == 0, "never navigated away from the surface that fired it"
+
+
+def test_bearer_settle_default_is_wide_enough_for_a_slow_spa_boot():
+    from aggregator_bootstrap.browser import _CAREEM_BEARER_SETTLE_SECONDS
+
+    assert _CAREEM_BEARER_SETTLE_SECONDS >= 15
+
+
+def test_bearer_guard_reports_that_nothing_fired():
+    """Empty `captured` = the SPA never issued the call. Distinguishing this from
+    'fired unauthenticated' is the difference between widening the settle and
+    hunting a different bug."""
+    with pytest.raises(NeedsHumanLogin) as exc:
+        _assert_careem_bearer_captured("careem", {})
+    assert "no saturn-ext request seen" in str(exc.value)
+
+
+def test_bearer_guard_reports_which_headers_did_arrive():
+    with pytest.raises(NeedsHumanLogin) as exc:
+        _assert_careem_bearer_captured("careem", {"user-agent": "x", "uuid": "y"})
+    msg = str(exc.value)
+    assert "user-agent" in msg and "uuid" in msg

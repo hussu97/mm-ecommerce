@@ -634,8 +634,23 @@ _CAREEM_BEARER_SURFACES = (
 )
 
 
+#: How long to let a freshly-committed Careem surface actually issue its
+#: authenticated XHR before navigating somewhere else. The surfaces are SPA page
+#: URLs; the bearer rides the `/api/saturn-ext/` call the bundle fires *after*
+#: boot, and `wait_until="commit"` returns long before that. This was 4s, which
+#: on the production VM is nowhere near enough — the same box needed 45-90s just
+#: to render the login form — so every round navigated away mid-boot and the
+#: exchange never fired. Polled in 1s slices, so a fast capture still returns
+#: immediately and nothing is slower in the good case.
+_CAREEM_BEARER_SETTLE_SECONDS = 15
+
+
 async def _await_careem_bearer(
-    page, captured: dict[str, str], *, rounds: int = 6
+    page,
+    captured: dict[str, str],
+    *,
+    rounds: int = 6,
+    settle_seconds: int = _CAREEM_BEARER_SETTLE_SECONDS,
 ) -> None:
     """Wait until a saturn-ext request carrying the Authorization bearer has been
     seen, reloading business surfaces between polls.
@@ -649,12 +664,13 @@ async def _await_careem_bearer(
     """
     for i in range(rounds):
         # Check before sleeping: the caller already loaded a surface and waited,
-        # so the bearer is often in hand on entry — don't burn a 4s tick on it.
+        # so the bearer is often in hand on entry — don't burn a tick on it.
         if captured.get("authorization"):
             return
-        await asyncio.sleep(4)
-        if captured.get("authorization"):
-            return
+        for _ in range(settle_seconds):
+            await asyncio.sleep(1)
+            if captured.get("authorization"):
+                return
         try:
             await page.goto(
                 _CAREEM_BEARER_SURFACES[i % len(_CAREEM_BEARER_SURFACES)],
@@ -677,10 +693,19 @@ def _assert_careem_bearer_captured(channel: str, captured: dict[str, str]) -> No
     keeps retrying until a capture actually lands the bearer.
     """
     if channel == "careem" and "authorization" not in captured:
+        # Say WHICH failure this is. An empty `captured` means no saturn-ext
+        # request was seen at all (the SPA never got far enough — widen
+        # `_CAREEM_BEARER_SETTLE_SECONDS`); a populated one without
+        # `authorization` means the call fired unauthenticated, which is a
+        # different bug entirely. Guessing between those cost a diagnosis cycle
+        # on 2026-09-04.
+        seen = ", ".join(sorted(captured)) or "<no saturn-ext request seen>"
+        logger.warning("careem: bearer capture missed; headers seen: %s", seen)
         raise NeedsHumanLogin(
             "careem: captured a session with no partner bearer — the "
-            "/api/saturn-ext/ call never fired its Authorization header. Not "
-            "pushing it live; the reauth cron will retry."
+            "/api/saturn-ext/ call never fired its Authorization header "
+            f"(headers seen: {seen}). Not pushing it live; the reauth cron "
+            "will retry."
         )
 
 
