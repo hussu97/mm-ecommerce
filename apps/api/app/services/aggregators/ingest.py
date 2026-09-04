@@ -44,7 +44,7 @@ from sqlalchemy.exc import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock
+from app.core import advisory_lock, alerting
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.aggregator import (
@@ -1408,6 +1408,21 @@ async def _run_range_channel(
             run.finished_at = utcnow()
             stats["skipped"] = "session_not_live"
             run.stats = stats
+            # "Ran but did not complete fully": the run row records this, but it
+            # is not logged at ERROR, so nothing became a Sentry event. Raise one,
+            # fingerprinted per channel so a channel stuck dead is one grouped
+            # issue an alert rule can watch (it pairs with the worker's
+            # needs_human event once the daemon confirms it needs a person).
+            alerting.capture_issue(
+                f"aggregator {channel}: sync run failed — {run.error}",
+                level="warning",
+                fingerprint=["aggregator", "run_failed", channel],
+                tags={
+                    "channel": channel,
+                    "aggregator_issue": "run_failed",
+                    "reason": "session_not_live",
+                },
+            )
             return {"channel": channel, "status": run.status, "stats": stats}
 
         since, until = _dubai_range_window(from_date, to_date)
@@ -2291,8 +2306,16 @@ async def _log_health() -> None:
                 )
                 unhealthy.append(f"{r.channel}=stale({span})")
     if unhealthy:
-        logger.warning(
-            "aggregator health: %s need attention", ", ".join(sorted(unhealthy))
+        detail = ", ".join(sorted(unhealthy))
+        logger.warning("aggregator health: %s need attention", detail)
+        # WARNING is below Sentry's default capture level, so this health signal
+        # produced no event. Raise one with a stable fingerprint so a persistent
+        # unhealthy session becomes a single alertable issue rather than nothing.
+        alerting.capture_issue(
+            f"aggregator health: {detail} need attention",
+            level="warning",
+            fingerprint=["aggregator", "session_unhealthy"],
+            tags={"aggregator_issue": "session_unhealthy"},
         )
     else:
         logger.info("aggregator health: all sessions live")

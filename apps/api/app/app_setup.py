@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.core.background import spawn_tracked
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.deps import get_db
@@ -57,13 +58,21 @@ def configure_observability(*, service: str) -> None:
     if not settings.SENTRY_DSN:
         return
 
+    from sentry_sdk.integrations.asyncio import AsyncioIntegration
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
     sentry_sdk.init(
         dsn=settings.SENTRY_DSN,
         environment=settings.SENTRY_ENVIRONMENT,
-        integrations=[FastApiIntegration(), SqlalchemyIntegration()],
+        # AsyncioIntegration so an exception escaping a background scheduler task
+        # (the aggregator ingest, the batch dispatcher, …) is attributed to that
+        # task rather than lost — these loops run outside any request scope.
+        integrations=[
+            FastApiIntegration(),
+            SqlalchemyIntegration(),
+            AsyncioIntegration(),
+        ],
         traces_sample_rate=(
             settings.SENTRY_TRACES_SAMPLE_RATE if settings.is_production else 1.0
         ),
@@ -173,7 +182,9 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
         if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
             from app.services.delivery import batch_scheduler
 
-            background.append(asyncio.create_task(batch_scheduler.run_forever()))
+            background.append(
+                spawn_tracked(batch_scheduler.run_forever(), name="batch_scheduler")
+            )
 
             # Rides with the dispatcher rather than getting a flag of its own.
             # Both are loops in the app because this stack has no cron, both
@@ -181,7 +192,9 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # both belong to whichever app already owns the shared work.
             from app.services import log_retention
 
-            background.append(asyncio.create_task(log_retention.run_forever()))
+            background.append(
+                spawn_tracked(log_retention.run_forever(), name="log_retention")
+            )
 
             # The daily sales email. Rides here for the same reasons its
             # neighbours do — no cron in this stack, an advisory lock so a second
@@ -189,7 +202,9 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # work. Sends once, after the last branch closes for the day.
             from app.services.pos import daily_sales_email
 
-            background.append(asyncio.create_task(daily_sales_email.run_forever()))
+            background.append(
+                spawn_tracked(daily_sales_email.run_forever(), name="daily_sales_email")
+            )
 
             # Branch hours sync. Same reasoning as its neighbours — no cron here,
             # an advisory lock so a second copy is harmless, storefront app only.
@@ -198,7 +213,9 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             # pushes the day's hours to the marketplaces.
             from app.services import branch_hours_sync
 
-            background.append(asyncio.create_task(branch_hours_sync.run_forever()))
+            background.append(
+                spawn_tracked(branch_hours_sync.run_forever(), name="branch_hours_sync")
+            )
 
             # Same reasoning, its own flag: this one talks to somebody else's
             # private API, so it has to be switchable off without taking the
@@ -207,7 +224,11 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             if settings.GRUBOPS_SYNC_ENABLED:
                 from app.services.grubops import grubops_reconcile
 
-                background.append(asyncio.create_task(grubops_reconcile.run_forever()))
+                background.append(
+                    spawn_tracked(
+                        grubops_reconcile.run_forever(), name="grubops_reconcile"
+                    )
+                )
 
             # The order-ingest loop, the OOS sync's mirror image: it reads
             # aggregator orders out of the same console rather than pushing
@@ -217,7 +238,9 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             if settings.GRUBOPS_ORDERS_ENABLED:
                 from app.services.grubops import grubops_orders
 
-                background.append(asyncio.create_task(grubops_orders.run_forever()))
+                background.append(
+                    spawn_tracked(grubops_orders.run_forever(), name="grubops_orders")
+                )
 
             # The aggregator ingest: once a day at AGGREGATOR_RUN_HOUR_DXB it
             # mirrors each marketplace's ledger (sales + statements/payouts) into
@@ -237,8 +260,9 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
                 from app.services.aggregators import ingest as aggregator_ingest
 
                 background.append(
-                    asyncio.create_task(
-                        aggregator_ingest.run_aggregator_schedulers_forever()
+                    spawn_tracked(
+                        aggregator_ingest.run_aggregator_schedulers_forever(),
+                        name="aggregator_ingest",
                     )
                 )
 
