@@ -231,3 +231,30 @@ def test_keeta_is_a_wired_auto_login_channel():
     assert {"email", "password", "page"} <= set(params), (
         "login_keeta must accept email/password/page so the daemon can drive it"
     )
+
+
+def test_record_seen_keeps_api_paths_and_ignores_noise():
+    from aggregator_bootstrap.browser import _CAREEM_SEEN_LIMIT, _record_seen
+
+    seen: list[str] = []
+    _record_seen(seen, "https://partners.careem.com/api/saturn-ext/merchant/x?a=1")
+    _record_seen(seen, "https://cdn.careem.com/static/app.css")  # noise
+    _record_seen(seen, "https://partners.careem.com/graphql")
+    _record_seen(seen, "https://partners.careem.com/api/saturn-ext/merchant/x?a=2")
+    assert seen == [
+        "https://partners.careem.com/api/saturn-ext/merchant/x",  # query stripped
+        "https://partners.careem.com/graphql",
+    ], "distinct api paths only, no static noise, no duplicates"
+
+    for i in range(_CAREEM_SEEN_LIMIT * 2):
+        _record_seen(seen, f"https://x.careem.com/api/{i}")
+    assert len(seen) <= _CAREEM_SEEN_LIMIT, "a chatty SPA must not grow this unbounded"
+
+
+def test_bearer_guard_names_the_paths_the_page_really_called():
+    """The decisive diagnosis. 'no saturn-ext request seen' rules out timing but
+    not the possibility that Careem moved the API — this says which it is."""
+    with pytest.raises(NeedsHumanLogin):
+        _assert_careem_bearer_captured(
+            "careem", {}, seen=["https://partners.careem.com/api/v2/merchant/x"]
+        )
