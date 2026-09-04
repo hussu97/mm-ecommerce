@@ -412,13 +412,24 @@ Keeta does not expose a full weekly schedule on this account, so the read is
 the real captured values. The category `availableTimeDTO` (7 per-day ranges) is
 **item-availability, not shop hours** — deliberately not used, as it would misreport drift.
 
-### Deliveroo — separate login + Cloudflare
+### Deliveroo — hub session (no separate login); Cloudflare cleared by the worker
 
-Deliveroo's menu editor is a **separate login** (`/login?return_to=/menus/…`) and
-the hub is behind a **Cloudflare bot challenge** that does not clear in this
-environment. So its menu endpoint must be captured on the worker's real Chrome
-(where `deliveroo_pull` already carries `cf_clearance` for finance), then a
-`DELIVEROO_MENU` job built exactly like the Keeta one above.
+The earlier "separate menu login" belief was **wrong** (see §0 footnote 6): the
+Partner Hub session **auto-exchanges a webrom token**, so both reads ride the
+existing headed session that already passes Cloudflare for finance. Current state:
+- **Hours — ✅ DONE, direct server-side read.** `GET
+  partner-hub.deliveroo.com/api/restaurants/{outlet}/opening_hours` replays over the
+  provider's TLS-impersonating transport with the session's `cf_clearance` (200 for
+  all 3 MM outlets). `deliveroo_provider.get_opening_hours` + `_read_deliveroo_hours`
+  — no headed worker. Verified live for all 3 branches.
+- **Menu — ⏸ worker push only.** After Deliveroo's `/api-gw/` restructure the SPA no
+  longer *fires* the menu request on the Opening-Hours page, so the worker's passive
+  capture returns 0; the webrom `logon-pass` token rejects every server-side call
+  (needs menu-editor SPA context). The `DELIVEROO_MENU` job + `_read_deliveroo_menu`
+  are built; menu ships once the worker capture is re-mapped to the api-gw feed or
+  the `logon-pass` exchange is cracked.
+- **Create/delete — ⏸.** Read decoded; the write (a save on the `rs-hub.deliveroo.com`
+  menu editor) still needs one live-save capture to learn the endpoint.
 
 ---
 
@@ -442,24 +453,24 @@ Every channel's items/options/categories map to MM through the single
 
 | Item | Blocker | How to finish |
 |---|---|---|
-| **Talabat create/delete** | Import-based (per-item POST 405s); no portal/write access here | Capture the DH catalog-import from the portal; implement + create-then-delete |
-| **Talabat hours read** | On a separate DH availability service | Headed portal capture of the availability endpoint (VM) |
+| **Talabat hours read** | ✅ DONE — direct server-side read via the Vendor Time Service (`get_delivery_calendars` + `_read_talabat_hours`), verified live for all 3 vendors (§4) | — |
+| **Talabat create/delete (server-side writer)** | Capability **proven on Karama via the portal** (§4/footnote 12); the CQRS `/catalogs/commands` command body could not be captured autonomously (federated menu plugin runs in an isolated realm; direct API write is blocked by the session write-guard) | Capture the `/catalogs/commands` create + delete request bodies from the portal DevTools (or lift the write-guard), then wire `talabat_provider.create_product`/`delete` + supply an AI-passing image + handle the review state |
+| **Talabat read reliability** | The vendor-portal keymaker token (~1h) is minted only at login, not refreshed server-side, so reads 401 outside the ~1h window | Capture the keymaker refresh call from the SPA login trace (OIDC discovery 404s; opaque-token flow, not derivable) |
 | **Keeta weekly hours** | Today's window is read + verified (§footnote 9); a full 7-day schedule isn't exposed to this portal account | Only if a weekly schedule is needed: find the settings-page schedule endpoint (headed) — else today's window stands |
-| **Deliveroo hours** | ✅ DONE — direct server-side read (`get_opening_hours` + `_read_deliveroo_hours`), verified live for all 3 branches | — |
 | **Deliveroo menu** | Worker push only; passive capture returns 0 (api-gw restructure) and the webrom `logon-pass` token rejects every server-side call | Crack the webrom `logon-pass` exchange (menu-editor SPA context) or re-map the worker capture to the new api-gw menu feed |
 | **Deliveroo create/delete** | Read decoded; the write (menu-editor save) endpoint not captured | Capture one live save on the `rs-hub.deliveroo.com` menu editor → implement + verify |
 
-**Keeta is now complete** (menu + hours + create + delete, all verified live and
-deployed). **Deliveroo menu + hours** turned out reachable after all — decoded, coded,
-and tested; only the deploy is pending (held during the GrubOps/Cognito incident, since
-a deploy restarts the API container). **Talabat** create/hours are the one genuinely
-external-gated area: its product API is read-only (`OPTIONS`→GET-only, `POST`→405) and
-its writes/hours live behind the partner-app SPA (`/menu-management-v2`,
-`/opening_times_global` — Next.js `.data` + `vagw-api` GraphQL) with no safe off-shelf
-test path like Keeta/Deliveroo had.
+**Keeta is complete** (menu + hours + create + delete, all verified live and deployed).
+**Deliveroo** is **hours ✅ (server-side) + menu ⏸ (worker, api-gw re-map pending) +
+create/delete ⏸**. **Talabat** is now **menu ✅ + hours ✅ read server-side**, with
+**create/delete proven live on the standalone Karama branch** (Sharjah/Barsha are
+Foodics-role-restricted to availability toggles) — the only remaining piece is turning
+that proven capability into a server-side writer, which needs the `/catalogs/commands`
+command body captured (the write is behind a review workflow + AI image check, and the
+federated menu plugin's isolated realm prevented autonomous capture).
 
-Everything marked ✅ is verified, shipped, and deployed to production; ⚙ is coded +
-tested and awaiting the post-incident deploy.
+Everything marked ✅ is verified, shipped, and deployed to production. ⚙ = capability
+proven live but not yet a productionised server-side writer.
 
 ---
 
@@ -510,12 +521,19 @@ default off). A write is only ever run deliberately.
 
 ### Talabat
 - **Menu read** — Admin → Refresh `{target:"talabat", kind:"menu"}` (DeliveryHero
-  vendor-api `/api/5/…/vendors/{v}/catalogs`).
-- **Hours read / item create / delete — NOT available.** The vendor product API is
-  read-only (`OPTIONS`→`GET,HEAD,OPTIONS`, `POST`→405) and menu writes + opening hours
-  live on DirectHub's separate partner-app SPA (`/menu-management-v2`,
-  `/opening_times_global`) with no per-item API for this account. Finishing these needs
-  DirectHub catalog/availability access or a portal-side capture of a live save.
+  vendor-api `/api/5/…/vendors/{v}/catalogs`). Reads succeed within ~1h of a fresh
+  worker login (see the token note in §4).
+- **Hours read** — Admin → Refresh `{target:"talabat", kind:"hours"}` (Vendor Time
+  Service `vts.eu.restaurant-partners.com/opening-times/v1/vendor/TB_AE;{v}/calendars/
+  DELIVERY`; `from`/`to` minutes-from-midnight, `day` 0=Mon → MM weekday `(day+1)%7`).
+  Verified server-side for all 3 vendors.
+- **Item create / delete — Karama (793319) only, and not yet a server-side writer.**
+  Sharjah/Barsha are Foodics-synced and role-restricted to availability toggles; Karama
+  is the standalone branch with full menu editing. Create/delete go through the CQRS
+  `POST …/vendors/{v}/catalogs/commands` endpoint, require an AI-validated food image,
+  and pass a "product addition in review" workflow before the delete control appears.
+  Proven end-to-end via the portal; productionising it needs the `/catalogs/commands`
+  command body captured (see §8).
 
 ### Keeta (anti-bot — runs on the worker, not server-side)
 - **Menu read** — enable the worker job: `WORKER_KEETA_MENU_INTERVAL_HOURS > 0` (it pushes
