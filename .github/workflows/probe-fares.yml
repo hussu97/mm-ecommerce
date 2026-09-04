@@ -1,0 +1,56 @@
+name: Probe courier fares
+
+# Manual only. Runs the minimal Slider fare probe INSIDE the live api container
+# on the VM (the only egress Slider's prod fare API answers), then uploads the
+# refreshed courier_costs.json as an artifact. Nothing is committed or deployed —
+# download the artifact, drop it into apps/api/app/data/courier_costs.json,
+# rebuild the map with scripts/build_delivery_areas.py, and ship it as a new
+# polygon version. See scripts/probe_courier_fares.py.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p 22 "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run the Slider fare probe in the live api container
+        env:
+          HOST: ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}
+        run: |
+          set -euo pipefail
+          KEY="$HOME/.ssh/deploy_key"
+          SSH="ssh -i $KEY -o ConnectTimeout=30 $HOST"
+
+          # The probe script rides in from this checkout, not the deployed image,
+          # so it can be newer than what is running.
+          scp -i "$KEY" apps/api/scripts/probe_courier_fares.py "$HOST:/tmp/probe_courier_fares.py"
+
+          # The live api slot (api-1 or api-green-1 — 'cakes-api' adjacency
+          # excludes pos-api). Only the running one shows in `docker ps`.
+          SLOT="$($SSH "docker ps --format '{{.Names}}' | grep -E 'melting-moments-cakes-api(-green)?-1' | head -1")"
+          echo "live api slot: ${SLOT:-<none>}"
+          test -n "$SLOT"
+
+          $SSH "docker cp /tmp/probe_courier_fares.py $SLOT:/app/scripts/probe_courier_fares.py"
+          $SSH "docker exec -w /app $SLOT sh -lc 'PYTHONPATH=/app python -u scripts/probe_courier_fares.py'"
+          $SSH "docker cp $SLOT:/tmp/courier_costs.json /tmp/courier_costs.json"
+          $SSH "cat /tmp/courier_costs.json" > courier_costs.json
+          echo "wrote $(wc -c < courier_costs.json) bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: courier_costs
+          path: courier_costs.json
+          retention-days: 7
