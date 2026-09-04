@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
+import { BranchWeeklyHours } from '@/components/pos/BranchWeeklyHours';
 import { BranchHolidays } from '@/components/pos/BranchHolidays';
 
 export default function BranchesPage() {
@@ -80,8 +81,14 @@ export default function BranchesPage() {
           helper: 'Shown to customers choosing where to collect from',
         },
         { name: 'city_localized', label: 'City (Arabic)', placeholder: 'الشارقة' },
-        { name: 'opening_from', label: 'Opens', placeholder: '09:00' },
-        { name: 'opening_to', label: 'Closes', placeholder: '23:00' },
+        {
+          name: 'opening_from',
+          label: 'Opens (today)',
+          placeholder: '09:00',
+          helper:
+            'Derived from the weekly hours below — the daily sync keeps it as today’s shift. Set it directly only as the starting window for a branch with no weekly schedule yet.',
+        },
+        { name: 'opening_to', label: 'Closes (today)', placeholder: '23:00' },
         {
           name: 'business_day_start',
           label: 'Trading day starts',
@@ -126,6 +133,14 @@ export default function BranchesPage() {
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />
+
+    {/* The weekly schedule — the source of truth the single window above is
+        derived from. Its own section rather than seven fields on the branch
+        form, and it sits with the holidays below because both answer "when is
+        this branch open". */}
+    <div className="mt-8">
+      <BranchWeeklyHours />
+    </div>
 
     {/* Its own section rather than a field on the branch, because a closure is
         a row per date and a branch has none most of the time. It sits here

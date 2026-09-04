@@ -243,10 +243,9 @@ export const catalogSyncApi = {
     api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/products/${productId}/sync`, data),
   setCategorySync: (categoryId: string, data: Schemas['SyncFlagUpdate']) =>
     api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/categories/${categoryId}/sync`, data),
-  getHours: (branchId: string) =>
-    api.get<Schemas['WeeklyHoursResponse']>(`/catalog-sync/branches/${branchId}/hours`),
-  setHours: (branchId: string, data: Schemas['WeeklyHoursUpdate']) =>
-    api.put<Schemas['WeeklyHoursResponse']>(`/catalog-sync/branches/${branchId}/hours`, data),
+  // Weekly hours moved to `branchesApi.weeklyHours` / `.setWeeklyHours`
+  // (`/branches/{id}/weekly-hours`) — they are a branch setting, edited in the
+  // Branches tab. This surface keeps only the read-only per-channel hours drift.
 };
 
 // ─── Menu groups ──────────────────────────────────────────────────────────────

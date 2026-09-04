@@ -21,6 +21,9 @@ from .branches import (
     BranchResponse,
     BranchUpdate,
     BusinessDayResponse,
+    WeeklyHoursResponse,
+    WeeklyHoursUpdate,
+    WeeklyShift,
 )
 from .business_settings import BusinessSettingsResponse, BusinessSettingsUpdate
 from .charges import ChargeCreate, ChargeResponse, ChargeUpdate
@@ -100,6 +103,9 @@ __all__ = [
     "BranchResponse",
     "BranchUpdate",
     "BusinessDayResponse",
+    "WeeklyShift",
+    "WeeklyHoursUpdate",
+    "WeeklyHoursResponse",
     "BusinessSettingsResponse",
     "BusinessSettingsUpdate",
     "ChargeCreate",

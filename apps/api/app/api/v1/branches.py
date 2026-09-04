@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import ConflictError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.permissions import require
 from app.models import (
     Branch,
@@ -38,8 +38,17 @@ from app.schemas.pos import (
     TableCreate,
     TableResponse,
     TableUpdate,
+    WeeklyHoursResponse,
+    WeeklyHoursUpdate,
+    WeeklyShift,
 )
-from app.services import audit_service, branch_holiday_service, crud_service
+from app.services import (
+    audit_service,
+    branch_holiday_service,
+    branch_hours_service,
+    branch_hours_sync,
+    crud_service,
+)
 from app.services.delivery import fulfilment_service
 from app.services.pos import business_day_service
 
@@ -234,6 +243,93 @@ async def close_business_day(
         request=request,
     )
     return day
+
+
+# ─── Weekly hours ─────────────────────────────────────────────────────────────
+#
+# The branch's per-weekday schedule — one shift a day, a weekday with no shift is
+# closed. The source of truth for when the branch trades: the daily branch-hours
+# cron derives `opening_from`/`opening_to` from it, a closed weekday reads through
+# `branch_holiday_service` exactly like a holiday, and the marketplace fan-out
+# sends it per portal. Editing it here moves both at once, from the next request.
+
+
+@router.get("/{branch_id}/weekly-hours", response_model=WeeklyHoursResponse)
+async def get_weekly_hours(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("admin.branches.manage")),
+) -> WeeklyHoursResponse:
+    """The branch's weekly schedule (source of truth for trading hours)."""
+    await crud_service.get_or_404(db, Branch, branch_id)
+    rows = await branch_hours_service.list_weekly(db, branch_id)
+    return WeeklyHoursResponse(
+        branch_id=str(branch_id),
+        shifts=[
+            WeeklyShift(weekday=r.weekday, opens=r.opens, closes=r.closes) for r in rows
+        ],
+    )
+
+
+@router.put("/{branch_id}/weekly-hours", response_model=WeeklyHoursResponse)
+async def set_weekly_hours(
+    request: Request,
+    branch_id: uuid.UUID,
+    payload: WeeklyHoursUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("admin.branches.manage")),
+) -> WeeklyHoursResponse:
+    """Replace the branch's weekly schedule (a weekday with no shift = closed).
+
+    Changing this moves what every customer in the branch's zones is quoted and
+    what the marketplaces are sent — the same reach as a holiday.
+    `opening_from`/`opening_to` catches up when the branch-hours cron next runs, or
+    immediately on a manual sync.
+    """
+    branch = await crud_service.get_or_404(db, Branch, branch_id)
+    rows = await branch_hours_service.set_weekly(
+        db, branch_id, [s.model_dump() for s in payload.shifts]
+    )
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="branch",
+        entity_id=str(branch_id),
+        entity_label=f"{branch.name} weekly hours",
+        admin=admin,
+        changes={"shifts": [s.model_dump() for s in payload.shifts]},
+        request=request,
+    )
+    return WeeklyHoursResponse(
+        branch_id=str(branch_id),
+        shifts=[
+            WeeklyShift(weekday=r.weekday, opens=r.opens, closes=r.closes) for r in rows
+        ],
+    )
+
+
+@router.post("/{branch_id}/sync-hours")
+async def sync_branch_hours(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("admin.branches.manage")),
+) -> dict[str, object]:
+    """Derive this branch's window from its weekly schedule now.
+
+    The branch-hours loop does this hourly on its own; this is the manual trigger
+    for right after editing the hours or adding a holiday, so the storefront and
+    the integrators reflect the change immediately rather than at the next tick.
+    """
+    branch = (
+        await db.execute(
+            select(Branch)
+            .where(Branch.id == branch_id)
+            .options(selectinload(Branch.aggregator_maps))
+        )
+    ).scalar_one_or_none()
+    if branch is None:
+        raise NotFoundError("Branch not found")
+    return await branch_hours_sync.sync_branch(db, branch)
 
 
 # ─── Holidays ─────────────────────────────────────────────────────────────────

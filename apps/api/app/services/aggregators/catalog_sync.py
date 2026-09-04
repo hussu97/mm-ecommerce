@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -42,7 +41,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.models.aggregator import AGGREGATOR_CHANNELS
-from app.models.branch import Branch, BranchWeeklyHours
+from app.models.branch import Branch
 from app.models.catalog_sync import (
     SNAPSHOT_ERROR,
     SNAPSHOT_HOURS,
@@ -55,6 +54,7 @@ from app.models.catalog_sync import (
 from app.models.category import Category
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
+from app.services import branch_hours_service
 from app.services.aggregators import catalog_mapping, menu_readers
 from app.services.aggregators.catalog_diff import (
     HoursDiff,
@@ -162,75 +162,17 @@ async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
 
 
 async def build_mm_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
-    """A branch's canonical weekly schedule as the desired hours."""
-    rows = (
-        (
-            await db.execute(
-                select(BranchWeeklyHours)
-                .where(BranchWeeklyHours.branch_id == branch_id)
-                .order_by(BranchWeeklyHours.weekday, BranchWeeklyHours.shift_index)
-            )
-        )
-        .scalars()
-        .all()
-    )
+    """A branch's canonical weekly schedule as the desired hours.
+
+    Reads the schedule through `branch_hours_service`, the one owner of the weekly
+    rows — this is the marketplace fan-out consuming the same source of truth the
+    storefront and trading-hours logic read.
+    """
+    rows = await branch_hours_service.list_weekly(db, branch_id)
     return NormalizedHours(
         source="mm",
         shifts=[NormalizedShift(r.weekday, r.opens, r.closes) for r in rows],
     )
-
-
-_TIME_RE = re.compile(r"^\d{2}:\d{2}$")
-
-
-async def get_weekly_hours(db: AsyncSession, branch_id: Any) -> list[BranchWeeklyHours]:
-    """The branch's canonical weekly shifts, ordered."""
-    return list(
-        (
-            await db.execute(
-                select(BranchWeeklyHours)
-                .where(BranchWeeklyHours.branch_id == branch_id)
-                .order_by(BranchWeeklyHours.weekday, BranchWeeklyHours.shift_index)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-
-async def set_weekly_hours(
-    db: AsyncSession, branch_id: Any, shifts: list[dict[str, Any]]
-) -> list[BranchWeeklyHours]:
-    """Replace a branch's whole weekly schedule (a weekday with no shift = closed).
-
-    Whole-list replace rather than per-row edits: a schedule is read and set as one
-    thing, and diffing sub-rows would be its own bug surface. Validates the shape MM
-    owns; each channel's writer later normalises it to that portal's limits.
-    """
-    cleaned: list[dict[str, Any]] = []
-    per_day: dict[int, int] = {}
-    for s in shifts:
-        weekday = int(s["weekday"])
-        opens = str(s["opens"])
-        closes = str(s["closes"])
-        if not (0 <= weekday <= 6):
-            raise BadRequestError(f"weekday {weekday} out of range 0..6")
-        if not _TIME_RE.match(opens) or not _TIME_RE.match(closes):
-            raise BadRequestError(f"times must be HH:MM, got {opens}-{closes}")
-        idx = per_day.get(weekday, 0)
-        per_day[weekday] = idx + 1
-        cleaned.append(
-            {"weekday": weekday, "shift_index": idx, "opens": opens, "closes": closes}
-        )
-
-    existing = await get_weekly_hours(db, branch_id)
-    for row in existing:
-        await db.delete(row)
-    await db.flush()
-    for c in cleaned:
-        db.add(BranchWeeklyHours(branch_id=branch_id, **c))
-    await db.flush()
-    return await get_weekly_hours(db, branch_id)
 
 
 # ── Mapping reuse (external_item_map, not a parallel table) ───────────────────

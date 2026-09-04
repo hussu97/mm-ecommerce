@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ._base import _TIME_RE, ORMModel, Translations
 
@@ -160,6 +160,39 @@ class BranchHolidayResponse(ORMModel):
     note: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class WeeklyShift(BaseModel):
+    """One open shift. weekday 0=Sunday … 6=Saturday; times HH:MM."""
+
+    weekday: int = Field(ge=0, le=6)
+    opens: str = Field(pattern=_TIME_RE)
+    closes: str = Field(pattern=_TIME_RE)
+
+
+class WeeklyHoursUpdate(BaseModel):
+    """Replace a branch's whole weekly schedule (a weekday with no shift = closed).
+
+    At most one shift per weekday — the model is one continuous shift a day.
+    """
+
+    shifts: list[WeeklyShift]
+
+    @model_validator(mode="after")
+    def _one_shift_per_day(self) -> "WeeklyHoursUpdate":
+        seen: set[int] = set()
+        for s in self.shifts:
+            if s.weekday in seen:
+                raise ValueError(
+                    f"weekday {s.weekday} has more than one shift — one shift per day"
+                )
+            seen.add(s.weekday)
+        return self
+
+
+class WeeklyHoursResponse(BaseModel):
+    branch_id: str
+    shifts: list[WeeklyShift]
 
 
 class BusinessDayResponse(ORMModel):

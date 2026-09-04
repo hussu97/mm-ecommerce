@@ -13,7 +13,7 @@ import type {
   PaymentReportRow, PermissionCatalogue, PosOrder, Printer, PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
   SupplierAnalysisRow, Supplier, Tag, Tax,
-  TaxGroup, TaxReportRow, Till, Warehouse,
+  TaxGroup, TaxReportRow, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
 // ─── Branches & floor plan ────────────────────────────────────────────────────
@@ -27,6 +27,19 @@ export const branchesApi = {
   businessDays: (id: string, limit = 30) => api.get<unknown[]>(`/branches/${id}/business-days${buildQs({ limit })}`),
   closeBusinessDay: (id: string) => api.post<unknown>(`/branches/${id}/business-days/close`),
   sections: (id: string) => api.get<unknown[]>(`/branches/${id}/sections`),
+
+  // ── Weekly hours ────────────────────────────────────────────────────────
+  //
+  // The branch's per-weekday schedule (one shift a day, no shift = closed) —
+  // the source of truth for when it trades. The derived opening window, the
+  // delivery estimate and the marketplace hours all follow from it.
+  weeklyHours: (id: string) => api.get<WeeklyHours>(`/branches/${id}/weekly-hours`),
+  setWeeklyHours: (id: string, data: WeeklyHoursWrite) =>
+    api.put<WeeklyHours>(`/branches/${id}/weekly-hours`, data),
+  // Derive `opening_from`/`opening_to` from the schedule now (and push to the
+  // marketplaces) instead of waiting for the hourly loop.
+  syncHours: (id: string) =>
+    api.post<Record<string, unknown>>(`/branches/${id}/sync-hours`),
 
   // ── Holidays ────────────────────────────────────────────────────────────
   //

@@ -48,7 +48,12 @@ from app.schemas.pos_order import (
     VoidItemRequest,
     VoidOrderRequest,
 )
-from app.services import crud_service, email_service, option_snapshot
+from app.services import (
+    branch_holiday_service,
+    crud_service,
+    email_service,
+    option_snapshot,
+)
 from app.services.delivery import address_format, driver_proximity
 from app.services.orders import order_lifecycle, order_service
 from app.services.pos import pos_order_service
@@ -169,9 +174,10 @@ def _serialise(order: Order) -> PosOrderResponse:
         delivery_provider=payload.delivery_provider,
     )
     # Same guard, same reason. A hint for the terminal, not the enforcement —
-    # `accept_order` asks the question again with the branch definitely loaded,
-    # so a payload that could not resolve the hours costs a 409 and an alarm
-    # rather than a driver at a shut shop.
+    # `accept_order` asks the question again with the branch definitely loaded
+    # *and the closed days*, so a payload that could not resolve the hours (or a
+    # hint computed without the closed set here, in a sync serialiser with no db)
+    # costs a 409 and an alarm rather than a driver at a shut shop.
     if "branch" not in inspect(order).unloaded:
         payload.may_auto_accept = pos_order_service.may_auto_accept(order, order.branch)
     # Written out rather than left to the enum's `str` base, so the register
@@ -754,7 +760,8 @@ async def accept_order(
     # 03:00 order sends a van to a dark shutter. Asked here with the branch
     # certainly loaded, rather than trusting the hint in the payload.
     branch = await db.get(Branch, order.branch_id) if order.branch_id else None
-    if auto and not pos_order_service.may_auto_accept(order, branch):
+    closed = await branch_holiday_service.closed_dates_for(db, order.branch_id)
+    if auto and not pos_order_service.may_auto_accept(order, branch, closed):
         raise ConflictError(
             "This order was placed outside the branch's opening hours and has "
             "to be accepted by a person."
