@@ -213,7 +213,7 @@ async def _async_false():
 
 
 def _patch_child_loops(monkeypatch, started):
-    """Replace the two forever-loops with markers that run until cancelled."""
+    """Replace the forever-loops with markers that run until cancelled."""
 
     async def fake_daily():
         started.append("daily")
@@ -223,8 +223,15 @@ def _patch_child_loops(monkeypatch, started):
         started.append("rolling")
         await asyncio.Event().wait()
 
+    async def fake_coverage():
+        started.append("coverage")
+        await asyncio.Event().wait()
+
     monkeypatch.setattr(ingest, "run_scheduler_forever", fake_daily)
     monkeypatch.setattr(ingest, "run_sales_refresh_scheduler_forever", fake_rolling)
+    monkeypatch.setattr(
+        ingest, "run_coverage_backfill_scheduler_forever", fake_coverage
+    )
 
 
 async def test_supervisor_runs_both_loops_when_it_wins_leadership(monkeypatch):
@@ -240,7 +247,7 @@ async def test_supervisor_runs_both_loops_when_it_wins_leadership(monkeypatch):
 
     task = asyncio.create_task(ingest.run_aggregator_schedulers_forever())
     await asyncio.sleep(0.05)  # let it acquire and spawn the children
-    assert set(started) == {"daily", "rolling"}
+    assert set(started) == {"daily", "rolling", "coverage"}
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -293,7 +300,7 @@ async def test_supervisor_promotes_from_standby_to_leader(monkeypatch):
 
     task = asyncio.create_task(ingest.run_aggregator_schedulers_forever())
     await real_sleep(0.05)
-    assert set(started) == {"daily", "rolling"}  # promoted and ticking
+    assert set(started) == {"daily", "rolling", "coverage"}  # promoted and ticking
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1792,3 +1799,103 @@ async def test_fetch_and_persist_reraises_systemic_db_error(monkeypatch):
             since=datetime(2026, 8, 31, tzinfo=timezone.utc),
             until=datetime(2026, 8, 31, 23, tzinfo=timezone.utc),
         )
+
+
+# ── standing coverage backfill (multi-day gap recovery) ───────────────────────
+
+
+def test_uncovered_dates_marks_days_with_orders_or_a_swept_backfill_as_covered():
+    """A date is covered when an order landed on it OR a completed backfill span
+    already swept it (inclusive); everything else in the window is a gap."""
+    window = [date(2026, 9, d) for d in (1, 2, 3, 4)]
+    # Orders on the 1st; a prior backfill swept 03..04 (even if it wrote nothing).
+    gaps = ingest._uncovered_dates(
+        window,
+        order_dates={"2026-09-01"},
+        swept_ranges=[("2026-09-03", "2026-09-04")],
+    )
+    assert gaps == [date(2026, 9, 2)]  # only the 2nd is neither
+
+
+def test_uncovered_dates_empty_when_all_covered():
+    window = [date(2026, 9, 1), date(2026, 9, 2)]
+    assert (
+        ingest._uncovered_dates(
+            window, order_dates={"2026-09-01", "2026-09-02"}, swept_ranges=[]
+        )
+        == []
+    )
+
+
+class _FakeFactory:
+    """A stand-in for AsyncSessionFactory: callable, and an async context manager
+    yielding a throwaway db (the reads are monkeypatched, so the db is unused)."""
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return SimpleNamespace()
+
+    async def __aexit__(self, *_):
+        return False
+
+
+async def test_coverage_backfill_repulls_only_live_channels_with_gaps(monkeypatch):
+    """A live channel with uncovered dates is re-pulled over the whole gap span
+    (SALES only); a dead channel is skipped without waking its login; a live channel
+    with no gaps is left alone."""
+    monkeypatch.setattr(ingest, "is_enabled", lambda: True)
+    monkeypatch.setattr(ingest, "_register_providers", lambda: None)
+    monkeypatch.setattr(
+        ingest,
+        "PROVIDERS",
+        {"careem": object(), "deliveroo": object(), "noon": object()},
+    )
+    monkeypatch.setattr(ingest, "AsyncSessionFactory", _FakeFactory())
+    monkeypatch.setattr(
+        ingest.settings, "AGGREGATOR_COVERAGE_BACKFILL_DAYS", 7, raising=False
+    )
+
+    # careem is dead (skipped); deliveroo + noon are live.
+    async def fake_session_for(_db, channel, _provider):
+        return None if channel == "careem" else object()
+
+    # deliveroo has a two-day gap; noon has none.
+    gaps = {
+        "deliveroo": [date(2026, 9, 2), date(2026, 9, 3)],
+        "noon": [],
+    }
+
+    async def fake_gap_dates(_db, channel, _guard):
+        return gaps[channel]
+
+    calls: list[tuple] = []
+
+    async def fake_run_range(channels, from_date, to_date, *, modes):
+        calls.append((tuple(channels), from_date, to_date, modes))
+        return []
+
+    monkeypatch.setattr(ingest, "_session_for", fake_session_for)
+    monkeypatch.setattr(ingest, "_coverage_gap_dates", fake_gap_dates)
+    monkeypatch.setattr(ingest, "run_range", fake_run_range)
+
+    backfilled = await ingest.run_coverage_backfill_once()
+
+    assert backfilled == 1  # only deliveroo
+    assert calls == [
+        (("deliveroo",), date(2026, 9, 2), date(2026, 9, 3), (ingest.RUN_MODE_SALES,))
+    ]
+
+
+async def test_coverage_backfill_disabled_by_zero_guard(monkeypatch):
+    monkeypatch.setattr(ingest, "is_enabled", lambda: True)
+    monkeypatch.setattr(
+        ingest.settings, "AGGREGATOR_COVERAGE_BACKFILL_DAYS", 0, raising=False
+    )
+
+    async def boom(*_a, **_k):  # pragma: no cover — must never be reached
+        raise AssertionError("should not scan providers when disabled")
+
+    monkeypatch.setattr(ingest, "_register_providers", boom)
+    assert await ingest.run_coverage_backfill_once() == 0

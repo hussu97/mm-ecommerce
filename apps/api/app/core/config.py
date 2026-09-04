@@ -490,6 +490,21 @@ class Settings(BaseSettings):
     #: yesterday plus today across the Dubai/UTC offset, so a late-settling value on
     #: a late-yesterday order is still in range. Idempotent upserts, so widen freely.
     AGGREGATOR_SALES_ROLLING_HOURS: int = 36
+    #: Standing multi-day coverage backfill. The daily pass looks back only
+    #: `AGGREGATOR_LOOKBACK_DAYS` and the rolling refresh only
+    #: `AGGREGATOR_SALES_ROLLING_HOURS`, so an outage longer than either window
+    #: leaves the business dates it spanned permanently uncovered — they age out of
+    #: every window before a headed re-login recovers the session, and the nightly
+    #: pass never looks back far enough to re-pull them. That is the recurring
+    #: "2-3 aggregator orders short vs the portal" hole (Careem sat dead
+    #: 2026-09-02..04; Keeta since 09-01). This pass re-pulls any still-uncovered
+    #: date in the last N days once the session is live again, turning a long outage
+    #: into a delay instead of a loss. Idempotent; SALES only. `0` disables it.
+    AGGREGATOR_COVERAGE_BACKFILL_DAYS: int = 7
+    #: How often the coverage backfill checks for gaps. The gap query is cheap and
+    #: the re-pull is idempotent, so hourly is ample. `0` disables it — the safety
+    #: valve for this autonomous re-scrape.
+    AGGREGATOR_COVERAGE_BACKFILL_MINUTES: int = 60
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
     #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.

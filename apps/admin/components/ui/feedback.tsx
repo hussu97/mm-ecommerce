@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from './index';
 
@@ -167,7 +167,16 @@ function useFeedback(): FeedbackContextValue {
 /** Non-blocking outcome feedback. `toast.error(...)` replaces `alert(...)`. */
 export function useToast() {
   const { toastSuccess, toastError } = useFeedback();
-  return { success: toastSuccess, error: toastError };
+  // The wrapper object must be referentially stable: `toast` is a legitimate
+  // dependency of `useCallback`/`useEffect` in consumers (e.g. a component that
+  // loads on mount and toasts on failure). Returning a fresh `{...}` each render
+  // turned those effects into infinite re-fire loops (the catalog-sync hours
+  // editor hammered GET /catalog-sync/branches/{id}/hours forever). The inner
+  // functions are already memoised by the provider, so this memo never churns.
+  return useMemo(
+    () => ({ success: toastSuccess, error: toastError }),
+    [toastSuccess, toastError],
+  );
 }
 
 /**

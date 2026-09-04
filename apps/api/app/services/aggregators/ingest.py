@@ -1772,6 +1772,155 @@ async def _last_sales_sweep_at() -> datetime | None:
         )
 
 
+def _uncovered_dates(
+    window: list[date],
+    order_dates: set[str],
+    swept_ranges: list[tuple[str, str]],
+) -> list[date]:
+    """Which `window` dates are uncovered: no order landed on them (their ISO date
+    is absent from `order_dates`) AND no completed backfill span in `swept_ranges`
+    (inclusive ISO `from`/`to` pairs) already covers them.
+
+    A date with orders is covered; a date a prior backfill swept — even down to zero
+    orders — is covered too, so a genuinely-empty day is re-pulled at most once and
+    then stays quiet. Pure so the coverage rule is unit-testable; the DB reads live
+    in `_coverage_gap_dates`."""
+
+    def covered(d: date) -> bool:
+        iso = d.isoformat()
+        return iso in order_dates or any(f <= iso <= t for f, t in swept_ranges)
+
+    return [d for d in window if not covered(d)]
+
+
+async def _coverage_gap_dates(
+    db: AsyncSession, channel: str, guard_days: int
+) -> list[date]:
+    """The channel's still-uncovered Dubai business dates in the last `guard_days`
+    (ending yesterday), ascending. Reads the durable order + backfill-run trail so
+    the answer survives a redeploy and reflects the true current coverage."""
+    today = _start_of_today_dubai(utcnow()).date()
+    window = [today - timedelta(days=n) for n in range(guard_days, 0, -1)]
+    lo, hi = window[0].isoformat(), window[-1].isoformat()
+
+    order_dates = set(
+        await db.scalars(
+            select(AggregatorOrder.business_date)
+            .where(
+                AggregatorOrder.channel == channel,
+                AggregatorOrder.business_date >= lo,
+                AggregatorOrder.business_date <= hi,
+            )
+            .distinct()
+        )
+    )
+    # Only backfill runs record their business-date span on the row (from_date/
+    # to_date); the scheduled sweeps leave those NULL and prove their coverage
+    # through the orders they wrote, so a genuinely-empty swept day is caught by the
+    # one-shot backfill above rather than re-pulled every hour.
+    swept_ranges = [
+        (f, t)
+        for f, t in (
+            await db.execute(
+                select(AggregatorSyncRun.from_date, AggregatorSyncRun.to_date).where(
+                    AggregatorSyncRun.channel == channel,
+                    AggregatorSyncRun.mode == RUN_MODE_BACKFILL,
+                    AggregatorSyncRun.status == RUN_COMPLETED,
+                    AggregatorSyncRun.from_date.is_not(None),
+                    AggregatorSyncRun.to_date.is_not(None),
+                    AggregatorSyncRun.to_date >= lo,
+                    AggregatorSyncRun.from_date <= hi,
+                )
+            )
+        ).all()
+    ]
+    return _uncovered_dates(window, order_dates, swept_ranges)
+
+
+async def run_coverage_backfill_once() -> int:
+    """Re-pull each httpx channel's still-uncovered business dates in the guard
+    window, once its session is live again. Returns the number of channels backfilled.
+
+    The multi-day complement to `_retry_failed_channels_this_slot` (which retries a
+    failed channel only a few times the same night) and the rolling refresh (which
+    reaches back only `AGGREGATOR_SALES_ROLLING_HOURS`): an outage longer than either
+    leaves the dates it spanned uncovered forever, because they age out of every
+    window before the re-login recovers the session. This closes that hole.
+
+    Keeta is push-only — its missed orders come back when the bootstrap worker's
+    in-page pull re-pushes them after a headed re-login, not from a re-scrape here
+    (a range rerun only re-normalises orders already stored on `aggregator_order.raw`,
+    and the missed ones were never pushed) — so it is not swept. A dead session is
+    skipped, never driven: healing the login is the reauth daemon's job and this pass
+    must not hammer a dead marketplace login (the anti-bot ban rule). SALES only —
+    it closes gaps in the order count; finance settles on the nightly pass."""
+    if not is_enabled():
+        return 0
+    guard = settings.AGGREGATOR_COVERAGE_BACKFILL_DAYS
+    if guard <= 0:
+        return 0
+    _register_providers()
+    backfilled = 0
+    for channel, provider in PROVIDERS.items():
+        try:
+            async with AsyncSessionFactory() as db:
+                # Only touch a channel whose session is live NOW — the same read-only
+                # liveness gate the sweeps use, so this never wakes a dead login.
+                if await _session_for(db, channel, provider) is None:
+                    continue
+                gaps = await _coverage_gap_dates(db, channel, guard)
+            if not gaps:
+                continue
+            logger.warning(
+                "aggregator coverage backfill: %s uncovered %s date(s) %s..%s — "
+                "re-pulling now the session is live",
+                channel,
+                len(gaps),
+                gaps[0].isoformat(),
+                gaps[-1].isoformat(),
+            )
+            # One range over the whole gap span: run_range is idempotent, so any
+            # already-covered day in between is simply re-upserted, and the single
+            # backfill run row then records the whole span as swept — so a truly
+            # empty day inside the span is not re-pulled next hour.
+            await run_range([channel], gaps[0], gaps[-1], modes=(RUN_MODE_SALES,))
+            backfilled += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one channel must not stop the rest
+            logger.exception("aggregator coverage backfill failed for %s", channel)
+    return backfilled
+
+
+async def run_coverage_backfill_scheduler_forever() -> None:
+    """The standing coverage backfill, every `AGGREGATOR_COVERAGE_BACKFILL_MINUTES`.
+
+    A plain interval loop: the gap is re-derived from the durable order + run trail
+    on every tick, so — unlike the daily/rolling schedulers — it needs no boot
+    catch-up, and it sleeps first so a redeploy does not trigger a re-scrape burst.
+    `<= 0` on the cadence or on `AGGREGATOR_COVERAGE_BACKFILL_DAYS` disables it (the
+    safety valve). Cancellation-safe; one bad tick is logged and the loop lives on.
+    """
+    interval = settings.AGGREGATOR_COVERAGE_BACKFILL_MINUTES
+    if interval <= 0 or settings.AGGREGATOR_COVERAGE_BACKFILL_DAYS <= 0:
+        logger.info("aggregator coverage backfill disabled (interval or days <= 0)")
+        return
+    logger.info(
+        "aggregator coverage backfill started (every %dm, %dd guard window)",
+        interval,
+        settings.AGGREGATOR_COVERAGE_BACKFILL_DAYS,
+    )
+    while True:
+        try:
+            await asyncio.sleep(interval * 60)
+            if is_enabled():
+                await run_coverage_backfill_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — one bad tick must not stop the loop
+            logger.exception("aggregator coverage backfill tick failed")
+
+
 #: Holds the in-flight manual-trigger task so the event loop's weak reference to
 #: it cannot let it be collected mid-sweep (convention #5's tracked-task rule, the
 #: way `indexnow_service._pending` does). Discarded on completion so it is not a
@@ -2234,6 +2383,10 @@ async def run_aggregator_schedulers_forever() -> None:
                 children = [
                     asyncio.create_task(run_scheduler_forever()),
                     asyncio.create_task(run_sales_refresh_scheduler_forever()),
+                    # Standing multi-day coverage backfill — re-pulls dates a long
+                    # outage left uncovered once the session is live again. Self-
+                    # disabling unless AGGREGATOR_COVERAGE_BACKFILL_MINUTES/_DAYS > 0.
+                    asyncio.create_task(run_coverage_backfill_scheduler_forever()),
                     # Catalog & hours sweep — self-disabling unless
                     # CATALOG_SYNC_SWEEP_MINUTES > 0, so it is inert by default.
                     asyncio.create_task(run_catalog_sync_scheduler_forever()),
