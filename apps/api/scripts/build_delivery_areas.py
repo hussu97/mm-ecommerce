@@ -70,7 +70,7 @@ COSTS = DATA / "courier_costs.json"
 EMIRATES = DATA / "uae_emirates.geojson.json"
 V2_GEOMETRY = DATA / "uae_delivery_zones.geojson.json"
 OUT_GEOMETRY = DATA / "uae_delivery_zones.v6.geojson.json"
-OUT_ASSIGN = DATA / "uae_delivery_areas_assignments.v2.json"
+OUT_ASSIGN = DATA / "uae_delivery_areas_assignments.v3.json"
 
 #: The kitchen's emirate. A Slider bike only runs inside it (see
 #: `_assign_provider`); everywhere else the Slider option is a car.

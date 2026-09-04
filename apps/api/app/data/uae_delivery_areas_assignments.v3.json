@@ -1,0 +1,1562 @@
+[
+  {
+    "name": "Sharjah \u00b7 Al Qasimia",
+    "emirate": "Sharjah",
+    "label": "Al Qasimia",
+    "lat": 25.339,
+    "lng": 55.386,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Majaz",
+    "emirate": "Sharjah",
+    "label": "Al Majaz",
+    "lat": 25.3234,
+    "lng": 55.381,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Khan",
+    "emirate": "Sharjah",
+    "label": "Al Khan",
+    "lat": 25.3306,
+    "lng": 55.36,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Taawun",
+    "emirate": "Sharjah",
+    "label": "Al Taawun",
+    "lat": 25.316,
+    "lng": 55.372,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Abu Shagara",
+    "emirate": "Sharjah",
+    "label": "Abu Shagara",
+    "lat": 25.333,
+    "lng": 55.39,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Rolla / Al Ghuwair",
+    "emirate": "Sharjah",
+    "label": "Rolla / Al Ghuwair",
+    "lat": 25.356,
+    "lng": 55.387,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Layyah",
+    "emirate": "Sharjah",
+    "label": "Al Layyah",
+    "lat": 25.355,
+    "lng": 55.373,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Nahda (Sharjah)",
+    "emirate": "Sharjah",
+    "label": "Al Nahda (Sharjah)",
+    "lat": 25.2937,
+    "lng": 55.3697,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Nud",
+    "emirate": "Sharjah",
+    "label": "Al Nud",
+    "lat": 25.34,
+    "lng": 55.4,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Yarmook",
+    "emirate": "Sharjah",
+    "label": "Al Yarmook",
+    "lat": 25.33,
+    "lng": 55.41,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Maysaloon",
+    "emirate": "Sharjah",
+    "label": "Maysaloon",
+    "lat": 25.322,
+    "lng": 55.425,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Muwaileh",
+    "emirate": "Sharjah",
+    "label": "Muwaileh",
+    "lat": 25.312,
+    "lng": 55.456,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Zahia",
+    "emirate": "Sharjah",
+    "label": "Al Zahia",
+    "lat": 25.3,
+    "lng": 55.47,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 University City",
+    "emirate": "Sharjah",
+    "label": "University City",
+    "lat": 25.2937,
+    "lng": 55.4901,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Rahmaniya",
+    "emirate": "Sharjah",
+    "label": "Al Rahmaniya",
+    "lat": 25.276,
+    "lng": 55.52,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_bike",
+    "alternate_providers": [
+      "slider_car",
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Sharjah Industrial Area",
+    "emirate": "Sharjah",
+    "label": "Sharjah Industrial Area",
+    "lat": 25.32,
+    "lng": 55.4,
+    "delivery_fee": "0.00",
+    "free_delivery_threshold": "0.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "noon_send",
+    "alternate_providers": [
+      "third_party",
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Khor Fakkan",
+    "emirate": "Sharjah",
+    "label": "Khor Fakkan",
+    "lat": 25.339,
+    "lng": 56.352,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Kalba",
+    "emirate": "Sharjah",
+    "label": "Kalba",
+    "lat": 25.05,
+    "lng": 56.35,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Dibba Al Hisn",
+    "emirate": "Sharjah",
+    "label": "Dibba Al Hisn",
+    "lat": 25.619,
+    "lng": 56.276,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Masafi",
+    "emirate": "Sharjah",
+    "label": "Masafi",
+    "lat": 25.305,
+    "lng": 56.17,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party",
+      "noon_send"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Dhaid",
+    "emirate": "Sharjah",
+    "label": "Al Dhaid",
+    "lat": 25.288,
+    "lng": 55.883,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Mleiha",
+    "emirate": "Sharjah",
+    "label": "Mleiha",
+    "lat": 25.113,
+    "lng": 55.93,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Madam",
+    "emirate": "Sharjah",
+    "label": "Al Madam",
+    "lat": 24.925,
+    "lng": 55.69,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Batayih",
+    "emirate": "Sharjah",
+    "label": "Al Batayih",
+    "lat": 25.17,
+    "lng": 55.72,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Ajman Corniche",
+    "emirate": "Ajman",
+    "label": "Ajman Corniche",
+    "lat": 25.4098,
+    "lng": 55.438,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Mushairef",
+    "emirate": "Ajman",
+    "label": "Mushairef",
+    "lat": 25.398,
+    "lng": 55.452,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Rashidiya",
+    "emirate": "Ajman",
+    "label": "Al Rashidiya",
+    "lat": 25.403,
+    "lng": 55.456,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Zahra",
+    "emirate": "Ajman",
+    "label": "Al Zahra",
+    "lat": 25.405,
+    "lng": 55.465,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Nuaimiya",
+    "emirate": "Ajman",
+    "label": "Al Nuaimiya",
+    "lat": 25.383,
+    "lng": 55.465,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Ajman City Centre",
+    "emirate": "Ajman",
+    "label": "Ajman City Centre",
+    "lat": 25.3987,
+    "lng": 55.478,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Mowaihat",
+    "emirate": "Ajman",
+    "label": "Al Mowaihat",
+    "lat": 25.376,
+    "lng": 55.483,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Rawda",
+    "emirate": "Ajman",
+    "label": "Al Rawda",
+    "lat": 25.391,
+    "lng": 55.488,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Hamidiyah",
+    "emirate": "Ajman",
+    "label": "Al Hamidiyah",
+    "lat": 25.39,
+    "lng": 55.5,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Emirates City / Ajman One",
+    "emirate": "Ajman",
+    "label": "Emirates City / Ajman One",
+    "lat": 25.418,
+    "lng": 55.508,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Jurf",
+    "emirate": "Ajman",
+    "label": "Al Jurf",
+    "lat": 25.413,
+    "lng": 55.509,
+    "delivery_fee": "10.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Masfout",
+    "emirate": "Ajman",
+    "label": "Masfout",
+    "lat": 24.82,
+    "lng": 56.06,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 UAQ Old Town",
+    "emirate": "Umm al-Quwain",
+    "label": "UAQ Old Town",
+    "lat": 25.565,
+    "lng": 55.553,
+    "delivery_fee": "30.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Salamah",
+    "emirate": "Umm al-Quwain",
+    "label": "Al Salamah",
+    "lat": 25.545,
+    "lng": 55.56,
+    "delivery_fee": "30.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Raas",
+    "emirate": "Umm al-Quwain",
+    "label": "Al Raas",
+    "lat": 25.572,
+    "lng": 55.556,
+    "delivery_fee": "30.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Haditha",
+    "emirate": "Umm al-Quwain",
+    "label": "Al Haditha",
+    "lat": 25.523,
+    "lng": 55.63,
+    "delivery_fee": "30.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Emirates Modern Industrial",
+    "emirate": "Umm al-Quwain",
+    "label": "Emirates Modern Industrial",
+    "lat": 25.51,
+    "lng": 55.66,
+    "delivery_fee": "30.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Falaj Al Mualla",
+    "emirate": "Umm al-Quwain",
+    "label": "Falaj Al Mualla",
+    "lat": 25.34,
+    "lng": 55.92,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 RAK City / Al Nakheel",
+    "emirate": "Ras al-Khaimah",
+    "label": "RAK City / Al Nakheel",
+    "lat": 25.7895,
+    "lng": 55.9432,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Dhait",
+    "emirate": "Ras al-Khaimah",
+    "label": "Al Dhait",
+    "lat": 25.75,
+    "lng": 55.92,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Mina Al Arab",
+    "emirate": "Ras al-Khaimah",
+    "label": "Mina Al Arab",
+    "lat": 25.706,
+    "lng": 55.83,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Hamra Village",
+    "emirate": "Ras al-Khaimah",
+    "label": "Al Hamra Village",
+    "lat": 25.689,
+    "lng": 55.783,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Digdaga",
+    "emirate": "Ras al-Khaimah",
+    "label": "Digdaga",
+    "lat": 25.66,
+    "lng": 55.91,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Rams",
+    "emirate": "Ras al-Khaimah",
+    "label": "Al Rams",
+    "lat": 25.876,
+    "lng": 56.048,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Sha'am",
+    "emirate": "Ras al-Khaimah",
+    "label": "Sha'am",
+    "lat": 25.98,
+    "lng": 56.1,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Jazirah Al Hamra",
+    "emirate": "Ras al-Khaimah",
+    "label": "Al Jazirah Al Hamra",
+    "lat": 25.66,
+    "lng": 55.79,
+    "delivery_fee": "50.00",
+    "free_delivery_threshold": "100.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Fujairah City",
+    "emirate": "Fujairah",
+    "label": "Fujairah City",
+    "lat": 25.1288,
+    "lng": 56.3265,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Dibba Al Fujairah",
+    "emirate": "Fujairah",
+    "label": "Dibba Al Fujairah",
+    "lat": 25.592,
+    "lng": 56.268,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Al Bidiyah",
+    "emirate": "Fujairah",
+    "label": "Al Bidiyah",
+    "lat": 25.44,
+    "lng": 56.35,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Al Faseel",
+    "emirate": "Fujairah",
+    "label": "Al Faseel",
+    "lat": 25.15,
+    "lng": 56.345,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Sakamkam",
+    "emirate": "Fujairah",
+    "label": "Sakamkam",
+    "lat": 25.17,
+    "lng": 56.335,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Nahda (Dubai)",
+    "emirate": "Dubai",
+    "label": "Al Nahda (Dubai)",
+    "lat": 25.287,
+    "lng": 55.366,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Deira / Al Rigga",
+    "emirate": "Dubai",
+    "label": "Deira / Al Rigga",
+    "lat": 25.2653,
+    "lng": 55.3211,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Mirdif",
+    "emirate": "Dubai",
+    "label": "Mirdif",
+    "lat": 25.2178,
+    "lng": 55.4192,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Bur Dubai / Al Karama",
+    "emirate": "Dubai",
+    "label": "Bur Dubai / Al Karama",
+    "lat": 25.2478,
+    "lng": 55.305,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Jumeirah 1",
+    "emirate": "Dubai",
+    "label": "Jumeirah 1",
+    "lat": 25.225,
+    "lng": 55.26,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Downtown Dubai",
+    "emirate": "Dubai",
+    "label": "Downtown Dubai",
+    "lat": 25.1972,
+    "lng": 55.2744,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Business Bay",
+    "emirate": "Dubai",
+    "label": "Business Bay",
+    "lat": 25.1857,
+    "lng": 55.262,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 International City",
+    "emirate": "Dubai",
+    "label": "International City",
+    "lat": 25.162,
+    "lng": 55.407,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Quoz",
+    "emirate": "Dubai",
+    "label": "Al Quoz",
+    "lat": 25.145,
+    "lng": 55.233,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Silicon Oasis",
+    "emirate": "Dubai",
+    "label": "Dubai Silicon Oasis",
+    "lat": 25.122,
+    "lng": 55.3773,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Barsha",
+    "emirate": "Dubai",
+    "label": "Al Barsha",
+    "lat": 25.1107,
+    "lng": 55.1975,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Hills Estate",
+    "emirate": "Dubai",
+    "label": "Dubai Hills Estate",
+    "lat": 25.105,
+    "lng": 55.248,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Palm Jumeirah",
+    "emirate": "Dubai",
+    "label": "Palm Jumeirah",
+    "lat": 25.1124,
+    "lng": 55.139,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Marina / JBR",
+    "emirate": "Dubai",
+    "label": "Dubai Marina / JBR",
+    "lat": 25.0805,
+    "lng": 55.1403,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 JLT",
+    "emirate": "Dubai",
+    "label": "JLT",
+    "lat": 25.0693,
+    "lng": 55.1418,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 JVC",
+    "emirate": "Dubai",
+    "label": "JVC",
+    "lat": 25.0578,
+    "lng": 55.2094,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Motor City",
+    "emirate": "Dubai",
+    "label": "Motor City",
+    "lat": 25.048,
+    "lng": 55.238,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Discovery Gardens",
+    "emirate": "Dubai",
+    "label": "Discovery Gardens",
+    "lat": 25.043,
+    "lng": 55.14,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Jebel Ali",
+    "emirate": "Dubai",
+    "label": "Jebel Ali",
+    "lat": 25.01,
+    "lng": 55.07,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Investment Park",
+    "emirate": "Dubai",
+    "label": "Dubai Investment Park",
+    "lat": 24.98,
+    "lng": 55.17,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Hatta",
+    "emirate": "Dubai",
+    "label": "Hatta",
+    "lat": 24.7967,
+    "lng": 56.118,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Awir",
+    "emirate": "Dubai",
+    "label": "Al Awir",
+    "lat": 25.17,
+    "lng": 55.55,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "slider_car",
+    "alternate_providers": [
+      "lalamove",
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Lehbab",
+    "emirate": "Dubai",
+    "label": "Lehbab",
+    "lat": 24.93,
+    "lng": 55.49,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Marmoom",
+    "emirate": "Dubai",
+    "label": "Al Marmoom",
+    "lat": 24.93,
+    "lng": 55.45,
+    "delivery_fee": "20.00",
+    "free_delivery_threshold": "75.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "lalamove",
+    "alternate_providers": [
+      "third_party"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Lisaili",
+    "emirate": "Dubai",
+    "label": "Al Lisaili",
+    "lat": 24.87,
+    "lng": 55.43,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Margham",
+    "emirate": "Dubai",
+    "label": "Margham",
+    "lat": 24.87,
+    "lng": 55.7,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Faqa",
+    "emirate": "Dubai",
+    "label": "Al Faqa",
+    "lat": 24.76,
+    "lng": 55.62,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Yas Island",
+    "emirate": "Abu Dhabi",
+    "label": "Yas Island",
+    "lat": 24.4886,
+    "lng": 54.607,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Raha Beach",
+    "emirate": "Abu Dhabi",
+    "label": "Al Raha Beach",
+    "lat": 24.453,
+    "lng": 54.606,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Masdar City",
+    "emirate": "Abu Dhabi",
+    "label": "Masdar City",
+    "lat": 24.427,
+    "lng": 54.617,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Khalifa City",
+    "emirate": "Abu Dhabi",
+    "label": "Khalifa City",
+    "lat": 24.42,
+    "lng": 54.579,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Shakhbout City",
+    "emirate": "Abu Dhabi",
+    "label": "Shakhbout City",
+    "lat": 24.376,
+    "lng": 54.621,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Mohammed Bin Zayed City",
+    "emirate": "Abu Dhabi",
+    "label": "Mohammed Bin Zayed City",
+    "lat": 24.333,
+    "lng": 54.554,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Mussafah",
+    "emirate": "Abu Dhabi",
+    "label": "Mussafah",
+    "lat": 24.351,
+    "lng": 54.501,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Saadiyat Island",
+    "emirate": "Abu Dhabi",
+    "label": "Saadiyat Island",
+    "lat": 24.539,
+    "lng": 54.434,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Reem Island",
+    "emirate": "Abu Dhabi",
+    "label": "Al Reem Island",
+    "lat": 24.498,
+    "lng": 54.405,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Maryah Island",
+    "emirate": "Abu Dhabi",
+    "label": "Al Maryah Island",
+    "lat": 24.5,
+    "lng": 54.388,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Zahiyah (Tourist Club)",
+    "emirate": "Abu Dhabi",
+    "label": "Al Zahiyah (Tourist Club)",
+    "lat": 24.4959,
+    "lng": 54.3831,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Khalidiyah",
+    "emirate": "Abu Dhabi",
+    "label": "Al Khalidiyah",
+    "lat": 24.468,
+    "lng": 54.346,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Bateen",
+    "emirate": "Abu Dhabi",
+    "label": "Al Bateen",
+    "lat": 24.456,
+    "lng": 54.332,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Abu Dhabi Corniche",
+    "emirate": "Abu Dhabi",
+    "label": "Abu Dhabi Corniche",
+    "lat": 24.473,
+    "lng": 54.34,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Shamkha",
+    "emirate": "Abu Dhabi",
+    "label": "Al Shamkha",
+    "lat": 24.341,
+    "lng": 54.701,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Ain City Centre",
+    "emirate": "Abu Dhabi",
+    "label": "Al Ain City Centre",
+    "lat": 24.2075,
+    "lng": 55.7447,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Jimi",
+    "emirate": "Abu Dhabi",
+    "label": "Al Jimi",
+    "lat": 24.23,
+    "lng": 55.73,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Muwaiji",
+    "emirate": "Abu Dhabi",
+    "label": "Al Muwaiji",
+    "lat": 24.217,
+    "lng": 55.718,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Hili",
+    "emirate": "Abu Dhabi",
+    "label": "Hili",
+    "lat": 24.26,
+    "lng": 55.77,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Zakher",
+    "emirate": "Abu Dhabi",
+    "label": "Zakher",
+    "lat": 24.16,
+    "lng": 55.72,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Yahar",
+    "emirate": "Abu Dhabi",
+    "label": "Al Yahar",
+    "lat": 24.21,
+    "lng": 55.61,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Ruwais",
+    "emirate": "Abu Dhabi",
+    "label": "Ruwais",
+    "lat": 24.11,
+    "lng": 52.73,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Madinat Zayed",
+    "emirate": "Abu Dhabi",
+    "label": "Madinat Zayed",
+    "lat": 23.65,
+    "lng": 53.7,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Ghayathi",
+    "emirate": "Abu Dhabi",
+    "label": "Ghayathi",
+    "lat": 23.84,
+    "lng": 52.82,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Liwa / Mezairaa",
+    "emirate": "Abu Dhabi",
+    "label": "Liwa / Mezairaa",
+    "lat": 23.13,
+    "lng": 53.78,
+    "delivery_fee": "80.00",
+    "free_delivery_threshold": "200.00",
+    "free_delivery_eligible": true,
+    "fulfilment_provider": "third_party",
+    "alternate_providers": [
+      "lalamove"
+    ]
+  }
+]

@@ -1,7 +1,7 @@
 """
 The committed per-area map says what the rules say.
 
-The map that migration `177_per_area_courier_map_v2` seeds is generated data —
+The map that migration `178_per_area_map_v3` seeds is generated data —
 `scripts.build_delivery_areas` writes the geometry and the assignments, and a
 person commits them. This is what stops the committed files drifting from the
 rules that are supposed to have produced them: it re-derives every polygon's
@@ -30,7 +30,7 @@ from scripts.build_delivery_areas import (
 )
 
 DATA = Path(__file__).resolve().parents[2] / "app" / "data"
-ASSIGN = json.loads((DATA / "uae_delivery_areas_assignments.v2.json").read_text())
+ASSIGN = json.loads((DATA / "uae_delivery_areas_assignments.v3.json").read_text())
 COSTS = json.loads((DATA / "courier_costs.json").read_text())["costs"]
 GEOMETRY = json.loads((DATA / "uae_delivery_zones.v6.geojson.json").read_text())
 
