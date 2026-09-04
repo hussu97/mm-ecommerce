@@ -202,3 +202,32 @@ def test_bearer_guard_reports_which_headers_did_arrive():
         _assert_careem_bearer_captured("careem", {"user-agent": "x", "uuid": "y"})
     msg = str(exc.value)
     assert "user-agent" in msg and "uuid" in msg
+
+
+# ── keeta auto-login is wired into the daemon's relogin path ───────────────────
+
+
+def test_keeta_is_a_wired_auto_login_channel():
+    """Keeta login is a plain email -> password flow (no OTP, no mandatory
+    captcha), so the daemon's `login_with_account` must drive it rather than
+    reject it as "not wired" — otherwise a signed-out keeta session waits for a
+    human forever, which is exactly what stranded keeta from 2026-09-01. The
+    fallback still holds: a risk-triggered wall raises AntiBotChallengeError and
+    the channel drops to needs-human, no worse than before."""
+    import inspect
+
+    from aggregator_bootstrap import browser as b
+    from aggregator_bootstrap.channels import login as L
+
+    src = inspect.getsource(b.login_with_account)
+    # It is in the wired allow-list, and there is a keeta driving branch.
+    gate = src.split("not wired")[0]
+    assert '"keeta"' in gate, "keeta must be in the auto-login allow-list"
+    assert "login_keeta(" in src, "login_with_account must drive login_keeta"
+
+    # login_keeta takes the account's creds + a page (the daemon passes them);
+    # it no longer reads only KEETA_EMAIL/KEETA_PASSWORD from the environment.
+    params = inspect.signature(L.login_keeta).parameters
+    assert {"email", "password", "page"} <= set(params), (
+        "login_keeta must accept email/password/page so the daemon can drive it"
+    )

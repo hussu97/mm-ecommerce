@@ -41,6 +41,7 @@ from .channels.login import (
     deliveroo_login_form_visible,
     fill_deliveroo_login,
     login_careem,
+    login_keeta,
     login_noon,
     login_talabat,
     page_looks_authenticated,
@@ -942,8 +943,9 @@ async def login_with_account(
     - **noon** — email → Graph OTP via `login_noon` (needs mailbox-auth)
     - **talabat** — email+password → Graph OTP via `login_talabat`
     - **careem** — email → Graph OTP via `login_careem` (needs mailbox-auth)
+    - **keeta** — email → password (no OTP) via `login_keeta`
     """
-    if channel not in ("deliveroo", "noon", "talabat", "careem"):
+    if channel not in ("deliveroo", "noon", "talabat", "careem", "keeta"):
         raise NeedsHumanLogin(
             f"{channel} auto-login is not wired yet; run `login --channel "
             f"{channel}` headed, or store the recipe and wait for that channel's "
@@ -953,6 +955,11 @@ async def login_with_account(
         raise NeedsHumanLogin(
             "Deliveroo account has no email/password in the DB. "
             "Run `store-account --channel deliveroo` first."
+        )
+    if channel == "keeta" and (not email or not password):
+        raise NeedsHumanLogin(
+            "Keeta account has no email/password in the DB. "
+            "Run `store-account --channel keeta` first."
         )
     if channel == "noon" and not email:
         raise NeedsHumanLogin(
@@ -1009,6 +1016,13 @@ async def login_with_account(
             f"fill the email and poll the linked Graph mailbox for the OTP (up to\n"
             f"{_LOGIN_WAIT_SECONDS // 60} minutes). If reCAPTCHA challenges, "
             f"complete it in the window.\n"
+        )
+    elif channel == "keeta":
+        hint = (
+            f"Google Chrome opened on the Keeta merchant AE login. I fill the\n"
+            f"email, continue, then fill the password (no OTP). If Keeta throws a\n"
+            f"captcha / device-verification wall, complete it in the window (up to\n"
+            f"{_LOGIN_WAIT_SECONDS // 60} minutes).\n"
         )
     else:
         hint = (
@@ -1076,6 +1090,15 @@ async def login_with_account(
                             page = await login_careem(
                                 context,
                                 mailbox=mailbox,
+                                email=email,
+                                password=password,
+                                page=page,
+                            )
+                            filled = True
+                        elif channel == "keeta" and not filled:
+                            logger.info("%s: driving email + password", channel)
+                            page = await login_keeta(
+                                context,
                                 email=email,
                                 password=password,
                                 page=page,

@@ -624,13 +624,41 @@ async def _keeta_prime_region(context, page) -> None:
     )
 
 
-async def login_keeta(context) -> None:
-    if not settings.KEETA_EMAIL or not settings.KEETA_PASSWORD:
-        raise LoginError("KEETA_EMAIL / KEETA_PASSWORD are not configured.")
-    page = await context.new_page()
-    await _keeta_prime_region(context, page)
-    await page.goto(KEETA_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000)
-    await page.wait_for_timeout(5_000)
+async def login_keeta(
+    context,
+    *,
+    email: str | None = None,
+    password: str | None = None,
+    page=None,
+):
+    """Drive Keeta merchant email -> password (two steps) on the AE region.
+
+    Keeta login is a plain email -> Continue -> password -> Sign in flow — no OTP,
+    no mandatory captcha on the common path — so it is auto-drivable with the
+    stored account credentials, exactly like Deliveroo. Email/password come from
+    the account the daemon passes (they fall back to KEETA_EMAIL / KEETA_PASSWORD
+    for a standalone run). Keeta *can* front a risk-triggered captcha / device-
+    verification wall; that is detected and surfaced as `AntiBotChallengeError`
+    (→ needs-human) rather than bumped against. Returns the authenticated page so
+    the caller can snapshot the context.
+
+    When the caller already spawned Chrome on the AE login form (the auto path
+    opens `KEETA_LOGIN_URL`), `page` is passed and re-used as-is — re-navigating to
+    `/?region=AE` risks the HK redirect the crafted login URL exists to avoid. A
+    standalone call (page is None) opens its own page straight on that AE form.
+    """
+    address = (email or settings.KEETA_EMAIL or "").strip()
+    secret = password or settings.KEETA_PASSWORD or ""
+    if not address or not secret:
+        raise LoginError(
+            "Keeta login needs an email + password (account recipe, or "
+            "KEETA_EMAIL / KEETA_PASSWORD)."
+        )
+    if page is None:
+        page = await context.new_page()
+        await _keeta_prime_region(context, page)
+        await page.goto(KEETA_LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(5_000)
 
     if await _keeta_verification_wall(page):
         raise AntiBotChallengeError(
@@ -638,7 +666,7 @@ async def login_keeta(context) -> None:
             "not bypassed by the worker."
         )
     if await _keeta_has_authenticated_surface(page):
-        return
+        return page
 
     email_input = await _keeta_first_visible(
         page,
@@ -654,7 +682,7 @@ async def login_keeta(context) -> None:
     )
     if not email_input:
         raise LoginError("Keeta email login control was not found.")
-    await email_input.fill(settings.KEETA_EMAIL)
+    await email_input.fill(address)
     await _keeta_click_submit(page)
     await page.wait_for_timeout(8_000)
     if await _keeta_verification_wall(page):
@@ -672,7 +700,7 @@ async def login_keeta(context) -> None:
     )
     if not password_input:
         raise LoginError("Keeta password control was not found after email entry.")
-    await password_input.fill(settings.KEETA_PASSWORD)
+    await password_input.fill(secret)
     await _keeta_click_submit(page)
     await page.wait_for_timeout(8_000)
     if await _keeta_verification_wall(page):
@@ -681,6 +709,7 @@ async def login_keeta(context) -> None:
         )
     if not await _keeta_has_authenticated_surface(page):
         raise LoginError("Keeta login did not reach an authenticated portal surface.")
+    return page
 
 
 # --- Careem -----------------------------------------------------------------
