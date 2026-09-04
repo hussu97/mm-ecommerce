@@ -31,8 +31,16 @@ Plan: /Users/hussainabbasi/.claude/plans/lets-plan-for-slider-crispy-wirth.md
 - [x] test_per_area_map.py validates committed map vs rules (103 cases); full suite 2711 green; ruff clean
 - [x] NOTE: prod-fare result — Slider dominates, lalamove=1 (batching minimal). Filename collision bug fixed (v3 was 085's file; now v5).
 - [ ] PENDING: push to main + deploy to prod + verify (per user request)
-## Phase 3 — Admin polygon data-table UI (paginated/search/sort/filter + version switch + in-place attr edit)
-## Phase 4 — Courier switching bike->car (not car->bike) — backend DONE in Phase 1; remaining: admin ChangeFulfilmentDialog/DeliveryPanel UI (do with Phase 3)
+## Phase 3 — Admin polygon data-table UI ✅ DONE
+- [x] Backend: GET /delivery-zones/polygons (paginated/search/sort/filter) + PolygonPage schema; relaxed update_polygon guard (attrs editable in place on active version) + invalidate_cache; regenerated @mm/types (no drift)
+- [x] Frontend: FulfilmentProvider += slider_bike/slider_car; provider-labels + ZoneMap colors; deliveryZonesApi.listPolygons; new PolygonTable.tsx (version switcher + search + provider/branch/batch filters + click-sort + Pagination 50-2000 + in-place ZoneEditForm); page.tsx uses it; deleted dead VersionCard/ZoneRow
+- [x] admin type-check + lint clean (0 errors); backend 2711 tests green
+
+## Phase 4 — Courier switching bike->car (not car->bike) ✅ DONE
+- [x] Backend delivered in Phase 1 (reassignment quote/move recognise slider tiers; allowed_targets directional guard car-never->bike)
+- [x] Frontend: DeliveryPanel + courier-labels render slider_bike/car labels + amber badge + status control; dialog offers slider_car for a slider_bike order (targets come from server allowed_targets)
+
+## DEPLOY (pending user go) — push branch to main -> auto-deploy -> verify on prod
 
 ## Notes
 - New versioning: attributes (fee/threshold/default courier) editable in place on active version; new version only for geometry changes.

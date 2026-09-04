@@ -94,6 +94,27 @@ class PolygonResponse(BaseModel):
         )
 
 
+class PolygonPageVersion(BaseModel):
+    """Just enough of the version for the table header: which map, and whether
+    editing a row writes to the live storefront (it does, in place, when active)."""
+
+    id: str
+    name: str
+    is_active: bool
+
+
+class PolygonPage(BaseModel):
+    """One page of a version's zones, for the admin table — the per-area map has
+    ~97 of them, too many for the all-at-once shape `VersionResponse` returns."""
+
+    items: list[PolygonResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+    version: PolygonPageVersion | None
+
+
 class VersionResponse(BaseModel):
     id: str
     name: str

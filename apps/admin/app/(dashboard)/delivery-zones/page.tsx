@@ -5,6 +5,7 @@ import { deliveryZonesApi, ApiError } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import type {
+  BatchGroup,
   DeliveryBatch,
   DeliverySettings,
   DeliveryMapVersion,
@@ -12,14 +13,13 @@ import type {
   } from '@/lib/types';
 import { Spinner, TabBar } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { cn } from '@/lib/utils';
 import { DeliveryEstimates } from '@/components/delivery/DeliveryEstimates';
 import { ZoneMap } from '@/components/delivery/ZoneMap';
 
 import { BatchingTab } from './components/BatchingTab';
+import { PolygonTable } from './components/PolygonTable';
 import { RunsTab } from './components/RunsTab';
 import { SettingsCard } from './components/SettingsCard';
-import { VersionCard } from './components/VersionCard';
 
 export default function DeliveryZonesPage() {
   const toast = useToast();
@@ -29,11 +29,11 @@ export default function DeliveryZonesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [tab, setTab] = useState('map');
   const [zoneMap, setZoneMap] = useState<DeliveryZoneMap | null>(null);
   const [batches, setBatches] = useState<DeliveryBatch[]>([]);
+  const [batchGroups, setBatchGroups] = useState<BatchGroup[]>([]);
   // Which kitchen bakes a zone's orders. Needed here rather than on the branch
   // page because the choice belongs to the shape, not to the branch.
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -46,19 +46,20 @@ export default function DeliveryZonesPage() {
     setLoading(true);
     setError('');
     try {
-      const [v, s, m, b, br] = await Promise.all([
+      const [v, s, m, b, br, bg] = await Promise.all([
         deliveryZonesApi.listVersions(),
         deliveryZonesApi.getSettings(),
         deliveryZonesApi.map(),
         deliveryZonesApi.listBatches({ limit: 50 }),
         branchesApi.list(),
+        deliveryZonesApi.listBatchGroups(),
       ]);
       setVersions(v);
       setSettings(s);
       setZoneMap(m);
       setBatches(b);
       setBranches(br.filter(x => x.is_active && !x.deleted_at));
-      setOpenId(current => current ?? v.find(x => x.is_active)?.id ?? v[0]?.id ?? null);
+      setBatchGroups(bg);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load delivery maps.');
     } finally {
@@ -85,13 +86,29 @@ export default function DeliveryZonesPage() {
       return;
     }
     await run(async () => {
-      const draft = await deliveryZonesApi.createVersion({
+      await deliveryZonesApi.createVersion({
         name,
         source_version_id: sourceId,
       });
       setDraftName('');
-      setOpenId(draft.id);
     });
+  }
+
+  async function publishVersion(version: DeliveryMapVersion) {
+    if (await confirm({
+      title: 'Publish map',
+      message: `Publish "${version.name}"? Every new order is priced from it immediately.`,
+      confirmLabel: 'Publish',
+    })) void run(() => deliveryZonesApi.publish(version.id));
+  }
+
+  async function deleteVersion(version: DeliveryMapVersion) {
+    if (await confirm({
+      title: 'Delete draft',
+      message: `Delete the draft "${version.name}"?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    })) void run(() => deliveryZonesApi.deleteVersion(version.id));
   }
 
   if (loading) {
@@ -164,46 +181,25 @@ export default function DeliveryZonesPage() {
       )}
 
       {tab === 'maps' && settings && (
-        <SettingsCard
-          settings={settings}
-          busy={busy}
-          onSave={data => run(() => deliveryZonesApi.updateSettings(data))}
-        />
-      )}
-
-      <div className={cn('space-y-3', tab !== 'maps' && 'hidden')}>
-        {versions.map(version => (
-          <VersionCard
-            key={version.id}
-            version={version}
+        <div className="space-y-3">
+          <SettingsCard
+            settings={settings}
+            busy={busy}
+            onSave={data => run(() => deliveryZonesApi.updateSettings(data))}
+          />
+          <PolygonTable
+            versions={versions}
             branches={branches}
-            open={openId === version.id}
+            batchGroups={batchGroups}
             busy={busy}
             draftName={draftName}
-            onToggle={() => setOpenId(openId === version.id ? null : version.id)}
             onDraftNameChange={setDraftName}
-            onCopy={() => createDraft(version.id)}
-            onPublish={async () => {
-              if (await confirm({
-                title: 'Publish map',
-                message: `Publish "${version.name}"? Every new order is priced from it immediately.`,
-                confirmLabel: 'Publish',
-              })) void run(() => deliveryZonesApi.publish(version.id));
-            }}
-            onDelete={async () => {
-              if (await confirm({
-                title: 'Delete draft',
-                message: `Delete the draft "${version.name}"?`,
-                confirmLabel: 'Delete',
-                danger: true,
-              })) void run(() => deliveryZonesApi.deleteVersion(version.id));
-            }}
-            onZoneChange={(zoneId, data) =>
-              run(() => deliveryZonesApi.updateZone(zoneId, data))
-            }
+            onCopy={createDraft}
+            onPublish={publishVersion}
+            onDelete={deleteVersion}
           />
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
