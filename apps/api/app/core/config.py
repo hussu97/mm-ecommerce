@@ -326,7 +326,7 @@ class Settings(BaseSettings):
     #: console client is a superset — verified serving every read the sync makes
     #: (orders, locations, catalogue, availability) — so the whole sync uses it.
     #: Do not "tidy" this back to the integration client; see
-    #: docs/grubops-integration.md.
+    #: docs/integrators-and-aggregators.md.
     GRUBOPS_COGNITO_CLIENT_ID: str = "75n3em3l16kvhnf6c512680vm9"
     GRUBOPS_COGNITO_REGION: str = "eu-west-2"
     GRUBOPS_API_BASE: str = "https://internal-api.grubtech.io"
@@ -518,7 +518,7 @@ class Settings(BaseSettings):
     #: non-Foodics outlets (Al Karama, Silicon Oasis); hours per portal for every
     #: outlet (Foodics never carries aggregator hours). See
     #: `services/aggregators/catalog_sync.py` and
-    #: `docs/aggregator-catalog-hours-sync-audit.md`.
+    #: `docs/integrators-and-aggregators.md`.
     #:
     #: TWO flags, both off by default, because the read side and the write side
     #: carry very different risk:

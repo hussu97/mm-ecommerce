@@ -19,7 +19,7 @@ live ids from it. `foodics` menu snapshots are account-level (`branch_id` null,
 because the `Grubtech` group + price tag serve both integrated branches at once).
 
 See `services/aggregators/catalog_sync.py` and
-`docs/aggregator-catalog-hours-sync-audit.md`.
+`docs/integrators-and-aggregators.md`.
 """
 
 from __future__ import annotations
