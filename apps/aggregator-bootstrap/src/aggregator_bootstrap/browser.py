@@ -51,6 +51,7 @@ from .config import settings
 from .engine import async_playwright, evaluate_in_page
 from .fingerprint import (
     CONTAINER_CHROME_ARGS,
+    LOW_OVERHEAD_CHROME_ARGS,
     chrome_binary,
     chrome_profile_dir,
     context_kwargs,
@@ -505,6 +506,16 @@ _CHANNEL_LAUNCH_ARGS: dict[str, list[str]] = {
 }
 
 
+def _lean_args() -> list[str]:
+    """Background-only CPU/RAM flags for the AUTOMATED warm/pull launches.
+
+    Empty when `WORKER_LEAN_CHROME` is off. Never added to the standalone `login`
+    spawn (`standalone_chrome_args`), which must stay a pristine Chrome for the
+    initial anti-bot challenge. See `fingerprint.LOW_OVERHEAD_CHROME_ARGS`.
+    """
+    return list(LOW_OVERHEAD_CHROME_ARGS) if settings.WORKER_LEAN_CHROME else []
+
+
 def _clear_stale_singleton_locks(user_data_dir: Path) -> None:
     """Remove a previous Chrome's Singleton* lock files from the profile.
 
@@ -538,7 +549,7 @@ async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool, channel: 
     os.makedirs(user_data_dir, exist_ok=True)
     _clear_stale_singleton_locks(user_data_dir)
     kwargs = warm_persistent_kwargs(headed=headed)
-    extra_args = _CHANNEL_LAUNCH_ARGS.get(channel)
+    extra_args = [*(_CHANNEL_LAUNCH_ARGS.get(channel) or []), *_lean_args()]
     if extra_args:
         kwargs["args"] = [*kwargs.get("args", []), *extra_args]
     try:
@@ -587,8 +598,13 @@ async def _open_storage_state_context(pw, channel: str) -> _Opened:
     """
     extra = load_extra_state(channel)
     # Container sandbox flags first (Chrome won't launch as non-root pwuser
-    # without them), then any per-channel extras like noon's --disable-http2.
-    launch_args = [*CONTAINER_CHROME_ARGS, *(_CHANNEL_LAUNCH_ARGS.get(channel) or [])]
+    # without them), then the background-only lean flags, then any per-channel
+    # extras like noon's --disable-http2.
+    launch_args = [
+        *CONTAINER_CHROME_ARGS,
+        *_lean_args(),
+        *(_CHANNEL_LAUNCH_ARGS.get(channel) or []),
+    ]
     headed = not settings.HEADLESS
     try:
         browser = await pw.chromium.launch(

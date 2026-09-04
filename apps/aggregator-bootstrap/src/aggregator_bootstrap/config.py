@@ -121,7 +121,11 @@ class Settings(BaseSettings):
     #: when the sweep replays it. Computed in-process (Dubai is a permanent UTC+4).
     WORKER_WARM_HOUR_DXB: int = 22
     #: Dubai wall-clock hour for the nightly Deliveroo invoice (finance) pull.
-    WORKER_DELIVEROO_FINANCE_HOUR_DXB: int = 22
+    #: Moved OFF 22:00 (where it stacked on both nightly warms — three headed jobs
+    #: serialised on the single consumer at once) into the deep-quiet post-midnight
+    #: window. Finance downloads settled invoices, so it has no freshness constraint
+    #: and can run whenever the box is idle.
+    WORKER_DELIVEROO_FINANCE_HOUR_DXB: int = 2
     #: Keeta ORDERS-pull cadence (hours). Every few hours, not nightly, so each
     #: order's customer name/phone/address is captured BEFORE Keeta masks it to
     #: `***` a few hours after the order. This job is orders-only now; finance is a
@@ -137,8 +141,11 @@ class Settings(BaseSettings):
     WORKER_DELIVEROO_MENU_INTERVAL_HOURS: int = 0
     #: Dubai wall-clock hour for the nightly Keeta FINANCE pull (settled statement
     #: files). Split from the orders pull because it re-downloads settled files and
-    #: is slow; nightly + lowest priority keeps it off the hot path.
-    WORKER_KEETA_FINANCE_HOUR_DXB: int = 23
+    #: is slow; nightly + lowest priority keeps it off the hot path. Moved OFF 23:00
+    #: (where the slow finance download overlapped the API's 23:00 daily ingest sweep)
+    #: to a distinct post-midnight hour so the two heavy nightly workloads no longer
+    #: contend for the same 2 vCPUs. Settled files have no freshness constraint.
+    WORKER_KEETA_FINANCE_HOUR_DXB: int = 4
     #: How many months back the nightly Keeta finance pull lists — the LIST calls are
     #: newest-first, so this bounds how far back settled files are re-fetched (the
     #: pull used to re-download every historical file every run). 2 covers a
@@ -146,8 +153,13 @@ class Settings(BaseSettings):
     #: idempotent so a re-fetch is harmless, only wasteful.
     WORKER_KEETA_FINANCE_MONTHS_BACK: int = 2
     #: How often the daemon asks the API which sessions are dead and enqueues a
-    #: RELOGIN for each (respecting the per-channel reauth backoff).
-    WORKER_HEAL_POLL_SECONDS: int = 120
+    #: RELOGIN for each (respecting the per-channel reauth backoff). Raised 120→300:
+    #: the poll itself is a cheap HTTP call, but it is the CADENCE at which a
+    #: marginal session gets re-driven into a headed Chrome (the steady-state CPU
+    #: sink on this box). The reauth backoff + success floor already gate repeats;
+    #: a slower poll lowers the re-drive rate further at negligible freshness cost —
+    #: a genuinely dead session still heals within five minutes.
+    WORKER_HEAL_POLL_SECONDS: int = 300
     #: Floor (seconds) on how often a channel is re-driven *after a SUCCESSFUL
     #: re-login*. The reauth backoff above only paces FAILURES; a channel whose
     #: anti-bot cookie legitimately rotates and dies again minutes after a healthy
@@ -164,6 +176,23 @@ class Settings(BaseSettings):
     #: How often the scheduler wakes to enqueue what is due (and beats the heartbeat
     #: the container healthcheck watches).
     WORKER_SCHEDULER_TICK_SECONDS: int = 30
+    #: Random per-job spread (seconds, 0 disables) added to every scheduled fire —
+    #: the daily jobs and the boot-relative interval jobs. Two purposes: it un-stacks
+    #: jobs pinned to the same wall-clock hour (the two nightly warms) and the two
+    #: 12h interval jobs that would otherwise re-align on every restart (the classic
+    #: thundering-herd), so the single consumer meets a spread of arrivals rather
+    #: than a burst. 15 min keeps the anti-bot warm comfortably inside its pre-sweep
+    #: window (22:00–22:15, before the 23:00 ingest).
+    WORKER_JITTER_SECONDS: int = 900
+    #: Append a small set of BACKGROUND-ONLY Chrome flags (crash reporting, sync,
+    #: component/background networking, first-run) to the AUTOMATED warm/pull
+    #: launches to trim host CPU/RAM per browser. Every flag is host/background and
+    #: none is readable by page JS, so — by the exact criterion `fingerprint.py`
+    #: uses to justify `--no-sandbox` — none is an anti-bot signal. It is NOT
+    #: applied to the pristine standalone `login` spawn that faces the initial
+    #: Cloudflare/Akamai/PerimeterX challenge. A toggle, not a code change, so it
+    #: can be switched off instantly on the VM if a channel ever regresses.
+    WORKER_LEAN_CHROME: bool = True
     #: Heartbeat file the daemon touches each tick; the compose healthcheck fails
     #: the container when it goes stale. On the persisted `/data` volume.
     WORKER_HEARTBEAT_PATH: str = "/data/worker.heartbeat"

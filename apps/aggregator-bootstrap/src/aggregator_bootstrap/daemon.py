@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -67,6 +68,19 @@ def next_daily_dxb(hour: int, now_utc: datetime) -> datetime:
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _jitter() -> timedelta:
+    """A random 0..`WORKER_JITTER_SECONDS` spread (zero when the setting is <= 0).
+
+    Added to every scheduled fire so jobs pinned to the same wall-clock hour (the
+    two nightly warms) and boot-relative interval jobs that would re-align on a
+    restart do not arrive at the single consumer in a burst.
+    """
+    span = settings.WORKER_JITTER_SECONDS
+    if span <= 0:
+        return timedelta(0)
+    return timedelta(seconds=random.uniform(0, span))
 
 
 def _touch_heartbeat() -> None:
@@ -242,7 +256,7 @@ async def _run_scheduler(queue: JobQueue) -> None:
     now = _now_utc()
     daily: list[_Daily] = [
         _Daily(
-            next_at=next_daily_dxb(settings.WORKER_WARM_HOUR_DXB, now),
+            next_at=next_daily_dxb(settings.WORKER_WARM_HOUR_DXB, now) + _jitter(),
             kind=JobKind.WARM,
             channel=ch,
             hour=settings.WORKER_WARM_HOUR_DXB,
@@ -251,7 +265,8 @@ async def _run_scheduler(queue: JobQueue) -> None:
     ]
     daily.append(
         _Daily(
-            next_at=next_daily_dxb(settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB, now),
+            next_at=next_daily_dxb(settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB, now)
+            + _jitter(),
             kind=JobKind.DELIVEROO_FINANCE,
             channel="deliveroo",
             hour=settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB,
@@ -262,7 +277,8 @@ async def _run_scheduler(queue: JobQueue) -> None:
     # keeps the long finance download off the every-few-hours hot path.
     daily.append(
         _Daily(
-            next_at=next_daily_dxb(settings.WORKER_KEETA_FINANCE_HOUR_DXB, now),
+            next_at=next_daily_dxb(settings.WORKER_KEETA_FINANCE_HOUR_DXB, now)
+            + _jitter(),
             kind=JobKind.KEETA_FINANCE,
             channel="keeta",
             hour=settings.WORKER_KEETA_FINANCE_HOUR_DXB,
@@ -299,16 +315,16 @@ async def _run_scheduler(queue: JobQueue) -> None:
         for entry in daily:
             if now >= entry.next_at:
                 await queue.put(entry.kind, entry.channel)
-                entry.next_at = next_daily_dxb(entry.hour, now)
+                entry.next_at = next_daily_dxb(entry.hour, now) + _jitter()
         if now >= keeta_next:
             await queue.put(JobKind.KEETA_ORDERS, "keeta")
-            keeta_next = now + keeta_delta
+            keeta_next = now + keeta_delta + _jitter()
         if menu_delta is not None and now >= menu_next:
             await queue.put(JobKind.KEETA_MENU, "keeta")
-            menu_next = now + menu_delta
+            menu_next = now + menu_delta + _jitter()
         if del_menu_delta is not None and now >= del_menu_next:
             await queue.put(JobKind.DELIVEROO_MENU, "deliveroo")
-            del_menu_next = now + del_menu_delta
+            del_menu_next = now + del_menu_delta + _jitter()
         if now >= heal_next:
             await _heal_poll(queue)
             heal_next = now + heal_delta
