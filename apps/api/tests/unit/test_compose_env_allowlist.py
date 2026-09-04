@@ -206,12 +206,6 @@ def test_the_register_can_book_a_courier():
         "NOON_SEND_ENV",
         "SLIDER_API_KEY",
         "SLIDER_ACCOUNT_ID",
-        # The gate, not a credential — and the one most easily forgotten. It
-        # decides whether a Slider zone's order goes to Slider or back to the
-        # courier that carried it before, so a register without it would route
-        # the pilot account's order differently from the storefront depending
-        # only on which door the order came through.
-        "SLIDER_TRIAL_EMAILS",
     ):
         assert key in pos_env, (
             f"{key} never reaches the register, so an order packed at the "

@@ -114,14 +114,8 @@ async def get_rates(db: AsyncSession = Depends(get_db)):
 async def calculate_delivery(
     data: DeliveryCalculateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_optional_user),
 ):
-    """
-    The delivery fee for a pin and an order subtotal.
-
-    The identity is read for one reason only: a trial account pays nothing, and
-    this endpoint has to agree with what the order will actually charge.
-    """
+    """The delivery fee for a pin and an order subtotal."""
     settings = await delivery_service.get_settings(db)
     fee = await delivery_service.calculate_fee(
         data.delivery_method,
@@ -130,8 +124,6 @@ async def calculate_delivery(
         settings=settings,
         latitude=data.latitude,
         longitude=data.longitude,
-        user_id=current_user.id if current_user else None,
-        email=current_user.email if current_user else None,
     )
 
     if data.delivery_method == DeliveryMethodEnum.PICKUP:
@@ -271,8 +263,7 @@ async def quote_delivery(
     figure on screen is the one the order will be written with.
 
     The identity is used to find the basket the courier's own estimate gets
-    filed against, and to spot a trial account, who pays no delivery fee.
-    Nothing about the courier appears in the response either way.
+    filed against. Nothing about the courier appears in the response either way.
     """
     cart = await cart_service.find_cart(
         db,
@@ -286,6 +277,4 @@ async def quote_delivery(
         longitude=data.longitude,
         cart=cart,
         address=data.address,
-        user_id=current_user.id if current_user else None,
-        email=current_user.email if current_user else None,
     )

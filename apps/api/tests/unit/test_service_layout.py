@@ -61,7 +61,6 @@ CROSS_CUTTING = {
     "push_service",
     "redirect_service",
     "reference_integrity",
-    "trial_customer",
     "turnstile_service",
     "webhook_log_service",
 }

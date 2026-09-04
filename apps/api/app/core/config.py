@@ -607,19 +607,6 @@ class Settings(BaseSettings):
     #: or may arrive in a header nobody is reading.
     SLIDER_WEBHOOK_TOKEN: str = ""
     SLIDER_WEBHOOK_HEADER: str = "X-Slider-Token"
-    #: The accounts running the Slider pilot on production. Comma-separated, and
-    #: matched against a **signed-in** customer's own address — a guest checkout
-    #: never qualifies, because an email is a string anybody may type.
-    #:
-    #: Two things follow from being on this list and they are two halves of one
-    #: decision: Slider carries the order, and delivery is free. See
-    #: `app/services/trial_customer.py`. Emptying it ends the pilot — Slider
-    #: opens to its zones and nobody gets free delivery, both at once.
-    #:
-    #: This list is the *only* thing gating Slider. It applies in every
-    #: environment, deliberately: an environment-shaped gate opens a trial to
-    #: everybody the moment the environment changes.
-    SLIDER_TRIAL_EMAILS: str = ""
 
     # ── Apple Push (the POS registers) ────────────────────────────────────────
     #: The APNs auth key, as `.p8` PEM. Team-scoped and account-wide: one key

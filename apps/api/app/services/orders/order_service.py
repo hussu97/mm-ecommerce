@@ -1035,10 +1035,6 @@ async def create_order(
         latitude=address.latitude if address else None,
         longitude=address.longitude if address else None,
         address=address.address_line_1 if address else None,
-        # The same identity the preview priced against, so a pilot account's
-        # free delivery survives from the summary onto the order.
-        user_id=user_id,
-        email=data.email or fallback_email,
     )
 
     # 5. Find the kitchen before writing anything. `orders.branch_id` is NOT
@@ -1127,20 +1123,15 @@ async def create_order(
     #    so "what did fulfilment cost" is answerable for the whole country and
     #    not just the automated part of it.
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
-        # The courier this order will actually go out on, resolved through the
-        # Slider pilot gate here — the same decision `carrier_for` makes at
-        # dispatch — so quote, creation and dispatch all agree. Without it a
-        # non-pilot order in a Slider zone would stamp `slider` and carry the
-        # dead sandbox's 403 into the panel for a courier it will never reach.
-        # `effective_provider` lives in `courier_service`, which imports this
-        # module's neighbours but not this one; computing it here and passing
-        # the resolved string down keeps `lalamove_service` clear of a courier
+        # The courier this order will actually go out on, resolved the same way
+        # `carrier_for` resolves it at dispatch — so quote, creation and dispatch
+        # all agree. Only a Slider zone with Slider unconfigured resolves to
+        # anything but the zone's own courier; the resolved string is computed
+        # here and passed down so `lalamove_service` stays clear of a courier
         # import it would otherwise have to make locally.
         effective_provider, _ = courier_service.effective_provider(
             totals.zone.fulfilment_provider if totals.zone else None,
             totals.zone.name if totals.zone else None,
-            order.user_id,
-            order.email,
             city=str((order.shipping_address_snapshot or {}).get("city") or ""),
         )
         await lalamove_service.record_order_delivery(
@@ -1286,8 +1277,6 @@ async def preview_order(
         longitude=data.longitude,
         cart=cart,
         address=data.address,
-        user_id=user_id,
-        email=data.email or fallback_email,
     )
 
     totals = await order_pricing.compute_order_totals(
@@ -1296,10 +1285,6 @@ async def preview_order(
         delivery_method=data.delivery_method,
         discount_amount=discount_amount,
         priced=priced,
-        # The same identity `quote_priced` above was given, or the summary and
-        # the totals under it would disagree about a pilot account's fee.
-        user_id=user_id,
-        email=data.email or fallback_email,
         # A preview answers; it does not refuse. See `compute_order_totals`.
         strict=False,
     )

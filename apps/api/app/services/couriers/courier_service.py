@@ -22,19 +22,17 @@ not strand a paid, packed order — so it books Lalamove instead and records why
 The reverse does not apply: a Lalamove zone is never handed to noon Send,
 because noon Send probably cannot reach it.
 
-**Slider is gated to one account while the pilot runs.** A `slider` zone is
-carried by Slider only for a signed-in customer on `SLIDER_TRIAL_EMAILS`. For
-everybody else the zone resolves to whoever carries them today — noon Send in
-Sharjah, Lalamove everywhere else — which is *exactly* today's behaviour, since
-every Slider zone was carved out of one of those two. That is what makes it safe
-to publish the map before the courier is proven: the rollout is a no-op for
-every customer except the trial account.
+**Slider carries its own zones, for everyone.** A `slider` zone goes to Slider
+whenever Slider is configured — routing is the map's business, like it is for
+the other two, and which customer placed the order decides nothing. It briefly
+did: while the integration was being proved on production a named allow-list was
+the only thing that let a real order reach Slider's fleet. That list is gone.
 
-The list is deliberately not tied to `APP_ENV` or to any environment selector.
-An environment-shaped gate opens a trial to everyone the moment the environment
-changes, which is the mistake the noon Send trial was written to avoid.
-Emptying the list is how this trial ends — and that one setting ends both halves
-at once, because it also grants the free delivery in `trial_customer`.
+One thing still stands between a `slider` zone and a Slider task, and it is the
+same fallback the others have: an absent credential, or a refusal at booking,
+must not strand a paid, packed order — so it drops to whoever carried that
+ground before Slider, noon Send inside Sharjah and Lalamove outside it, and
+records why.
 
 Third-party zones fall through everything here untouched, exactly as before.
 """
@@ -52,7 +50,6 @@ from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
-from app.services import trial_customer
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
 
 logger = logging.getLogger(__name__)
@@ -147,51 +144,37 @@ def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]
     """
     Who will actually carry this order, and why it is not the zone's choice.
 
-    The zone decides for two of the three couriers and nothing here changes
-    that. For a `slider` zone it decides only for the trial account: everybody
-    else is handed to whoever carried that ground before the zone existed —
-    noon Send inside Sharjah, Lalamove outside it — which is what makes
-    publishing the new map a no-op for every customer but one.
+    The zone decides for all three couriers now, and this is the thin adapter
+    that reads an `Order` and an `OrderDelivery` and asks `effective_provider`
+    the question in strings. The only time the answer is not the zone's own is a
+    Slider zone with Slider unconfigured, which falls back to whoever carried
+    that ground before — noon Send inside Sharjah, Lalamove outside it.
 
-    **One function, and two callers that must not disagree.** `_dispatch_once`
-    asks it to decide who to book, and `batching_service.reserve` asks it, at
-    confirmation, to decide whether the order joins a shared run. If only the
-    dispatcher knew about the swap, then every Dubai and Ajman order would skip
-    its batch window — `reserve` keys off the literal string `lalamove` — and go
-    out alone at roughly three times the courier cost, with nothing on any
-    screen to say why. The gate is meant to change who carries the trial
-    account's cake, not how the rest of Dubai is routed.
-
-    The fallback is chosen from the **zone**, not from the address, and by name.
+    That fallback is chosen from the **zone**, not the address, and by name.
     `Sharjah Core` was carved out of `Sharjah Central`, which is noon Send's; the
     Ajman, Dubai and Umm al-Quwain Slider zones were carved out of Lalamove's.
-    The zone name is therefore a statement about who used to carry this ground,
-    which is exactly the question being asked — where the address's `city` is a
-    string a customer typed and can say "Dubai" for a pin in Sharjah. The
-    address is consulted only for a delivery row too old to carry a zone name.
+    The zone name is a statement about who used to carry this ground, which is
+    exactly the question — where the address's `city` is a string a customer
+    typed and can say "Dubai" for a pin in Sharjah. The address is consulted only
+    for a delivery row too old to carry a zone name.
 
     Returns the provider to book and, when it is not the zone's, the reason.
 
-    **One decision, asked in three places now.** Dispatch is where it began, but
-    the fare quote and the order-creation stamp have to reach exactly the same
-    verdict — a checkout that quotes Slider against an account the dispatcher
-    will hand to Lalamove shows a fare nobody will be booked at, and a delivery
-    row stamped `slider` for an order that dispatches on Lalamove parks a Slider
-    error on a real order and prints the wrong carrier in the panel. So the core
-    of this lives in `effective_provider`, which works on primitives and knows
-    nothing about an `Order` or an `OrderDelivery`, and this function is the
-    thin adapter that reads those two rows and calls it.
+    **One decision, asked in three places that must not disagree.**
+    `_dispatch_once` asks who to book, `batching_service.reserve` asks whether
+    the order joins a shared run, and the fare quote and order-creation stamp
+    have to reach the same verdict — a row stamped for one courier and dispatched
+    on another parks the wrong error and prints the wrong carrier. So the core
+    lives in `effective_provider`, which knows nothing about an `Order`, and this
+    reads the two rows and calls it.
     """
     return effective_provider(
         delivery.provider,
         delivery.zone_name,
         # Read tolerantly with `getattr`: a non-Slider zone returns from
-        # `effective_provider` before any of these is looked at, and one caller
-        # — `batching_service.reserve` — asks this about orders that carry only
-        # an id and a number. The old early return made the same three reads
-        # unreachable for those orders; keeping them lazy keeps that true.
-        getattr(order, "user_id", None),
-        getattr(order, "email", None),
+        # `effective_provider` before `city` is looked at, and one caller —
+        # `batching_service.reserve` — asks this about orders that carry only an
+        # id and a number. Keeping the read lazy keeps that true.
         city=str(
             (getattr(order, "shipping_address_snapshot", None) or {}).get("city") or ""
         ),
@@ -201,50 +184,43 @@ def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]
 def effective_provider(
     zone_provider: str | None,
     zone_name: str | None,
-    user_id: uuid.UUID | None,
-    email: str | None,
     *,
     city: str | None = None,
 ) -> tuple[str, str | None]:
     """
-    The courier a zone actually resolves to for this customer, and why it is not
-    the zone's own.
+    The courier a zone actually resolves to, and why it is not the zone's own.
 
-    Everything the Slider pilot gate needs, expressed in strings rather than
+    Everything a Slider zone's fallback needs, expressed in strings rather than
     rows, so the one decision can be asked at dispatch (`carrier_for`), at the
     fare quote (`estimate_for_point`) and at order creation — where the answer
     must agree or the customer is shown one courier, charged against a second
     and delivered by a third.
 
     A non-Slider zone passes straight through: the map decides for the other two
-    couriers and nothing here changes that. A Slider zone is Slider's only for
-    the signed-in pilot account; everybody else is handed to whoever carried
-    that ground before the zone existed — noon Send inside Sharjah, Lalamove
-    outside it — which is what makes publishing the new map a no-op for every
-    customer but one.
+    couriers and nothing here changes that. A Slider zone is Slider's whenever
+    Slider is configured; only an absent credential falls back — to noon Send
+    inside Sharjah, Lalamove outside it — the same "unconfigured is a fallback,
+    never an outage" contract the other two couriers have.
 
-    `city` is consulted only for a Slider zone with no name to read, which in
-    practice is a delivery row too old to carry one: the zone name is a
-    statement about who used to carry this ground and is trusted first, where
-    the address's `city` is a string a customer typed and can say "Dubai" for a
-    pin in Sharjah. Every zone name begins with its emirate by construction, so
-    the fare quote — which has a name but no address — needs no `city` at all.
+    `city` is consulted only for that fallback on a Slider zone with no name to
+    read, which in practice is a delivery row too old to carry one: the zone name
+    is a statement about who used to carry this ground and is trusted first,
+    where the address's `city` is a string a customer typed and can say "Dubai"
+    for a pin in Sharjah. Every zone name begins with its emirate by
+    construction, so the fare quote — which has a name but no address — needs no
+    `city` at all.
     """
     if zone_provider != SLIDER:
         return zone_provider, None
 
-    if not slider_service.is_enabled():
-        # The same contract the other two have: an absent credential is a
-        # fallback, never an outage.
-        reason = "Slider is not configured"
-    elif user_id is None:
-        reason = "Slider is limited to signed-in pilot accounts"
-    elif not trial_customer.is_trial_customer(user_id, email):
-        reason = "Slider is limited to the pilot account"
-    else:
+    if slider_service.is_enabled():
         return SLIDER, None
 
-    return (NOON_SEND if _is_sharjah_ground(zone_name, city) else LALAMOVE), reason
+    # The same contract the other two have: an absent credential is a fallback,
+    # never an outage.
+    return (
+        NOON_SEND if _is_sharjah_ground(zone_name, city) else LALAMOVE
+    ), "Slider is not configured"
 
 
 def _was_noon_send_ground(order: Order, delivery: OrderDelivery) -> bool:
@@ -560,8 +536,6 @@ async def estimate_for_point(
     address: str | None = None,
     branch_id: uuid.UUID | None = None,
     zone_name: str | None = None,
-    user_id: uuid.UUID | None = None,
-    email: str | None = None,
 ):
     """
     What this zone's courier would charge us to reach this point.
@@ -569,19 +543,13 @@ async def estimate_for_point(
     Never raises and never blocks a sale: this runs inside the pricing call the
     checkout makes on every pin move.
 
-    The Slider pilot gate is applied here first, on the same terms it is applied
-    at dispatch: a Slider zone is quoted against Slider only for the pilot
-    account, and against its fallback — noon Send inside Sharjah, Lalamove
-    outside it — for everybody else. This used to quote every Slider zone
-    against Slider whoever asked, which meant a non-pilot checkout hit Slider's
-    fare endpoint (a dead sandbox that 403s) and parked that error on the cart,
-    for a courier the order was never going to be dispatched to. Quoting what
-    will actually carry it keeps the number the customer is shown honest and
-    keeps the Slider 403 off orders that dispatch on Lalamove.
-
-    `zone_name` carries the emirate by construction, which is all the fallback
-    needs to tell Sharjah ground from the rest — so no address is required here
-    even though `carrier_for` reads one at dispatch.
+    The courier asked is the one that will actually carry the order:
+    `effective_provider` resolves the zone first, so a Slider zone with Slider
+    unconfigured is quoted against its fallback — noon Send inside Sharjah,
+    Lalamove outside it — rather than against a Slider fare endpoint nobody will
+    be booked at. `zone_name` carries the emirate by construction, which is all
+    that fallback needs to tell Sharjah ground from the rest, so no address is
+    required here even though `carrier_for` reads one at dispatch.
 
     Everything else — including third-party zones and pins outside every zone —
     is still quoted against Lalamove, unchanged. Those quotes are not used to
@@ -589,10 +557,10 @@ async def estimate_for_point(
     could be served by a courier instead, and that question stops being
     answerable the moment we stop asking it.
     """
-    # The gate, before the provider dispatch below: a non-pilot Slider zone is
-    # quoted against the courier that will actually carry it, so its fare
-    # endpoint is never reached for a quote that would only be thrown away.
-    provider, _ = effective_provider(provider, zone_name, user_id, email)
+    # Resolved before the dispatch below, so a Slider zone with Slider
+    # unconfigured is quoted against the courier that will actually carry it
+    # rather than a fare endpoint the order will never reach.
+    provider, _ = effective_provider(provider, zone_name)
 
     if provider == NOON_SEND and noon_send_service.is_enabled():
         return await noon_send_service.estimate_for_point(

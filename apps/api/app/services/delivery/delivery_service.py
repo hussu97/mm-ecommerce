@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal
 from zoneinfo import ZoneInfo
@@ -13,7 +12,6 @@ from app.models.cart import Cart
 from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import trial_customer
 from app.services.couriers import courier_service, lalamove_service
 from app.services.delivery import delivery_promise, delivery_zone_service
 from app.services.delivery.delivery_zone_service import Zone
@@ -206,8 +204,6 @@ async def price(
     longitude: Decimal | float | None = None,
     address: str | None = None,
     settings: DeliverySettings | None = None,
-    user_id: uuid.UUID | None = None,
-    email: str | None = None,
 ) -> DeliveryPrice:
     """
     Price delivery to one pin. The single place that decision is made.
@@ -238,13 +234,6 @@ async def price(
     far ones. The test now happens once the pin has resolved to a zone, against
     that zone's own number, falling back to the national one where a zone does
     not set its own.
-
-    `user_id` and `email` are threaded down to the courier estimate for the
-    Slider pilot gate, and for that alone: a non-pilot Slider zone is quoted
-    against the courier that will actually carry it rather than against Slider's
-    dead fare endpoint. They change nothing about the fee itself — a fixed-fee
-    zone charges its own row whoever asks — only which courier is asked for the
-    margin estimate. Most callers pass neither and get the ordinary answer.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -306,10 +295,6 @@ async def price(
         # emirate the drop is in and a pin does not carry one. Every zone name
         # begins with its emirate by construction.
         zone.name if zone else None,
-        # Who is asking, so the Slider pilot gate can quote a non-pilot Slider
-        # zone against its fallback courier instead of Slider itself.
-        user_id=user_id,
-        email=email,
     )
 
     eligible = zone is not None and zone.free_delivery_eligible
@@ -398,21 +383,12 @@ async def calculate_fee(
     latitude: Decimal | float | None = None,
     longitude: Decimal | float | None = None,
     address: str | None = None,
-    user_id: uuid.UUID | None = None,
-    email: str | None = None,
 ) -> Decimal:
     """
     The delivery fee in AED, or `UnserviceableAreaError` if there is no such fee.
 
     An order without coordinates cannot be delivered anyway, so the default fee
     is the honest answer for one.
-
-    The pilot accounts pay nothing, anywhere. Their orders exist to exercise the
-    courier pipeline on production, and a test that costs the tester money is a
-    test that gets run less often than it should. The identity is passed in
-    rather than looked up here so that the two callers that know it — the
-    checkout quote and the order being written — are the only two that can grant
-    it, and so both grant it identically.
     """
     if settings is None:
         settings = await get_settings(db)
@@ -427,17 +403,9 @@ async def calculate_fee(
         longitude=longitude,
         address=address,
         settings=settings,
-        # The same identity the waiver below reads, so the courier the fee is
-        # costed against is the one the pilot gate would actually book.
-        user_id=user_id,
-        email=email,
     )
-    # After `price`, not before: a pilot account still may not order somewhere we
-    # cannot deliver to. Free is a discount, not an exemption from geography.
     if not priced.serviceable:
         raise UnserviceableAreaError()
-    if trial_customer.is_trial_customer(user_id, email):
-        return Decimal("0.00")
     fee = priced.fee
     if fee is None:
         # No pin, so no zone, so no price. This used to answer with the national
@@ -456,8 +424,6 @@ async def quote(
     longitude: Decimal | float | None = None,
     cart: Cart | None = None,
     address: str | None = None,
-    user_id: uuid.UUID | None = None,
-    email: str | None = None,
 ) -> dict:
     """What delivery would cost to this point. See `quote_priced`."""
     payload, _ = await quote_priced(
@@ -467,8 +433,6 @@ async def quote(
         longitude=longitude,
         cart=cart,
         address=address,
-        user_id=user_id,
-        email=email,
     )
     return payload
 
@@ -480,8 +444,6 @@ async def quote_priced(
     longitude: Decimal | float | None = None,
     cart: Cart | None = None,
     address: str | None = None,
-    user_id: uuid.UUID | None = None,
-    email: str | None = None,
 ) -> tuple[dict, DeliveryPrice]:
     """
     What delivery would cost to this point, for the checkout to show live.
@@ -500,13 +462,6 @@ async def quote_priced(
     is not "how much" but "when". It is only present once there is a pin,
     because before then there is no schedule to read it off.
 
-    A pilot account sees free delivery, and sees it the same way anyone over the
-    threshold does. Presenting it as its own kind of discount would mean a
-    second state for the checkout to render, and the account exists to walk the
-    ordinary path rather than a special one — including having its
-    "AED X to go" zeroed, or it would be shown "free delivery" and "AED 150 to
-    go" at the same time.
-
     Returns the payload **and** the `DeliveryPrice` it was built from, because
     `POST /orders/preview` needs both and must not ask twice: `price()` reaches
     a courier's live pricing API in the dynamic zones, so a second call is a
@@ -522,20 +477,10 @@ async def quote_priced(
         longitude=longitude,
         address=address,
         settings=settings,
-        # So the courier estimate parked on the basket is the one that would
-        # actually carry this customer under the Slider pilot gate.
-        user_id=user_id,
-        email=email,
     )
 
-    # A pilot account pays nothing anywhere it can be delivered to. Applied here
-    # rather than inside `price` so the waiver stays a property of who is
-    # ordering rather than of the map — and applied at the same point
-    # `calculate_fee` applies it, which is what keeps the price on the checkout
-    # and the price on the order the same number.
-    waived = trial_customer.is_trial_customer(user_id, email) and priced.serviceable
-    fee = Decimal("0.00") if waived else priced.fee
-    free_applied = priced.free_applied or waived
+    fee = priced.fee
+    free_applied = priced.free_applied
 
     if (
         cart is not None
@@ -544,14 +489,12 @@ async def quote_priced(
         and (priced.estimate is not None or priced.error is not None)
     ):
         # The courier this customer actually resolves to, not the zone's raw
-        # provider: for a non-pilot Slider zone the estimate above was quoted
-        # against the fallback, so the provider parked beside it on the basket
-        # has to name the same courier or the two disagree.
+        # provider: for a Slider zone with Slider unconfigured the estimate above
+        # was quoted against the fallback, so the provider parked beside it on the
+        # basket has to name the same courier or the two disagree.
         effective, _ = courier_service.effective_provider(
             priced.zone.fulfilment_provider if priced.zone else None,
             priced.zone.name if priced.zone else None,
-            user_id,
-            email,
         )
         await lalamove_service.record_cart_estimate(
             db,

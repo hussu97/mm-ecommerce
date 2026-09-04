@@ -417,12 +417,12 @@ async def quote(
     * **third party** is not booked and not priced. There is no number, and
       inventing one would be worse than the honest blank.
 
-    **A human pressing this button is outside the pilot gate.** Automatic
-    routing hands a Slider zone back to noon Send or Lalamove for everyone off
-    `SLIDER_TRIAL_EMAILS`; this does not, and deliberately. The gate exists so
-    the rollout changes nothing on its own, not to stop somebody rescuing a
-    stuck order with the courier standing right there — and whoever presses it
-    is looking at the courier's name and its price.
+    **A human pressing this button is not bound by the automatic routing.**
+    Automatic routing hands a Slider zone back to noon Send or Lalamove only when
+    Slider is unconfigured; this does not consult that at all, and deliberately —
+    the fallback exists so a paid order is never stranded, not to stop somebody
+    rescuing a stuck order with the courier standing right there, and whoever
+    presses it is looking at the courier's name and its price.
     """
     delivery = await _locked(db, order, lock=False)
     await _assert_may_move(db, order, delivery, target)
