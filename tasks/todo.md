@@ -23,8 +23,46 @@ fallback for blue/green deploy skew.
 - [x] Regenerate OpenAPI + `packages/types` (CLAUDE.md rule 8)
 - [x] Tests: API publishes the reason; worker honours it; fallback still works
 - [x] Lint + format + test suites green
-- [ ] Commit + deploy
-- [ ] Verify re-login rate on prod after 24h
+- [x] Commit + deploy (391c8a9e, deploy run 33842099650 green 2026-09-04 06:10 UTC)
+- [x] Verify re-login rate on prod (28-min window, 2026-09-04 06:09-06:37 UTC)
+
+## Result — the churn stopped
+28 minutes on the new image: **2 re-logins total** (keeta 1, deliveroo 1 — both
+one-time startup heals of genuinely dead sessions) and **zero talabat**. The old
+behaviour would have driven ~2 talabat re-logins in that same window.
+
+| | before (09-03) | after (09-04 06:37) |
+|---|---|---|
+| load avg | 9.88 / 6.53 / 4.74 | **1.54 / 1.90 / 3.05** |
+| worker CPU | 110% (at its 1.0 cap) | **0.01%** |
+| re-logins | ~137/day (96 in 16.8h) | 2 in 28 min, both one-off startup heals |
+
+The 5- and 15-min averages were still decaying from the pre-fix state when
+measured, so the steady state is at or below the 1-min figure. **The
+e2-highcpu-4 resize is no longer indicated** — the load was the false-positive
+re-login churn, not genuine demand.
+
+## Review
+Shipped. Verified on prod immediately after the deploy: `list_worker_bundles`
+now publishes a verdict per channel, and **talabat's stored `cookie_expires_at`
+(2026-09-04 05:51:51) was already in the past while the verdict read `None`** —
+exactly the case that used to say "cookie expired" and drive a headed Chrome.
+careem read `needs_bootstrap` (a genuinely dead session the heal loop should
+re-login) and deliveroo/keeta/noon read healthy, so the verdict is not
+blanket-suppressing — only the advisory cookie is skipped, and only for talabat.
+
+Not done, deliberately out of scope — worth a follow-up:
+- `WORKER_MIN_RELOGIN_INTERVAL_SECONDS` is in NONE of the five W9 locations
+  (`.env.example`, PRODUCTION.md, deploy.yml, rollback.yml,
+  docker-compose.prod.yml) and is absent from the worker container's env. It
+  works only because `config.py:153` defaults it to 900, so it cannot be tuned
+  without a code change + redeploy. With the parity fix the floor should now be
+  near-inert for talabat, which makes this low urgency but still a real gap.
+- The success-cooldown skip in `daemon._heal_poll` is silent (bare `continue`).
+  The "refreshed recently" log line lives only in the legacy
+  `reauth._heal_once`, so grepping for it to measure the guard reports 0 no
+  matter what it does. Worth a one-line log if the guard ever needs measuring.
+- The e2-highcpu-4 resize decision is deferred until the next 24h measurement.
 
 ---
 
