@@ -46,7 +46,15 @@ _COMMON_UA = (
 CHANNEL_PROBES: dict[str, ChannelProbe] = {
     "careem": ChannelProbe(
         probe_url="https://partners.careem.com/saturn-ext/merchant/finances",
-        match="/api/saturn-ext/",
+        # The partner API the SPA calls is `partners.careem.com/saturn-ext/…`
+        # (merchant/orders, auth/identity, …), NOT `/api/saturn-ext/`. Careem
+        # dropped the `/api` prefix; the old value matched nothing, so the
+        # Authorization bearer was never captured and every auto-relogin left the
+        # session `needs_bootstrap` with "<no saturn-ext request seen>". The
+        # authenticated saturn-ext XHR carries the bearer + the careem header
+        # profile below; a plain document load of the same path has no auth and is
+        # harmlessly overwritten by the first bearer-carrying call.
+        match="/saturn-ext/",
         # Careem's provider replays Authorization from the header profile (it
         # does not re-add it from tokens), so it must be captured into the profile.
         header_keys=_COMMON_UA

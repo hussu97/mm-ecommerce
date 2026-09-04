@@ -737,7 +737,7 @@ def _assert_careem_bearer_captured(
             )
         raise NeedsHumanLogin(
             "careem: captured a session with no partner bearer — the "
-            "/api/saturn-ext/ call never fired its Authorization header "
+            "/saturn-ext/ call never fired its Authorization header "
             f"(headers seen: {headers}). Not pushing it live; the reauth cron "
             "will retry."
         )
