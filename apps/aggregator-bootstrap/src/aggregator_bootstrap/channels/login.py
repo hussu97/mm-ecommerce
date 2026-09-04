@@ -770,12 +770,12 @@ async def login_careem(
     # still misses — this was the one failure path in this flow that captured
     # nothing, which is why those 44 attempts produced no diagnosis at all.
     email_input = page.locator("input[type='email']").first
-    if not await _careem_email_input_ready(email_input):
+    if not await _careem_input_ready(email_input):
         if await _careem_is_authenticated(page):
             return page
         logger.warning(
             "careem: no email input after %ss at %s — reloading once",
-            _CAREEM_EMAIL_STEP_SECONDS,
+            _CAREEM_STEP_SECONDS,
             page.url,
         )
         await _careem_capture_failure(page, "no-email-input")
@@ -784,7 +784,7 @@ async def login_careem(
             await page.wait_for_timeout(3_000)
         except Exception:  # noqa: BLE001 — a failed reload is not fatal yet
             logger.info("careem: reload failed, checking the page as-is")
-        if not await _careem_email_input_ready(email_input):
+        if not await _careem_input_ready(email_input):
             if await _careem_is_authenticated(page):
                 return page
             await _careem_capture_failure(page, "no-email-input-retry")
@@ -798,17 +798,20 @@ async def login_careem(
     await page.wait_for_timeout(3_000)
     logger.info("careem: after email submit, url=%s", page.url)
 
-    # Verification-code step — one text box, submit, done.
+    # Verification-code step — one text box, submit, done. Same SPA, same slow
+    # box, so the same budget as the email step: with only the email step
+    # widened, the 2026-09-04 re-login got past it and then died here instead,
+    # 20s being just as short for the code box as it was for the email box.
+    # Unlike the email step this does NOT reload — Careem has already sent the
+    # code, and reloading would strand it.
     otp_input = page.locator("input[type='text']").first
-    try:
-        await otp_input.wait_for(state="visible", timeout=20_000)
-    except Exception as exc:  # noqa: BLE001
+    if not await _careem_input_ready(otp_input):
         if await _careem_is_authenticated(page):
             return page
-        await _careem_debug_shot(page, "no-otp-input")
+        await _careem_capture_failure(page, "no-otp-input")
         raise LoginError(
             f"Careem did not present a verification-code input at {page.url}"
-        ) from exc
+        )
     box = mailbox or {}
     try:
         otp = await wait_for_otp(
@@ -838,11 +841,12 @@ async def login_careem(
     # ("Enter Careem password"), so the flow is email → OTP → password.
     if not await _careem_is_authenticated(page):
         pwd = password or settings.CAREEM_PASSWORD or ""
-        pwd_input = page.locator("input[type='password']")
-        try:
-            await pwd_input.wait_for(state="visible", timeout=20_000)
-        except Exception:  # noqa: BLE001 — no password step on this account/build
-            await _careem_debug_shot(page, "no-password-step")
+        pwd_input = page.locator("input[type='password']").first
+        # Same budget again. This step legitimately may not exist (some accounts
+        # finish at the OTP), so a miss is not fatal — but it must be a real
+        # absence, not this box losing a race it would have won with more time.
+        if not await _careem_input_ready(pwd_input):
+            await _careem_capture_failure(page, "no-password-step")
         else:
             if not pwd:
                 await _careem_debug_shot(page, "password-needed")
@@ -863,14 +867,16 @@ async def login_careem(
     return page
 
 
-#: How long to let the client-rendered Careem email form appear before retrying.
-#: Generous on purpose: the cost of waiting is seconds inside a 480s re-login
-#: budget, and the cost of being too eager was two days of a dead channel.
-_CAREEM_EMAIL_STEP_SECONDS = 45
+#: How long to let any client-rendered Careem form field appear. Generous on
+#: purpose: the cost of waiting is seconds inside a 480s re-login budget, and the
+#: cost of being too eager was two days of a dead channel. Every step of this
+#: flow renders in the same SPA on the same slow box, so they share one budget —
+#: fixing only the email step just moved the failure to the OTP step.
+_CAREEM_STEP_SECONDS = 45
 
 
-async def _careem_email_input_ready(locator) -> bool:
-    """Whether the email box is visible within the step budget.
+async def _careem_input_ready(locator) -> bool:
+    """Whether a login-form field is visible within the step budget.
 
     `.first` on the caller's locator matters: Careem renders responsive variants,
     and `wait_for` against a locator that matches more than one element raises a
@@ -878,9 +884,7 @@ async def _careem_email_input_ready(locator) -> bool:
     same opaque "did not expose an email input" as a genuine miss.
     """
     try:
-        await locator.wait_for(
-            state="visible", timeout=_CAREEM_EMAIL_STEP_SECONDS * 1_000
-        )
+        await locator.wait_for(state="visible", timeout=_CAREEM_STEP_SECONDS * 1_000)
         return True
     except Exception:  # noqa: BLE001 — absent, hidden, or ambiguous: all "not ready"
         return False

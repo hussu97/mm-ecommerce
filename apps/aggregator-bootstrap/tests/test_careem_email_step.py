@@ -36,17 +36,17 @@ class _Locator:
 # ── the readiness helper ────────────────────────────────────────────────────────
 
 
-def test_email_input_ready_is_true_when_the_form_appears():
-    assert asyncio.run(L._careem_email_input_ready(_Locator(ready_on_call=1)))
+def test_input_ready_is_true_when_the_form_appears():
+    assert asyncio.run(L._careem_input_ready(_Locator(ready_on_call=1)))
 
 
-def test_email_input_ready_is_false_on_timeout_rather_than_raising():
+def test_input_ready_is_false_on_timeout_rather_than_raising():
     """A miss must be a boolean the caller can retry on, not an exception that
     aborts the login — the retry is the whole point."""
-    assert not asyncio.run(L._careem_email_input_ready(_Locator(ready_on_call=99)))
+    assert not asyncio.run(L._careem_input_ready(_Locator(ready_on_call=99)))
 
 
-def test_email_input_ready_swallows_a_strict_mode_violation():
+def test_input_ready_swallows_a_strict_mode_violation():
     """Careem renders responsive variants. `wait_for` against a locator matching
     more than one element raises a Playwright strict-mode violation, which this
     flow used to report as the same opaque 'did not expose an email input' as a
@@ -56,13 +56,13 @@ def test_email_input_ready_swallows_a_strict_mode_violation():
         async def wait_for(self, **kwargs):
             raise RuntimeError("strict mode violation: resolved to 2 elements")
 
-    assert not asyncio.run(L._careem_email_input_ready(_Strict()))
+    assert not asyncio.run(L._careem_input_ready(_Strict()))
 
 
 def test_the_step_budget_is_generous_enough_to_outlast_a_slow_spa_boot():
     """Pin the intent: seconds inside a 480s re-login budget are cheap; the 20s
     that shipped before cost two days of a dead channel."""
-    assert L._CAREEM_EMAIL_STEP_SECONDS >= 45
+    assert L._CAREEM_STEP_SECONDS >= 45
 
 
 # ── the evidence capture ────────────────────────────────────────────────────────
@@ -153,13 +153,13 @@ def _run_email_step(page, monkeypatch, tmp_path):
 
     async def _step():
         email_input = page.locator("input[type='email']").first
-        if not await L._careem_email_input_ready(email_input):
+        if not await L._careem_input_ready(email_input):
             if await L._careem_is_authenticated(page):
                 return "authed"
             await L._careem_capture_failure(page, "no-email-input")
             await page.reload(wait_until="domcontentloaded", timeout=60_000)
             await page.wait_for_timeout(3_000)
-            if not await L._careem_email_input_ready(email_input):
+            if not await L._careem_input_ready(email_input):
                 await L._careem_capture_failure(page, "no-email-input-retry")
                 raise L.LoginError(f"no email input at {page.url}")
         return "ready"
@@ -205,8 +205,48 @@ def test_login_careem_really_retries_and_captures_on_both_misses():
     src = inspect.getsource(L.login_careem)
     step = src.split("# auth.careem.com email step")[1].split("Verification-code")[0]
 
-    assert step.count("_careem_email_input_ready") == 2, "must re-check after reload"
+    assert step.count("_careem_input_ready") == 2, "must re-check after reload"
     assert step.count("_careem_capture_failure") == 2, "evidence on BOTH misses"
     assert "page.reload" in step, "the retry must actually reload the SPA"
     assert ".first" in step, "strict-mode guard on the email locator"
     assert "timeout=20_000" not in step, "the flat 20s wait must be gone"
+
+
+# ── every step of the flow shares the budget ───────────────────────────────────
+
+
+def test_no_step_of_the_careem_login_keeps_a_flat_20s_wait():
+    """The 2026-09-04 lesson, pinned.
+
+    Widening only the email step moved the failure one step down: that re-login
+    reached `email step at …` for the first time in two days, submitted, and then
+    died on the verification-code box, whose wait was still 20s. Email, OTP and
+    password all render in the same SPA on the same slow box, so they share
+    `_CAREEM_STEP_SECONDS`. A new flat wait anywhere in this flow re-opens it.
+    """
+    import inspect
+
+    src = inspect.getsource(L.login_careem)
+    assert "timeout=20_000" not in src
+    assert src.count("_careem_input_ready") == 4  # email x2 (retry), otp, password
+
+
+def test_the_otp_step_does_not_reload():
+    """The email step reloads to re-boot a stalled SPA. The OTP step must not:
+    Careem has already emailed the code by then, and a reload strands it."""
+    import inspect
+
+    src = inspect.getsource(L.login_careem)
+    otp_step = src.split("Verification-code step")[1].split("Password step")[0]
+    assert "page.reload" not in otp_step  # the call, not the word in the comment
+
+
+def test_a_missing_password_step_is_still_survivable():
+    """Some accounts finish at the OTP. That miss must stay non-fatal — it only
+    had to stop being a race the box could lose."""
+    import inspect
+
+    src = inspect.getsource(L.login_careem)
+    pwd_step = src.split("Password step")[1]
+    assert '_careem_capture_failure(page, "no-password-step")' in pwd_step
+    assert "raise LoginError" in pwd_step  # only the no-password-stored case
