@@ -22,7 +22,15 @@ Plan: /Users/hussainabbasi/.claude/plans/lets-plan-for-slider-crispy-wirth.md
 - [x] fulfilment_reassignment: quote/move recognise SLIDER_PROVIDERS; allowed_targets directional guard (car never→bike) — **Phase 4 backend delivered early here**
 - [x] +16 tests (helpers, effective_provider tiers, estimate vehicle-pass, dispatch records-car substitution, allowed_targets bike↔car); full suite 2608 green; ruff clean
 
-## Phase 2 — Per-area Voronoi polygon map + Sharjah-branch provider simulation + cart backfill
+## Phase 2 — Per-area Voronoi polygon map + Sharjah-branch provider simulation + cart backfill ✅ DONE
+- [x] Extracted 97 areas -> app/data/uae_delivery_areas.json
+- [x] Probed PROD Slider fares for all 97 areas from the VM (34.18.98.2); merged with real lalamove/noon -> app/data/courier_costs.json
+- [x] scripts/build_delivery_areas.py: per-emirate Voronoi (gap-filled), fee inherited from v2 band by centroid, provider = cheapest + >5 lalamove margin + fee>=80->3rd party + bike/car tier, N/S batch groups, per-polygon alternates (noon added for Sharjah slider)
+- [x] Committed v5 geojson + assignments (97 polys: 30 slider_bike, 22 slider_car, 8 noon, 1 lalamove, 36 third_party)
+- [x] Migration 174: rename Dubai->South of Sharjah / Northern Emirates->North of Sharjah, seed new ACTIVE version, cart delivery_quote_* backfill; verified on throwaway PG (upgrade/downgrade/re-upgrade)
+- [x] test_per_area_map.py validates committed map vs rules (103 cases); full suite 2711 green; ruff clean
+- [x] NOTE: prod-fare result — Slider dominates, lalamove=1 (batching minimal). Filename collision bug fixed (v3 was 085's file; now v5).
+- [ ] PENDING: push to main + deploy to prod + verify (per user request)
 ## Phase 3 — Admin polygon data-table UI (paginated/search/sort/filter + version switch + in-place attr edit)
 ## Phase 4 — Courier switching bike->car (not car->bike) — backend DONE in Phase 1; remaining: admin ChangeFulfilmentDialog/DeliveryPanel UI (do with Phase 3)
 
