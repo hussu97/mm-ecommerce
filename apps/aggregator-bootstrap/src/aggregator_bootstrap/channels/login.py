@@ -12,9 +12,11 @@ fills the form after Cloudflare has passed. OTP/captcha channels stay headed.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 from ..config import settings
 from ..mailbox import OTPPollingError, wait_for_otp
@@ -757,16 +759,38 @@ async def login_careem(
                 continue
         await page.wait_for_timeout(3_000)
 
-    # auth.careem.com email step.
-    email_input = page.locator("input[type='email']")
-    try:
-        await email_input.wait_for(state="visible", timeout=20_000)
-    except Exception as exc:  # noqa: BLE001
+    # auth.careem.com email step. The form is CLIENT-rendered — the document is
+    # a ~5 KB SPA shell and the input only exists once the bundle has booted — so
+    # this wait is a race against how fast the box can run JavaScript, not against
+    # the network. On this 2-vCPU VM, with headed Chrome pinned to one core by the
+    # worker's CPU cap, a flat 20s lost that race and stranded Careem for 44
+    # consecutive re-logins from 2026-09-02 12:17 (each one then arming the
+    # needs-human hour backoff, so the channel sat dead for two days while its
+    # sales went uningested). Wait longer, reload once, and leave evidence if it
+    # still misses — this was the one failure path in this flow that captured
+    # nothing, which is why those 44 attempts produced no diagnosis at all.
+    email_input = page.locator("input[type='email']").first
+    if not await _careem_email_input_ready(email_input):
         if await _careem_is_authenticated(page):
             return page
-        raise LoginError(
-            f"Careem login did not expose an email input at {page.url}"
-        ) from exc
+        logger.warning(
+            "careem: no email input after %ss at %s — reloading once",
+            _CAREEM_EMAIL_STEP_SECONDS,
+            page.url,
+        )
+        await _careem_capture_failure(page, "no-email-input")
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=60_000)
+            await page.wait_for_timeout(3_000)
+        except Exception:  # noqa: BLE001 — a failed reload is not fatal yet
+            logger.info("careem: reload failed, checking the page as-is")
+        if not await _careem_email_input_ready(email_input):
+            if await _careem_is_authenticated(page):
+                return page
+            await _careem_capture_failure(page, "no-email-input-retry")
+            raise LoginError(
+                f"Careem login did not expose an email input at {page.url}"
+            )
     logger.info("careem: email step at %s", page.url)
     await email_input.fill(address)
     otp_since = datetime.now(UTC)
@@ -837,6 +861,60 @@ async def login_careem(
     )
     await _careem_debug_shot(page, "final")
     return page
+
+
+#: How long to let the client-rendered Careem email form appear before retrying.
+#: Generous on purpose: the cost of waiting is seconds inside a 480s re-login
+#: budget, and the cost of being too eager was two days of a dead channel.
+_CAREEM_EMAIL_STEP_SECONDS = 45
+
+
+async def _careem_email_input_ready(locator) -> bool:
+    """Whether the email box is visible within the step budget.
+
+    `.first` on the caller's locator matters: Careem renders responsive variants,
+    and `wait_for` against a locator that matches more than one element raises a
+    Playwright strict-mode violation — which this flow would have reported as the
+    same opaque "did not expose an email input" as a genuine miss.
+    """
+    try:
+        await locator.wait_for(
+            state="visible", timeout=_CAREEM_EMAIL_STEP_SECONDS * 1_000
+        )
+        return True
+    except Exception:  # noqa: BLE001 — absent, hidden, or ambiguous: all "not ready"
+        return False
+
+
+async def _careem_capture_failure(page, tag: str) -> None:
+    """Screenshot + a DOM/text dump for a login step that did not find its form.
+
+    A screenshot alone did not settle the 2026-09-04 diagnosis — knowing WHICH
+    inputs exist, and what the page says, is what separates "the SPA has not
+    booted yet" from "Careem changed the markup" from "we are on a challenge
+    page". Best-effort: diagnostics must never break a login.
+    """
+    await _careem_debug_shot(page, tag)
+    try:
+        info = await page.evaluate(
+            """() => ({
+                url: location.href,
+                title: document.title,
+                readyState: document.readyState,
+                inputs: [...document.querySelectorAll('input')].map(i => ({
+                    type: i.type, name: i.name, id: i.id,
+                    visible: !!(i.offsetWidth || i.offsetHeight)
+                })),
+                iframes: [...document.querySelectorAll('iframe')]
+                    .map(f => f.src).slice(0, 8),
+                text: (document.body ? document.body.innerText : '').slice(0, 1200)
+            })"""
+        )
+        path = Path(settings.STORAGE_STATE_DIR) / f"careem-debug-{tag}.json"
+        path.write_text(json.dumps(info, indent=1)[:20_000], encoding="utf-8")
+        logger.warning("careem: %s dump -> %s", tag, path)
+    except Exception:  # noqa: BLE001 — diagnostics must never break the flow
+        logger.info("careem: could not dump the DOM for %s", tag)
 
 
 async def _careem_debug_shot(page, tag: str) -> None:
