@@ -596,12 +596,30 @@ async def _keeta_first_visible(page, selectors):
 
 
 async def _keeta_click_submit(page) -> None:
+    """Advance a keeta login step. Keeta's "Continue"/"Sign in" control is a
+    `<div class="submit-btn">`, not a real button, and a plain Playwright click on
+    it intermittently hangs its 5s actionability-then-dispatch on the CPU-capped VM
+    (the div passes visible/enabled/stable, then the click never lands) — which
+    used to raise straight out of the login and strand the whole attempt
+    (2026-09-04). So every strategy is best-effort and falls through: a normal
+    click, then a forced click (bypasses the pointer-events/overlay check), then
+    Enter in the focused field, which submits the form just the same."""
     for selector in (".submit-btn", "button[type='submit']"):
         target = page.locator(selector).first
-        if await target.count():
-            await target.click(timeout=5_000)
-            return
-    await page.keyboard.press("Enter")
+        try:
+            if await target.count():
+                await target.click(timeout=5_000)
+                return
+        except Exception:  # noqa: BLE001 — the click hung/was intercepted; try harder
+            try:
+                await target.click(timeout=3_000, force=True)
+                return
+            except Exception:  # noqa: BLE001 — fall through to the keyboard
+                break
+    try:
+        await page.keyboard.press("Enter")
+    except Exception:  # noqa: BLE001 — best effort; the caller re-checks state
+        pass
 
 
 async def _keeta_prime_region(context, page) -> None:
@@ -622,6 +640,38 @@ async def _keeta_prime_region(context, page) -> None:
         " window.localStorage && window.localStorage.setItem('region', 'AE');"
         " } catch (e) {} }"
     )
+
+
+async def _keeta_capture_failure(page, tag: str) -> None:
+    """Screenshot + URL/sessionStorage/text dump for a keeta login that stalled.
+
+    The auto path fails opaquely otherwise ("did not reach an authenticated
+    surface"), and keeta's authenticated marker is `LOGIN_ACCOUNTID` in
+    sessionStorage — so knowing what the page shows and which storage keys exist
+    separates "the redirect has not settled yet" from "a post-password wall" from
+    "the credentials were rejected". Best-effort; diagnostics must never break a
+    login."""
+    try:
+        path = f"{settings.STORAGE_STATE_DIR}/keeta-debug-{tag}.png"
+        await page.screenshot(path=path, full_page=True)
+        logger.warning("keeta: debug screenshot -> %s", path)
+    except Exception:  # noqa: BLE001 — diagnostics must never break the flow
+        pass
+    try:
+        info = await page.evaluate(
+            """() => ({
+                url: location.href,
+                title: document.title,
+                sessionKeys: Object.keys(sessionStorage || {}),
+                accountId: sessionStorage.getItem('LOGIN_ACCOUNTID') || '',
+                text: (document.body ? document.body.innerText : '').slice(0, 1000)
+            })"""
+        )
+        path = Path(settings.STORAGE_STATE_DIR) / f"keeta-debug-{tag}.json"
+        path.write_text(json.dumps(info, indent=1)[:20_000], encoding="utf-8")
+        logger.warning("keeta: %s dump -> %s", tag, path)
+    except Exception:  # noqa: BLE001 — diagnostics must never break the flow
+        logger.info("keeta: could not dump the DOM for %s", tag)
 
 
 async def login_keeta(
@@ -702,14 +752,23 @@ async def login_keeta(
         raise LoginError("Keeta password control was not found after email entry.")
     await password_input.fill(secret)
     await _keeta_click_submit(page)
-    await page.wait_for_timeout(8_000)
-    if await _keeta_verification_wall(page):
-        raise AntiBotChallengeError(
-            "Keeta demanded verification after the password step; not bypassed."
-        )
-    if not await _keeta_has_authenticated_surface(page):
-        raise LoginError("Keeta login did not reach an authenticated portal surface.")
-    return page
+    # Sign-in redirects (passport.mykeeta.com → the merchant app) and only THEN
+    # writes LOGIN_ACCOUNTID to sessionStorage. A single fixed wait raced that and
+    # reported "did not reach an authenticated surface" while the portal was still
+    # settling (2026-09-04). Poll for the authenticated marker instead — same
+    # settle idea the careem bearer capture uses — and only give up after it has
+    # had real time to land.
+    for _ in range(12):
+        await page.wait_for_timeout(3_000)
+        if await _keeta_has_authenticated_surface(page):
+            return page
+        if await _keeta_verification_wall(page):
+            await _keeta_capture_failure(page, "post-password-wall")
+            raise AntiBotChallengeError(
+                "Keeta demanded verification after the password step; not bypassed."
+            )
+    await _keeta_capture_failure(page, "no-auth-surface")
+    raise LoginError("Keeta login did not reach an authenticated portal surface.")
 
 
 # --- Careem -----------------------------------------------------------------
