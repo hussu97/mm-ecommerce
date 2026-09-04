@@ -127,7 +127,7 @@ _CREATING = "/core-api/creating"
 #: they live here as constants rather than as five-place env vars. The price tag
 #: is the authoritative aggregator product set + prices; the group is its
 #: membership mirror. Confirmed live 2026-08-31. See
-#: docs/aggregator-catalog-hours-sync-audit.md.
+#: docs/integrators-and-aggregators.md.
 FOODICS_GRUBTECH_PRICE_TAG_ID = "a056ee7e-5823-47af-9ab5-1029508c996b"
 FOODICS_GRUBTECH_GROUP_ID = "a062ba1a-70b6-4bd7-8dac-f7986f33727f"
 

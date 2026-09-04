@@ -19,7 +19,7 @@ Layers:
 - `plan_push` — the write entry point: 503s unless `CATALOG_SYNC_ENABLED`, and
   returns a dry-run plan (the approved deltas it *would* apply) in Phase 1.
 
-Routing (from `docs/aggregator-catalog-hours-sync-audit.md`): menu writes for the
+Routing (from `docs/integrators-and-aggregators.md`): menu writes for the
 two integrated branches target Foodics' `Grubtech` group + price tag; non-Foodics
 outlets target the portal; hours fan out per portal for every outlet.
 """

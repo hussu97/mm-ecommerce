@@ -90,6 +90,61 @@ async def test_run_job_guarded_escalates_dead_session_to_relogin(monkeypatch):
     assert (JobKind.RELOGIN, "talabat") in q.pending()
 
 
+async def test_run_job_guarded_chains_keeta_orders_after_a_fresh_relogin(
+    monkeypatch, tmp_path
+):
+    """Keeta's merchant session dies fast, so the 3-hourly pull hydrates a dead one.
+    A successful keeta RELOGIN must pull orders immediately, while it is fresh."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+
+    async def _ok(_job):
+        return reauth.ReloginOutcome.OK
+
+    monkeypatch.setattr(daemon, "_dispatch", _ok)
+    monkeypatch.setattr(daemon, "_timeout_for", lambda kind: 30)
+
+    q = JobQueue()
+    await daemon.run_job_guarded(q, Job(kind=JobKind.RELOGIN, seq=0, channel="keeta"))
+    assert (JobKind.KEETA_ORDERS, "keeta") in q.pending()
+
+
+async def test_run_job_guarded_does_not_chain_for_other_channels(monkeypatch, tmp_path):
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+
+    async def _ok(_job):
+        return reauth.ReloginOutcome.OK
+
+    monkeypatch.setattr(daemon, "_dispatch", _ok)
+    monkeypatch.setattr(daemon, "_timeout_for", lambda kind: 30)
+
+    q = JobQueue()
+    await daemon.run_job_guarded(q, Job(kind=JobKind.RELOGIN, seq=0, channel="noon"))
+    assert q.pending() == set()  # only keeta chains an orders pull
+
+
+async def test_run_job_guarded_does_not_reloop_relogin_when_in_cooldown(
+    monkeypatch, tmp_path
+):
+    """A job that keeps failing signed-out (a keeta session that died within seconds
+    of its relogin) must NOT re-drive a headed relogin while the success floor holds
+    — otherwise it tight-loops headed Chrome and pegs the box's CPU."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(reauth.settings, "WORKER_MIN_RELOGIN_INTERVAL_SECONDS", 900)
+    reauth._record_relogin_success("keeta")  # a relogin just succeeded
+
+    async def _dead(_job):
+        raise NeedsHumanLogin("signed out again within seconds")
+
+    monkeypatch.setattr(daemon, "_dispatch", _dead)
+    monkeypatch.setattr(daemon, "_timeout_for", lambda kind: 30)
+
+    q = JobQueue()
+    await daemon.run_job_guarded(
+        q, Job(kind=JobKind.KEETA_ORDERS, seq=0, channel="keeta")
+    )
+    assert q.pending() == set()  # in cooldown → no relogin, no loop
+
+
 # ── job → coroutine routing ──────────────────────────────────────────────────
 async def test_dispatch_relogin_clears_backoff_on_success(monkeypatch):
     calls = {}

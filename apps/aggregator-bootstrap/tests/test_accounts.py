@@ -14,7 +14,9 @@ def test_overlay_env_fills_blank_db_row(monkeypatch):
         "aggregator_bootstrap.accounts.settings.DELIVEROO_PASSWORD", "env-secret"
     )
     account = overlay_env(
-        PortalAccount(channel="deliveroo", email="", password="", login_method="email_password")
+        PortalAccount(
+            channel="deliveroo", email="", password="", login_method="email_password"
+        )
     )
     assert account.email == "from-env@x"
     assert account.password == "env-secret"

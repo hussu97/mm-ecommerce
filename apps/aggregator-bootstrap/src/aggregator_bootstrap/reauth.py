@@ -21,7 +21,7 @@ from pathlib import Path
 
 import typer
 
-from . import push
+from . import observability, push
 from .accounts import PortalAccount, from_env, pull_account
 from .browser import ChromeLaunchError, NeedsHumanLogin, login_with_account
 from .config import settings
@@ -241,6 +241,9 @@ def _record_reauth_failure(channel: str, *, transient: bool = False) -> None:
         "transient" if transient else "needs-human",
         int(delay),
     )
+    # Report every failed reauth to Sentry, fingerprinted per channel so the
+    # backoff's own debouncing keeps it to one grouped issue rather than spam.
+    observability.note_reauth_failure(channel, transient=transient, failures=failures)
     if not transient:
         # The irreducible zero-touch gap: automated re-login cannot clear a
         # captcha/passkey/press-and-hold wall or get an OTP when the mailbox is
@@ -257,6 +260,10 @@ def _record_reauth_failure(channel: str, *, transient: bool = False) -> None:
             channel,
             int(delay),
         )
+        # The Sentry event to page on: distinct fingerprint from the transient
+        # reauth-failed above, so an alert rule can notify immediately on a
+        # channel that truly needs a person at the VM.
+        observability.note_needs_human(channel, next_attempt_seconds=int(delay))
     # Publish the next-attempt time to the API so the ingest's reauth wait can bail
     # out early instead of burning the full AGGREGATOR_REAUTH_WAIT_SECONDS on a
     # login this daemon will not re-drive until `next_at`. Best-effort: the backoff
@@ -346,6 +353,15 @@ def _heal_once(only: set[str] | None = None) -> int:
         reason = _channel_needs_reauth(bundle)
         if reason is None:
             _clear_reauth_backoff(ch)  # healthy → forget any past failures
+            continue
+        if bundle.get("server_refreshable"):
+            # The API re-mints this channel's session itself (httpx); a headed
+            # relogin would waste a Chrome on work the next API sweep does.
+            logger.info(
+                "reauth: %s is %s but server-refreshable — leaving it to the API",
+                ch,
+                reason,
+            )
             continue
         remaining = _reauth_cooldown_remaining(ch)
         if remaining > 0:

@@ -25,6 +25,7 @@ from urllib.parse import quote
 
 import httpx
 
+from app.core.background import report_result
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -180,3 +181,6 @@ def warm_in_background(urls: Iterable[str]) -> None:
     # holds it until it finishes and the callback stops the set being a leak.
     _pending.add(task)
     task.add_done_callback(_pending.discard)
+    # Report an exception that escapes the warm body to Sentry rather than
+    # letting it disappear with the task's last reference.
+    task.add_done_callback(report_result)

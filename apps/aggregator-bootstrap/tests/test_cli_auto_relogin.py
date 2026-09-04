@@ -203,6 +203,37 @@ def test_heal_once_skips_a_channel_in_backoff(monkeypatch, tmp_path):
     assert healed == 0
 
 
+def test_heal_once_skips_a_server_refreshable_channel(monkeypatch, tmp_path):
+    """A server-refreshable channel (Deliveroo) is renewed by the API itself over
+    httpx before every sweep; the worker must NOT burn a headed Chrome re-logging
+    it in. The API marks the bundle `server_refreshable` from the one auth
+    descriptor, and the heal loop leaves it alone."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+    _stub_backoff_report(monkeypatch)
+    monkeypatch.setattr(
+        reauth.push,
+        "pull_sessions",
+        _async_return(
+            [
+                {
+                    "channel": "deliveroo",
+                    "status": "needs_bootstrap",
+                    "unusable_reason": "needs_bootstrap",
+                    "server_refreshable": True,
+                }
+            ]
+        ),
+    )
+    attempts: list[str] = []
+    monkeypatch.setattr(
+        reauth,
+        "_try_auto_relogin",
+        lambda ch: attempts.append(ch) or reauth.ReloginOutcome.OK,
+    )
+    assert reauth._heal_once() == 0
+    assert attempts == []  # left to the API sweep — no headed relogin
+
+
 def _async_return(value):
     async def _f(*a, **k):
         return value

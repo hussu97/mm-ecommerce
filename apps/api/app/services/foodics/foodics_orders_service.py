@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from app.core.background import report_result
 from app.core.config import settings
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderStatusEnum
@@ -188,6 +189,8 @@ def push_status_out_in_background(
         task = asyncio.create_task(_run())
         _pending.add(task)
         task.add_done_callback(_pending.discard)
+        # _run() logs its own failures; this reports anything escaping it.
+        task.add_done_callback(report_result)
     except RuntimeError:
         # No running loop — nothing to mirror from here.
         pass

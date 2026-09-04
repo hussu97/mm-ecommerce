@@ -665,6 +665,14 @@ services:
       AGGREGATOR_API_URL: ${AGGREGATOR_API_URL:-https://api.meltingmomentscakes.com}
       AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
       STORAGE_STATE_DIR: /data/sessions
+      # Sentry for the browser half. This block is an ALLOW-LIST, not an env_file
+      # (see the api anchor's note): a value written to the VM `.env` and not
+      # named here never reaches the container. The worker does NOT use the
+      # api-environment anchor, so the DSN has to be listed here explicitly — its
+      # absence is exactly the CLAUDE.md W9 item-5 silent failure. With it unset
+      # (empty), the daemon's init is a clean no-op.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       # MUST stay "false": the anti-bot channels (Akamai/PerimeterX/Cloudflare)
       # drop headless real Chrome, so every per-job Chrome has to run HEADED under
       # the entrypoint's resident Xvfb display. This compose env overrides the

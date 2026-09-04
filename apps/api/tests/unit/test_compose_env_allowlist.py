@@ -226,6 +226,26 @@ def test_the_register_does_not_run_the_storefront_scheduler():
     assert "STOREFRONT_SCHEDULER_ENABLED" not in pos_env
 
 
+def test_the_aggregator_worker_gets_sentry():
+    """
+    The browser half's blind spot, asserted rather than remembered.
+
+    `aggregator-worker` runs the scrapers and does NOT use the api-environment
+    anchor — it declares its own literal `environment:` block. So `SENTRY_DSN`
+    has to be named there explicitly, or the daemon (which now initialises
+    Sentry) never sees the DSN and every scraper login-fail / needs-human /
+    zero-capture stays a stdout log with nothing paging anyone. Its absence is
+    silent — the exact CLAUDE.md W9 item-5 class the outages above are about —
+    so it is enforced here.
+    """
+    worker_env = _load_compose()["services"]["aggregator-worker"]["environment"]
+    for key in ("SENTRY_DSN", "SENTRY_ENVIRONMENT"):
+        assert key in worker_env, (
+            f"{key} never reaches the aggregator worker, so its scraper failures "
+            "are invisible in Sentry"
+        )
+
+
 def _default_of(expression: str) -> str | None:
     """The `X` out of `${VAR:-X}`, or None if the entry has no default."""
     m = re.fullmatch(r"\$\{[A-Z0-9_]+:-(.*)\}", str(expression).strip())

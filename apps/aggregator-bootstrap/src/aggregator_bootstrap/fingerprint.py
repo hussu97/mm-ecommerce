@@ -87,6 +87,27 @@ def free_debug_port() -> int:
 #: developer's macOS where the sandbox would work anyway.
 CONTAINER_CHROME_ARGS: list[str] = ["--no-sandbox", "--disable-dev-shm-usage"]
 
+#: Background-only flags that trim host CPU/RAM per browser without touching the
+#: page-observable fingerprint. Each disables a HOST/BACKGROUND subsystem (crash
+#: upload, profile sync, component + background update pings, first-run UI, the
+#: hang monitor); NONE of them is readable by page JS — the same criterion the
+#: comment above uses to call `--no-sandbox` safe. Deliberately EXCLUDES anything
+#: page-observable (no `--disable-features`, no `--js-flags`, no automation flag,
+#: no UA/viewport change) and is applied ONLY to the automated warm/pull launches,
+#: never to the standalone `login` spawn that meets the initial anti-bot wall.
+#: Gated by `WORKER_LEAN_CHROME` so it is revertible on the VM without a deploy.
+LOW_OVERHEAD_CHROME_ARGS: list[str] = [
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-breakpad",
+    "--disable-sync",
+    "--disable-default-apps",
+    "--disable-client-side-phishing-detection",
+    "--disable-hang-monitor",
+    "--no-first-run",
+    "--no-default-browser-check",
+]
+
 
 def standalone_chrome_args(
     *,

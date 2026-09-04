@@ -165,7 +165,9 @@ def _fetch_latest_otp(
         port = 993
     user = str(box.get("username") or settings.OTP_IMAP_USER or "").strip()
     password = str(box.get("password") or settings.OTP_IMAP_PASSWORD or "")
-    folder = str(box.get("folder") or settings.OTP_IMAP_FOLDER or "INBOX").strip() or "INBOX"
+    folder = (
+        str(box.get("folder") or settings.OTP_IMAP_FOLDER or "INBOX").strip() or "INBOX"
+    )
     if not host:
         raise OTPPollingError(
             "no IMAP host: store a mailbox on the aggregator login recipe, "

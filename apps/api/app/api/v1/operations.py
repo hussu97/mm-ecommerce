@@ -3,7 +3,7 @@ Transfer orders, production, spot checks, reservations, notification rules,
 and the live branches dashboard.
 
 These close the last verified gaps against the Foodics audit — see
-docs/foodics-coverage-matrix.md.
+docs/integrators-and-aggregators.md.
 """
 
 from __future__ import annotations

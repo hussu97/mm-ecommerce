@@ -2,7 +2,7 @@
 
 Mirror image of `menu_readers._HOURS_READERS`: that reads each marketplace's
 opening hours, this would write them. **No channel has a writer yet.** Every
-push reachability is documented in `docs/integrator-capabilities.md:136-159`, and
+push reachability is documented in `docs/integrators-and-aggregators.md`, and
 several channels (Keeta, Deliveroo, Noon) can only be written through the headed
 anti-bot worker on the VM, while Careem/Talabat still need their save endpoint
 probed. So this is the seam the branch-hours cron calls, not a working writer:

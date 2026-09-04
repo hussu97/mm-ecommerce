@@ -37,6 +37,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import report_result
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.external_item_map import ExternalItemMap
@@ -465,3 +466,6 @@ def push_change_in_background(
         return
     _pending.add(task)
     task.add_done_callback(_pending.discard)
+    # _run() swallows its own GrubOpsError/Exception; this reports anything that
+    # escapes it (a bug in the wrapper itself) instead of losing it.
+    task.add_done_callback(report_result)

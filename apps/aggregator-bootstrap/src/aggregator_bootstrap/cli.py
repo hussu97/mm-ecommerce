@@ -18,6 +18,7 @@ from .browser import (
 from .channels.probes import CHANNEL_PROBES
 from .daemon import run_daemon
 from .hydrate import hydrate_from_api
+from .observability import init_sentry
 from .reauth import (
     ReloginOutcome,
     _heal_once,
@@ -30,6 +31,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("aggregator-bootstrap")
 
 app = typer.Typer(help="Aggregator session bootstrap/warmer worker.")
+
+
+@app.callback()
+def _bootstrap_observability() -> None:
+    """Initialise Sentry before any command runs — the daemon and every one-shot.
+
+    A Typer callback fires ahead of the chosen subcommand, so `serve` and a
+    hand-run `login`/`heal-sessions` all report to Sentry with no per-command
+    wiring. No-op without a `SENTRY_DSN` (local/dev).
+    """
+    init_sentry()
+
 
 _CHANNELS = tuple(CHANNEL_PROBES)
 

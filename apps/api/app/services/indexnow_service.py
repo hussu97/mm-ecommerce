@@ -36,6 +36,7 @@ import logging
 
 import httpx
 
+from app.core.background import report_result
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -180,3 +181,6 @@ def submit_in_background(paths: list[str]) -> None:
     # what stops the set being a leak.
     _pending.add(task)
     task.add_done_callback(_pending.discard)
+    # Report an exception that escapes the task body (past submit()'s own
+    # handling) instead of letting it vanish with the task's last reference.
+    task.add_done_callback(report_result)

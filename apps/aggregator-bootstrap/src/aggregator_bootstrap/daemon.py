@@ -22,11 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import browser, push, reauth, warm
+from . import browser, observability, push, reauth, warm
 from .browser import NeedsHumanLogin, NotLoggedInError
 from .channels.probes import CHANNEL_PROBES
 from .config import settings
@@ -69,6 +70,19 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _jitter() -> timedelta:
+    """A random 0..`WORKER_JITTER_SECONDS` spread (zero when the setting is <= 0).
+
+    Added to every scheduled fire so jobs pinned to the same wall-clock hour (the
+    two nightly warms) and boot-relative interval jobs that would re-align on a
+    restart do not arrive at the single consumer in a burst.
+    """
+    span = settings.WORKER_JITTER_SECONDS
+    if span <= 0:
+        return timedelta(0)
+    return timedelta(seconds=random.uniform(0, span))
+
+
 def _touch_heartbeat() -> None:
     """Bump the heartbeat file the compose healthcheck watches.
 
@@ -101,13 +115,28 @@ def _timeout_for(kind: JobKind) -> int:
     return int(getattr(settings, _TIMEOUT_FIELDS[kind]))
 
 
-async def _dispatch(job: Job) -> None:
+def _relogin_in_cooldown(channel: str) -> bool:
+    """True when `channel` is inside its reauth backoff or its post-success floor.
+
+    The same gate the heal poll applies, so an on-demand RELOGIN escalated from a
+    failed job cannot tight-loop headed Chrome (each login pegs both vCPUs). Reads
+    the two persisted cooldown files; called via `to_thread` off the event loop.
+    """
+    return (
+        reauth._reauth_cooldown_remaining(channel) > 0
+        or reauth._success_cooldown_remaining(channel) > 0
+    )
+
+
+async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
     """Map a job to the existing coroutine that does the work — reuse, not reimpl.
 
     RELOGIN drives the stored login in a worker thread: `reauth._try_auto_relogin`
     is synchronous and starts its own event loop (`asyncio.run`), which cannot run
     inside the daemon's loop, so `to_thread` gives it one. It never raises; its
-    outcome decides whether the channel's backoff is cleared or armed.
+    outcome decides whether the channel's backoff is cleared or armed — and is
+    returned so the consumer can chain follow-up work (a keeta orders pull while
+    the fresh session is still valid).
     """
     if job.kind is JobKind.RELOGIN:
         outcome = await asyncio.to_thread(reauth._try_auto_relogin, job.channel)
@@ -123,7 +152,7 @@ async def _dispatch(job: Job) -> None:
                 job.channel,
                 transient=(outcome is reauth.ReloginOutcome.TRANSIENT),
             )
-        return
+        return outcome
     if job.kind is JobKind.WARM:
         await warm.warm_channel(job.channel)
         return
@@ -165,10 +194,12 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
     budget = _timeout_for(job.kind)
     label = f"{job.kind.name}{('/' + job.channel) if job.channel else ''}"
     logger.info("daemon: running %s (budget %ss)", label, budget)
+    outcome: reauth.ReloginOutcome | None = None
     try:
-        await asyncio.wait_for(_dispatch(job), timeout=budget)
+        outcome = await asyncio.wait_for(_dispatch(job), timeout=budget)
     except (asyncio.TimeoutError, TimeoutError):
         logger.error("daemon: %s exceeded %ss — killing Chrome", label, budget)
+        observability.note_job_timeout(job.kind.name, job.channel, budget)
         browser.kill_live_chrome()
         if job.channel:
             await asyncio.to_thread(
@@ -176,18 +207,48 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
             )
     except (NeedsHumanLogin, NotLoggedInError) as exc:
         if job.kind is not JobKind.RELOGIN and job.channel:
-            logger.warning(
-                "daemon: %s stored session is dead (%s) — enqueuing RELOGIN",
-                label,
-                exc,
-            )
-            await queue.put(JobKind.RELOGIN, job.channel)
+            # A job found its stored session dead. Escalate to a RELOGIN — but
+            # honour the SAME cooldowns the heal poll uses, or a job that keeps
+            # failing signed-out (a keeta session that dies within seconds of a
+            # relogin) would tight-loop headed Chrome logins, each pegging this
+            # e2-small's CPU. The job-failure path used to enqueue unconditionally;
+            # the success floor just stamped by that relogin now blocks the loop,
+            # and the next scheduled run (or heal poll, out of cooldown) retries.
+            in_cooldown = await asyncio.to_thread(_relogin_in_cooldown, job.channel)
+            if in_cooldown:
+                logger.info(
+                    "daemon: %s is dead but in relogin cooldown — not re-driving",
+                    label,
+                )
+            else:
+                logger.warning(
+                    "daemon: %s stored session is dead (%s) — enqueuing RELOGIN",
+                    label,
+                    exc,
+                )
+                await queue.put(JobKind.RELOGIN, job.channel)
         else:
             logger.warning("daemon: %s needs a human login: %s", label, exc)
-    except Exception:  # noqa: BLE001 — one job must never kill the consumer
+    except Exception as exc:  # noqa: BLE001 — one job must never kill the consumer
         logger.exception("daemon: %s failed", label)
+        observability.capture_exception(
+            exc, tags={"kind": job.kind.name, "channel": job.channel or "-"}
+        )
     else:
         logger.info("daemon: finished %s", label)
+        # Capture-while-fresh: keeta's merchant session signs out server-side within
+        # minutes (its cookie TTL is long but the session is not), so waiting for the
+        # 3-hourly KEETA_ORDERS to hydrate the session it just minted finds it dead —
+        # the silent zero-orders gap. Pull orders NOW, while the session is fresh. The
+        # queue dedupes, and the success floor stamped above stops a failed pull from
+        # re-driving a relogin, so this cannot loop.
+        if (
+            job.kind is JobKind.RELOGIN
+            and job.channel == "keeta"
+            and outcome is reauth.ReloginOutcome.OK
+        ):
+            logger.info("daemon: keeta relogin OK — pulling orders while fresh")
+            await queue.put(JobKind.KEETA_ORDERS, "keeta")
 
 
 async def _heal_poll(queue: JobQueue) -> None:
@@ -209,6 +270,11 @@ async def _heal_poll(queue: JobQueue) -> None:
             continue
         if reauth._channel_needs_reauth(bundle) is None:
             await asyncio.to_thread(reauth._clear_reauth_backoff, ch)
+            continue
+        if bundle.get("server_refreshable"):
+            # The API renews this channel itself over httpx (Deliveroo re-mints its
+            # token before every sweep). A headed RELOGIN here would burn a Chrome
+            # on this e2-small doing what the next API sweep does for free.
             continue
         if reauth._reauth_cooldown_remaining(ch) > 0:
             continue
@@ -238,7 +304,7 @@ async def _run_scheduler(queue: JobQueue) -> None:
     now = _now_utc()
     daily: list[_Daily] = [
         _Daily(
-            next_at=next_daily_dxb(settings.WORKER_WARM_HOUR_DXB, now),
+            next_at=next_daily_dxb(settings.WORKER_WARM_HOUR_DXB, now) + _jitter(),
             kind=JobKind.WARM,
             channel=ch,
             hour=settings.WORKER_WARM_HOUR_DXB,
@@ -247,7 +313,8 @@ async def _run_scheduler(queue: JobQueue) -> None:
     ]
     daily.append(
         _Daily(
-            next_at=next_daily_dxb(settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB, now),
+            next_at=next_daily_dxb(settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB, now)
+            + _jitter(),
             kind=JobKind.DELIVEROO_FINANCE,
             channel="deliveroo",
             hour=settings.WORKER_DELIVEROO_FINANCE_HOUR_DXB,
@@ -258,7 +325,8 @@ async def _run_scheduler(queue: JobQueue) -> None:
     # keeps the long finance download off the every-few-hours hot path.
     daily.append(
         _Daily(
-            next_at=next_daily_dxb(settings.WORKER_KEETA_FINANCE_HOUR_DXB, now),
+            next_at=next_daily_dxb(settings.WORKER_KEETA_FINANCE_HOUR_DXB, now)
+            + _jitter(),
             kind=JobKind.KEETA_FINANCE,
             channel="keeta",
             hour=settings.WORKER_KEETA_FINANCE_HOUR_DXB,
@@ -295,16 +363,16 @@ async def _run_scheduler(queue: JobQueue) -> None:
         for entry in daily:
             if now >= entry.next_at:
                 await queue.put(entry.kind, entry.channel)
-                entry.next_at = next_daily_dxb(entry.hour, now)
+                entry.next_at = next_daily_dxb(entry.hour, now) + _jitter()
         if now >= keeta_next:
             await queue.put(JobKind.KEETA_ORDERS, "keeta")
-            keeta_next = now + keeta_delta
+            keeta_next = now + keeta_delta + _jitter()
         if menu_delta is not None and now >= menu_next:
             await queue.put(JobKind.KEETA_MENU, "keeta")
-            menu_next = now + menu_delta
+            menu_next = now + menu_delta + _jitter()
         if del_menu_delta is not None and now >= del_menu_next:
             await queue.put(JobKind.DELIVEROO_MENU, "deliveroo")
-            del_menu_next = now + del_menu_delta
+            del_menu_next = now + del_menu_delta + _jitter()
         if now >= heal_next:
             await _heal_poll(queue)
             heal_next = now + heal_delta

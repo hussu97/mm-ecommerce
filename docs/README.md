@@ -16,10 +16,9 @@ themselves live in [`../CLAUDE.md`](../CLAUDE.md).
 
 | Doc | What it is |
 |---|---|
-| [`grubops-integration.md`](grubops-integration.md) | Aggregator order ingestion, mapping and reconciliation. |
+| [`integrators-and-aggregators.md`](integrators-and-aggregators.md) | **Canonical capabilities reference** for the POS/menu integrators and the delivery aggregators: order ingestion, mapping, reconciliation, menu/hours sync, and Foodics parity. Replaces seven older capability docs. |
+| [`aggregator-runbook.md`](aggregator-runbook.md) | Operational run-book: how to heal aggregator sessions on the VM. |
 | [`tabby-tamara.md`](tabby-tamara.md) | Onboarding runbook for the two buy-now-pay-later providers. Provider stubs exist; neither is live. |
-| [`foodics-coverage-matrix.md`](foodics-coverage-matrix.md) | What the previous POS did, feature by feature. |
-| [`pos-foodics-parity.md`](pos-foodics-parity.md) | How far the register has closed that gap. |
 
 ## Analytics and performance
 
