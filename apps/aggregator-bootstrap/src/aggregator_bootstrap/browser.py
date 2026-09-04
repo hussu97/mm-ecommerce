@@ -759,6 +759,45 @@ def _assert_careem_bearer_captured(
         )
 
 
+#: Keeta's authenticated marker. It lives in sessionStorage (not cookies), which
+#: the Playwright `storage_state` does not persist — it rides the per-origin
+#: `.extra.json` state and is re-injected on hydrate. An empty one means signed out.
+_KEETA_ACCOUNT_MARKER = "LOGIN_ACCOUNTID"
+
+
+def _assert_keeta_account_captured(channel: str, result: "ProbeResult") -> None:
+    """Refuse to push a keeta session that carries no LOGIN_ACCOUNTID.
+
+    Exactly the careem-bearer trap, one channel over. Keeta's every getOrders/menu
+    call is signed in-page against `LOGIN_ACCOUNTID` in sessionStorage. If a login
+    completes and captures cookies but that marker never landed in the persisted
+    extra state (the post-login probe navigation closed the page, a wrong-origin
+    snapshot, a killed Chrome), the session is pushed `live` yet is SIGNED OUT:
+    every in-page pull returns nothing while the cookie-based liveness still reads
+    `live`, so nothing looks unhealthy. That silently zeroed Keeta — the highest
+    volume channel — for three days (2026-09-04). Raising instead leaves it
+    `needs_bootstrap`, so the heal keeps re-driving (and, unrecovered, escalates to
+    the AGGREGATOR_NEEDS_HUMAN alert) rather than serving a dead session as live.
+
+    Checks the persisted extra state across ALL captured origins, not just this
+    snapshot's page, so a marker captured under the login origin still counts even
+    when the final probe landed on a different one.
+    """
+    if channel != "keeta":
+        return
+    if (result.session_storage or {}).get(_KEETA_ACCOUNT_MARKER):
+        return
+    for items in load_extra_state(channel).values():
+        if isinstance(items, dict) and items.get(_KEETA_ACCOUNT_MARKER):
+            return
+    raise NeedsHumanLogin(
+        "keeta: captured a session with no LOGIN_ACCOUNTID — the in-page session "
+        "is signed out (the sessionStorage marker never landed in the extra "
+        "state). Not pushing it live; a headed `login --channel keeta` is needed "
+        "and the reauth loop will keep retrying."
+    )
+
+
 async def probe_channel(channel: str) -> ProbeResult:
     """Load the channel's probe page and return cookies, headers, persisted state.
 
@@ -972,6 +1011,7 @@ async def login_interactive(channel: str) -> ProbeResult:
         _stop_chrome(chrome)
 
     _assert_careem_bearer_captured(channel, result.request_headers)
+    _assert_keeta_account_captured(channel, result)
     print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
     return result
 
@@ -1228,6 +1268,7 @@ async def login_with_account(
         _stop_chrome(chrome)
 
     _assert_careem_bearer_captured(channel, result.request_headers, seen=seen_urls)
+    _assert_keeta_account_captured(channel, result)
     print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
     return result
 

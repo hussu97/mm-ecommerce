@@ -9,11 +9,15 @@ import pytest
 from aggregator_bootstrap.browser import (
     ChromeLaunchError,
     NeedsHumanLogin,
+    ProbeResult,
     _assert_careem_bearer_captured,
+    _assert_keeta_account_captured,
     _await_careem_bearer,
     _clear_stale_singleton_locks,
     _wait_for_cdp,
+    persist_extra_state,
 )
+from aggregator_bootstrap.config import settings
 
 
 def test_wait_for_cdp_raises_transient_launch_error(monkeypatch):
@@ -113,6 +117,57 @@ def test_careem_guard_passes_with_a_bearer():
 def test_guard_is_a_noop_for_other_channels():
     # talabat/noon replay their token from a cookie/scope header, not this profile.
     _assert_careem_bearer_captured("talabat", {"user-agent": "x"})  # no raise
+
+
+# ── keeta LOGIN_ACCOUNTID capture (the silent zero-orders fix) ──────────────
+def _keeta_result(session_storage: dict | None = None) -> ProbeResult:
+    return ProbeResult(
+        cookies=[],
+        request_headers={},
+        final_url="",
+        playwright_state={},
+        session_storage=session_storage or {},
+    )
+
+
+def test_keeta_guard_passes_with_marker_in_the_snapshot(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
+    _assert_keeta_account_captured(
+        "keeta", _keeta_result({"LOGIN_ACCOUNTID": "acc-1"})
+    )  # no raise
+
+
+def test_keeta_guard_passes_with_marker_only_in_persisted_extra_state(
+    monkeypatch, tmp_path
+):
+    """The marker may have been captured under the login origin on an earlier
+    snapshot even when THIS result landed on a different one — the persisted extra
+    state across origins still counts, so a valid session is not rejected."""
+    monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
+    persist_extra_state(
+        "keeta",
+        {
+            "https://merchant.mykeeta.com": {
+                "LOGIN_ACCOUNTID": "acc-1",
+                "SHOP_IDS": "[1]",
+            }
+        },
+    )
+    _assert_keeta_account_captured("keeta", _keeta_result())  # no raise
+
+
+def test_keeta_guard_raises_when_signed_out(monkeypatch, tmp_path):
+    """Cookies captured but no LOGIN_ACCOUNTID anywhere = signed out. Must NOT be
+    pushed live (that silently zeroed Keeta for three days); raise so it re-drives."""
+    monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
+    persist_extra_state("keeta", {"https://merchant.mykeeta.com": {"SHOP_IDS": "[1]"}})
+    with pytest.raises(NeedsHumanLogin):
+        _assert_keeta_account_captured("keeta", _keeta_result({}))
+
+
+def test_keeta_guard_is_a_noop_for_other_channels(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
+    _assert_keeta_account_captured("noon", _keeta_result({}))  # no raise
 
 
 class _FakePage:
