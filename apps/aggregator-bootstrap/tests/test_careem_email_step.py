@@ -241,6 +241,25 @@ def test_the_otp_step_does_not_reload():
     assert "page.reload" not in otp_step  # the call, not the word in the comment
 
 
+def test_the_otp_locator_matches_a_numeric_code_box_not_only_type_text():
+    """The 2026-09-04 lesson, pinned.
+
+    With the email step fixed, the re-login reached the verification page — the
+    debug shot showed the "Verification Code" box on screen — but died anyway,
+    because Careem renders that box as a numeric field (type=tel / inputmode=
+    numeric / autocomplete=one-time-code), which `input[type='text']` never
+    matched. The OTP locator must cover those variants; narrowing it back to a
+    lone `type='text'` re-opens the bug."""
+    import inspect
+
+    src = inspect.getsource(L.login_careem)
+    otp_step = src.split("Verification-code step")[1].split("Password step")[0]
+    assert "otp_input = page.locator(" in otp_step
+    for token in ("one-time-code", "inputmode='numeric'", "type='tel'"):
+        assert token in otp_step, f"OTP locator must also match {token}"
+    assert ".first" in otp_step, "strict-mode guard on the OTP locator"
+
+
 def test_a_missing_password_step_is_still_survivable():
     """Some accounts finish at the OTP. That miss must stay non-fatal — it only
     had to stop being a race the box could lose."""

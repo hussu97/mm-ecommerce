@@ -798,13 +798,24 @@ async def login_careem(
     await page.wait_for_timeout(3_000)
     logger.info("careem: after email submit, url=%s", page.url)
 
-    # Verification-code step — one text box, submit, done. Same SPA, same slow
+    # Verification-code step — one code box, submit, done. Same SPA, same slow
     # box, so the same budget as the email step: with only the email step
     # widened, the 2026-09-04 re-login got past it and then died here instead,
     # 20s being just as short for the code box as it was for the email box.
     # Unlike the email step this does NOT reload — Careem has already sent the
     # code, and reloading would strand it.
-    otp_input = page.locator("input[type='text']").first
+    #
+    # The box is NOT reliably `type=text`: on the current flow Careem renders the
+    # "Verification Code" field as a numeric one (type=tel / inputmode=numeric,
+    # `autocomplete=one-time-code`), so the old `input[type='text']` selector
+    # matched nothing and the login died one step from done reporting "did not
+    # present a verification-code input" — while the debug shot showed the field
+    # plainly on screen (2026-09-04). Match the realistic set; the union stays a
+    # superset of the old selector, so a `type=text` code box is still caught.
+    otp_input = page.locator(
+        "input[autocomplete='one-time-code'], input[inputmode='numeric'], "
+        "input[type='tel'], input[type='number'], input[type='text']"
+    ).first
     if not await _careem_input_ready(otp_input):
         if await _careem_is_authenticated(page):
             return page
