@@ -42,12 +42,26 @@ class FulfilmentProviderEnum(str, enum.Enum):
     #: every customer outside the trial while it runs against noon's staging.
     NOON_SEND = "noon_send"
     #: Booked over Slider's API. A third courier, brought in for dispatch
-    #: accuracy rather than for price — across Ajman, Dubai and Umm al-Quwain
-    #: its car costs about AED 0.94 an order more than Lalamove, and Ajman
-    #: alone is cheaper on every area. It books one delivery at a time and
+    #: accuracy rather than for price. It books one delivery at a time and
     #: cannot be batched, so a Slider zone never joins a shared run. Like the
     #: other two, an unconfigured key is a fallback and not an outage.
+    #:
+    #: **Legacy.** Slider prices a bike and a car differently, and a zone now
+    #: names the *tier* it was drawn for — `slider_bike` or `slider_car` below —
+    #: so a quote and its booking agree on a vehicle without recomputing it. This
+    #: bare value predates the split; it still dispatches (the tier is computed
+    #: from distance the old way) and existing rows still carry it, but no new
+    #: polygon is assigned it.
     SLIDER = "slider"
+    #: A Slider zone whose run is a bike: same emirate as the kitchen and inside
+    #: the `SLIDER_BIKE_MAX_KM` road ceiling, so the bike tier is reachable. The
+    #: zone pins the tier the checkout quotes; if Slider has only a car free at
+    #: dispatch the order is carried — and recorded — as `slider_car`, because the
+    #: charge is what the run cost, not what was quoted.
+    SLIDER_BIKE = "slider_bike"
+    #: A Slider zone whose run is a car: a different emirate, or past the bike
+    #: ceiling. A car cannot be downgraded to a bike, at dispatch or by hand.
+    SLIDER_CAR = "slider_car"
     #: Whoever we already use. No integration: the same manual flow as today.
     THIRD_PARTY = "third_party"
 
@@ -90,6 +104,21 @@ DEFAULT_ALTERNATES: dict[str, list[str]] = {
     #: A per-provider default cannot say that, so `126_cost_banded_map_v2` seeds
     #: that zone's row explicitly and this stays the safe answer everywhere else.
     FulfilmentProviderEnum.SLIDER.value: [
+        FulfilmentProviderEnum.LALAMOVE.value,
+        FulfilmentProviderEnum.THIRD_PARTY.value,
+    ],
+    #: A Slider **bike** zone may be upgraded to a Slider car by hand — the one
+    #: move within Slider, and one-way (a car never becomes a bike). Lalamove and
+    #: the third party are the escapes off Slider entirely. Not noon Send, for the
+    #: same reason as the others: a bike zone reaches at most the edge of Sharjah.
+    FulfilmentProviderEnum.SLIDER_BIKE.value: [
+        FulfilmentProviderEnum.SLIDER_CAR.value,
+        FulfilmentProviderEnum.LALAMOVE.value,
+        FulfilmentProviderEnum.THIRD_PARTY.value,
+    ],
+    #: A Slider **car** zone cannot go to a bike, so Slider is not among its
+    #: alternates at all — only the escapes off it.
+    FulfilmentProviderEnum.SLIDER_CAR.value: [
         FulfilmentProviderEnum.LALAMOVE.value,
         FulfilmentProviderEnum.THIRD_PARTY.value,
     ],

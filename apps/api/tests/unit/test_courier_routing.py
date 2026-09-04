@@ -448,6 +448,52 @@ def test_effective_provider_leaves_a_non_slider_zone_alone(slider_ready, zone_pr
     assert reason is None
 
 
+@pytest.mark.parametrize("tier", ["slider_bike", "slider_car"])
+def test_effective_provider_keeps_a_slider_tier_when_configured(slider_ready, tier):
+    """The tier is Slider's business; the routing only decides the courier, so a
+    configured `slider_bike` stays `slider_bike` — it is not flattened to a bare
+    `slider`."""
+    provider, reason = courier_service.effective_provider(tier, "Ajman City")
+    assert provider == tier
+    assert reason is None
+
+
+@pytest.mark.parametrize("tier", ["slider_bike", "slider_car"])
+def test_an_unconfigured_slider_tier_falls_back_like_the_bare_value(monkeypatch, tier):
+    """Neither a bike nor a car can be dispatched without Slider, so both fall the
+    same way the bare `slider` does — noon Send inside Sharjah, Lalamove out."""
+    monkeypatch.setattr(settings, "SLIDER_API_KEY", "")
+    ajman, reason = courier_service.effective_provider(tier, "Ajman City")
+    assert ajman == "lalamove" and reason
+    sharjah, _ = courier_service.effective_provider(tier, "Sharjah Core")
+    assert sharjah == "noon_send"
+
+
+@pytest.mark.asyncio
+async def test_a_slider_tier_quote_prices_the_named_vehicle(slider_ready, monkeypatch):
+    """A `slider_bike` zone quotes the bike, a `slider_car` zone the car — the
+    tier the zone names is passed straight to Slider's estimate."""
+    captured: dict = {}
+
+    async def capture(_db, _lat, _lng, _address=None, _branch_id=None, **kw):
+        captured.clear()
+        captured.update(kw)
+        return None, None
+
+    monkeypatch.setattr(courier_service.slider_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(courier_service.slider_service, "estimate_for_point", capture)
+
+    await courier_service.estimate_for_point(
+        AsyncMock(), "slider_bike", 25.40, 55.44, zone_name="Ajman City"
+    )
+    assert captured["vehicle"] == "bike"
+
+    await courier_service.estimate_for_point(
+        AsyncMock(), "slider_car", 25.40, 55.44, zone_name="Ajman City"
+    )
+    assert captured["vehicle"] == "car"
+
+
 # ── the decision at the fare quote ─────────────────────────────────────────────
 #
 # `effective_provider` runs before a fare is quoted too, so a Slider zone is

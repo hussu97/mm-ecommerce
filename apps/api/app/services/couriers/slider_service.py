@@ -6,10 +6,15 @@ customer failure, the price the customer pays comes from the zone map and not
 from here, and a third-party zone behaves exactly as it did before — plus two of
 its own.
 
-**The vehicle is one decision, made once.** Slider prices a bike and a car
+**The vehicle is the zone's, decided once.** Slider prices a bike and a car
 differently and there is no quotation id to carry a choice from the estimate
-into the booking, so if the two computed it separately the quote and the invoice
-would disagree. `vehicle_for` is the single pure function both call.
+into the booking. A `slider_bike` or `slider_car` zone names the tier it was
+drawn for, so the checkout quotes it and the booking asks for it — the same
+value, not two computations that could drift. A bare `slider` zone (legacy)
+still computes the tier from distance with `vehicle_for`. Either way, what
+Slider actually assigns can differ — an unavailable bike comes back as a car —
+so the order records the tier that carried it (`slider_car`) and its charge is
+that run's, not the quote's.
 
 **They have no coverage endpoint, and their fare endpoint is not one.**
 `/deliveries/fare` priced Riyadh, Muscat and Liwa at 345 km. The only thing that
@@ -66,6 +71,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "PROVIDER",
+    "PROVIDERS",
+    "SLIDER_BIKE",
+    "SLIDER_CAR",
     "apply_webhook",
     "cancel_delivery",
     "dispatch_order",
@@ -73,16 +81,49 @@ __all__ = [
     "handle_webhook",
     "is_enabled",
     "may_serve",
+    "provider_for_vehicle",
     "refresh",
     "road_distance_km",
     "same_emirate",
     "vehicle_for",
+    "vehicle_for_provider",
 ]
 
 PROVIDER = FulfilmentProviderEnum.SLIDER.value
+SLIDER_BIKE = FulfilmentProviderEnum.SLIDER_BIKE.value
+SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
+
+#: Every provider value this module carries: the legacy bare `slider` and the
+#: two tier-pinned ones. `courier_service` asks whether a zone is one of these.
+PROVIDERS = frozenset({PROVIDER, SLIDER_BIKE, SLIDER_CAR})
 
 BIKE = "bike"
 CAR = "car"
+
+_VEHICLE_BY_PROVIDER = {SLIDER_BIKE: BIKE, SLIDER_CAR: CAR}
+_PROVIDER_BY_VEHICLE = {BIKE: SLIDER_BIKE, CAR: SLIDER_CAR}
+
+
+def vehicle_for_provider(provider: str | None) -> str | None:
+    """The tier a provider pins, or ``None`` for the legacy `slider` (computed).
+
+    A `slider_bike` or `slider_car` zone names the vehicle the checkout quoted,
+    so the booking uses it rather than recomputing from distance. The bare
+    `slider` value predates the split and still computes with `vehicle_for`.
+    """
+    return _VEHICLE_BY_PROVIDER.get(provider or "")
+
+
+def provider_for_vehicle(vehicle: str) -> str:
+    """The tier-pinned provider a booked vehicle is recorded as.
+
+    What actually carried the order, which is not always what was asked: a
+    `slider_bike` zone whose bike was unavailable is booked — and recorded — as
+    `slider_car`, because the charge is the run's, not the quote's. Anything but
+    a bike is a car, the safe reading of an unexpected value.
+    """
+    return _PROVIDER_BY_VEHICLE.get(vehicle, SLIDER_CAR)
+
 
 #: What Slider will hand over on delivery, in AED, by how the order was paid.
 #:
@@ -331,6 +372,7 @@ async def estimate_for_point(
     branch_id: uuid.UUID | None = None,
     pickup: PickupPoint | None = None,
     drop_emirate: str | None = None,
+    vehicle: str | None = None,
 ) -> tuple[Estimate | None, str | None]:
     """
     What a Slider run to this point would cost us, or why we cannot say.
@@ -338,9 +380,12 @@ async def estimate_for_point(
     Signature-compatible with the other two `estimate_for_point`s so the
     checkout path does not have to know which courier a zone uses.
 
-    Quoted on the vehicle `vehicle_for` chooses, which is the same function
-    `dispatch_order` calls — so the tier in the estimate is the tier on the
-    booking. Slider issues no quotation id to carry that choice across, so if
+    `vehicle` is the tier the zone pins — `bike` for a `slider_bike` zone, `car`
+    for a `slider_car` one — and it is quoted as-is, because a zone that names a
+    tier has already decided it. A bare `slider` zone passes nothing and the tier
+    is computed from distance the old way (`vehicle_for`), the same function
+    `dispatch_order` falls back to, so the tier in the estimate is the tier on
+    the booking. Slider issues no quotation id to carry that choice across, so if
     the two decided separately they would eventually decide differently, and the
     first anyone would know is an invoice that did not match a quote.
     """
@@ -361,6 +406,9 @@ async def estimate_for_point(
         round(latitude, 4),
         round(longitude, 4),
         emirate_of(drop_emirate),
+        # The pinned tier, so a `slider_bike` quote is never served to a
+        # `slider_car` zone at the same coordinates (or the reverse).
+        vehicle,
     )
     cached = _quote_cache.get(key)
     if cached:
@@ -392,7 +440,7 @@ async def estimate_for_point(
             or car_km
             or road_distance_km(pickup.latitude, pickup.longitude, latitude, longitude)
         )
-        vehicle = vehicle_for(
+        vehicle = vehicle or vehicle_for(
             in_same_emirate=same_emirate(pickup.emirate, drop_emirate),
             road_km=distance_km,
         )
@@ -599,7 +647,11 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             float(drop["longitude"]),
         )
     )
-    vehicle = vehicle_for(
+    # The tier the zone pinned, if it named one; otherwise the legacy distance
+    # computation for a bare `slider` row. The zone was drawn for a vehicle and
+    # the checkout quoted that vehicle, so the booking asks for it rather than
+    # recomputing and risking a different answer.
+    vehicle = vehicle_for_provider(delivery.provider) or vehicle_for(
         in_same_emirate=same_emirate(pickup.emirate, _drop_emirate(order, delivery)),
         road_km=distance_km,
     )
@@ -681,6 +733,10 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.price_breakdown = {
             "source": "slider_fare",
             "vehicle": assigned,
+            # What the zone pinned and the checkout quoted, kept beside what was
+            # actually booked so a bike→car substitution is legible after the
+            # fact — the charge above is the car's, this says a bike was asked for.
+            "requested_vehicle": vehicle,
             "distance_km": round(recorded_km, 2),
             "total": str(cost),
             "currency": "AED",
@@ -698,7 +754,13 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
                 vehicle,
             )
 
-    delivery.provider = PROVIDER
+    # The tier that actually carried it, not the one asked for: a `slider_bike`
+    # zone whose bike was unavailable becomes a `slider_car` order, so the panel,
+    # the reassignment options and any later dispatch all read the real vehicle.
+    # Not `original_provider` — a substitution Slider made is not a hand move, and
+    # the three readers of that column (the "moved from" badge, the reassignment
+    # dialog, the next-day promise in `fulfilment_service`) must not fire on it.
+    delivery.provider = provider_for_vehicle(assigned)
     delivery.courier_order_id = str(delivery_id)
     delivery.courier_previous_status = delivery.courier_status
     delivery.courier_status = (

@@ -70,12 +70,20 @@ __all__ = [
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
 NOON_SEND = FulfilmentProviderEnum.NOON_SEND.value
 SLIDER = FulfilmentProviderEnum.SLIDER.value
+SLIDER_BIKE = FulfilmentProviderEnum.SLIDER_BIKE.value
+SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
 THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
+
+#: The bare legacy value and the two tier-pinned ones. A zone naming any of them
+#: is Slider's — the tier only decides which vehicle, not which courier — so the
+#: routing here treats them together and `slider_service` is the one that cares
+#: about bike versus car.
+SLIDER_PROVIDERS = frozenset({SLIDER, SLIDER_BIKE, SLIDER_CAR})
 
 
 def books_itself(provider: str | None) -> bool:
     """Whether this provider is one we dispatch over an API."""
-    return provider in {LALAMOVE, NOON_SEND, SLIDER}
+    return provider in {LALAMOVE, NOON_SEND} or provider in SLIDER_PROVIDERS
 
 
 def is_enabled(provider: str | None) -> bool:
@@ -84,7 +92,7 @@ def is_enabled(provider: str | None) -> bool:
         return noon_send_service.is_enabled()
     if provider == LALAMOVE:
         return lalamove_service.is_enabled()
-    if provider == SLIDER:
+    if provider in SLIDER_PROVIDERS:
         return slider_service.is_enabled()
     return False
 
@@ -118,9 +126,15 @@ def may_use_noon_send(order: Order) -> tuple[bool, str | None]:
 #: booked with one courier is a run this zone's orders can ever be on. See
 #: `may_be_carried_by`.
 FALLBACKS: dict[str, tuple[str, ...]] = {
-    # noon Send inside Sharjah, Lalamove outside it — which between them is
-    # every Slider zone, since all six were carved out of one or the other.
+    # noon Send inside Sharjah, Lalamove outside it — where a Slider zone falls
+    # when Slider is unconfigured or refuses at booking. The tier does not change
+    # the fallback: neither a bike nor a car can be dispatched without Slider, so
+    # both go to the courier that carried that ground before. (Upgrading a bike
+    # to a car is a manual, human-only move — `fulfilment_reassignment` — not an
+    # automatic fallback the dispatcher takes on its own.)
     SLIDER: (NOON_SEND, LALAMOVE),
+    SLIDER_BIKE: (NOON_SEND, LALAMOVE),
+    SLIDER_CAR: (NOON_SEND, LALAMOVE),
     # The long-standing one: noon Send cap a run at 20 km, cannot cross an
     # emirate boundary, and can simply have nobody free.
     NOON_SEND: (LALAMOVE,),
@@ -210,11 +224,13 @@ def effective_provider(
     construction, so the fare quote — which has a name but no address — needs no
     `city` at all.
     """
-    if zone_provider != SLIDER:
+    if zone_provider not in SLIDER_PROVIDERS:
         return zone_provider, None
 
     if slider_service.is_enabled():
-        return SLIDER, None
+        # The zone's own tier, unchanged — `slider_bike` stays `slider_bike`. The
+        # vehicle is `slider_service`'s business; this only decides the courier.
+        return zone_provider, None
 
     # The same contract the other two have: an absent credential is a fallback,
     # never an outage.
@@ -276,7 +292,7 @@ async def _dispatch_once(
     """One attempt, on whichever courier ends up carrying it."""
     carrier, gated = carrier_for(order, delivery)
 
-    if carrier == SLIDER:
+    if carrier in SLIDER_PROVIDERS:
         allowed, refusal = await slider_service.may_serve(db, order)
         if allowed:
             result = await slider_service.dispatch_order(db, order)
@@ -566,19 +582,20 @@ async def estimate_for_point(
         return await noon_send_service.estimate_for_point(
             db, latitude, longitude, address, branch_id
         )
-    if provider == SLIDER and slider_service.is_enabled():
+    if provider in SLIDER_PROVIDERS and slider_service.is_enabled():
         return await slider_service.estimate_for_point(
             db,
             latitude,
             longitude,
             address,
             branch_id,
-            # Slider prices a bike and a car differently and the rule that picks
-            # between them turns on the drop's emirate — which, at a checkout
-            # with nothing but a pin, only the polygon knows. Without it every
-            # quote here would price the car, and a `Sharjah Core` order would
-            # be shown a fare it will not be booked at.
+            # Slider prices a bike and a car differently. A tier-pinned zone names
+            # the vehicle outright (`slider_bike`/`slider_car`), so quote it as
+            # named; a bare legacy `slider` zone passes no tier and it is computed
+            # from the drop's emirate, which — at a checkout with nothing but a
+            # pin — only the polygon knows.
             drop_emirate=zone_name,
+            vehicle=slider_service.vehicle_for_provider(provider),
         )
     return await lalamove_service.estimate_for_point(
         db, latitude, longitude, address, branch_id

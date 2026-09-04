@@ -667,6 +667,84 @@ async def test_a_drop_inside_sharjah_is_quoted_and_booked_on_the_bike(booked):
     assert db.delivery.cost_total == Decimal("18.50")
 
 
+@pytest.mark.parametrize(
+    "provider, vehicle",
+    [
+        ("slider_bike", "bike"),
+        ("slider_car", "car"),
+        ("slider", None),
+        (None, None),
+        ("lalamove", None),
+    ],
+)
+def test_vehicle_for_provider_maps_a_tier_and_leaves_the_rest_to_compute(
+    provider, vehicle
+):
+    """A tier-pinned provider names its vehicle; a legacy `slider` (or anything
+    else) returns None and the caller computes from distance."""
+    assert slider_service.vehicle_for_provider(provider) == vehicle
+
+
+@pytest.mark.parametrize(
+    "vehicle, provider",
+    [("bike", "slider_bike"), ("car", "slider_car"), ("van", "slider_car")],
+)
+def test_provider_for_vehicle_records_the_tier_that_carried_it(vehicle, provider):
+    """Anything but a bike records as a car — the safe reading of a value Slider
+    should never send."""
+    assert slider_service.provider_for_vehicle(vehicle) == provider
+
+
+@pytest.mark.asyncio
+async def test_a_slider_bike_order_records_the_car_when_only_a_car_is_free(
+    booked, monkeypatch
+):
+    """
+    The reason the order carries a tier of its own. A `slider_bike` zone quotes a
+    bike, but Slider substitutes a car — a booking they accepted, not one they
+    refused — so the order is carried, charged and recorded as `slider_car`. The
+    charge is the run's, not the quote's, and `original_provider` stays empty
+    because a substitution Slider made is not a hand move (the three readers of
+    that column must not fire on it).
+    """
+
+    async def substitute(**kwargs):
+        assert kwargs["vehicle"] == "bike"  # the zone pinned a bike
+        return {
+            "order_number": 4820193,
+            "status": "searching_rider",
+            "vehicle_type": "car",  # …and Slider hands back a car
+            "fare": 26.00,
+            "currency": "AED",
+            "distance_km": 12.4,
+        }
+
+    monkeypatch.setattr(slider_service.provider, "create_delivery", substitute)
+
+    row = _row()
+    row.provider = "slider_bike"
+    db = _Db(row)
+    order = _order(
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "city": "Sharjah",
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "last_name": "Abbasi",
+            "address_line_1": "Garden Tower 1, Al Majaz 3",
+        }
+    )
+
+    delivery = await slider_service.dispatch_order(db, order)
+
+    assert delivery.provider == "slider_car"
+    assert delivery.original_provider is None
+    assert delivery.cost_total == Decimal("26.00")
+    assert delivery.price_breakdown["requested_vehicle"] == "bike"
+    assert delivery.price_breakdown["vehicle"] == "car"
+
+
 @pytest.mark.asyncio
 async def test_a_booking_records_the_id_the_tracking_link_and_nothing_else(booked):
     db = _Db(_row())

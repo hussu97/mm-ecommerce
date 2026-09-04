@@ -100,6 +100,8 @@ _BOOKED_BY_US = {
     FulfilmentProviderEnum.LALAMOVE.value,
     FulfilmentProviderEnum.NOON_SEND.value,
     FulfilmentProviderEnum.SLIDER.value,
+    FulfilmentProviderEnum.SLIDER_BIKE.value,
+    FulfilmentProviderEnum.SLIDER_CAR.value,
 }
 
 #: Couriers that text the customer their own tracking link once a rider has the
