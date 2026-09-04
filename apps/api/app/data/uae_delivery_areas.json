@@ -685,6 +685,76 @@
       "zone": "Al Dhafra",
       "lat": 23.13,
       "lng": 53.78
+    },
+    {
+      "label": "Al Dhaid",
+      "emirate": "Sharjah",
+      "zone": "Sharjah Inland",
+      "lat": 25.288,
+      "lng": 55.883
+    },
+    {
+      "label": "Mleiha",
+      "emirate": "Sharjah",
+      "zone": "Sharjah Inland",
+      "lat": 25.113,
+      "lng": 55.93
+    },
+    {
+      "label": "Al Madam",
+      "emirate": "Sharjah",
+      "zone": "Sharjah Inland",
+      "lat": 24.925,
+      "lng": 55.69
+    },
+    {
+      "label": "Al Batayih",
+      "emirate": "Sharjah",
+      "zone": "Sharjah Inland",
+      "lat": 25.17,
+      "lng": 55.72
+    },
+    {
+      "label": "Al Awir",
+      "emirate": "Dubai",
+      "zone": "Dubai Outer",
+      "lat": 25.17,
+      "lng": 55.55
+    },
+    {
+      "label": "Lehbab",
+      "emirate": "Dubai",
+      "zone": "Dubai Outer",
+      "lat": 24.93,
+      "lng": 55.49
+    },
+    {
+      "label": "Al Marmoom",
+      "emirate": "Dubai",
+      "zone": "Dubai Outer",
+      "lat": 24.93,
+      "lng": 55.45
+    },
+    {
+      "label": "Al Lisaili",
+      "emirate": "Dubai",
+      "zone": "Dubai Outer",
+      "lat": 24.87,
+      "lng": 55.43
+    },
+    {
+      "label": "Margham",
+      "emirate": "Dubai",
+      "zone": "Dubai Outer",
+      "lat": 24.87,
+      "lng": 55.7
+    },
+    {
+      "label": "Al Faqa",
+      "emirate": "Dubai",
+      "zone": "Dubai Outer",
+      "lat": 24.76,
+      "lng": 55.62
     }
   ]
 }

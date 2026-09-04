@@ -26,31 +26,36 @@ from the Sharjah-branch cost survey (`app/data/courier_costs.json`):
     the far, uneconomical ground.
   * Otherwise the cheapest serviceable courier wins, with one reliability
     thumb on the scale: Lalamove beats Slider only when it is cheaper by **more
-    than AED 5**, because Slider is the steadier of the two. noon Send is taken
+    than AED 3**, because Slider is the steadier of the two. noon Send is taken
     purely on price where it can serve (inside Sharjah, one emirate, <= 20 km).
-  * When Slider wins, the polygon names the *tier* the survey reached it on —
-    `slider_bike` inside the bike's range, `slider_car` beyond it — so the
-    checkout quotes that vehicle and the booking asks for it.
+  * When Slider wins, the polygon names the *tier* it may actually be run on.
+    **A bike only rides inside the kitchen's own emirate (Sharjah).** Slider's
+    API will quote a bike fare across an emirate line up to a road ceiling, but
+    a bike does not operationally cross the boundary — so anything outside
+    Sharjah is `slider_car`, and only a Sharjah area the survey reached on a
+    bike is `slider_bike`. So the contest outside Sharjah is car vs Lalamove;
+    inside Sharjah it is bike (or car) vs Lalamove vs noon Send.
 
-**Batching stays Lalamove-only, split south vs north of the kitchen.** A
-Lalamove polygon south of the kitchen latitude (the Dubai direction) joins the
-"South of Sharjah" run; north of it (Ajman, Umm al-Quwain, Ras al-Khaimah) joins
-"North of Sharjah". Same two schedules the shop batches on today, renamed.
+Every polygon is dispatched on its own — there is no batching. Lalamove books
+directly, one order at a time.
 
 Run from apps/api:
 
     python -m scripts.build_delivery_areas
 
-Writes:
-  * app/data/uae_delivery_zones.v5.geojson.json — name -> geometry, seeded by the
-    per-area map migration.
-  * app/data/uae_delivery_areas_assignments.json — name -> fee, threshold,
-    provider, batch group; the same migration reads it for everything but shape.
+Writes (v2 of the per-area map — finer, with the eastern desert broken out and
+the bike-emirate rule applied; the v5/assignments files migration 175 froze are
+left untouched):
+  * app/data/uae_delivery_zones.v6.geojson.json — name -> geometry.
+  * app/data/uae_delivery_areas_assignments.v2.json — name -> fee, threshold,
+    provider; the map migration reads it for everything but shape.
 
 Regenerate and commit both. Nothing computes this at runtime. Slider's fares in
 `courier_costs.json` are a production probe from the whitelisted VM egress; the
 Lalamove figures beside them are the market survey and noon Send's are its rate
-card. Re-probe and rebuild when fares move.
+card. Areas with no cost entry (the far inland/desert points that only exist to
+stop a city cell sprawling east) fall to `third_party` on their outer-tier fee,
+which needs no fare. Re-probe and rebuild when fares move.
 """
 
 from __future__ import annotations
@@ -64,10 +69,12 @@ AREAS = DATA / "uae_delivery_areas.json"
 COSTS = DATA / "courier_costs.json"
 EMIRATES = DATA / "uae_emirates.geojson.json"
 V2_GEOMETRY = DATA / "uae_delivery_zones.geojson.json"
-OUT_GEOMETRY = DATA / "uae_delivery_zones.v5.geojson.json"
-OUT_ASSIGN = DATA / "uae_delivery_areas_assignments.json"
+OUT_GEOMETRY = DATA / "uae_delivery_zones.v6.geojson.json"
+OUT_ASSIGN = DATA / "uae_delivery_areas_assignments.v2.json"
 
-KITCHEN_LAT = 25.3304139
+#: The kitchen's emirate. A Slider bike only runs inside it (see
+#: `_assign_provider`); everywhere else the Slider option is a car.
+KITCHEN_EMIRATE = "Sharjah"
 
 #: The emirate name the areas file uses -> the canonical name the outlines and
 #: `delivery_service.public_zone_name` use. A polygon's name must begin with the
@@ -119,7 +126,7 @@ OUTER = ("80.00", "200.00", True)
 
 #: The reliability margin: Lalamove has to be cheaper than Slider by more than
 #: this to win, because Slider is the steadier courier.
-SLIDER_MARGIN = Decimal("5")
+SLIDER_MARGIN = Decimal("3")
 
 #: A fee at or above this is third party — the far ground no courier is run to.
 THIRD_PARTY_FEE = Decimal("80")
@@ -198,14 +205,23 @@ def _inherit_fee(point, v2_shapes) -> tuple[str, str, bool]:
     return OUTER
 
 
-def _assign_provider(fee: Decimal, cost: dict) -> str:
-    """The courier a run to this area is cheapest on, with the rules above."""
+def _assign_provider(fee: Decimal, cost: dict, *, same_emirate: bool) -> str:
+    """The courier a run to this area is cheapest on, with the rules above.
+
+    `same_emirate` is whether the area is in the kitchen's own emirate. A Slider
+    **bike** is only an option there: across an emirate line the bike does not
+    run, whatever fare Slider's API quotes, so the Slider option outside Sharjah
+    is always the car.
+    """
     if fee >= THIRD_PARTY_FEE:
         return "third_party"
 
-    tier = (cost.get("slider_tier") or "").strip().lower()
-    slider_cost = cost.get("slider_bike") if tier == "bike" else cost.get("slider_car")
-    slider_provider = "slider_bike" if tier == "bike" else "slider_car"
+    # The bike tier is only reachable inside the kitchen's emirate. Outside it,
+    # fall to the car — using the car fare, never the (invalid) bike one.
+    probe_tier = (cost.get("slider_tier") or "").strip().lower()
+    use_bike = same_emirate and probe_tier == "bike" and cost.get("slider_bike")
+    slider_cost = cost.get("slider_bike") if use_bike else cost.get("slider_car")
+    slider_provider = "slider_bike" if use_bike else "slider_car"
     slider_ok = slider_cost is not None
     slider_cost = Decimal(str(slider_cost)) if slider_ok else None
 
@@ -234,13 +250,6 @@ def _assign_provider(fee: Decimal, cost: dict) -> str:
     if noon_ok and noon_cost <= fast_cost:
         return "noon_send"
     return fast
-
-
-def _batch_group(provider: str, lat: float) -> str | None:
-    """The Lalamove run this polygon joins, or None — batching is Lalamove-only."""
-    if provider != "lalamove":
-        return None
-    return "South of Sharjah" if lat < KITCHEN_LAT else "North of Sharjah"
 
 
 def build() -> tuple[list[dict], list[dict]]:
@@ -311,7 +320,9 @@ def build() -> tuple[list[dict], list[dict]]:
             fee_s, threshold_s, free = _inherit_fee(point, v2_shapes)
             fee = Decimal(fee_s)
             cost = costs.get(label, {})
-            provider = _assign_provider(fee, cost)
+            provider = _assign_provider(
+                fee, cost, same_emirate=(emirate == KITCHEN_EMIRATE)
+            )
             geometry.append({"name": name, "geometry": _to_multipolygon(cell, mapping)})
             assignments.append(
                 {
@@ -325,7 +336,6 @@ def build() -> tuple[list[dict], list[dict]]:
                     "free_delivery_eligible": free,
                     "fulfilment_provider": provider,
                     "alternate_providers": _alternates(provider, emirate),
-                    "batch_group": _batch_group(provider, area["lat"]),
                 }
             )
 
@@ -340,13 +350,9 @@ def main() -> None:
     import collections
 
     providers = collections.Counter(a["fulfilment_provider"] for a in assignments)
-    groups = collections.Counter(
-        a["batch_group"] for a in assignments if a["batch_group"]
-    )
     print(f"{len(assignments)} polygons")
     for provider, count in sorted(providers.items()):
         print(f"  {provider:<14} {count}")
-    print("batch groups:", dict(groups))
     print(f"\nwrote {OUT_GEOMETRY.relative_to(Path.cwd())}")
     print(f"wrote {OUT_ASSIGN.relative_to(Path.cwd())}")
 

@@ -1,13 +1,13 @@
 """
 The committed per-area map says what the rules say.
 
-The map that migration `175_per_area_courier_map` seeds is generated data —
+The map that migration `177_per_area_courier_map_v2` seeds is generated data —
 `scripts.build_delivery_areas` writes the geometry and the assignments, and a
 person commits them. This is what stops the committed files drifting from the
 rules that are supposed to have produced them: it re-derives every polygon's
-courier, fee tier and batch group from the same cost survey and asserts the
-committed value matches. If someone hand-edits an assignment without re-running
-the generator, or the generator changes and the data is not rebuilt, this fails.
+courier and alternates from the same cost survey and asserts the committed value
+matches. If someone hand-edits an assignment without re-running the generator, or
+the generator changes and the data is not rebuilt, this fails.
 
 The geometry checks need shapely (the build-time `geo` extra) and skip where it
 is absent; the assignment-rule checks need only the cost table and always run.
@@ -23,16 +23,16 @@ import pytest
 
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from scripts.build_delivery_areas import (
+    KITCHEN_EMIRATE,
     THIRD_PARTY_FEE,
     _alternates,
     _assign_provider,
-    _batch_group,
 )
 
 DATA = Path(__file__).resolve().parents[2] / "app" / "data"
-ASSIGN = json.loads((DATA / "uae_delivery_areas_assignments.json").read_text())
+ASSIGN = json.loads((DATA / "uae_delivery_areas_assignments.v2.json").read_text())
 COSTS = json.loads((DATA / "courier_costs.json").read_text())["costs"]
-GEOMETRY = json.loads((DATA / "uae_delivery_zones.v5.geojson.json").read_text())
+GEOMETRY = json.loads((DATA / "uae_delivery_zones.v6.geojson.json").read_text())
 
 PROVIDERS = {p.value for p in FulfilmentProviderEnum}
 
@@ -41,19 +41,20 @@ def test_every_area_has_a_polygon_and_an_assignment():
     """One polygon per area, and the two files name the same set."""
     assert len(ASSIGN) == len(GEOMETRY)
     assert {a["name"] for a in ASSIGN} == {g["name"] for g in GEOMETRY}
-    assert len(ASSIGN) >= 90  # ~97 survey areas; a floor, not the exact count
+    assert len(ASSIGN) >= 100  # ~107 survey areas; a floor, not the exact count
 
 
 @pytest.mark.parametrize("a", ASSIGN, ids=[a["label"] for a in ASSIGN])
 def test_each_assignment_matches_the_rules(a):
-    """The committed courier, batch group and alternates are what the generator's
-    own rules produce from the cost survey — no hand-edit has slipped in."""
+    """The committed courier and alternates are what the generator's own rules
+    produce from the cost survey — no hand-edit has slipped in."""
     fee = Decimal(a["delivery_fee"])
-    cost = COSTS[a["label"]]
+    cost = COSTS.get(a["label"], {})
 
-    assert a["fulfilment_provider"] == _assign_provider(fee, cost)
+    assert a["fulfilment_provider"] == _assign_provider(
+        fee, cost, same_emirate=(a["emirate"] == KITCHEN_EMIRATE)
+    )
     assert a["fulfilment_provider"] in PROVIDERS
-    assert a["batch_group"] == _batch_group(a["fulfilment_provider"], a["lat"])
     assert a["alternate_providers"] == _alternates(
         a["fulfilment_provider"], a["emirate"]
     )
@@ -66,13 +67,15 @@ def test_the_outer_fee_is_always_third_party():
             assert a["fulfilment_provider"] == "third_party", a["name"]
 
 
-def test_only_lalamove_polygons_batch():
-    """Batching is Lalamove-only; nothing else carries a batch group."""
+def test_a_bike_only_ever_serves_the_kitchens_own_emirate():
+    """A Slider bike does not cross an emirate line, whatever fare Slider quotes.
+
+    Outside Sharjah the Slider option is always the car; `slider_bike` may appear
+    only on a Sharjah polygon.
+    """
     for a in ASSIGN:
-        if a["fulfilment_provider"] != "lalamove":
-            assert a["batch_group"] is None, a["name"]
-        else:
-            assert a["batch_group"] in ("South of Sharjah", "North of Sharjah")
+        if a["fulfilment_provider"] == "slider_bike":
+            assert a["emirate"] == KITCHEN_EMIRATE, a["name"]
 
 
 def test_a_car_polygon_never_offers_a_bike_and_a_bike_may_offer_a_car():
