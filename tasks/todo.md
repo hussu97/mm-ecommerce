@@ -1,41 +1,48 @@
-# Unified Branch Hours & Holidays — Implementation
+# Observability + CPU + Docs + Unified Auth
 
-Plan: `~/.claude/plans/lets-figure-out-for-unified-bachman.md`
+Branch: `feat/observability-cpu-auth-overhaul`
+Plan: `~/.claude/plans/atomic-booping-hammock.md`
 
-## Part 1 — Data model: one shift per day
-- [x] Migration 173: collapse multi-shift rows (MIN opens / MAX closes), add uq(branch_id, weekday)
-- [x] Model `BranchWeeklyHours`: docstring + `__table_args__` single-shift constraint
-- [x] Move weekly-hours schemas into `app/schemas/pos/branches.py`, validate ≤1/day
-- [ ] Verify migration on throwaway Postgres (Docker was down)
+## W2/W3 — Sentry  ✅ DONE (3 commits)
+- [x] Worker: sentry-sdk dep + `observability.py` init + Typer callback
+- [x] Worker: SENTRY_DSN/SENTRY_ENVIRONMENT in compose worker block (W9 item 5) + enforce in test
+- [x] Worker: captures — needs-human, reauth-failed, job-timeout, empty-capture
+- [x] API: AsyncioIntegration; captures at RUN_FAILED + health; alerting.py
+- [x] API: spawn_tracked() + report_result on orphan tasks
+- [x] Web/admin: documented server SENTRY_DSN (Vercel action) + docs/sentry-observability.md alert rules
 
-## Part 2 — Weekly hours as source of truth (window = derived cache)
-- [x] New `services/branch_hours_service.py`: `schedule`, `window_for`, `next_open_window`, `model_weekday`
-- [x] Fold weekly-closed weekdays into `closed_dates_for` (no trading_hours rewrite needed — chosen lower-risk design)
-- [x] Fix POS holiday gap (`may_auto_accept` takes closed_dates; `accept_order` passes it)
-- [x] Unit tests for resolver + service-layout allow-list
+## W1 — CPU (code-only)  ✅ DONE (1 commit)
+- [x] De-stack nightly: deliveroo finance 22→02, keeta finance 23→04
+- [x] WORKER_JITTER_SECONDS (15m) on all fires
+- [x] Heal poll 120 → 300
+- [x] Background-only lean Chrome flags (WORKER_LEAN_CHROME), fingerprint untouched
 
-## Part 3 — Move hours + holidays UI into Branches tab
-- [x] Branch-scoped `GET/PUT /branches/{id}/weekly-hours` in `api/v1/branches.py`
-- [x] Relocate schedule read/write into `branch_hours_service`; catalog_sync consumes it
-- [x] Migration verified live on throwaway PG (collapse + constraint)
-- [x] OpenAPI regenerated
-- [x] `branchesApi` bindings; dropped catalog-sync getHours/setHours from admin
-- [x] New `BranchWeeklyHours` editor in Branches tab, one-shift/day, "apply to whole week"
-- [x] Uses stable toast pattern (no infinite GET loop)
+## W4 — Ground-zero doc + artifact  ✅ DONE (1 commit + published artifact)
+- [x] docs/integrators-and-aggregators.md (A–E, Mermaid, live counts)
+- [x] Retire 7 old docs; keep aggregator-runbook; repoint all references
+- [x] Visual HTML artifact published
 
-## Part 4 — Daily cron + manual trigger
-- [x] `branch_hours_sync.sync_all/sync_branch` + hourly `run_forever` loop (advisory-locked, storefront-only)
-- [x] Integrator write seam scaffold `aggregators/hours_writers.py` (registry, all NotImplemented)
-- [x] `POST /branches/{id}/sync-hours` + admin "Sync now" button
-- [x] No new env var (rides BATCH_DISPATCHER_ENABLED) → no W9 churn
+## W5 — Unified auth rewrite  ⏳ Phase A DONE; B–D handed off
+- [x] A: `ChannelAuthDescriptor` registry in policy.py (login_method, refresh_strategy,
+      token_shape, anti_bot, server_refreshable) + drift-guard test — behaviour-preserving
+- [ ] B: single liveness authority (drop worker `_channel_needs_reauth` fallback) +
+      single backoff engine (delete reauth.py disk backoff → policy.next_backoff)
+      ⚠ blue/green fallback + reauth-timing change — stage against instrumented prod
+- [ ] C: `AuthProvider` interface + server-refresh-first + proactive pre-expiry refresh
+      (start with deliveroo, the one REFRESH_SERVER_HTTPX channel)
+- [ ] D: explicit `aggregator_reauth_request` queue (Alembic migration, ≤32-char id,
+      verify on throwaway Postgres) replacing flag-and-poll + heal-poll churn
 
-## Part 5 — Holidays across integrators
-- [x] Holiday/closed-weekday → closed_dates everywhere; cron calls close_outlet seam
-- [x] POS auto-accept now respects holidays
+### Why B–D are staged, not rushed
+They change money-adjacent session timing (relogin cadence, liveness verdict) and
+carry a DB migration; the safe path is one shippable step at a time, validated with
+the Sentry telemetry now in place (needs_human / reauth_failed / run_failed events)
+and a staged blue/green deploy — not a big-bang cutover. The Phase-A descriptor is
+the seam they all consume (`policy.server_refreshable`, `refresh_strategy`).
 
-## Part 0 — Live audit (operational, VM) — PENDING
-- [ ] Run reads per branch×channel on VM (needs live sessions + CATALOG_SYNC_READ_ENABLED), emit diff report
-
-## Verification
-- [x] Unit tests (11 new) + full suite green (2859 passed); types regen; ruff clean; migration verified live on throwaway PG; admin typecheck + lint clean
-- [ ] Admin manual check in running app (optional)
+## Cross-cutting
+- [x] Local tests + ruff (worker 119 pass; API aggregator 134 pass; allowlist 18 pass)
+- [ ] W5-D migration verified on throwaway Postgres
+- [ ] HOLD prod deploy for explicit user confirmation
+- [ ] Vercel: user sets server SENTRY_DSN (web + admin)
+- [ ] Sentry: user configures alert rules per docs/sentry-observability.md
