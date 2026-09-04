@@ -13,11 +13,14 @@ from app.services.orders import order_query
 def test_all_codes_lead_with_counter():
     codes = order_query.ALL_COURIER_CODES
     assert codes[0] == "counter"
-    # The four dispatch couriers and the five marketplaces, plus counter.
+    # The dispatch couriers — including Slider's two vehicle tiers and the legacy
+    # bare `slider` — the five marketplaces, and counter.
     assert set(codes) == {
         "counter",
         "lalamove",
         "noon_send",
+        "slider_bike",
+        "slider_car",
         "slider",
         "third_party",
         "talabat",
@@ -26,6 +29,14 @@ def test_all_codes_lead_with_counter():
         "deliveroo",
         "careem",
     }
+
+
+def test_a_slider_tier_is_its_own_courier_code():
+    """A `slider_bike`/`slider_car` delivery is grouped as itself, not dropped as
+    carrier-less — the bug that silently excluded tier orders from the per-courier
+    scorecard."""
+    assert order_query.courier_code_for("online", None, "slider_bike") == "slider_bike"
+    assert order_query.courier_code_for("online", None, "slider_car") == "slider_car"
 
 
 def test_courier_code_for_counter_is_the_register():

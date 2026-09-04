@@ -40,7 +40,19 @@ Plan: /Users/hussainabbasi/.claude/plans/lets-plan-for-slider-crispy-wirth.md
 - [x] Backend delivered in Phase 1 (reassignment quote/move recognise slider tiers; allowed_targets directional guard car-never->bike)
 - [x] Frontend: DeliveryPanel + courier-labels render slider_bike/car labels + amber badge + status control; dialog offers slider_car for a slider_bike order (targets come from server allowed_targets)
 
-## DEPLOY (pending user go) — push branch to main -> auto-deploy -> verify on prod
+## Integration audit (whole order journey + reports + admin) — DONE
+Three parallel audits. Real gaps found + FIXED:
+- [x] courier_catalog.COURIER_NAMES missed the tiers -> dashboard per-courier scorecard SILENTLY DROPPED slider_bike/car orders + revenue, no badge, no filter option. Added both + logo falls back to slider.png. (order_query ALL_COURIER_CODES/grouping fixed via this.)
+- [x] slider_service._delivery_for matched webhooks on provider=="slider" only -> tier orders' status webhooks lost. Now .in_(PROVIDERS) (3 filters).
+- [x] courier_service.cancel routed slider_bike/car cancellation to Lalamove. Now in SLIDER_PROVIDERS.
+- [x] admin couriers.ts COURIER_OPTIONS + courierLogo + delivery courier-labels.ts missed tiers. Added.
+- [x] test_order_query updated + new tier test. Full suite 2723 green; ruff + admin type-check clean.
+- Confirmed SAFE (provider-agnostic): order_economics margin, daily_sales_email (by source), analytics commerce (by method), aggregator reconcile/fees, export_data, delivery_promise (keys on zone provider -> finds 60min tier rows), storefront apps/web (no courier field). NOTE: order-journey audit agent's premise was WRONG (claimed Phase 1 code missing) — verified Phase 1 intact; only #11 webhook + #3 cancel were real.
+
+## Merge with main — DONE
+- [x] Merged origin/main (8 commits ahead); re-chained migrations onto main's 173_branch_weekly (mine now 174_slider_vehicle_couriers, 175_per_area_courier_map); single alembic head verified on throwaway; 2723 tests + type-check green.
+
+## DEPLOY (user: reverify all -> fix bugs+optim -> push to main direct -> deploy green -> verify prod)
 
 ## Notes
 - New versioning: attributes (fee/threshold/default courier) editable in place on active version; new version only for geometry changes.

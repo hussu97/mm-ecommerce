@@ -539,7 +539,7 @@ async def cancel(db: AsyncSession, order: Order) -> OrderDelivery | None:
 
     if delivery.provider == NOON_SEND:
         return await noon_send_service.cancel_delivery(db, order)
-    if delivery.provider == SLIDER:
+    if delivery.provider in SLIDER_PROVIDERS:
         return await slider_service.cancel_delivery(db, order)
     return await lalamove_service.cancel_delivery(db, order)
 

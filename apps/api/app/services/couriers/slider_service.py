@@ -916,7 +916,7 @@ async def _delivery_for(
                     select(OrderDelivery)
                     .where(
                         OrderDelivery.courier_order_id == str(delivery_id),
-                        OrderDelivery.provider == PROVIDER,
+                        OrderDelivery.provider.in_(PROVIDERS),
                     )
                     .options(selectinload(OrderDelivery.order))
                 )
@@ -939,7 +939,7 @@ async def _delivery_for(
                 select(OrderDelivery)
                 .where(
                     OrderDelivery.courier_reference == reference,
-                    OrderDelivery.provider == PROVIDER,
+                    OrderDelivery.provider.in_(PROVIDERS),
                 )
                 .options(selectinload(OrderDelivery.order))
             )
@@ -957,7 +957,7 @@ async def _delivery_for(
                 .join(Order, Order.id == OrderDelivery.order_id)
                 .where(
                     Order.order_number == reference,
-                    OrderDelivery.provider == PROVIDER,
+                    OrderDelivery.provider.in_(PROVIDERS),
                 )
                 .options(selectinload(OrderDelivery.order))
             )
