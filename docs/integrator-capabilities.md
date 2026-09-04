@@ -24,7 +24,7 @@ not just captured shapes.
 |---|---|---|---|---|---|
 | **Foodics** (master) | ✅ verified | n/a¹ | ✅ verified | via Foodics | ✅ (existing) |
 | **Careem** | ✅ verified² | ✅ verified | ✅ verified³ | ✅ verified³ | ✅ (existing) |
-| **Talabat** | ✅ verified | ⏸ separate service | ⏸ import-based | ⏸ | ✅ (existing) |
+| **Talabat** | ✅ verified | ✅ verified¹¹ | ⚙ Karama only¹² | ⚙ Karama only¹² | ✅ (existing) |
 | **Noon** | ✅ verified | ✅ verified⁵ | ✅ verified⁸ | ✅ verified⁸ | ✅ (existing) |
 | **Keeta** | ✅ built⁴ | ✅ verified⁹ | ✅ verified⁷ | ✅ verified¹⁰ | ✅ (existing) |
 | **Deliveroo** | ⚙ worker⁶ | ✅ verified⁶ | ⏸ headed | ⏸ | ✅ (existing) |
@@ -116,8 +116,20 @@ not just captured shapes.
   `delete_keeta_spu` + `delete_keeta_item_in_page` + a `delete-keeta-item` CLI. This is
   the reverse half of the create-then-delete, so a create verification never orphans.
 
-⚙ = writer built + deployed; a successful live create pending the backend-category
-field above (create currently validates-and-rejects, leaving nothing behind).
+¹¹ **Talabat hours — verified live (2026-09-02).** DeliveryHero Vendor Time Service:
+  `GET vts.eu.restaurant-partners.com/opening-times/v1/vendor/TB_AE;{v}/calendars/DELIVERY`.
+  Replays over the existing TLS-impersonated session (same auth domain as the menu
+  API) — no headed browser. `from`/`to` = minutes-from-midnight; `day` 0=Mon..6=Sun →
+  weekday=(day+1)%7. See §4.
+
+¹² **Talabat create/delete — PROVEN on Karama only (2026-09-04).** Sharjah/Barsha are
+  Foodics-synced and role-restricted to availability toggles; the standalone Karama
+  branch (793319) has full menu editing. Create/delete go through a CQRS command endpoint
+  (`POST …/catalogs/commands`), require an AI-validated food image, and pass through a
+  "product addition in review" workflow. Proven end-to-end via the portal; not yet a
+  server-side writer. See §4.
+
+⚙ = capability proven live but not yet a productionised/deployed server-side writer.
 
 ✅ = verified live and shipped · ⏸ = not yet, with the exact reason + path below.
 
@@ -238,9 +250,9 @@ records the mapping (`_create_on_careem`).
 
 ---
 
-## 4. Talabat — read verified; write is import-based (pending)
+## 4. Talabat — menu + hours read server-side; writes token-gated
 
-**Auth.** DeliveryHero bearer under
+**Auth.** DeliveryHero vendor-portal bearer under
 `vendor-api-gdp-ae.me.restaurant-partners.com/api/5/platforms/TB_AE` + the
 `x-global-entity-id`. Vendors (outlets): `711571`, `728173`, `793319`.
 
@@ -250,20 +262,48 @@ categories:[{id,name}]}]}` → `/vendors/{v}/catalogs/{c}/categories/{cat}/produ
 productOptionIds}]`. Sizes are **separate products**, so there is no option layer.
 Reader: `_read_talabat_menu` / `parse_talabat_catalog`.
 
-**Hours read (⏸ pending — separate service).** Every schedule path on the menu API
-404s ("no Route matched"): `/vendors/{v}`, `/availability`, `/opening-times`,
-`/schedules`, `/schedule`, `/opening-hours`, `/special-days` (probed 2026-09-01).
-DeliveryHero manages availability on a **different microservice**; the endpoint must
-be captured from the portal's network (anti-bot → headed capture on the VM) before
-a reader can be trusted.
+**Hours read (✅ verified — 2026-09-02).** The earlier belief (a mysterious separate
+service, or a portal GraphQL) was wrong. A headed capture of the Opening-Times page
+showed hours load from the DeliveryHero **Vendor Time Service**, a plain REST GET:
+`GET https://vts.eu.restaurant-partners.com/opening-times/v1/vendor/TB_AE;{v}/
+calendars/DELIVERY` → `{calendars:[{name:"Normal", schedule:{openingTimesByDay:
+[{day, openingTimes:[{from,to}]}]}}]}`. That host is the **same auth domain** as the
+menu vendor-api, so it **replays server-side over the existing TLS-impersonated
+session — no headed browser for the read** (headed was only to discover it). `from`/
+`to` are minutes-from-midnight; `day` 0=Mon..6=Sun (`entity/configuration.firstDOW=0`)
+→ `weekday = (day+1)%7`. Day origin cross-checked (Sharjah Sunday 08:15–23:30 matches
+the verified Deliveroo Sunday; Karama closed Friday). Provider
+`get_delivery_calendars`; reader `_read_talabat_hours` / `parse_talabat_hours`.
+Verified live for all 3 vendors.
 
-**Create + delete (⏸ pending — import-based).** The per-item `POST` to the read
-path returns **405 Method Not Allowed** (probed 2026-09-01), so DeliveryHero menu
-writes are **not** a plain REST create — they go through a **catalog import** (bulk
-job), not confirmed live. The create dispatch raises a clear "not yet verified" for
-Talabat. **To finish:** capture the portal's actual add-item request (or the DH
-catalog-import job shape) and implement `talabat_provider.create_product` against
-it, then verify with a controlled create-then-delete (the Careem template).
+**⚠️ Read reliability — the vendor-portal token.** Both reads use a keymaker
+accessToken (`aud=vendor-portal-prd-eu`) that lasts ~1h and is **minted only at
+login, not refreshed** server-side (the SPA fires no refresh call; the worker relogin
+does not reliably re-mint it). So menu + hours reads succeed only within ~1h of a
+fresh login and `401` otherwise. Fixing this needs the keymaker refresh call captured
+from the SPA's login network trace (the OIDC discovery 404s and the refresh is a
+non-standard opaque-token flow — not derivable server-side).
+
+**Create + delete — PROVEN on the Karama branch only (2026-09-04, via the portal).**
+Menu editing is **per-branch, gated by Foodics integration**: Sharjah (711571) and
+Barsha (728173) are Foodics-synced, so their Talabat menu is **role-restricted to
+availability toggles** ("your current role only allows you to change item availability
+… contact your manager"). **Karama (793319) is the standalone non-Foodics branch — it
+has full menu editing** (Add category / Add product / delete). Verified by a controlled
+create-then-delete through the real portal (Chrome, live session): created a Brownies
+product end-to-end.
+- **Write API:** DeliveryHero uses a **CQRS command** endpoint —
+  `POST vendor-api-gdp-ae…/api/5/platforms/TB_AE/vendors/{v}/catalogs/commands`
+  (the products path itself is read-only). The read API (`/catalogs/.../products`) shows
+  the created item with a UUID `id`, `active`, `catalogIds`.
+- **Gotchas that make automation non-trivial:** (1) create **requires a real product
+  image that passes an AI food-check** (a synthetic placeholder is rejected "it is not a
+  food"); (2) a new item enters **"PRODUCT ADDITION IN REVIEW"** — not live until Talabat
+  approves, and the **delete button only appears in the item form after the review
+  resolves**. So it is not a silent create-then-delete like Careem/Noon/Keeta.
+- **To productionise:** replay the `/catalogs/commands` create + delete command bodies
+  server-side (capture them from the portal — a direct API write is otherwise blocked by
+  the session write-guard), supply an image, and handle the review state.
 
 ---
 
