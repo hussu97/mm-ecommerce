@@ -243,28 +243,38 @@ def _keep_component(geom, point, make_valid):
     return make_valid(min(parts, key=lambda p: p.distance(point)))
 
 
-def _bike_reachable(areas, outline_shapes, canonical, Point) -> set[str]:
-    """The area labels a bike can reach from the kitchen without leaving its land.
+#: How much of the straight kitchen->area line may lie in another emirate before
+#: a bike is ruled out. A line can graze a neighbour's corner; passing *through*
+#: one is different. 1.5 km separates the two.
+BIKE_CROSSING_TOLERANCE_KM = 1.5
 
-    Sharjah is non-contiguous — the east coast (Kalba, Khor Fakkan) and a strip
-    north of Ajman are Sharjah but separated from the kitchen by another emirate,
-    so a bike cannot reach them. Bike is allowed only on an area in the same
-    connected piece of the Sharjah outline as the kitchen.
+
+def _bike_reachable(areas, outline_shapes, canonical, Point) -> set[str]:
+    """The area labels a bike can reach from the kitchen without crossing another
+    emirate.
+
+    Stricter than "same emirate" and than "same landmass": Sharjah wraps around
+    Ajman, so the strip north of Ajman (Al Hamriyah) is topologically connected
+    to the kitchen — but the road to it runs *through* Ajman, and a bike cannot.
+    So the test is the practical one: the straight kitchen->area line must not
+    pass through another emirate. That also rules out the east-coast enclaves,
+    whose line crosses Ajman/Fujairah to get there.
     """
-    sharjah = outline_shapes[KITCHEN_EMIRATE]
-    kitchen = Point(KITCHEN_LNG, KITCHEN_LAT)
-    parts = list(getattr(sharjah, "geoms", [sharjah]))
-    tol = 2.0 / KM_PER_DEG  # 2 km slack for a pin just off its own outline
-    block = next((p for p in parts if p.buffer(tol).covers(kitchen)), None)
-    if block is None:
-        return set()
-    reachable = block.buffer(tol)
-    return {
-        a["label"]
-        for a in areas
-        if canonical[a["emirate"]] == KITCHEN_EMIRATE
-        and reachable.covers(Point(a["lng"], a["lat"]))
-    }
+    from shapely.geometry import LineString  # noqa: PLC0415
+    from shapely.ops import unary_union  # noqa: PLC0415
+
+    others = unary_union(
+        [g for name, g in outline_shapes.items() if name != KITCHEN_EMIRATE]
+    )
+    reachable = set()
+    for a in areas:
+        if canonical[a["emirate"]] != KITCHEN_EMIRATE:
+            continue
+        line = LineString([(KITCHEN_LNG, KITCHEN_LAT), (a["lng"], a["lat"])])
+        crossing = line.intersection(others)
+        if crossing.length * KM_PER_DEG <= BIKE_CROSSING_TOLERANCE_KM:
+            reachable.add(a["label"])
+    return reachable
 
 
 def _inherit_fee(point, v2_shapes) -> tuple[str, str, bool]:
