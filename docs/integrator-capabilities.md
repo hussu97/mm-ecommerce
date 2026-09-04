@@ -133,6 +133,31 @@ not just captured shapes.
 
 ✅ = verified live and shipped · ⏸ = not yet, with the exact reason + path below.
 
+### Hours — read/diff only; **no channel has an hours *write* (update) writer**
+
+The five hours columns above are all **reads**. The system reads each channel's
+current hours, builds MM's canonical weekly schedule (`build_mm_hours`), and reports
+the **drift** (`compute_hours_drift` → `diff_hours`) in the admin Catalog-Sync report.
+It does **not** push a corrected schedule back to any marketplace — there is no
+`update_hours`/`set_calendar` writer on any provider. Hours *update* was not one of the
+four target functionalities (menu read, hours read, item create, item delete); it is a
+distinct fifth capability, unbuilt. Per-channel path to add it (each needs its
+hours-write endpoint captured, same as the item-create writers):
+
+| Channel | Reachability of an hours-write | Path |
+|---|---|---|
+| **Careem** | server-side (same bearer session) | probe `food-outlet-operational-hours` for a PUT; verify with an **idempotent write-back** (read → write identical → re-read) so nothing customer-facing changes |
+| **Noon** | server-side (RMS session) | capture the schedule-save call from the portal; wire `noon_provider.update_schedule` |
+| **Talabat** | behind the **review-gated `/catalogs/commands`** | same wall as Talabat create — needs the command body |
+| **Keeta** | headed worker only (mtgsig) | in-page write on the settings page |
+| **Deliveroo** | headed worker only (api-gw/webrom) | capture a live opening-hours save |
+| **Foodics** | n/a | hours managed in Foodics directly |
+
+Careem and Noon are the two cleanly reachable server-side; both still need one
+controlled live verification before shipping (an hours write is immediately
+customer-facing — there is no off-shelf equivalent to the create-then-delete used to
+verify the item writers, so the safe check is an idempotent write-back).
+
 ---
 
 ## 1. How the catalog & hours layer is built (shared architecture)
