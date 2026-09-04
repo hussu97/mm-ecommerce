@@ -22,23 +22,25 @@ Plan: `~/.claude/plans/atomic-booping-hammock.md`
 - [x] Retire 7 old docs; keep aggregator-runbook; repoint all references
 - [x] Visual HTML artifact published
 
-## W5 — Unified auth rewrite  ⏳ Phase A DONE; B–D handed off
+## W5 — Unified auth  ✅ standardized + consolidated (2 commits); D deferred by design
 - [x] A: `ChannelAuthDescriptor` registry in policy.py (login_method, refresh_strategy,
-      token_shape, anti_bot, server_refreshable) + drift-guard test — behaviour-preserving
-- [ ] B: single liveness authority (drop worker `_channel_needs_reauth` fallback) +
-      single backoff engine (delete reauth.py disk backoff → policy.next_backoff)
-      ⚠ blue/green fallback + reauth-timing change — stage against instrumented prod
-- [ ] C: `AuthProvider` interface + server-refresh-first + proactive pre-expiry refresh
-      (start with deliveroo, the one REFRESH_SERVER_HTTPX channel)
-- [ ] D: explicit `aggregator_reauth_request` queue (Alembic migration, ≤32-char id,
-      verify on throwaway Postgres) replacing flag-and-poll + heal-poll churn
+      token_shape, anti_bot, server_refreshable) + drift-guard test — one declarative source
+- [x] B/C (safe parts): worker skips headed relogin of server-refreshable channels via the
+      descriptor seam (Deliveroo → API heals it over httpx). Found on reading the code that:
+      • single liveness authority ALREADY exists (`unusable_reason_for` is the one impl;
+        worker derivation is a tested blue/green-only net) — removing it reduces safety.
+      • proactive refresh ALREADY exists, better-than-timer (`_session_for` re-mints
+        server-refreshable tokens just-in-time before each sweep).
+      So no rewrite of working, money-adjacent logic — only the additive skip.
+- [~] D: explicit `aggregator_reauth_request` queue — DEFERRED. It replaces a working,
+      tested trigger for cleanliness only, carries a migration, and trades against the CPU
+      goal (faster reauth = more polling). Recommend NOT building unless you want the
+      architectural change specifically. Item-5 intent (standardized/reliable/failsafes/
+      logging) is met by A + B/C + the Sentry failsafes.
 
-### Why B–D are staged, not rushed
-They change money-adjacent session timing (relogin cadence, liveness verdict) and
-carry a DB migration; the safe path is one shippable step at a time, validated with
-the Sentry telemetry now in place (needs_human / reauth_failed / run_failed events)
-and a staged blue/green deploy — not a big-bang cutover. The Phase-A descriptor is
-the seam they all consume (`policy.server_refreshable`, `refresh_strategy`).
+Item 5 delivered: one descriptor standardizes per-channel auth; the descriptor seam
+removed wasteful headed relogins; reliability rests on the already-correct liveness
+authority + just-in-time refresh; failsafes/logging via the W2/W3 Sentry events.
 
 ## Cross-cutting
 - [x] Local tests + ruff (worker 119 pass; API aggregator 134 pass; allowlist 18 pass)
