@@ -185,6 +185,42 @@ async def pull_keeta_menu_in_page() -> dict[str, Any]:
     return {"payloads": len(payloads), **(result or {})}
 
 
+async def pull_keeta_hours_in_page() -> list[dict[str, Any]]:
+    """Read each Keeta shop's business status + today's hours in-page (signed).
+
+    Keeta exposes only *today's* hours (SCM `shop/base/summary/list`), not a weekly
+    schedule — so this is an audit/read, returning the raw per-shop
+    `{shopId, businessStatus, todayBusinessHours:[{startTime,endTime}]}` (seconds
+    from midnight). Reads SHOP_IDS off the menu route, then calls
+    `fetch_keeta_today_hours`. Mirrors `pull_keeta_menu_in_page`'s context setup;
+    the operator entry point is `fetch-keeta-hours`."""
+    from .browser import _open_storage_state_context
+    from .engine import async_playwright
+    from .keeta_pull import (
+        KEETA_MENU_ROUTE,
+        _read_shop_ids,
+        fetch_keeta_today_hours,
+    )
+
+    _keeta_state_or_raise()
+    async with async_playwright() as pw:
+        opened = await _open_storage_state_context(pw, "keeta")
+        try:
+            page = await opened.context.new_page()
+            await page.goto(
+                KEETA_MENU_ROUTE, wait_until="domcontentloaded", timeout=60_000
+            )
+            await page.wait_for_timeout(6_000)  # let the SPA prime SHOP_IDS
+            shop_ids = await _read_shop_ids(page)
+            await page.close()
+            if not shop_ids:
+                logger.warning("keeta hours: no SHOP_IDS in sessionStorage")
+                return []
+            return await fetch_keeta_today_hours(opened.context, shop_ids)
+        finally:
+            await opened.close()
+
+
 async def create_keeta_item_in_page(
     *,
     shop_id: str,
