@@ -42,9 +42,7 @@ async def test_wait_for_otp_uses_the_channel_mailbox_app(monkeypatch):
         seen["refresh_token"] = refresh_token
         return ("483920", None)
 
-    monkeypatch.setattr(
-        "aggregator_bootstrap.graph_mail.fetch_latest_otp", _fake_otp
-    )
+    monkeypatch.setattr("aggregator_bootstrap.graph_mail.fetch_latest_otp", _fake_otp)
     code = await wait_for_otp(
         sender_filter="noon",
         subject_filter="verify",
