@@ -2,24 +2,22 @@
 The three delivery-estimate numbers, from the outside.
 
 Every one of them was a deploy before this: noon Send's minutes were a value in
-a migration, a batch group's minutes-to-door likewise, and a third party's days
-were the literal `1` in the resolver. They are commercial figures — an SLA is
-renegotiated, a route re-timed — so the property worth pinning here is not the
-arithmetic (that is `test_delivery_estimate.py`) but that the numbers can be
-written at all, and that the one combination which makes the resolver fall back
-to a figure nobody chose is refused.
+a migration, and a third party's days were the literal `1` in the resolver. They
+are commercial figures — an SLA is renegotiated, a route re-timed — so the
+property worth pinning here is not the arithmetic (that is
+`test_delivery_estimate.py`) but that the numbers can be written at all, and that
+the one combination which makes the resolver fall back to a figure nobody chose
+is refused.
 """
 
 from __future__ import annotations
 
-import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.core.deps import get_current_active_user
 from app.models.courier import Courier
-from app.models.delivery_batch import DeliveryBatchGroup
 from app.models.user import User
 
 
@@ -27,7 +25,6 @@ def _courier(code: str, *, kind: str, minutes: int | None, days: int = 1) -> Cou
     return Courier(
         code=code,
         name=code.replace("_", " ").title(),
-        supports_batching=code == "lalamove",
         unbatched_promise_kind=kind,
         unbatched_promise_minutes=minutes,
         unbatched_promise_days=days,
@@ -79,9 +76,6 @@ class TestCourierPromises:
         by_code = {c["code"]: c for c in response.json()}
         assert by_code["noon_send"]["unbatched_promise_minutes"] == 90
         assert by_code["third_party"]["unbatched_promise_days"] == 2
-        # Read-only, and shown anyway: it is the reason noon Send has no
-        # schedule on the batching screen.
-        assert by_code["noon_send"]["supports_batching"] is False
 
     async def test_noon_send_can_be_moved_from_an_hour_to_ninety_minutes(
         self, admin_client, mock_db, quiet_audit
@@ -169,58 +163,3 @@ class TestCourierPromises:
         )
 
         assert response.status_code == 404
-
-
-class TestBatchGroupMinutes:
-    async def test_a_groups_time_to_the_door_can_be_changed(
-        self, admin_client, mock_db, quiet_audit
-    ):
-        """
-        The northern run crosses three emirates on the same rate card as the
-        Dubai one, which is why this lives on the group rather than the courier.
-        """
-        group = DeliveryBatchGroup(
-            id=uuid.uuid4(),
-            name="Northern Emirates",
-            courier_code="lalamove",
-            delivery_minutes_after_dispatch=120,
-            is_active=True,
-        )
-        mock_db.get = AsyncMock(return_value=group)
-        _rows(mock_db, [])
-
-        response = await admin_client.put(
-            f"/api/v1/delivery-zones/batch-groups/{group.id}",
-            json={"delivery_minutes_after_dispatch": 150},
-        )
-
-        assert response.status_code == 200
-        assert response.json()["delivery_minutes_after_dispatch"] == 150
-        assert group.delivery_minutes_after_dispatch == 150
-
-    async def test_the_courier_a_group_books_cannot_be_changed_here(
-        self, admin_client, mock_db, quiet_audit
-    ):
-        """
-        Not a validation rule — the field simply is not on the write model.
-        Which carrier a group books is what `supports_batching` guards and what
-        its zones were assigned against; moving it re-partitions the map.
-        """
-        group = DeliveryBatchGroup(
-            id=uuid.uuid4(),
-            name="Dubai",
-            courier_code="lalamove",
-            delivery_minutes_after_dispatch=90,
-            is_active=True,
-        )
-        mock_db.get = AsyncMock(return_value=group)
-        _rows(mock_db, [])
-
-        response = await admin_client.put(
-            f"/api/v1/delivery-zones/batch-groups/{group.id}",
-            json={"courier_code": "noon_send", "delivery_minutes_after_dispatch": 95},
-        )
-
-        assert response.status_code == 200
-        assert group.courier_code == "lalamove"
-        assert group.delivery_minutes_after_dispatch == 95

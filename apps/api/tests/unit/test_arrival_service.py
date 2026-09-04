@@ -2,31 +2,26 @@
 When the shop is told to make an order.
 
 `confirmed` used to mean the money arrived *and* the register heard about it.
-For a zone whose orders ride a shared van those are hours apart, and collapsing
-them meant the ticket printed before the courier existed — so it printed
-`MM-20260819-001`, which is the fifteen-character string the seven-digit courier
-reference exists to keep out of a driver's mouth.
+Those are now two moments: `confirmed` is the money, and `arrived_at_pos` is
+the register hearing about it. For an online order the two are the same instant
+when the shop is open — every order dispatches its own courier directly, there
+is no run to wait for — and the arrival is held to the branch's next opening
+when the shop is shut.
 
-The rule these tests pin: **the shop is told when the van is booked.** For a
-batched zone that is the close of the run; for everything else — a pickup, a
-third-party zone, a courier with no schedule — it is the same instant as the
-confirmation.
+The rule these tests pin: **the shop is told when the courier is booked**, which
+for an open shop is the same breath as the confirmation.
 """
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 
 from app.models.order import Order, OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
 from app.services.delivery import arrival_service
-
-#: Comfortably ahead of now, so the batched case is genuinely waiting.
-LATER = datetime.now(timezone.utc) + timedelta(hours=2)
 
 
 def _order(status: OrderStatusEnum = OrderStatusEnum.CONFIRMED, **overrides) -> Order:
@@ -47,32 +42,17 @@ def _order(status: OrderStatusEnum = OrderStatusEnum.CONFIRMED, **overrides) -> 
     return order
 
 
-def _run(dispatch_at: datetime, *, open_: bool = True):
-    return SimpleNamespace(dispatch_at=dispatch_at, is_open=open_)
-
-
 @pytest.fixture
 def stubs(monkeypatch):
     """The world around a scheduling decision, recorded rather than run."""
-    from app.services.delivery import batching_service
-
-    calls: dict[str, list] = {"landed": [], "reserved": []}
+    calls: dict[str, list] = {"landed": [], "reasons": []}
 
     async def land(db, order, *, because):
         calls["landed"].append(order)
-        calls.setdefault("reasons", []).append(because)
+        calls["reasons"].append(because)
         return True
 
     monkeypatch.setattr(arrival_service, "land", land)
-
-    def reserve_returns(batch):
-        async def reserve(db, order, **kwargs):
-            calls["reserved"].append(order)
-            return batch
-
-        monkeypatch.setattr(batching_service, "reserve", reserve)
-
-    calls["reserve_returns"] = reserve_returns  # type: ignore[assignment]
     return calls
 
 
@@ -85,51 +65,20 @@ def shop_is_open(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_batched_order_arrives_when_its_run_leaves(stubs, shop_is_open):
+async def test_an_open_shop_is_told_at_once(stubs, shop_is_open):
     """
-    The case the status exists for. Two hours between the money and the kitchen,
-    and the ticket that eventually prints has a courier on it.
+    A pickup, a third-party zone, a courier nobody put on a schedule — every
+    online order now dispatches its own courier directly, with no run to wait
+    for. Landed inline rather than left for the sweep: a minute between a
+    customer paying cash at the counter and the counter hearing about it is a
+    minute of somebody standing there.
     """
-    stubs["reserve_returns"](_run(LATER))
     order = _order()
 
-    await arrival_service.schedule(None, order)
-
-    assert order.arrives_at == LATER
-    assert stubs["landed"] == [], "the counter was told before the van was booked"
-
-
-@pytest.mark.asyncio
-async def test_an_order_with_no_run_to_wait_for_arrives_at_once(stubs, shop_is_open):
-    """
-    A pickup, a third-party zone, a courier nobody put on a schedule. Landed
-    inline rather than left for the sweep: a minute between a customer paying
-    cash at the counter and the counter hearing about it is a minute of
-    somebody standing there.
-    """
-    stubs["reserve_returns"](None)
-    order = _order()
-
-    await arrival_service.schedule(None, order)
+    stamped = await arrival_service.schedule(None, order)
 
     assert stubs["landed"] == [order]
-
-
-@pytest.mark.asyncio
-async def test_a_run_that_has_already_gone_does_not_hold_an_order_back(
-    stubs, shop_is_open
-):
-    """
-    `reserve` answering with a closed run means the order was added to something
-    already dispatched. Reading `dispatch_at` off it would date the arrival in
-    the past and, worse, read as batched — so it is treated as no run at all.
-    """
-    stubs["reserve_returns"](_run(LATER, open_=False))
-    order = _order()
-
-    await arrival_service.schedule(None, order)
-
-    assert stubs["landed"] == [order]
+    assert stamped == order.arrives_at, "schedule returns the moment it stamped"
 
 
 @pytest.mark.asyncio
@@ -139,7 +88,7 @@ async def test_a_counter_sale_has_no_arrival_to_schedule(stubs):
 
     assert await arrival_service.schedule(None, order) is None
     assert order.arrives_at is None
-    assert stubs["reserved"] == []
+    assert stubs["landed"] == []
 
 
 @pytest.mark.asyncio
@@ -154,7 +103,6 @@ async def test_a_shut_shop_is_not_told_until_it_opens(stubs, monkeypatch):
         return opens
 
     monkeypatch.setattr(arrival_service, "_next_working_moment", at_opening)
-    stubs["reserve_returns"](None)
     order = _order()
 
     await arrival_service.schedule(None, order)
@@ -192,12 +140,12 @@ async def test_a_courier_that_refuses_still_lets_the_kitchen_know(
     and never *conditional* on it. Getting this backwards would mean an empty
     Lalamove wallet silently stopped the kitchen.
     """
-    from app.services.delivery import batching_service
+    from app.services.couriers import courier_service
 
     async def explode(db, order, **kwargs):
         raise RuntimeError("wallet is empty")
 
-    monkeypatch.setattr(batching_service, "assign_or_dispatch", explode)
+    monkeypatch.setattr(courier_service, "dispatch", explode)
     order = _order()
 
     assert await arrival_service.land(_Db(), order, because="test") is True
@@ -213,12 +161,12 @@ async def test_an_order_that_moved_on_without_us_is_left_alone(
     `confirmed` without passing through here. The sweep must not drag such an
     order backwards onto a status it has already overtaken.
     """
-    from app.services.delivery import batching_service
+    from app.services.couriers import courier_service
 
     async def never(db, order, **kwargs):
         raise AssertionError("a driver was called for an order already gone")
 
-    monkeypatch.setattr(batching_service, "assign_or_dispatch", never)
+    monkeypatch.setattr(courier_service, "dispatch", never)
     order = _order(status=OrderStatusEnum.OUT_FOR_DELIVERY)
 
     assert await arrival_service.land(_Db(), order, because="test") is False
@@ -289,12 +237,12 @@ async def test_the_gateway_is_not_recorded_as_having_told_the_shop(
     tell a kitchen anything.
     """
     from app.models.order_status_event import StatusSourceEnum, acting_as
-    from app.services.delivery import batching_service
+    from app.services.couriers import courier_service
 
     async def nothing(db, order, **kwargs):
         return None
 
-    monkeypatch.setattr(batching_service, "assign_or_dispatch", nothing)
+    monkeypatch.setattr(courier_service, "dispatch", nothing)
     order = _order()
 
     with acting_as(
@@ -302,7 +250,7 @@ async def test_the_gateway_is_not_recorded_as_having_told_the_shop(
         actor_label="stripe",
         note="payment_intent.succeeded",
     ):
-        await arrival_service.land(_Db(), order, because="its run left")
+        await arrival_service.land(_Db(), order, because="its arrival fell due")
 
     events = _pending_events(order)
     assert len(events) == 1
@@ -310,7 +258,7 @@ async def test_the_gateway_is_not_recorded_as_having_told_the_shop(
     assert status == OrderStatusEnum.ARRIVED_AT_POS
     assert actor.source == StatusSourceEnum.SYSTEM.value
     assert actor.actor_label != "stripe"
-    assert actor.note == "its run left"
+    assert actor.note == "its arrival fell due"
 
 
 @pytest.mark.asyncio
@@ -321,12 +269,12 @@ async def test_an_arrival_is_recorded_like_any_other_status(monkeypatch, quiet_p
     *assigned*, not because somebody remembered to record it — which is the
     property that survives the next writer.
     """
-    from app.services.delivery import batching_service
+    from app.services.couriers import courier_service
 
     async def nothing(db, order, **kwargs):
         return None
 
-    monkeypatch.setattr(batching_service, "assign_or_dispatch", nothing)
+    monkeypatch.setattr(courier_service, "dispatch", nothing)
     order = _order()
 
     await arrival_service.land(_Db(), order, because="its arrival fell due")
@@ -338,18 +286,10 @@ async def test_an_arrival_is_recorded_like_any_other_status(monkeypatch, quiet_p
 
 def test_the_sweep_says_why_each_order_landed():
     """
-    Three things bring an order to the sweep and they are different questions
-    later — the third most of all, because it means the confirmation failed to
+    Two things bring an order to the sweep and they are different questions
+    later — the second most of all, because it means the confirmation failed to
     stamp an arrival and this is covering for it.
     """
-    from app.models.order_delivery import OrderDelivery
-
-    on_a_run = _order()
-    on_a_run.delivery = OrderDelivery(
-        order_id=on_a_run.id, provider="lalamove", batch_id=uuid.uuid4()
-    )
-    assert arrival_service._why(on_a_run) == "its run left"
-
     held = _order(arrives_at=datetime.now(timezone.utc))
     assert arrival_service._why(held) == "its arrival fell due"
 

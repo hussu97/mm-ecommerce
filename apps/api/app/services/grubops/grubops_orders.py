@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["run_forever", "sweep_once"]
 
-#: "mmBATCH" + 4. After batch_scheduler (…4801), log_retention (…4802) and the
+#: "mmBATCH" + 4. After delivery_scheduler (…4801), log_retention (…4802) and the
 #: GrubOps OOS reconcile (…4803). A new loop needs a number nobody else holds.
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4804
 

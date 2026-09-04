@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError
+from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.cart import Cart
-from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
 from app.services.couriers import courier_service, lalamove_service
@@ -32,9 +32,7 @@ __all__ = [
 TZ = ZoneInfo(DELIVERY_TIMEZONE)
 
 # `DISPATCH_TO_DOOR` used to live here: one hour, applied to every zone alike.
-# It is now `delivery_batch_groups.delivery_minutes_after_dispatch` (90 for the
-# Dubai run, 120 for the northern one, because one crosses three emirates) and
-# `couriers.unbatched_promise_minutes` for anything not waiting for a run. See
+# It is now `couriers.unbatched_promise_minutes`, per courier. See
 # `services/delivery_promise.py`, which is the only place a delivery time is
 # now decided.
 

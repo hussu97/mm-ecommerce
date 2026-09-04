@@ -42,7 +42,7 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
-from app.models.delivery_batch import DELIVERY_TIMEZONE
+from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.email_log import EmailLog
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum

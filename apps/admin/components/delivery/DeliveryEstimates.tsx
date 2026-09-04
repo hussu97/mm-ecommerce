@@ -2,25 +2,19 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { deliveryZonesApi, ApiError } from '@/lib/api';
-import type { BatchGroup, Courier } from '@/lib/types';
+import type { Courier } from '@/lib/types';
 import { Spinner } from '@/components/ui';
 
 import { CourierRow } from './CourierRow';
-import { GroupRow } from './GroupRow';
 import { MarketplaceRow } from './MarketplaceRow';
 import { Th } from './rate-fields';
 
 /**
  * What the shop tells a customer their order will arrive.
  *
- * Both halves on one screen, because they are one question. Which half applies
- * to an order is decided by whether its zone is on a batch schedule:
- *
- *   * **On a schedule** — the window says when the van leaves, and the group's
- *     minutes-to-door says how long it then takes. That second number is here.
- *   * **Not on one** — every noon Send zone, every third-party zone — the
- *     courier's own promise applies, either minutes from ready or days from
- *     handover.
+ * Every zone's promise is its courier's own: either minutes from the order
+ * being ready, for a courier we dispatch ourselves, or days from handover, for
+ * one that collects on its own schedule.
  *
  * Every one of these used to be a deploy. They are commercial figures: an SLA
  * is renegotiated, a route is re-timed, a partner covering Al Ain says two days
@@ -33,18 +27,13 @@ import { Th } from './rate-fields';
 
 export function DeliveryEstimates() {
   const [couriers, setCouriers] = useState<Courier[] | null>(null);
-  const [groups, setGroups] = useState<BatchGroup[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const [c, g] = await Promise.all([
-        deliveryZonesApi.listCouriers(),
-        deliveryZonesApi.listBatchGroups(),
-      ]);
+      const c = await deliveryZonesApi.listCouriers();
       setCouriers(c);
-      setGroups(g);
       setError('');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the estimates.');
@@ -77,7 +66,7 @@ export function DeliveryEstimates() {
   const dispatched = (couriers ?? []).filter(c => !c.is_aggregator);
   const marketplaces = (couriers ?? []).filter(c => c.is_aggregator);
 
-  if (couriers === null || groups === null) {
+  if (couriers === null) {
     return (
       <div className="py-10 flex justify-center">
         {error ? (
@@ -170,53 +159,6 @@ export function DeliveryEstimates() {
                   busy={busy}
                   onSave={data =>
                     run(() => deliveryZonesApi.updateCourier(courier.code, data))
-                  }
-                />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="bg-white border border-gray-200">
-        <header className="px-4 py-3 border-b border-gray-100">
-          <h2 className="text-sm font-body text-gray-800">Batch runs — time to the door</h2>
-          <p className="text-[11px] font-body text-gray-400 mt-1">
-            How long after a run leaves that its last box is through a door. Per
-            group rather than per courier, because it is a property of the route:
-            the northern run crosses three emirates on the same rate card as the
-            Dubai one. One number for every drop, since which stop is last is not
-            knowable when the promise is made — the courier optimises the order
-            after we hand it over.
-          </p>
-        </header>
-        {groups.length === 0 ? (
-          <p className="px-4 py-4 text-xs font-body text-gray-400">
-            No batch groups. Every zone dispatches on its own, and the courier
-            promises above are the whole of what a customer is told.
-          </p>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <Th>Group</Th>
-                <Th>Zones</Th>
-                <Th>Minutes to the door</Th>
-                <th className="px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {groups.map(group => (
-                <GroupRow
-                  key={`${group.id}:${group.delivery_minutes_after_dispatch}:${group.is_active}`}
-                  group={group}
-                  busy={busy}
-                  onSave={minutes =>
-                    run(() =>
-                      deliveryZonesApi.updateBatchGroup(group.id, {
-                        delivery_minutes_after_dispatch: minutes,
-                      }),
-                    )
                   }
                 />
               ))}

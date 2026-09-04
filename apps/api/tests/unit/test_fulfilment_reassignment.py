@@ -27,7 +27,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.exceptions import ConflictError
-from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import DeliveryPolygon
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery, is_failed
@@ -57,12 +56,6 @@ class _Db:
     def __init__(self, delivery=None, polygon=None):
         self.delivery = delivery
         self.polygon = polygon
-        self.batch = None
-        #: How many *other* deliveries share this one's courier booking.
-        #: `shared_run_booking` counts rather than trusting `batch.stop_count`,
-        #: because that column records what was booked and does not move when an
-        #: order later leaves a dispatched run.
-        self.shared_count = 0
         self.pending: list = []
         self.rows: list = []
         self.locked = False
@@ -77,8 +70,6 @@ class _Db:
     async def get(self, model, pk):
         if model is DeliveryPolygon:
             return self.polygon
-        if model is DeliveryBatch:
-            return self.batch
         return None
 
     async def execute(self, stmt):
@@ -86,7 +77,6 @@ class _Db:
             self.locked = True
         return SimpleNamespace(
             scalars=lambda: SimpleNamespace(first=lambda: self.delivery),
-            scalar=lambda: self.shared_count,
         )
 
     async def commit(self):
@@ -421,16 +411,13 @@ def quiet(monkeypatch):
         lalamove_service,
         noon_send_service,
     )
-    from app.services.delivery import batching_service, driver_assignment
+    from app.services.delivery import driver_assignment
 
     calls: list[str] = []
 
     async def cancel(db, order):
         calls.append("cancel_courier")
         return None
-
-    async def cancel_assignment(db, delivery):
-        calls.append("leave_batch")
 
     async def clear(db, delivery, **kw):
         calls.append("clear_driver")
@@ -474,7 +461,6 @@ def quiet(monkeypatch):
     # are about rather than for a missing API key.
     monkeypatch.setattr(courier_service, "is_enabled", lambda provider: True)
     monkeypatch.setattr(courier_service, "cancel", cancel)
-    monkeypatch.setattr(batching_service, "cancel_assignment", cancel_assignment)
     monkeypatch.setattr(driver_assignment, "clear", clear)
     monkeypatch.setattr(email_service, "repair_after_reassignment", repair)
     monkeypatch.setattr(lalamove_service, "quote_for_order", quote_for_order)
@@ -501,7 +487,6 @@ async def test_the_old_booking_is_called_off_before_a_new_one_is_made(quiet):
     await reassign.move(db, _order(), target=LALAMOVE, quotation_id="q1")
 
     assert quiet.index("cancel_courier") < quiet.index("book_lalamove")
-    assert quiet.index("leave_batch") < quiet.index("book_lalamove")
     assert quiet.index("clear_driver") < quiet.index("book_lalamove")
 
 
@@ -759,111 +744,3 @@ async def test_the_dialog_and_the_move_agree_about_a_failed_booking():
     assert "nothing to cancel" in exposure.reason
     # And the move agrees: no cancel is attempted for such a booking.
     assert is_failed(delivery.provider, delivery.courier_status)
-
-
-# ── a run is one booking, and it is not this order's ──────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_a_run_carrying_only_this_order_is_not_a_shared_booking():
-    """
-    A window that closes with one order in it still makes a batch and still
-    books through `_book_chunk`, so the delivery and the batch carry the same
-    id — and cancelling it harms nobody, because there is nobody else on it.
-
-    This blocked a real order. The dialog refused with "already been booked with
-    0 other order(s)", which is the arithmetic saying out loud that it had got
-    the question wrong.
-    """
-    batch = DeliveryBatch(
-        id=uuid.uuid4(), status="dispatched", courier_order_id="LM-SOLO", stop_count=1
-    )
-    delivery = _delivery(
-        provider=LALAMOVE,
-        courier_order_id="LM-SOLO",
-        courier_status="ASSIGNING_DRIVER",
-        batch_id=batch.id,
-    )
-    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
-    db.batch = batch
-    db.shared_count = 0  # nobody else on the booking
-
-    assert await reassign.refuse(db, _order(), delivery) is None
-    exposure = await reassign.exposure_of(db, delivery)
-    assert "shared run" not in exposure.reason
-
-
-@pytest.mark.asyncio
-async def test_an_order_on_a_shared_run_may_still_be_moved_with_a_warning():
-    """
-    The situation the whole feature exists for: a run was dispatched and the
-    driver never came for it.
-
-    Refusing here was wrong. The booking is not cancelled — `courier_service`
-    leaves a shared one alone — so the order simply leaves the run and nobody
-    else's delivery is touched. What the shop needs is to be told the van will
-    still call for a parcel that has gone, not to be stopped.
-    """
-    batch = DeliveryBatch(
-        id=uuid.uuid4(),
-        status="dispatched",
-        courier_order_id="LM-RUN-7788",
-        stop_count=5,
-    )
-    delivery = _delivery(
-        provider=LALAMOVE,
-        courier_order_id="LM-RUN-7788",
-        courier_status="ASSIGNING_DRIVER",
-        batch_id=batch.id,
-    )
-    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
-    db.batch = batch
-    db.shared_count = 4
-
-    assert await reassign.refuse(db, _order(), delivery) is None, "not a refusal"
-    exposure = await reassign.exposure_of(db, delivery)
-    assert exposure.will_be_charged is False
-    assert "shared run" in exposure.reason
-    assert "Nobody else's delivery is affected" in exposure.reason
-
-
-@pytest.mark.asyncio
-async def test_an_order_on_a_run_that_has_not_left_moves_freely():
-    """
-    A pending run has no booking at all — nothing has been sent to the courier —
-    so the order simply leaves it, and `cancel_assignment` recounts the stops.
-    This is the common case and it must not be caught by the guard above.
-    """
-    batch = DeliveryBatch(
-        id=uuid.uuid4(), status="pending", courier_order_id=None, stop_count=3
-    )
-    delivery = _delivery(provider=LALAMOVE, batch_id=batch.id)
-    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
-    db.batch = batch
-
-    assert await reassign.refuse(db, _order(), delivery) is None
-
-
-@pytest.mark.asyncio
-async def test_an_orders_own_booking_is_not_mistaken_for_a_run():
-    """
-    An order that went out alone while still attached to a run it never left
-    holds a booking id of its own. That is not the batch's, so it is cancellable
-    and the guard must not fire.
-    """
-    batch = DeliveryBatch(
-        id=uuid.uuid4(),
-        status="dispatched",
-        courier_order_id="LM-RUN-7788",
-        stop_count=5,
-    )
-    delivery = _delivery(
-        provider=LALAMOVE,
-        courier_order_id="LM-MINE-0001",
-        courier_status="ASSIGNING_DRIVER",
-        batch_id=batch.id,
-    )
-    db = _Db(delivery, _polygon(LALAMOVE, ["third_party"]))
-    db.batch = batch
-
-    assert await reassign.refuse(db, _order(), delivery) is None

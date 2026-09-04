@@ -5,7 +5,6 @@ import { useCallback, useMemo, useState } from 'react';
 import { deliveryZonesApi, ApiError } from '@/lib/api';
 import type { Branch } from '@/lib/pos-types';
 import type {
-  BatchGroup,
   DeliveryMapVersion,
   DeliveryPricingMode,
   DeliveryZone,
@@ -56,7 +55,6 @@ type SortKey =
 interface PolygonTableProps {
   versions: DeliveryMapVersion[];
   branches: Branch[];
-  batchGroups: BatchGroup[];
   /** A version-level action (copy / publish / delete) is in flight on the page. */
   busy: boolean;
   draftName: string;
@@ -70,7 +68,6 @@ interface PolygonTableProps {
 export function PolygonTable({
   versions,
   branches,
-  batchGroups,
   busy,
   draftName,
   onDraftNameChange,
@@ -89,7 +86,6 @@ export function PolygonTable({
   const debouncedSearch = useDebouncedValue(search);
   const [provider, setProvider] = useState('');
   const [branchId, setBranchId] = useState('');
-  const [batchGroupId, setBatchGroupId] = useState('');
   const [sort, setSort] = useState<SortKey>('display_order');
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc');
   // Which row is open for editing. Only one at a time — a page of half-edited
@@ -113,11 +109,10 @@ export function PolygonTable({
         search: debouncedSearch || undefined,
         provider: provider || undefined,
         branch_id: branchId || undefined,
-        batch_group_id: batchGroupId || undefined,
         sort,
         direction,
       }),
-    [versionId, debouncedSearch, provider, branchId, batchGroupId, sort, direction],
+    [versionId, debouncedSearch, provider, branchId, sort, direction],
   );
 
   const {
@@ -158,11 +153,6 @@ export function PolygonTable({
       return b ? b.reference : '—';
     };
   }, [branches]);
-
-  const batchGroupLabel = useMemo(() => {
-    const byId = new Map(batchGroups.map(g => [g.id, g.name] as const));
-    return (id: string | null) => (id ? byId.get(id) ?? '—' : '—');
-  }, [batchGroups]);
 
   const versionOptions = versions.map(v => ({
     value: v.id,
@@ -242,16 +232,6 @@ export function PolygonTable({
               ...branches.map(b => ({ value: b.id, label: `${b.reference} · ${b.name}` })),
             ]}
             onChange={e => setBranchId(e.target.value)}
-          />
-        </div>
-        <div className="w-52">
-          <Select
-            value={batchGroupId}
-            options={[
-              { value: '', label: 'All runs' },
-              ...batchGroups.map(g => ({ value: g.id, label: g.name })),
-            ]}
-            onChange={e => setBatchGroupId(e.target.value)}
           />
         </div>
       </div>
@@ -339,10 +319,6 @@ export function PolygonTable({
             {
               header: 'Baked at',
               render: z => <span className="text-xs font-body text-gray-700">{branchLabel(z.branch_id)}</span>,
-            },
-            {
-              header: 'Run',
-              render: z => <span className="text-xs font-body text-gray-500">{batchGroupLabel(z.batch_group_id)}</span>,
             },
             {
               header: 'Order',
@@ -533,11 +509,6 @@ function ZoneEditForm({
           }}
         />
         <AlternatePicker preferred={preferred} chosen={alternates} onChange={setAlternates} />
-        {zone.batch_group_id && preferred !== zone.fulfilment_provider && (
-          <span className="text-[11px] text-gray-500">
-            on a shared run — changing the courier takes it off
-          </span>
-        )}
       </div>
 
       <div className="flex flex-col gap-1">

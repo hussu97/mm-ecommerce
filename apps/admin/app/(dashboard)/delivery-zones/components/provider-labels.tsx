@@ -6,17 +6,17 @@
  *
  * Named "provider" rather than "Courier API": there are five fulfilment types
  * now — Lalamove, noon Send, the two Slider fleets (bike and car) and a third
- * party — they cost different amounts, and only one can be batched, so which is
- * which matters. Bare `slider` lingers as the legacy value the two fleets split
- * out of, kept last so a new map is nudged towards the fleet it actually means.
+ * party — they cost different amounts, so which is which matters. Bare `slider`
+ * lingers as the legacy value the two fleets split out of, kept last so a new
+ * map is nudged towards the fleet it actually means.
  */
 
 import type { DeliveryPricingMode, FulfilmentProvider } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 // Named rather than called "Courier API": there are five fulfilment types now,
-// they cost different amounts, and only one can be batched — so which is which
-// matters. `slider` is the legacy single fleet the bike/car pair replaced.
+// they cost different amounts — so which is which matters. `slider` is the
+// legacy single fleet the bike/car pair replaced.
 export const PROVIDER_LABEL: Record<FulfilmentProvider, string> = {
   lalamove: 'Lalamove',
   noon_send: 'noon Send',

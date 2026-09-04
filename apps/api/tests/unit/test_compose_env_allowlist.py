@@ -213,17 +213,17 @@ def test_the_register_can_book_a_courier():
         )
 
 
-def test_the_register_does_not_run_the_batch_sweeper():
+def test_the_register_does_not_run_the_storefront_scheduler():
     """
     The one courier-adjacent variable `pos-api` must *not* get.
 
-    `BATCH_DISPATCHER_ENABLED` starts a background loop that sweeps due batches
-    out to couriers. A second copy of it in the register container would race
-    the storefront's over the same rows, and the losing side of that race is a
-    second driver booked for one cake.
+    `STOREFRONT_SCHEDULER_ENABLED` starts a background loop that dispatches orders
+    to couriers, lands arrivals and tracks drivers. A second copy of it in the
+    register container would race the storefront's over the same rows, and the
+    losing side of that race is a second driver booked for one cake.
     """
     pos_env = _load_compose()["services"]["pos-api"]["environment"]
-    assert "BATCH_DISPATCHER_ENABLED" not in pos_env
+    assert "STOREFRONT_SCHEDULER_ENABLED" not in pos_env
 
 
 def _default_of(expression: str) -> str | None:

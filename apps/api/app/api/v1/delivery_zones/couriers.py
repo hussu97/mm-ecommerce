@@ -22,9 +22,8 @@ router = APIRouter()
 
 # ── Couriers ──────────────────────────────────────────────────────────────────
 #
-# The unbatched half of the delivery promise. A zone in no batch group — every
-# noon Send zone, and every third-party one — is quoted straight from these two
-# numbers, and until now neither had a way in that was not a migration.
+# The delivery promise. Every zone is quoted straight from these numbers, and
+# until now they had no way in that was not a migration.
 
 
 async def _live_zone_counts(db: AsyncSession) -> dict[str, int]:

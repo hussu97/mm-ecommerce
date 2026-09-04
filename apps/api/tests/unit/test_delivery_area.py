@@ -36,13 +36,11 @@ def _zone(
     threshold="75.00",
     eligible=True,
     branch_id=None,
-    batch_group_id=None,
 ):
     return Zone(
         id=uuid.uuid4(),
         name="Dubai Near",
         branch_id=branch_id,
-        batch_group_id=batch_group_id,
         delivery_fee=Decimal(fee),
         fulfilment_provider=provider,
         min_lat=24.0,
@@ -104,14 +102,8 @@ def _courier(kind="minutes", minutes=90):
     ],
 )
 def test_a_zone_waiting_for_nobody_is_promised_express(provider, expected):
-    """Ours to dispatch and in no group: a rider is called when the box is packed."""
+    """Ours to dispatch: a rider is called the moment the box is packed."""
     assert _speed_of(_zone(provider)) == expected
-
-
-@pytest.mark.parametrize("provider", ["lalamove", "slider", "noon_send"])
-def test_a_zone_on_a_shared_run_waits_for_it(provider):
-    """It lands today if it makes a window and tomorrow if it misses the last."""
-    assert _speed_of(_zone(provider, batch_group_id=uuid.uuid4())) == "same_day"
 
 
 def test_the_promise_follows_the_schedule_and_not_the_courier_name():
@@ -119,17 +111,14 @@ def test_the_promise_follows_the_schedule_and_not_the_courier_name():
     The regression this shape exists to prevent.
 
     This used to read `is_noon_send`, which was the same answer for as long as
-    they were the only unbatched courier we booked — and stopped being the same
-    answer the day `Sharjah Core` was carved out of `Sharjah Central` and handed
-    to Slider. Nothing about the zone got slower; only the name on it changed,
-    and a customer in the inner ring would have watched "express" turn into
-    "same day" for no reason they could see.
+    they were the only self-booked courier — and stopped being the same answer
+    the day `Sharjah Core` was carved out of `Sharjah Central` and handed to
+    Slider. Nothing about the zone got slower; only the name on it changed, and a
+    customer in the inner ring would have watched "express" change for no reason
+    they could see. Every self-booked courier dispatches directly, so the answer
+    turns on the shape of the zone and never on which carrier fills it.
     """
-    group = uuid.uuid4()
     assert _speed_of(_zone("noon_send")) == _speed_of(_zone("slider"))
-    assert _speed_of(_zone("noon_send", batch_group_id=group)) == _speed_of(
-        _zone("slider", batch_group_id=group)
-    )
 
 
 def test_an_unknown_pin_gets_the_most_cautious_promise():
@@ -171,16 +160,6 @@ async def test_a_day_promise_names_no_minutes():
         _zone("slider"), courier=_courier(kind="next_day", minutes=None)
     )
     assert result.speed == "express"
-    assert result.express_minutes is None
-
-
-@pytest.mark.parametrize("provider", ["lalamove", "slider", "noon_send"])
-async def test_a_batched_zone_names_no_minutes(provider):
-    """`same_day` counts in windows, not minutes."""
-    result = await _area(
-        _zone(provider, batch_group_id=uuid.uuid4()), courier=_courier()
-    )
-    assert result.speed == "same_day"
     assert result.express_minutes is None
 
 

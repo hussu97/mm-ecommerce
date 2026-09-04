@@ -41,14 +41,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
 from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
-from app.models.order import Order
+from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
 
@@ -79,6 +80,17 @@ THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 #: routing here treats them together and `slider_service` is the one that cares
 #: about bike versus car.
 SLIDER_PROVIDERS = frozenset({SLIDER, SLIDER_BIKE, SLIDER_CAR})
+
+#: How long to wait between re-tries of a single order's dispatch, one rung per
+#: attempt. A failure that outlives the last rung stops retrying and goes on the
+#: admin's needs-a-human list. (This used to live in `batching_service`, shared
+#: with the batch-retry ladder; batching is gone and the single-order retry keeps
+#: it here.)
+RETRY_BACKOFF = (
+    timedelta(minutes=5),
+    timedelta(minutes=15),
+    timedelta(minutes=45),
+)
 
 
 def books_itself(provider: str | None) -> bool:
@@ -174,9 +186,8 @@ def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]
 
     Returns the provider to book and, when it is not the zone's, the reason.
 
-    **One decision, asked in three places that must not disagree.**
-    `_dispatch_once` asks who to book, `batching_service.reserve` asks whether
-    the order joins a shared run, and the fare quote and order-creation stamp
+    **One decision, asked in more than one place that must not disagree.**
+    `_dispatch_once` asks who to book, and the fare quote and order-creation stamp
     have to reach the same verdict — a row stamped for one courier and dispatched
     on another parks the wrong error and prints the wrong carrier. So the core
     lives in `effective_provider`, which knows nothing about an `Order`, and this
@@ -186,9 +197,9 @@ def carrier_for(order: Order, delivery: OrderDelivery) -> tuple[str, str | None]
         delivery.provider,
         delivery.zone_name,
         # Read tolerantly with `getattr`: a non-Slider zone returns from
-        # `effective_provider` before `city` is looked at, and one caller —
-        # `batching_service.reserve` — asks this about orders that carry only an
-        # id and a number. Keeping the read lazy keeps that true.
+        # `effective_provider` before `city` is looked at, and some callers pass
+        # an order carrying only an id and a number. Keeping the read lazy keeps
+        # that true.
         city=str(
             (getattr(order, "shipping_address_snapshot", None) or {}).get("city") or ""
         ),
@@ -388,26 +399,8 @@ async def _record_outcome(
     if delivery.courier_order_id and not delivery.last_error:
         delivery.dispatch_attempts = 0
         delivery.next_attempt_at = None
-        # Imported here rather than at the top: both of these import this
-        # module.
-        from app.services.delivery import batching_service
+        # Imported here rather than at the top: it imports this module.
         from app.services.orders import order_service
-
-        # This box has a van of its own now, so it is not riding the run any
-        # more — and the run has to be told, because until it is it still counts
-        # this order as a stop. An admin pressing Dispatch now on one order out
-        # of a pending run left the Runs tab claiming a drop that was already
-        # being driven across town, and left the run itself scheduled to go out
-        # and collect it. It corrected itself only at the window's close, hours
-        # later, when the booking guard in `_ready_deliveries` found nothing to
-        # send.
-        #
-        # `cancel_assignment` is the same call an order cancellation makes and
-        # means the same thing here: off the run, stop count re-counted, and the
-        # run cancelled outright if this was the last thing on it. A run that has
-        # already left is left alone — a driver carrying the rest of it is not
-        # something this can rewrite.
-        await batching_service.cancel_assignment(db, delivery)
 
         # A driver has been called for this box, which is the closest thing to
         # "packed" that anybody now says out loud — the press that used to say
@@ -470,72 +463,106 @@ def _retry_at(
     """
     When to ask again, or None for "not on its own".
 
-    Two things end it, both borrowed from the batch ladder because they are the
-    same two facts. Running out of rungs, which means the failure has outlived
-    the kind of problem that fixes itself. And landing after the kitchen has
-    shut — the driver collects from a physical counter, and a booking made at
-    00:05 for something that failed at 23:00 sends somebody to a dark shop.
-
-    The ladder itself is `batching_service.RETRY_BACKOFF`, imported here rather
-    than copied: a second tuple that drifted by five minutes would be invisible
-    until somebody compared two orders that failed the same way. Imported
-    *inside the function* because `batching_service` imports this module at the
-    top of its own file, and closing that cycle at import time is a crash on
-    boot rather than a lint warning.
+    Two things end it. Running out of rungs (`RETRY_BACKOFF`), which means the
+    failure has outlived the kind of problem that fixes itself. And landing after
+    the kitchen has shut — the driver collects from a physical counter, and a
+    booking made at 00:05 for something that failed at 23:00 sends somebody to a
+    dark shop.
     """
-    from app.services.delivery.batching_service import RETRY_BACKOFF as LADDER
-
-    if delivery.dispatch_attempts > len(LADDER):
+    if delivery.dispatch_attempts > len(RETRY_BACKOFF):
         return None
     moment = now or datetime.now(timezone.utc)
-    when = moment + LADDER[delivery.dispatch_attempts - 1]
+    when = moment + RETRY_BACKOFF[delivery.dispatch_attempts - 1]
     if not trading_hours.is_open(when, opens_at, closes_at):
         return None
     return when
+
+
+#: The statuses an order can be in and still want a driver. Anything else has
+#: either already travelled or stopped being a delivery. `undelivered` is
+#: deliberately not here: a failed handover ends in a refund conversation a
+#: person starts, not a second unattended van for an order somebody wrote off.
+_RETRYABLE_STATUSES = {
+    OrderStatusEnum.CONFIRMED,
+    OrderStatusEnum.ARRIVED_AT_POS,
+    OrderStatusEnum.PACKED,
+}
+
+
+async def retry_failed_dispatches(db: AsyncSession, *, limit: int = 20) -> list:
+    """
+    Re-dispatch every order whose retry has fallen due.
+
+    An order that failed to book a courier is left with a `next_attempt_at` and
+    no `courier_order_id` by `_record_outcome`; the retry ladder (`_retry_at`)
+    set the time. This sweep asks again rather than leaving it for a human to
+    spot a red box on an admin screen — MM-20260815-001 waited six hours on an
+    error a deploy had fixed in twenty-six minutes. It runs on its own session
+    in the delivery scheduler.
+    """
+    now = datetime.now(timezone.utc)
+    due = (
+        (
+            await db.execute(
+                select(OrderDelivery)
+                .where(
+                    OrderDelivery.next_attempt_at.isnot(None),
+                    OrderDelivery.next_attempt_at <= now,
+                    OrderDelivery.courier_order_id.is_(None),
+                )
+                .order_by(OrderDelivery.next_attempt_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    retried: list = []
+    for delivery in due:
+        order = await db.get(Order, delivery.order_id)
+        if order is None:  # pragma: no cover — FK is RESTRICT
+            delivery.next_attempt_at = None
+            continue
+        # A settled order stops asking — a cake going out for a refunded order is
+        # worse than a late one.
+        if order.status not in _RETRYABLE_STATUSES:
+            logger.info(
+                "Order %s is %s; abandoning its retry",
+                order.order_number,
+                order.status.value,
+            )
+            delivery.next_attempt_at = None
+            await db.commit()
+            continue
+
+        # Cleared before the attempt: `dispatch` writes a fresh `next_attempt_at`
+        # if it fails again, and leaving the old one would have the sweep pick the
+        # same order up on the next tick.
+        delivery.next_attempt_at = None
+        try:
+            await dispatch(db, order)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception(
+                "Retry for order %s blew up; it will be left for a human",
+                order.order_number,
+            )
+        await db.commit()
+        retried.append(delivery.id)
+    return retried
 
 
 async def cancel(db: AsyncSession, order: Order) -> OrderDelivery | None:
     """
     Call off whichever courier is holding this order.
 
-    **Never calls off a run.** A batched dispatch books one Lalamove order for
-    up to fifteen stops and writes that single id onto every delivery in it, so
-    `courier_order_id` on a batched order names a van carrying other people's
-    cakes. Taking that id to `DELETE /v3/orders/{id}` would cancel every drop on
-    it — four other customers' deliveries called off to stop one, silently,
-    with each of those orders still reading `packed` and nothing coming.
-
-    Such an order simply leaves the run instead. The van keeps its stop and
-    arrives to find nothing there, which costs a wasted drop; the alternative
-    costs four deliveries. `cancel_assignment` is what takes it off the batch,
-    and the caller has already run it.
+    Every booking is this order's own — one dispatch, one courier order id — so
+    calling it off with the provider is always the right thing.
     """
     delivery = await lalamove_service.get_delivery(db, order.id)
     if delivery is None:
         return None
-
-    # Imported here rather than at module scope: `batching_service` imports this
-    # module at load time, and a top-level import would close the cycle.
-    from app.services.delivery import batching_service
-
-    run = await batching_service.shared_run_booking(db, delivery)
-    if run is not None:
-        logger.info(
-            "Order %s was not cancelled with the courier — its booking %s is a "
-            "shared run of %s stops. It has left the run instead.",
-            order.order_number,
-            delivery.courier_order_id,
-            run.stop_count,
-        )
-        # Detached from the booking on our side so nothing later mistakes the
-        # run's id for this order's own and tries again.
-        delivery.courier_previous_status = delivery.courier_status
-        delivery.courier_order_id = None
-        delivery.courier_status = None
-        delivery.share_link = None
-        delivery.stop_id = None
-        delivery.stop_sequence = None
-        return delivery
 
     if delivery.provider == NOON_SEND:
         return await noon_send_service.cancel_delivery(db, order)

@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -19,9 +19,6 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, UUIDMixin, utcnow
-
-if TYPE_CHECKING:
-    from .delivery_batch import DeliveryBatchGroup  # noqa: F401
 
 
 class FulfilmentProviderEnum(str, enum.Enum):
@@ -42,8 +39,7 @@ class FulfilmentProviderEnum(str, enum.Enum):
     #: every customer outside the trial while it runs against noon's staging.
     NOON_SEND = "noon_send"
     #: Booked over Slider's API. A third courier, brought in for dispatch
-    #: accuracy rather than for price. It books one delivery at a time and
-    #: cannot be batched, so a Slider zone never joins a shared run. Like the
+    #: accuracy rather than for price. It books one delivery at a time. Like the
     #: other two, an unconfigured key is a fallback and not an outage.
     #:
     #: **Legacy.** Slider prices a bike and a car differently, and a zone now
@@ -311,33 +307,6 @@ class DeliveryPolygon(Base, UUIDMixin):
 
     version: Mapped[DeliveryPolygonVersion] = relationship(
         "DeliveryPolygonVersion", back_populates="polygons"
-    )
-    #: The run schedule this zone follows, or null for a zone that dispatches
-    #: the moment an order is ready.
-    #:
-    #: A group rather than a schedule of its own, because "which orders share a
-    #: courier booking" is a decision somebody makes, not something that should
-    #: fall out of two zones happening to close a slot on the same minute — which
-    #: is what it used to be. The three Dubai bands ride together because we said
-    #: so; if one of their windows moves, the other two move with it, and no
-    #: other zone is dragged along.
-    #:
-    #: `SET NULL`: deleting a group leaves its zones dispatching immediately,
-    #: which is the safe reading. An order going out early costs a courier fare;
-    #: an order pointed at a schedule that no longer exists never goes out.
-    #:
-    #: Only ever set to a group whose courier matches `fulfilment_provider` —
-    #: enforced in `batching_service`, so the failure is a readable error rather
-    #: than a constraint violation when a zone changes courier.
-    batch_group_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("delivery_batch_groups.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
-    batch_group: Mapped[DeliveryBatchGroup | None] = relationship(
-        "DeliveryBatchGroup", back_populates="polygons"
     )
 
     def __repr__(self) -> str:

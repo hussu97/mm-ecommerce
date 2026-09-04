@@ -70,17 +70,16 @@ class DeliveryAreaResponse(BaseModel):
     #: The basket that earns free delivery *here*.
     free_threshold: float | None = None
     free_delivery_available: bool = False
-    #: How fast, as a promise rather than a mechanism: `express` is inside the
-    #: hour, `same_day` means it goes out on one of today's runs, `next_day` is
-    #: everywhere we hand to someone else. Three values because the answer
-    #: genuinely is three, and collapsing them would make the near zones wear
-    #: the far zones' promise.
+    #: How fast, as a promise rather than a mechanism: `express` is a zone we
+    #: dispatch ourselves (a rider called the moment the box is packed) and
+    #: `next_day` is everywhere we hand to someone else who collects on their own
+    #: schedule.
     speed: str = "next_day"
     #: The minutes an `express` badge says out loud, e.g. `90` — read from the
     #: same courier row the checkout's `delivery_promise` quotes, so the product
     #: card and the checkout cannot name two different durations for one pin. It
     #: is the number and never the courier: a duration leaks nothing a fee does
-    #: not. Null for `same_day`/`next_day` (nothing to count in minutes), and
+    #: not. Null for `next_day` (nothing to count in minutes), and
     #: null for an express zone whose courier promises a day rather than minutes,
     #: where the card keeps its own wording rather than inventing a figure.
     express_minutes: int | None = None
@@ -146,21 +145,10 @@ def _speed_of(zone) -> str:
     if zone is None:
         return "next_day"
     if zone.books_itself:
-        if not zone.is_batched:
-            # Ours to dispatch and waiting for nobody: a rider is called the
-            # moment the box is packed.
-            #
-            # Asked of the **schedule** rather than of the courier. It used to
-            # name noon Send, which was the same answer for as long as they were
-            # the only unbatched courier we booked — and stopped being the same
-            # answer the day `Sharjah Core` was carved out of `Sharjah Central`
-            # and given to Slider. The zone did not get slower; only the name on
-            # it changed, and a customer in the inner ring would have watched
-            # "express" turn into "same day" for no reason they could see.
-            return "express"
-        # Ours to dispatch, but batched onto a shared run — so it lands today
-        # if it makes a window, and tomorrow if it misses the last one.
-        return "same_day"
+        # Ours to dispatch and waiting for nobody: a rider is called the moment
+        # the box is packed. Every self-booked zone dispatches directly — there
+        # is no shared run to wait for.
+        return "express"
     return "next_day"
 
 

@@ -779,7 +779,7 @@ gives the intended value rather than an empty one:
 | `LALAMOVE_WEBHOOK_PATH` | `/api/v1/webhooks/lalamove` | Must match the Partner Portal URL byte for byte — it is part of the signature |
 | `LALAMOVE_TIMEOUT_SECONDS` | `8` | |
 | `LALAMOVE_QUOTE_CACHE_SECONDS` | `120` | |
-| `BATCH_DISPATCHER_ENABLED` | `true` | The in-process loop that sends a batch when its window closes |
+| `STOREFRONT_SCHEDULER_ENABLED` | `true` | The in-process loop that dispatches orders, lands arrivals, tracks drivers and sends the daily email. Storefront only |
 
 **The fallbacks are load-bearing, not tidiness.** An unset secret expands to an
 empty string, and an empty value in `.env` overrides the Python default rather

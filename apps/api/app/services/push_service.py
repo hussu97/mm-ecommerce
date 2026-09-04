@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.delivery_batch import DELIVERY_TIMEZONE
+from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.device_push_token import DevicePushToken
 from app.models.order import Order
 from app.models.pos_order import OrderSourceEnum

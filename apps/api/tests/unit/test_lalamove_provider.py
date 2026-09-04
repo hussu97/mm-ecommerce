@@ -208,7 +208,7 @@ def test_a_bare_error_code_is_read_as_the_id():
     Their quotation endpoint answers `{"message": "ERR_..."}` with no `errors`
     array, and only the array was being read — so `error_id` was None for the
     one call that produces these codes most. Checkout said "Courier quote
-    failed" for an address that was simply out of range, and `batching_service`
+    failed" for an address that was simply out of range, and the dispatch sweep
     kept retrying dispatches that could never succeed.
     """
     with pytest.raises(LalamoveError) as raised:

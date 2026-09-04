@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models.delivery_batch import DELIVERY_TIMEZONE
+from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (

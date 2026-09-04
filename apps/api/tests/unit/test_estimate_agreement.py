@@ -6,9 +6,8 @@ no order, an email has an order and a courier record — and every time those tw
 have drifted the customer has caught it. MM-20260805-008 was quoted 19:00 on the
 page and 17:25 in the inbox.
 
-So the numbers both sides use are pinned here: the group's minutes-to-door, and
-the courier's own promise. A flat constant reappearing in either is the failure
-this module exists to catch.
+So the number both sides use is pinned here: the courier's own promise. A flat
+constant reappearing in either is the failure this module exists to catch.
 """
 
 from __future__ import annotations
@@ -20,36 +19,26 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.courier import Courier
-from app.models.delivery_batch import DeliveryBatchGroup
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.services.delivery import fulfilment_service
 from app.services.delivery.fulfilment_service import TZ
 
 NOW = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
 
-DUBAI_GROUP = DeliveryBatchGroup(
-    id=uuid.uuid4(),
-    name="Dubai",
-    courier_code="lalamove",
-    delivery_minutes_after_dispatch=90,
-    is_active=True,
-)
 NOON_SEND = Courier(
     code="noon_send",
     name="noon Send",
-    supports_batching=False,
     unbatched_promise_kind="minutes",
     unbatched_promise_minutes=60,
 )
 
 
 class _Db:
-    """Answers the delivery, the branch, the group and the courier."""
+    """Answers the delivery, the branch and the courier."""
 
-    def __init__(self, delivery, courier=None, group=None):
+    def __init__(self, delivery, courier=None):
         self._delivery = delivery
         self._courier = courier
-        self._group = group
 
     async def execute(self, _stmt):
         delivery, courier = self._delivery, self._courier
@@ -63,8 +52,8 @@ class _Db:
 
         return _R()
 
-    async def get(self, model, _pk):
-        return self._group if model is DeliveryBatchGroup else None
+    async def get(self, _model, _pk):
+        return None
 
 
 def _order(status, **over):
@@ -94,30 +83,10 @@ def _delivery(**over):
         original_provider=None,
         courier_status=None,
         share_link=None,
-        batch=None,
         dispatchable_at=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
-
-
-async def test_a_batched_order_uses_its_group_s_minutes_not_a_flat_hour():
-    """
-    The Dubai group promises 90 minutes after the run leaves, and the email has
-    to say 90 too. A flat hour here is the same order carrying two arrival
-    times — which is exactly the bug the promise resolver was built to end.
-    """
-    leaves = NOW + timedelta(hours=2)
-    batch = SimpleNamespace(
-        id=uuid.uuid4(), dispatch_at=leaves, group_id=DUBAI_GROUP.id
-    )
-    result = await fulfilment_service.for_order(
-        _Db(_delivery(batch=batch), group=DUBAI_GROUP),
-        _order(OrderStatusEnum.PACKED),
-        now=NOW,
-    )
-    assert result.precision == "time"
-    assert result.estimated_at == leaves.astimezone(TZ) + timedelta(minutes=90)
 
 
 async def test_a_collected_order_counts_from_the_collection_less_the_allowance():

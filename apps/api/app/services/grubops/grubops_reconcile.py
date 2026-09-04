@@ -22,7 +22,7 @@ in the middle of a window, somebody editing availability in the GrubOps console
 by hand: all of them are drift, and drift is what a diff is for.
 
 The shape — `run_forever` + `sweep_once`, an advisory lock so a second worker
-achieves nothing, a loop in the app's own lifespan — is `batch_scheduler`'s,
+achieves nothing, a loop in the app's own lifespan — is `delivery_scheduler`'s,
 because this stack has no cron and nothing that survives the container.
 
 It ticks every two minutes rather than every minute. Availability is changed by
@@ -54,7 +54,7 @@ from app.services.providers.grubops_provider import GrubOpsError
 
 logger = logging.getLogger(__name__)
 
-#: "mmBATCH" + 3. The flat 64-bit namespace `batch_scheduler` (…4801) and
+#: "mmBATCH" + 3. The flat 64-bit namespace `delivery_scheduler` (…4801) and
 #: `log_retention` (…4802) live in; a new loop needs a number nobody else has,
 #: or two unrelated sweeps take turns doing nothing.
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4803
@@ -223,7 +223,7 @@ async def sweep_once() -> dict[str, int]:
             pushed: dict[str, int] = {}
             for location, branch in rows:
                 # Per branch, so Sharjah's outage does not cost Barsha Heights
-                # its sync — the sub-sweep posture `batch_scheduler` uses.
+                # its sync — the sub-sweep posture `delivery_scheduler` uses.
                 try:
                     count = await _reconcile_branch(db, location)
                 except Exception:  # noqa: BLE001 — one branch must not end the pass

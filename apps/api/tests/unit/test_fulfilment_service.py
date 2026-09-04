@@ -66,7 +66,6 @@ def _delivery(**overrides) -> SimpleNamespace:
         original_provider=None,
         courier_status=None,
         share_link=None,
-        batch=None,
         dispatchable_at=None,
     )
     base.update(overrides)
@@ -219,20 +218,6 @@ async def test_an_order_with_no_delivery_record_at_all_is_treated_as_third_party
     result = await _fulfilment(_order(status=OrderStatusEnum.CONFIRMED), None)
     assert result.precision == "day_by"
     assert result.courier_managed is False
-
-
-@pytest.mark.asyncio
-async def test_a_batched_order_arrives_an_hour_after_its_run_leaves():
-    dispatch_at = NOW + timedelta(hours=2)
-    result = await _fulfilment(
-        _order(status=OrderStatusEnum.PACKED),
-        _delivery(batch=SimpleNamespace(dispatch_at=dispatch_at)),
-    )
-    assert result.precision == "time"
-    assert (
-        result.estimated_at
-        == dispatch_at.astimezone(TZ) + fulfilment_service.DISPATCH_TO_DOOR
-    )
 
 
 @pytest.mark.asyncio
@@ -580,35 +565,6 @@ async def test_a_rider_holding_the_parcel_beats_the_promise():
 
 
 @pytest.mark.asyncio
-async def test_missing_a_window_moves_the_customer_to_the_run_they_are_on():
-    """
-    The other thing allowed to overrule it, and the reason the batch is checked
-    first rather than last.
-
-    An order packed after its window closed goes out on the next run. Repeating
-    the original promise there would leave somebody waiting at a door for a van
-    that left without them — the later time is the true one, and the one they
-    need.
-    """
-    promised = NOW + timedelta(hours=1)
-    dispatch_at = NOW + timedelta(hours=4)
-
-    result = await _fulfilment(
-        _order(
-            status=OrderStatusEnum.PACKED,
-            promised_at=promised,
-            promised_precision="time",
-        ),
-        _delivery(batch=SimpleNamespace(dispatch_at=dispatch_at)),
-    )
-
-    assert (
-        result.estimated_at
-        == dispatch_at.astimezone(TZ) + fulfilment_service.DISPATCH_TO_DOOR
-    )
-
-
-@pytest.mark.asyncio
 async def test_a_promise_already_past_is_still_the_promise():
     """
     A late order is late, and the tracking page should say so.
@@ -700,30 +656,6 @@ async def test_a_rider_collecting_does_not_sharpen_a_day_promise():
     assert result.precision == "day_by", "a day promise must never become an hour"
     # And it is the promised day, not today. A rider collecting early does not
     # move the date the customer was given.
-    assert result.estimated_at.date() == promised.astimezone(TZ).date()
-
-
-@pytest.mark.asyncio
-async def test_a_day_promise_ignores_a_batch_window():
-    """
-    A run's `dispatch_at` is the one thing allowed to move a *time* promise,
-    because the customer has genuinely been moved to a later run. It cannot
-    turn a date into a time.
-    """
-    promised = NOW + timedelta(days=1)
-    result = await _fulfilment(
-        _order(
-            status=OrderStatusEnum.PACKED,
-            promised_at=promised,
-            promised_precision="day",
-        ),
-        _delivery(
-            provider="lalamove",
-            original_provider="third_party",
-            batch=SimpleNamespace(dispatch_at=NOW + timedelta(hours=1)),
-        ),
-    )
-    assert result.precision == "day_by"
     assert result.estimated_at.date() == promised.astimezone(TZ).date()
 
 

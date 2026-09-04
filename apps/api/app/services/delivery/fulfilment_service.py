@@ -32,11 +32,10 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
+from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.branch import Branch
 from app.models.courier import Courier
-from app.models.delivery_batch import DELIVERY_TIMEZONE, DeliveryBatchGroup
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
@@ -232,9 +231,7 @@ async def for_order(
         delivery = (
             (
                 await db.execute(
-                    select(OrderDelivery)
-                    .where(OrderDelivery.order_id == order.id)
-                    .options(selectinload(OrderDelivery.batch))
+                    select(OrderDelivery).where(OrderDelivery.order_id == order.id)
                 )
             )
             .scalars()
@@ -363,14 +360,6 @@ async def _promise_minutes(
     if delivery is None:
         return None
 
-    batch = delivery.batch
-    # `getattr`, because a run predating groups has no `group_id` to read and
-    # should fall through to the courier rather than raise.
-    if batch is not None and getattr(batch, "group_id", None) is not None:
-        group = await db.get(DeliveryBatchGroup, batch.group_id)
-        if group is not None:
-            return timedelta(minutes=group.delivery_minutes_after_dispatch)
-
     if delivery.provider:
         courier = (
             await db.execute(select(Courier).where(Courier.code == delivery.provider))
@@ -471,29 +460,11 @@ def _estimate(
         day = promised[0] if promised is not None and not promised_a_time else now
         return _by_hour(day, THIRD_PARTY_BY_HOUR), "day_by"
 
-    # ── still in the kitchen, or packed and waiting for a run ────────────────
+    # ── still in the kitchen, or packed and waiting for a rider ──────────────
     #
     # Everything below is a schedule rather than an event, and the customer has
     # already been told what that schedule means for them. Repeat what they were
     # told; do not work it out again.
-    batch = delivery.batch if delivery is not None else None
-
-    if batch is not None and batch.dispatch_at is not None and promised_a_time:
-        # On a run, which is the one thing that can move the answer without a
-        # rider touching the box: an order packed after its window closed goes
-        # out on the next one. `dispatch_at` is where it is actually going, so
-        # it wins over what was said at checkout — a customer moved to a later
-        # run needs to be told the later time, not the earlier one.
-        #
-        # The group's own minutes, not a flat hour. A flat hour here against the
-        # 90 the Dubai group promises at checkout is the same order carrying two
-        # different arrival times — the disagreement `delivery_promise` exists
-        # to remove, reintroduced one layer down.
-        return (
-            _local(batch.dispatch_at) + (promise_minutes or DISPATCH_TO_DOOR),
-            "time",
-        )
-
     promised = _promise(order)
     if promised is not None:
         at, precision = promised

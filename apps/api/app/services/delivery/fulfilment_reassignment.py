@@ -20,8 +20,8 @@ direction happened to get built first. Two questions, answered in two places:
 
 Nothing here books, cancels or prices anything itself. Every side effect is
 delegated — `courier_service` to cancel, `lalamove_service` / `noon_send_service`
-to book, `batching_service` to leave a run, `driver_assignment` to close a stint,
-`email_service` to make good what the move leaves owing. A second copy of any of
+to book, `driver_assignment` to close a stint, `email_service` to make good what
+the move leaves owing. A second copy of any of
 those would be a second thing to keep in step with the first, and the first is
 where the money is.
 
@@ -61,7 +61,6 @@ from app.services.couriers import (
     slider_service,
 )
 from app.services.delivery import (
-    batching_service,
     delivery_zone_service,
     driver_assignment,
 )
@@ -181,18 +180,6 @@ async def exposure_of(db: AsyncSession, delivery: OrderDelivery) -> Exposure:
             False, "This booking already failed, so there is nothing to cancel."
         )
 
-    run = await batching_service.shared_run_booking(db, delivery)
-    if run is not None:
-        # The booking is a van carrying other people's cakes, so it is not
-        # called off — this order leaves the run and the van keeps its stop.
-        # Said plainly because it is a real consequence somebody pays for: a
-        # driver will arrive for a box that has gone out with somebody else.
-        return Exposure(
-            False,
-            "This order is on a shared run, so the courier booking stays as it "
-            "is — the van will still call for a parcel that has gone with "
-            "somebody else. Nobody else's delivery is affected.",
-        )
     if delivery.driver_id or delivery.driver_name:
         return Exposure(
             True,
@@ -637,15 +624,12 @@ async def _release(db: AsyncSession, order: Order, delivery: OrderDelivery) -> N
             order.order_number,
         )
 
-    await batching_service.cancel_assignment(db, delivery)
     await driver_assignment.clear(db, delivery)
 
     delivery.courier_order_id = None
     delivery.courier_previous_status = delivery.courier_status
     delivery.courier_status = None
     delivery.share_link = None
-    delivery.stop_id = None
-    delivery.stop_sequence = None
     delivery.quotation_id = None
     delivery.pod_status = None
     delivery.pod_image_url = None

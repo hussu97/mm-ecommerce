@@ -16,7 +16,7 @@ Three tables grow forever and only one of them is worth keeping forever.
   wanted is a dispute weeks after the change. Seven days would mean a question
   raised a fortnight later has no answer, so it gets `AUDIT_RETENTION_DAYS`.
 
-The sweep borrows `batch_scheduler`'s shape exactly — an advisory lock so only
+The sweep borrows `delivery_scheduler`'s shape exactly — an advisory lock so only
 one worker in the deployment is ever inside one, and a loop in the app's own
 lifespan, because this stack has no cron and nothing that survives the
 container. It ticks hourly rather than by the minute: the point is that the

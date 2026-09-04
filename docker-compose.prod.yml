@@ -1,5 +1,5 @@
 # Blue/green API slots share these environment mappings. The two services are
-# not identical (the register must not get BATCH_DISPATCHER_ENABLED, and it
+# not identical (the register must not get STOREFRONT_SCHEDULER_ENABLED, and it
 # does not run the storefront i18n seed), so each color pair has its own
 # anchor — never merge api's env into pos-api.
 x-api-environment: &api-environment
@@ -118,7 +118,7 @@ x-api-environment: &api-environment
   FOODICS_PASSWORD: ${FOODICS_PASSWORD:-}
   FOODICS_TIMEOUT_SECONDS: ${FOODICS_TIMEOUT_SECONDS:-8}
   # ── Aggregator ingestion (Careem/Deliveroo/Talabat/Noon/Keeta) ──────
-  # Storefront-only, like the GrubOps loops and BATCH_DISPATCHER_ENABLED:
+  # Storefront-only, like the GrubOps loops and STOREFRONT_SCHEDULER_ENABLED:
   # the sales and finance sweeps run here and not on the register. The two
   # strings default empty (Fernet key and push token — an empty key keeps
   # the ingest inert rather than storing credentials in plaintext); the
@@ -210,7 +210,7 @@ x-api-environment: &api-environment
   TABBY_MERCHANT_CODE: ${TABBY_MERCHANT_CODE:-}
   TAMARA_API_KEY: ${TAMARA_API_KEY:-}
   TAMARA_API_URL: ${TAMARA_API_URL:-https://api.tamara.co}
-  BATCH_DISPATCHER_ENABLED: ${BATCH_DISPATCHER_ENABLED:-true}
+  STOREFRONT_SCHEDULER_ENABLED: ${STOREFRONT_SCHEDULER_ENABLED:-true}
   UVICORN_WORKERS: "1"
 
 x-pos-environment: &pos-environment
@@ -337,11 +337,11 @@ x-pos-environment: &pos-environment
   FOODICS_EMAIL: ${FOODICS_EMAIL:-}
   FOODICS_PASSWORD: ${FOODICS_PASSWORD:-}
   FOODICS_TIMEOUT_SECONDS: ${FOODICS_TIMEOUT_SECONDS:-8}
-  # Deliberately absent: BATCH_DISPATCHER_ENABLED. That starts the
-  # background loop that sweeps batches out, and a second copy of it in this
-  # container would race the storefront's over the same rows. The register
-  # books the courier for the order in front of it; it does not run the
-  # sweeper.
+  # Deliberately absent: STOREFRONT_SCHEDULER_ENABLED. That starts the
+  # background loop that dispatches orders, lands arrivals, tracks drivers and
+  # sends the daily email, and a second copy of it in this container would race
+  # the storefront's over the same rows. The register books the courier for the
+  # order in front of it; it does not run the scheduler.
   # The register API answers `/devices/push-token`, so it needs the same
   # credentials the storefront one uses to send with.
   APNS_KEY_P8: ${APNS_KEY_P8:-}

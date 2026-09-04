@@ -73,6 +73,12 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
   const [view, setView] = useState({ x: 0, y: 0, w: WIDTH, h: HEIGHT });
   const [panning, setPanning] = useState<{ x: number; y: number } | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // Touch gestures are refs, not state, so a finger dragging does not re-render
+  // on every event — only the `view` it sets does. `touchPan` is the viewBox
+  // point a single finger went down on; `pinchDist` is the last two-finger
+  // spread, so each move zooms by the ratio to it.
+  const touchPan = useRef<{ x: number; y: number } | null>(null);
+  const pinchDist = useRef<number | null>(null);
   // Rendered width travels with the cursor because the SVG scales to its
   // container: the viewBox is 900 units wide and the panel may be 560 pixels,
   // so clamping the tooltip against the viewBox would never actually clamp.
@@ -127,9 +133,56 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
       <svg
         ref={svgRef}
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
-        className={`w-full h-auto bg-gray-50 border border-gray-200 ${
+        // `touch-none` (touch-action: none) hands every touch on the map to the
+        // handlers below instead of letting the browser scroll or zoom the page
+        // — so one finger pans the map without the admin page moving, and two
+        // fingers pinch-zoom it. The page still scrolls normally everywhere else.
+        className={`w-full h-auto touch-none select-none bg-gray-50 border border-gray-200 ${
           panning ? 'cursor-grabbing' : zoomedIn ? 'cursor-grab' : 'cursor-default'
         }`}
+        onTouchStart={e => {
+          if (e.touches.length === 2) {
+            const [a, b] = [e.touches[0], e.touches[1]];
+            pinchDist.current = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+            touchPan.current = null;
+          } else if (e.touches.length === 1) {
+            const t = e.touches[0];
+            touchPan.current = toViewBox({ clientX: t.clientX, clientY: t.clientY });
+            pinchDist.current = null;
+          }
+        }}
+        onTouchMove={e => {
+          if (e.touches.length === 2 && pinchDist.current != null) {
+            const [a, b] = [e.touches[0], e.touches[1]];
+            const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+            const anchor = toViewBox({
+              clientX: (a.clientX + b.clientX) / 2,
+              clientY: (a.clientY + b.clientY) / 2,
+            });
+            if (dist > 0 && pinchDist.current > 0) zoomAt(anchor, dist / pinchDist.current);
+            pinchDist.current = dist;
+          } else if (e.touches.length === 1 && touchPan.current != null) {
+            const t = e.touches[0];
+            const at = toViewBox({ clientX: t.clientX, clientY: t.clientY });
+            const start = touchPan.current;
+            setView(v => ({
+              ...v,
+              x: Math.min(Math.max(v.x - (at.x - start.x), 0), WIDTH - v.w),
+              y: Math.min(Math.max(v.y - (at.y - start.y), 0), HEIGHT - v.h),
+            }));
+          }
+        }}
+        onTouchEnd={e => {
+          if (e.touches.length === 0) {
+            touchPan.current = null;
+            pinchDist.current = null;
+          } else if (e.touches.length === 1) {
+            // A finger lifted out of a pinch — resume panning from the one left.
+            const t = e.touches[0];
+            touchPan.current = toViewBox({ clientX: t.clientX, clientY: t.clientY });
+            pinchDist.current = null;
+          }
+        }}
         onWheel={e => {
           // No `preventDefault` — React attaches wheel passively, so the page
           // would scroll too. Zoom only with a modifier held, which is also the
@@ -241,8 +294,8 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
           </div>
         ))}
         <span className="text-[11px] font-body text-gray-400 ml-auto">
-          Hover a zone for its fee. ⌘/Ctrl + scroll to zoom, drag to pan,
-          double-click to fit.
+          Hover a zone for its fee. Drag or one finger to pan, pinch or
+          ⌘/Ctrl + scroll to zoom, double-click to fit.
         </span>
       </div>
     </div>

@@ -51,9 +51,6 @@ export function CourierRow({
         </td>
         <td className="px-3 py-2.5 text-xs font-body text-gray-500">
           {courier.unbatched_promise_kind === 'minutes' ? 'A time' : 'A day'}
-          {courier.supports_batching && (
-            <span className="text-gray-400"> · can batch</span>
-          )}
         </td>
         <td className="px-3 py-2.5 text-xs font-body text-gray-800">
           {describe(courier)}

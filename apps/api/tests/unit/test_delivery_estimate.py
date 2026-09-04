@@ -1,5 +1,5 @@
 """
-"When will it arrive?" — one resolver, four rules, in a fixed order.
+"When will it arrive?" — one resolver, three rules, in a fixed order.
 
 The ordering *is* the contract, so this file tests it as one: each case names
 the rule it expects to fire and asserts on the `reason` as well as the time. A
@@ -8,27 +8,23 @@ here, because it means the next change to a polygon or a schedule will move a
 promise nobody can account for.
 
     1. no zone   -> nothing. The address cannot be served.
-    2. group     -> that group's next window close + its minutes-to-door.
-    3. next_day  -> tomorrow, or the day after if today's trading is over.
-    4. minutes   -> now + the courier's minutes, or the next opening + them.
+    2. next_day  -> the first day the kitchen can hand it over, plus the
+                    courier's transit days. A day, never an hour.
+    3. minutes   -> now + the courier's minutes, or the next opening + them.
 
 The failure this has always guarded against is the third-party case rendered
-with the precision of the second: "tomorrow at 14:00" for an order handed to a
-partner is a promise made with somebody else's van. `precision` is what keeps
-them apart, and every case below pins it.
+with the precision of a self-dispatched one: "tomorrow at 14:00" for an order
+handed to a partner is a promise made with somebody else's van. `precision` is
+what keeps them apart, and every case below pins it.
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-import pytest
-
 from app.models.courier import Courier
-from app.models.delivery_batch import DeliveryBatchGroup, DeliveryBatchWindow
 from app.services.delivery.delivery_promise import _Context, resolve
 from app.services.delivery.delivery_zone_service import Zone
 
@@ -42,25 +38,10 @@ def at(hour: int, minute: int = 0, day: int = 8) -> datetime:
     return datetime(2026, 8, day, hour, minute, tzinfo=DUBAI)
 
 
-def window(label: str, start: str, end: str) -> DeliveryBatchWindow:
-    sh, sm = (int(p) for p in start.split(":"))
-    eh, em = (int(p) for p in end.split(":"))
-    return DeliveryBatchWindow(
-        id=uuid.uuid4(),
-        label=label,
-        start_hour=sh,
-        start_minute=sm,
-        end_hour=eh,
-        end_minute=em,
-        is_active=True,
-    )
-
-
 def courier(code: str, *, kind: str, minutes: int | None, days: int = 1) -> Courier:
     return Courier(
         code=code,
         name=code,
-        supports_batching=code == "lalamove",
         unbatched_promise_kind=kind,
         unbatched_promise_minutes=minutes,
         unbatched_promise_days=days,
@@ -72,9 +53,9 @@ NOON_SEND = courier("noon_send", kind="minutes", minutes=90)
 THIRD_PARTY = courier("third_party", kind="next_day", minutes=None)
 
 
-def zone(provider: str, *, group_id: uuid.UUID | None = None) -> Zone:
+def zone(provider: str) -> Zone:
     return Zone(
-        id=uuid.uuid4(),
+        id=__import__("uuid").uuid4(),
         name="Test Zone",
         delivery_fee=Decimal("20.00"),
         fulfilment_provider=provider,
@@ -83,15 +64,12 @@ def zone(provider: str, *, group_id: uuid.UUID | None = None) -> Zone:
         min_lng=0,
         max_lng=1,
         rings=(),
-        batch_group_id=group_id,
     )
 
 
 def context(
     *,
     provider: str = "lalamove",
-    group: DeliveryBatchGroup | None = None,
-    windows: list[DeliveryBatchWindow] | None = None,
     courier_row: Courier | None = None,
     no_courier: bool = False,
     opens: str | None = OPENS,
@@ -99,15 +77,13 @@ def context(
     closed: frozenset[str] = frozenset(),
 ) -> _Context:
     return _Context(
-        zone=zone(provider, group_id=group.id if group else None),
+        zone=zone(provider),
         courier=None
         if no_courier
         else (
             courier_row
             or {"lalamove": LALAMOVE, "noon_send": NOON_SEND}.get(provider, THIRD_PARTY)
         ),
-        group=group,
-        windows=windows or [],
         opens_at=opens,
         closes_at=closes,
         closed_dates=closed,
@@ -119,100 +95,16 @@ def shut(*days: int) -> frozenset[str]:
     return frozenset(f"2026-08-{day:02d}" for day in days)
 
 
-def group(name: str, minutes: int) -> DeliveryBatchGroup:
-    return DeliveryBatchGroup(
-        id=uuid.uuid4(),
-        name=name,
-        courier_code="lalamove",
-        delivery_minutes_after_dispatch=minutes,
-        is_active=True,
-    )
-
-
 # ── rule 1: nowhere ──────────────────────────────────────────────────────────
 
 
 def test_no_zone_is_no_promise():
     """An address off the map cannot be served, so there is nothing to say."""
-    empty = _Context(
-        zone=None, courier=None, group=None, windows=[], opens_at=None, closes_at=None
-    )
+    empty = _Context(zone=None, courier=None, opens_at=None, closes_at=None)
     assert resolve(empty, at(14)) is None
 
 
-# ── rule 2: a declared batch group ───────────────────────────────────────────
-
-DUBAI_WINDOWS = [
-    window("Batch 1", "23:00", "12:00"),
-    window("Batch 2", "12:00", "18:00"),
-    window("Batch 3", "18:00", "21:00"),
-    window("Batch 4", "21:00", "22:30"),
-    window("Batch 5", "22:30", "23:00"),
-]
-
-
-@pytest.mark.parametrize(
-    "now,expected,slot",
-    [
-        # Inside Batch 3 (18:00–21:00): leaves 21:00, lands 90 minutes later.
-        (at(20), at(22, 30), "Batch 3"),
-        # Inside Batch 2: leaves 18:00, lands 19:30.
-        (at(13), at(19, 30), "Batch 2"),
-        # Exactly on a boundary belongs to the slot starting, not the one
-        # closing — otherwise an order lands on a van already pulling away.
-        # Batch 3 runs 18:00–21:00, so this leaves at 21:00 and lands at 22:30.
-        (at(18), at(22, 30), "Batch 3"),
-    ],
-)
-def test_a_grouped_zone_waits_for_its_next_run(now, expected, slot):
-    dubai = group("Dubai", 90)
-    promise = resolve(context(group=dubai, windows=DUBAI_WINDOWS), now)
-    assert promise is not None
-    assert promise.at == expected
-    assert promise.precision == "time"
-    assert "batch:Dubai/" in promise.reason and "+90m" in promise.reason
-
-
-def test_the_northern_group_carries_its_own_minutes():
-    """
-    Same rate card, same slots, different promise. The northern run crosses
-    three emirates, so its number is 120 — which is the whole reason the figure
-    lives on the group and not in one shared constant.
-    """
-    northern = group("Northern Emirates", 120)
-    promise = resolve(context(group=northern, windows=DUBAI_WINDOWS), at(20))
-    assert promise is not None
-    assert promise.at == at(23, 0)
-    assert "+120m" in promise.reason
-
-
-def test_a_batched_zone_ignores_trading_hours():
-    """
-    Deliberate. The 23:00–12:00 slot exists *because* nothing leaves overnight,
-    so applying the kitchen's close on top of it would subtract the same
-    closure twice and promise a day later than the van actually arrives.
-    """
-    dubai = group("Dubai", 90)
-    promise = resolve(context(group=dubai, windows=DUBAI_WINDOWS), at(23, 30))
-    assert promise is not None
-    # Batch 1 closes at noon tomorrow; 90 minutes after that.
-    assert promise.at == at(13, 30, day=9)
-    assert "batch:" in promise.reason
-
-
-def test_an_inactive_group_falls_through_to_the_courier():
-    """
-    Switching a schedule off sends its zones out immediately rather than parking
-    them against slots that will never fire. `_load` resolves an inactive group
-    to None, so the resolver sees a zone with no group.
-    """
-    promise = resolve(context(group=None, windows=[]), at(14))
-    assert promise is not None
-    assert promise.at == at(15)
-    assert "courier:lalamove +60m" in promise.reason
-
-
-# ── rule 3: somebody else's van ──────────────────────────────────────────────
+# ── rule 2: somebody else's van ──────────────────────────────────────────────
 
 
 def test_third_party_promises_a_day_and_only_a_day():
@@ -271,7 +163,7 @@ def test_a_zero_day_courier_still_promises_tomorrow():
     assert promise.at.date() == at(0, day=9).date()
 
 
-# ── rule 4: ours to dispatch ─────────────────────────────────────────────────
+# ── rule 3: ours to dispatch ─────────────────────────────────────────────────
 
 
 def test_noon_send_is_its_own_minutes_from_now():
@@ -295,7 +187,7 @@ def test_noon_send_after_closing_starts_the_clock_at_tomorrow_s_opening():
     assert "from 2026-08-09 09:00 opening" in promise.reason
 
 
-def test_a_courier_with_no_row_is_treated_as_somebody_else_s_van():
+def test_a_self_dispatched_courier_with_no_row_is_treated_as_somebody_else_s_van():
     """
     The safe reading. An unconfigured courier promising an hour would be the
     shop guessing on behalf of a carrier nobody has set up.
@@ -317,60 +209,16 @@ def test_unreadable_trading_hours_do_not_stop_the_shop_quoting():
     assert promise.at == at(4, 30)
 
 
-# ── holidays: one rule, three routes ─────────────────────────────────────────
+# ── holidays: one rule, two routes ───────────────────────────────────────────
 #
 # "A promise never names a day the branch is shut." Each rule reaches it
 # differently, which is exactly why each needs its own case — a shared helper
 # passing them all would prove the helper, not the rules.
 
 
-def test_a_run_that_would_leave_on_a_holiday_waits_for_the_next_open_day():
-    """
-    Rule 2. Nothing is packed on a holiday, so no slot on it fires. The order
-    joins the first run of the next day the kitchen works — found by asking the
-    dispatcher's own matcher again from the top of that day, rather than by a
-    second, differently-shaped idea of which slot is next.
-    """
-    dubai = group("Dubai", 90)
-    promise = resolve(
-        context(group=dubai, windows=DUBAI_WINDOWS, closed=shut(8)), at(13)
-    )
-    assert promise is not None
-    # Batch 1 runs 23:00–12:00, so the first run of the 9th closes at noon.
-    assert promise.at == at(13, 30, day=9)
-    assert promise.precision == "time"
-    assert "batch:Dubai/Batch 1" in promise.reason
-
-
-def test_a_run_steps_over_consecutive_holidays():
-    """A two-day Eid, not just a single day. The step repeats, it does not
-    assume one."""
-    dubai = group("Dubai", 90)
-    promise = resolve(
-        context(group=dubai, windows=DUBAI_WINDOWS, closed=shut(8, 9, 10)), at(13)
-    )
-    assert promise is not None
-    assert promise.at == at(13, 30, day=11)
-
-
-def test_a_run_on_an_open_day_is_untouched_by_a_later_holiday():
-    """
-    The ordinary case has to stay ordinary. A closure next week must not move
-    a promise for a van leaving this afternoon.
-    """
-    dubai = group("Dubai", 90)
-    with_holiday = resolve(
-        context(group=dubai, windows=DUBAI_WINDOWS, closed=shut(20)), at(20)
-    )
-    without = resolve(context(group=dubai, windows=DUBAI_WINDOWS), at(20))
-    assert with_holiday is not None and without is not None
-    assert with_holiday.at == without.at == at(22, 30)
-    assert with_holiday.reason == without.reason
-
-
 def test_a_third_party_hands_over_on_the_first_day_the_kitchen_works():
     """
-    Rule 3, first half. The closure moves the *handover* — the day the box can
+    Rule 2, first half. The closure moves the *handover* — the day the box can
     physically be put in somebody's van — and the courier's days are counted
     from there.
     """
@@ -384,7 +232,7 @@ def test_a_third_party_hands_over_on_the_first_day_the_kitchen_works():
 
 def test_a_third_party_arrival_is_walked_off_a_closed_day_too():
     """
-    Rule 3, second half. The handover day is fine — the shop is open on the 8th
+    Rule 2, second half. The handover day is fine — the shop is open on the 8th
     — but the day the parcel would land is not, and a promise naming a day the
     shop is dark is one nobody there can answer the phone about.
     """
@@ -409,7 +257,7 @@ def test_a_holiday_and_an_after_close_order_compound():
 
 def test_noon_send_on_a_holiday_starts_its_clock_at_the_next_opening():
     """
-    Rule 4, and it needed no code of its own: `is_open` is already false on a
+    Rule 3, and it needed no code of its own: `is_open` is already false on a
     closed day, so the promise takes the branch it has always taken for a shut
     kitchen — and `next_opening` steps over the closure on its way.
     """

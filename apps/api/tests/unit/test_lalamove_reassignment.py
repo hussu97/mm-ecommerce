@@ -241,8 +241,8 @@ async def test_assigning_books_at_the_approved_price_and_changes_hands(monkeypat
     assert result.fee_charged == Decimal("20.00")
     assert result.quoted_cost == Decimal("45")
 
-    # A third-party order never reaches `assign_or_dispatch`, so this has been
-    # null for its whole life — and with it the timeline's "packed" stamp.
+    # A third-party order never reaches `courier_service.dispatch`, so this has
+    # been null for its whole life — and with it the timeline's "packed" stamp.
     assert result.dispatchable_at is not None
 
     # Committed on the spot: a debited wallet does not roll back with us.

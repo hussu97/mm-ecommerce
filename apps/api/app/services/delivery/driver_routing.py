@@ -50,7 +50,7 @@ async def refresh_routes(
     """
     Re-route every delivery with a driver still coming. Returns how many moved.
 
-    Called from `batch_scheduler.sweep_once`, after the position sweep — a route
+    Called from `delivery_scheduler.sweep_once`, after the position sweep — a route
     computed from last minute's pin would be a minute of driving out of date
     before anybody read it.
 

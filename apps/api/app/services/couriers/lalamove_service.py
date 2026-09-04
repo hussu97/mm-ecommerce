@@ -41,7 +41,6 @@ from app.core.config import settings
 from app.core.phone import normalise_phone
 from app.models.branch import Branch
 from app.models.cart import Cart
-from app.models.delivery_batch import DeliveryBatch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (
@@ -418,8 +417,7 @@ async def record_order_delivery(
     courier it was never going to reach. Absent, it falls back to the zone's own
     provider, which keeps this the identity for the pilot account and for every
     non-Slider zone. `zone_name` and `polygon_id` still point at the **real**
-    zone whatever the provider resolves to, because batching reaches this zone's
-    own schedule through them.
+    zone whatever the provider resolves to.
     """
     delivery = OrderDelivery(
         order_id=order.id,
@@ -433,9 +431,8 @@ async def record_order_delivery(
             )
         ),
         zone_name=zone.name if zone else None,
-        # The row, not just the name: batching needs to reach this zone's
-        # schedule, and matching on a name would break the first time one is
-        # renamed.
+        # The row, not just the name: matching on a name would break the first
+        # time one is renamed.
         polygon_id=zone.id if zone else None,
         fee_charged=Decimal(str(order.delivery_fee or 0)),
     )
@@ -661,8 +658,8 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
 # courier we can actually book.
 #
 # What makes that cheap is that nothing here is a second dispatch path. The
-# three gates that keep a third-party order away from the courier
-# (`courier_service.books_itself`, `batching_service.assign_or_dispatch`,
+# gates that keep a third-party order away from the courier
+# (`courier_service.books_itself`, `courier_service.dispatch`,
 # `dispatch_order`) all read one column, so moving the order is a matter of
 # changing `provider` and letting the machinery that already exists take it:
 # webhook matching by `courier_order_id`, driver fill, POD, `_advance_order`,
@@ -845,8 +842,8 @@ async def assign_and_dispatch(
     if delivery.original_provider is None:
         delivery.original_provider = was
     delivery.provider = FulfilmentProviderEnum.LALAMOVE.value
-    # Third-party orders never reach `assign_or_dispatch`, so this has been null
-    # for the life of the order and the timeline's "packed" stamp with it. The
+    # Third-party orders never reach `courier_service.dispatch`, so this has been
+    # null for the life of the order and the timeline's "packed" stamp with it. The
     # box is demonstrably ready — a courier has just been booked to collect it.
     if delivery.dispatchable_at is None:
         delivery.dispatchable_at = datetime.now(timezone.utc)
@@ -869,7 +866,6 @@ async def assign_and_dispatch(
         delivery,
         driver_assignment.Driver.from_lalamove(None, driver_id=booking.get("driverId")),
     )
-    delivery.stop_id = stops[1].get("stopId")
     delivery.booked_at = datetime.now(timezone.utc)
     delivery.status_updated_at = delivery.booked_at
     delivery.last_error = None
@@ -998,7 +994,6 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
                     select(OrderDelivery)
                     .where(OrderDelivery.courier_order_id == lookup_id)
                     .options(selectinload(OrderDelivery.order))
-                    .order_by(OrderDelivery.stop_sequence)
                 )
             )
             .scalars()
@@ -1011,9 +1006,8 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
             provider="lalamove",
             event_id=str(event_id),
             event_type=event_type[:100],
-            # A batched run covers several orders, so no single number belongs
-            # in this column. The batch is the thing to look up by then, and it
-            # is findable by the same courier id.
+            # One booking carries one order, so its number belongs here — found
+            # by the same courier id the push arrived on.
             order_number=(
                 deliveries[0].order.order_number
                 if len(deliveries) == 1 and deliveries[0].order
@@ -1036,8 +1030,6 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
     # the driver and the status; only proof of delivery is per-customer.
     for delivery in deliveries:
         await apply_webhook(db, payload, delivery=delivery)
-    if lookup_id:
-        await _apply_to_batch(db, payload, lookup_id)
 
     return {
         "received": True,
@@ -1045,56 +1037,6 @@ async def handle_webhook(db: AsyncSession, raw_body: bytes) -> dict[str, Any]:
         "matched": True,
         "deliveries": len(deliveries),
     }
-
-
-async def _apply_to_batch(
-    db: AsyncSession, payload: dict[str, Any], courier_order_id: str
-) -> None:
-    """Keep the run's own row in step with the orders riding on it."""
-    batch = (
-        (
-            await db.execute(
-                select(DeliveryBatch).where(
-                    DeliveryBatch.courier_order_id == courier_order_id
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if batch is None:
-        return
-
-    data = payload.get("data") or {}
-    courier_order = data.get("order") or {}
-    driver = data.get("driver") or {}
-
-    if payload.get("eventType") == "ORDER_REPLACED":
-        # The run itself was cloned. Repoint it for the same reason the delivery
-        # rows are repointed — otherwise every subsequent event for this run
-        # arrives under an id the batch does not recognise.
-        new_id = courier_order_id_of(payload)
-        if new_id and new_id != batch.courier_order_id:
-            batch.courier_order_id = new_id
-            batch.last_payload = payload
-        return
-
-    if status := courier_order.get("status"):
-        batch.courier_status = status
-    if share_link := courier_order.get("shareLink"):
-        batch.share_link = share_link
-    if driver_id := (driver.get("driverId") or courier_order.get("driverId")):
-        batch.driver_id = str(driver_id)
-    if driver:
-        batch.driver_name = driver.get("name") or batch.driver_name
-        batch.driver_phone = driver.get("phone") or batch.driver_phone
-        batch.driver_plate = driver.get("plateNumber") or batch.driver_plate
-    if breakdown := courier_order.get("priceBreakdown"):
-        total = decimal_or_none(breakdown.get("total"))
-        if total is not None:
-            batch.cost_total = total
-        batch.price_breakdown = breakdown
-    batch.last_payload = payload
 
 
 def _apply_replacement(
@@ -1386,45 +1328,15 @@ async def announce_driver(db: AsyncSession, delivery: OrderDelivery) -> None:
 
 def _pod_for(delivery: OrderDelivery, stops: list[dict[str, Any]]) -> dict | None:
     """
-    The proof belonging to *this* customer, out of a route with many.
+    The proof of delivery for this order.
 
-    On a shared run every stop reports its own POD, and attaching the last one
-    to everybody would put a photo of somebody else's doorway on the wrong
-    order. Matched by stop id where Lalamove sends one and by coordinates where
-    it does not; on a solo run, where there is only ever one drop, the first
-    proof on the route is unambiguous.
+    Every booking is a solo run — one drop — so the first stop that carries a
+    POD is unambiguously this customer's. (`delivery` is kept in the signature
+    because callers hold it and it reads as the subject of the lookup.)
     """
-    with_pod = [stop for stop in stops if stop.get("POD")]
-    if not with_pod:
-        return None
-
-    if delivery.stop_id:
-        for stop in with_pod:
-            if stop.get("stopId") == delivery.stop_id:
-                return stop["POD"]
-
-    address = (delivery.order.shipping_address_snapshot or {}) if delivery.order else {}
-    latitude, longitude = _coordinates(address)
-    if latitude is not None and longitude is not None:
-        target = (f"{latitude:.4f}", f"{longitude:.4f}")
-        for stop in with_pod:
-            coords = stop.get("coordinates") or {}
-            try:
-                here = (
-                    f"{float(coords.get('lat')):.4f}",
-                    f"{float(coords.get('lng')):.4f}",
-                )
-            except (TypeError, ValueError):
-                continue
-            if here == target:
-                return stop["POD"]
-
-    # A solo booking has exactly one drop, so there is nothing to confuse it
-    # with. On a shared run, refusing to guess is the right answer.
-    if delivery.batch_id is None:
-        return with_pod[0]["POD"]
-
-    logger.info("POD on a shared run did not match a stop for delivery %s", delivery.id)
+    for stop in stops:
+        if stop.get("POD"):
+            return stop["POD"]
     return None
 
 

@@ -193,9 +193,9 @@ def test_no_sweep_takes_the_lock_through_a_session():
     import inspect
 
     from app.services import log_retention
-    from app.services.delivery import batch_scheduler
+    from app.services.delivery import delivery_scheduler
 
-    for module in (batch_scheduler, log_retention):
+    for module in (delivery_scheduler, log_retention):
         source = inspect.getsource(module)
         assert "pg_try_advisory_lock" not in source, (
             f"{module.__name__} takes the lock itself; it must go through "

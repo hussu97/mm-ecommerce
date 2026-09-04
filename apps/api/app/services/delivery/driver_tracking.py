@@ -111,7 +111,7 @@ async def refresh_live_drivers(
     """
     Re-read every live Lalamove booking. Returns how many were refreshed.
 
-    Called from `batch_scheduler.sweep_once`, which already holds the advisory
+    Called from `delivery_scheduler.sweep_once`, which already holds the advisory
     lock that makes one worker in the deployment responsible for periodic work.
     Standing up a second loop with a second lock for this would be a second
     thing to notice had stopped happening.

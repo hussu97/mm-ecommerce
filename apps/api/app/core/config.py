@@ -203,12 +203,13 @@ class Settings(BaseSettings):
     TURNSTILE_SECRET_KEY: str = ""
     TURNSTILE_TIMEOUT_SECONDS: float = 5.0
 
-    #: The in-process loop that sends a batch when its window closes. There is
-    #: no queue in this stack, so this is the only thing that fires them.
-    #: Turning it off leaves batches sitting until someone dispatches them by
-    #: hand from the admin — useful for a maintenance window, dangerous as a
-    #: default, which is why it is on.
-    BATCH_DISPATCHER_ENABLED: bool = True
+    #: The in-process loop that finishes what checkout starts — dispatch and its
+    #: retries, arrivals to the register, driver tracking, the daily sales email,
+    #: abandoned-checkout expiry. There is no queue in this stack, so this is the
+    #: only thing that runs them. Turning it off stops all of that until someone
+    #: acts by hand — useful for a maintenance window, dangerous as a default,
+    #: which is why it is on. The register app never runs it.
+    STOREFRONT_SCHEDULER_ENABLED: bool = True
 
     # ── noon Send / Rider-on-Demand (courier) ────────────────────────────────
     #: Same contract as Lalamove above: an empty key means a `noon_send` zone

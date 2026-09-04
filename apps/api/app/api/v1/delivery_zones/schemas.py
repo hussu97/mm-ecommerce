@@ -9,18 +9,12 @@ lines below, beside the two routes that return them. One home.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.models.courier import Courier
-from app.models.delivery_batch import (
-    DeliveryBatch,
-    DeliveryBatchGroup,
-    DeliveryBatchWindow,
-)
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
@@ -64,13 +58,6 @@ class PolygonResponse(BaseModel):
     #: The kitchen that bakes this zone's orders and hands them to the courier.
     #: Null falls back to the single configured pickup branch.
     branch_id: str | None
-    #: The run this zone travels on, or null for one that leaves alone.
-    #:
-    #: Read-only here — no route attaches a zone to a group, only migrations do.
-    #: It is exposed because changing a zone's courier *detaches* it (a run is
-    #: one booking with one courier), and a setting that can be lost by editing
-    #: a neighbouring field has to be visible while somebody edits it.
-    batch_group_id: str | None
     display_order: int
     #: How many coordinates the outline has, so the admin can tell a hand-drawn
     #: box from a real boundary without fetching either.
@@ -88,7 +75,6 @@ class PolygonResponse(BaseModel):
             fulfilment_provider=p.fulfilment_provider,
             alternate_providers=list(p.alternate_providers or []),
             branch_id=str(p.branch_id) if p.branch_id else None,
-            batch_group_id=str(p.batch_group_id) if p.batch_group_id else None,
             display_order=p.display_order,
             point_count=_point_count(p.geometry),
         )
@@ -166,113 +152,11 @@ class PolygonUpdate(BaseModel):
     display_order: int | None = None
 
 
-class BatchWindowResponse(BaseModel):
-    id: str
-    group_id: str
-    label: str
-    start_hour: int
-    start_minute: int
-    end_hour: int
-    end_minute: int
-    is_active: bool
-    #: True for a window like 22:00–02:00, so the admin can see at a glance
-    #: that it belongs to two calendar days.
-    wraps_midnight: bool
-
-    @classmethod
-    def of(cls, w: DeliveryBatchWindow) -> "BatchWindowResponse":
-        return cls(
-            id=str(w.id),
-            group_id=str(w.group_id),
-            label=w.label,
-            start_hour=w.start_hour,
-            start_minute=w.start_minute,
-            end_hour=w.end_hour,
-            end_minute=w.end_minute,
-            is_active=w.is_active,
-            wraps_midnight=w.wraps_midnight,
-        )
-
-
-class BatchWindowWrite(BaseModel):
-    label: str = Field(min_length=1, max_length=60)
-    start_hour: int = Field(ge=0, le=23)
-    start_minute: int = Field(default=0, ge=0, le=59)
-    #: 24 means midnight closing the day, so 23:00–24:00 can be written without
-    #: pretending it runs into tomorrow.
-    end_hour: int = Field(ge=0, le=24)
-    end_minute: int = Field(default=0, ge=0, le=59)
-    is_active: bool = True
-
-
-class BatchGroupResponse(BaseModel):
-    """
-    A set of zones whose orders ride together, and the schedule they share.
-
-    Everything the batching screen needs in one row, because the question it
-    answers — "which zones leave together, on whose van, and how long after"
-    — used to require reading five zones' schedules side by side and noticing
-    that their end times matched.
-    """
-
-    id: str
-    name: str
-    courier_code: str
-    #: How long after the run leaves that the last drop is through a door. Per
-    #: group, because it is a property of the route: 90 for Dubai, 120 for the
-    #: northern zones on the same rate card.
-    delivery_minutes_after_dispatch: int
-    is_active: bool
-    #: The zones on this schedule, in map order.
-    zone_names: list[str]
-    windows: list[BatchWindowResponse]
-
-    @classmethod
-    def of(
-        cls,
-        g: DeliveryBatchGroup,
-        zone_names: list[str],
-        windows: list[DeliveryBatchWindow],
-    ) -> "BatchGroupResponse":
-        return cls(
-            id=str(g.id),
-            name=g.name,
-            courier_code=g.courier_code,
-            delivery_minutes_after_dispatch=g.delivery_minutes_after_dispatch,
-            is_active=g.is_active,
-            zone_names=zone_names,
-            windows=[BatchWindowResponse.of(w) for w in windows],
-        )
-
-
-class BatchGroupUpdate(BaseModel):
-    """
-    The parts of a schedule that are a commercial decision rather than a
-    structural one.
-
-    `name` and `courier_code` are deliberately absent. Which carrier a group
-    books is the thing `supports_batching` guards and the thing its zones were
-    assigned against; moving it is a re-partitioning of the map, not a number
-    somebody adjusts on a Tuesday.
-    """
-
-    delivery_minutes_after_dispatch: int | None = Field(None, ge=1, le=1440)
-    is_active: bool | None = None
-
-
 class CourierResponse(BaseModel):
-    """
-    A carrier and what it promises, for the admin's Estimates screen.
-
-    `supports_batching` is read-only here and shown anyway: it is the reason a
-    courier does or does not appear on the batching screen, and an admin
-    wondering why noon Send has no schedule deserves the answer on the same
-    page as the numbers.
-    """
+    """A carrier and what it promises, for the admin's Estimates screen."""
 
     code: str
     name: str
-    supports_batching: bool
     unbatched_promise_kind: str
     unbatched_promise_minutes: int | None
     unbatched_promise_days: int
@@ -308,7 +192,6 @@ class CourierResponse(BaseModel):
         return cls(
             code=c.code,
             name=c.name,
-            supports_batching=c.supports_batching,
             unbatched_promise_kind=c.unbatched_promise_kind,
             unbatched_promise_minutes=c.unbatched_promise_minutes,
             unbatched_promise_days=c.unbatched_promise_days,
@@ -329,13 +212,10 @@ class CourierResponse(BaseModel):
 
 class CourierUpdate(BaseModel):
     """
-    What a courier promises when there is no batch to wait for.
+    What a courier promises.
 
-    `code` and `supports_batching` are not here. The code is the join key every
-    polygon and every group already holds, and whether a carrier can carry
-    several of our orders in one booking is a fact about their product, not a
-    setting — turning it on for a courier that cannot would let a schedule be
-    attached to a promise nothing can keep.
+    `code` is not here: it is the join key every polygon already holds, so it is
+    the address of the row, not one of its editable fields.
     """
 
     #: `minutes` or `next_day`. Which of the two numbers below is read.
@@ -361,65 +241,6 @@ class CourierUpdate(BaseModel):
     #: be a rebate wearing a fee's name.
     commission_fixed: Decimal | None = Field(None, ge=0)
     payment_fee_fixed: Decimal | None = Field(None, ge=0)
-
-
-class BatchResponse(BaseModel):
-    id: str
-    #: The group whose schedule opened this run. Zones ride together because
-    #: somebody put them in one group, so the group — not a zone — is what a run
-    #: belongs to. `zone_name` is the honest answer to what is on it.
-    group_id: str
-    #: Every zone with an order on this run, comma-separated.
-    zone_name: str | None
-    window_label: str | None
-    dispatch_at: datetime
-    status: str
-    stop_count: int
-    courier_order_id: str | None
-    courier_status: str | None
-    share_link: str | None
-    driver_name: str | None
-    distance_m: int | None
-    cost_total: float | None
-    #: What the run worked out at per order. The number the whole feature
-    #: exists to move.
-    cost_per_delivery: float | None
-    dispatched_at: datetime | None
-    last_error: str | None
-    #: How many times this run has been offered to the courier.
-    attempt_count: int
-    #: When it will be offered again on its own. Null means nothing more will
-    #: happen without somebody pressing the button — either it went out, or
-    #: another attempt cannot change the answer.
-    next_attempt_at: datetime | None
-    order_numbers: list[str]
-
-    @classmethod
-    def of(
-        cls, b: DeliveryBatch, zone_name: str | None, order_numbers: list[str]
-    ) -> "BatchResponse":
-        per = b.cost_per_delivery
-        return cls(
-            id=str(b.id),
-            group_id=str(b.group_id),
-            zone_name=zone_name,
-            window_label=b.window_label,
-            dispatch_at=b.dispatch_at,
-            status=b.status,
-            stop_count=b.stop_count,
-            courier_order_id=b.courier_order_id,
-            courier_status=b.courier_status,
-            share_link=b.share_link,
-            driver_name=b.driver_name,
-            distance_m=b.distance_m,
-            cost_total=float(b.cost_total) if b.cost_total is not None else None,
-            cost_per_delivery=float(per) if per is not None else None,
-            dispatched_at=b.dispatched_at,
-            last_error=b.last_error,
-            attempt_count=b.attempt_count,
-            next_attempt_at=b.next_attempt_at,
-            order_numbers=order_numbers,
-        )
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────

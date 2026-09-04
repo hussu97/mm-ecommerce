@@ -128,16 +128,17 @@ def _configure_logging() -> None:
     logging.root.setLevel(logging.INFO)
 
 
-def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
+def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
     """
-    Startup checks, the i18n seed, and the batch dispatcher — each owned by
+    Startup checks, the i18n seed, and the storefront scheduler — each owned by
     whichever app is responsible for it.
 
     Only one app seeds. Two processes racing the same upsert on boot is a
     deadlock waiting to happen, and the register has no use for storefront
-    copy anyway. The batch dispatcher belongs to the storefront for the same
-    reason: web orders are the only ones that batch, and it holds a database
-    advisory lock so running it in two places would achieve nothing but noise.
+    copy anyway. The scheduler belongs to the storefront for the same reason:
+    its work — dispatch, arrivals, driver tracking, the daily email — is web
+    orders' business, and each sweep holds a database advisory lock so running
+    it in two places would achieve nothing but noise.
     """
 
     @asynccontextmanager
@@ -170,13 +171,13 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
             logger.warning("courier logo cache warm failed (non-fatal): %s", exc)
 
         background: list[asyncio.Task] = []
-        if dispatch_batches and settings.BATCH_DISPATCHER_ENABLED:
-            from app.services.delivery import batch_scheduler
+        if run_scheduler and settings.STOREFRONT_SCHEDULER_ENABLED:
+            from app.services.delivery import delivery_scheduler
 
-            background.append(asyncio.create_task(batch_scheduler.run_forever()))
+            background.append(asyncio.create_task(delivery_scheduler.run_forever()))
 
-            # Rides with the dispatcher rather than getting a flag of its own.
-            # Both are loops in the app because this stack has no cron, both
+            # Rides with the delivery scheduler rather than getting a flag of its
+            # own. Both are loops in the app because this stack has no cron, both
             # hold an advisory lock so a second copy would achieve nothing, and
             # both belong to whichever app already owns the shared work.
             from app.services import log_retention

@@ -171,32 +171,26 @@ def mock_fulfilment():
             "app.services.orders.order_service.lalamove_service.cancel_delivery",
             new_callable=AsyncMock,
         ),
-        # Patched on the module itself: the dispatch calls moved into
-        # `order_lifecycle._consequences`, which imports `batching_service`
-        # lazily, so there is no `order_service.batching_service` attribute to
-        # route through any more.
+        # Patched where they are called: the dispatch calls live in
+        # `order_lifecycle._consequences`, which reaches `courier_service`
+        # lazily, so there is no `order_service` attribute to route through.
         patch(
-            "app.services.delivery.batching_service.assign_or_dispatch",
+            "app.services.couriers.courier_service.dispatch",
             new_callable=AsyncMock,
         ),
-        # The two facts the arrival needs from the world, stubbed rather than
-        # the arrival itself: a zone with no shared run, and a shop that is
-        # open. `arrival_service.schedule` then runs for real and lands the
-        # order, which is what `test_a_cash_order_is_published_at_checkout`
-        # is checking. Reading either for real would mean a branch row and a
-        # holiday query on a session whose results are a fixed script.
-        patch(
-            "app.services.delivery.batching_service.reserve",
-            new_callable=AsyncMock,
-            return_value=None,
-        ),
+        # The one fact the arrival needs from the world, stubbed rather than the
+        # arrival itself: a shop that is open. `arrival_service.schedule` then
+        # runs for real and lands the order, which is what
+        # `test_a_cash_order_is_published_at_checkout` is checking. Reading it
+        # for real would mean a branch row and a holiday query on a session
+        # whose results are a fixed script.
         patch(
             "app.services.delivery.arrival_service._next_working_moment",
             new_callable=AsyncMock,
             return_value=datetime.datetime.now(datetime.timezone.utc),
         ),
         patch(
-            "app.services.delivery.batching_service.cancel_assignment",
+            "app.services.couriers.courier_service.cancel",
             new_callable=AsyncMock,
         ),
         # Every customer-facing response now carries "when does this arrive",

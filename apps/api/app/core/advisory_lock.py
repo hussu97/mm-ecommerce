@@ -23,7 +23,7 @@ Nothing raises. `pg_try_advisory_lock` is a *try* lock, so every later sweep
 takes its `False` as "another worker is on it" and returns quietly. The loop
 keeps ticking and does nothing at all, which is how production spent an
 afternoon with a dispatcher that logged `Batch dispatcher started` and then
-never sent a run. See `batch_scheduler`.
+never sent a run. See `delivery_scheduler`.
 
 Holding the lock on a connection of its own is the fix, and it has to be an
 `AsyncConnection` rather than a `Session`: a connection checked out with

@@ -6,8 +6,7 @@ import type {
   PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
-  BatchGroup,
-  BatchWindow, BatchWindowWrite, Courier, CourierWrite, DeliveryBatch, DeliveryZoneMap, PolygonPage,
+  Courier, CourierWrite, DeliveryZoneMap, PolygonPage,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
@@ -505,7 +504,6 @@ export const deliveryZonesApi = {
     search?: string;
     provider?: string;
     branch_id?: string;
-    batch_group_id?: string;
     sort?: string;
     direction?: 'asc' | 'desc';
   }) => api.get<PolygonPage>(`/delivery-zones/polygons${buildQs(params)}`),
@@ -553,35 +551,11 @@ export const deliveryZonesApi = {
   map: (versionId?: string) =>
     api.get<DeliveryZoneMap>(`/delivery-zones/map${versionId ? `?version_id=${versionId}` : ''}`),
 
-  // ── Batching ────────────────────────────────────────────────────────────
-  //
-  // Addressed by group rather than by zone: a schedule governs a set of zones
-  // that ride together, and pointing it at one of them was what let two
-  // unrelated schedules merge onto a single booking by accident.
-  listBatchGroups: () => api.get<BatchGroup[]>('/delivery-zones/batch-groups'),
-  listWindows: (groupId: string) =>
-    api.get<BatchWindow[]>(`/delivery-zones/batch-groups/${groupId}/batch-windows`),
-  createWindow: (groupId: string, data: BatchWindowWrite) =>
-    api.post<BatchWindow>(`/delivery-zones/batch-groups/${groupId}/batch-windows`, data),
-  updateWindow: (windowId: string, data: BatchWindowWrite) =>
-    api.put<BatchWindow>(`/delivery-zones/batch-windows/${windowId}`, data),
-  deleteWindow: (windowId: string) =>
-    api.delete<void>(`/delivery-zones/batch-windows/${windowId}`),
-  /** Minutes-to-door and whether the schedule runs. Immediate, not versioned. */
-  updateBatchGroup: (
-    groupId: string,
-    data: { delivery_minutes_after_dispatch?: number; is_active?: boolean },
-  ) => api.put<BatchGroup>(`/delivery-zones/batch-groups/${groupId}`, data),
-  listBatches: (params?: { status_filter?: string; limit?: number }) =>
-    api.get<DeliveryBatch[]>(`/delivery-zones/batches${buildQs(params)}`),
-  dispatchBatch: (batchId: string) =>
-    api.post<DeliveryBatch>(`/delivery-zones/batches/${batchId}/dispatch`),
-
   // ── Courier promises ────────────────────────────────────────────────────
   //
-  // What a zone with no batch group is quoted — every noon Send zone and every
-  // third-party one. Addressed by courier code, which is the same key the
-  // polygons and the groups already hold.
+  // What each zone is quoted — every noon Send zone, every third-party one, and
+  // every Lalamove one. Addressed by courier code, which is the same key the
+  // polygons already hold.
   listCouriers: () => api.get<Courier[]>('/delivery-zones/couriers'),
   updateCourier: (code: string, data: CourierWrite) =>
     api.put<Courier>(`/delivery-zones/couriers/${code}`, data),

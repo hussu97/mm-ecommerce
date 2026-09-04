@@ -59,7 +59,7 @@ def quiet_consequences(monkeypatch):
     the same seam the noon Send tests use.
     """
     from app.services.couriers import courier_service, lalamove_service
-    from app.services.delivery import arrival_service, batching_service
+    from app.services.delivery import arrival_service
     from app.services.orders import order_service
     from app.services.payments import payment_service
 
@@ -67,7 +67,6 @@ def quiet_consequences(monkeypatch):
         "publish": [],
         "schedule": [],
         "dispatch": [],
-        "batch_cancel": [],
         "courier_cancel": [],
         "refund": [],
     }
@@ -85,9 +84,6 @@ def quiet_consequences(monkeypatch):
     async def get_delivery(db, order_id):
         return None
 
-    async def cancel_assignment(db, delivery):
-        calls["batch_cancel"].append(delivery)
-
     async def courier_cancel(db, order):
         calls["courier_cancel"].append(order)
 
@@ -97,8 +93,7 @@ def quiet_consequences(monkeypatch):
 
     monkeypatch.setattr(order_service, "publish_to_register", publish)
     monkeypatch.setattr(arrival_service, "schedule", schedule)
-    monkeypatch.setattr(batching_service, "assign_or_dispatch", dispatch)
-    monkeypatch.setattr(batching_service, "cancel_assignment", cancel_assignment)
+    monkeypatch.setattr(courier_service, "dispatch", dispatch)
     monkeypatch.setattr(lalamove_service, "get_delivery", get_delivery)
     monkeypatch.setattr(courier_service, "cancel", courier_cancel)
     monkeypatch.setattr(payment_service, "refund_order", refund)

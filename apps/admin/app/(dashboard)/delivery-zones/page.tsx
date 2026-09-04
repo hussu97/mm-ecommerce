@@ -5,8 +5,6 @@ import { deliveryZonesApi, ApiError } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import type {
-  BatchGroup,
-  DeliveryBatch,
   DeliverySettings,
   DeliveryMapVersion,
   DeliveryZoneMap,
@@ -16,9 +14,7 @@ import { useConfirm, useToast } from '@/components/ui/feedback';
 import { DeliveryEstimates } from '@/components/delivery/DeliveryEstimates';
 import { ZoneMap } from '@/components/delivery/ZoneMap';
 
-import { BatchingTab } from './components/BatchingTab';
 import { PolygonTable } from './components/PolygonTable';
-import { RunsTab } from './components/RunsTab';
 import { SettingsCard } from './components/SettingsCard';
 
 export default function DeliveryZonesPage() {
@@ -32,8 +28,6 @@ export default function DeliveryZonesPage() {
   const [draftName, setDraftName] = useState('');
   const [tab, setTab] = useState('map');
   const [zoneMap, setZoneMap] = useState<DeliveryZoneMap | null>(null);
-  const [batches, setBatches] = useState<DeliveryBatch[]>([]);
-  const [batchGroups, setBatchGroups] = useState<BatchGroup[]>([]);
   // Which kitchen bakes a zone's orders. Needed here rather than on the branch
   // page because the choice belongs to the shape, not to the branch.
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -46,20 +40,16 @@ export default function DeliveryZonesPage() {
     setLoading(true);
     setError('');
     try {
-      const [v, s, m, b, br, bg] = await Promise.all([
+      const [v, s, m, br] = await Promise.all([
         deliveryZonesApi.listVersions(),
         deliveryZonesApi.getSettings(),
         deliveryZonesApi.map(),
-        deliveryZonesApi.listBatches({ limit: 50 }),
         branchesApi.list(),
-        deliveryZonesApi.listBatchGroups(),
       ]);
       setVersions(v);
       setSettings(s);
       setZoneMap(m);
-      setBatches(b);
       setBranches(br.filter(x => x.is_active && !x.deleted_at));
-      setBatchGroups(bg);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load delivery maps.');
     } finally {
@@ -123,16 +113,13 @@ export default function DeliveryZonesPage() {
     return <div className="text-sm text-red-500 font-body">{error}</div>;
   }
 
-  const pending = batches.filter(b => b.status === 'pending').length;
-
   return (
     <div className="max-w-5xl">
       <div className="mb-6">
         <h1 className="font-display text-xl text-gray-800">Delivery Zones</h1>
         <p className="text-xs text-gray-400 font-body mt-1">
-          What each area costs to deliver to, who carries it, and when their orders
-          travel together. One map is live at a time; to change a price, copy it to a
-          draft and publish the draft.
+          What each area costs to deliver to and who carries it. One map is live at
+          a time; to change a price, copy it to a draft and publish the draft.
         </p>
       </div>
 
@@ -140,9 +127,7 @@ export default function DeliveryZonesPage() {
         tabs={[
           { key: 'map', label: 'Map' },
           { key: 'maps', label: 'Fees & couriers', count: versions.length },
-          { key: 'batching', label: 'Batching' },
           { key: 'estimates', label: 'Estimates' },
-          { key: 'runs', label: 'Runs', count: pending || undefined },
         ]}
         active={tab}
         onChange={setTab}
@@ -157,28 +142,10 @@ export default function DeliveryZonesPage() {
         </div>
       )}
 
-      {tab === 'batching' && zoneMap && (
-        <BatchingTab />
-      )}
-
-      {/* Not gated on `zoneMap` like Batching is: what a courier promises is
-          true whether or not a map has been published, and an estate with no
-          live map is exactly when somebody is setting these up. */}
+      {/* Not gated on `zoneMap`: what a courier promises is true whether or not
+          a map has been published, and an estate with no live map is exactly
+          when somebody is setting these up. */}
       {tab === 'estimates' && <DeliveryEstimates />}
-
-      {tab === 'runs' && (
-        <RunsTab
-          batches={batches}
-          busy={busy}
-          onDispatch={async id => {
-            if (await confirm({
-              title: 'Dispatch run',
-              message: 'Send this run to the courier now?',
-              confirmLabel: 'Dispatch',
-            })) void run(() => deliveryZonesApi.dispatchBatch(id));
-          }}
-        />
-      )}
 
       {tab === 'maps' && settings && (
         <div className="space-y-3">
@@ -190,7 +157,6 @@ export default function DeliveryZonesPage() {
           <PolygonTable
             versions={versions}
             branches={branches}
-            batchGroups={batchGroups}
             busy={busy}
             draftName={draftName}
             onDraftNameChange={setDraftName}

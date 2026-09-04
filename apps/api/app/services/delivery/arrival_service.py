@@ -30,7 +30,7 @@ the retry ladder and the shop is told regardless. Getting this backwards would
 mean a courier outage silently stopped the kitchen.
 
 The two callers are `order_lifecycle` (at confirmation, to stamp `arrives_at`)
-and `batch_scheduler` (each tick, to land everything now due).
+and `delivery_scheduler` (each tick, to land everything now due).
 """
 
 from __future__ import annotations
@@ -71,27 +71,16 @@ async def schedule(db: AsyncSession, order: Order) -> datetime | None:
     order. Returns the moment stamped, or None for an order that never reaches
     a register at all.
 
-    **The run is joined here rather than at arrival**, which is the one piece of
-    ordering the whole design turns on: a batch is made of the orders assigned
-    to it, and its window closing is what triggers their arrival. An order that
-    waited for arrival before joining would be waiting for a run it was not on.
+    Every order arrives as soon as the kitchen is open — now, or the branch's
+    next opening if the shop is shut. There is no run to wait for: every courier
+    dispatches its own order directly.
     """
     if order.source != OrderSourceEnum.ONLINE.value:
         # A counter sale is rung up by a person who is holding it. There is no
         # arrival to schedule and nothing to tell anybody.
         return None
 
-    from app.services.delivery import batching_service
-
-    # Takes its place on a run, if its zone has one. Books nothing: the whole
-    # point is that the booking happens when the run leaves.
-    reserved = await batching_service.reserve(db, order)
-
-    if reserved is not None and reserved.is_open:
-        # A batched order. It arrives when its run does.
-        order.arrives_at = reserved.dispatch_at
-    else:
-        order.arrives_at = await _next_working_moment(db, order)
+    order.arrives_at = await _next_working_moment(db, order)
 
     logger.info(
         "Order %s reaches the register at %s",
@@ -203,11 +192,11 @@ async def land(db: AsyncSession, order: Order, *, because: str) -> bool:
 
     The dispatch is best-effort and comes second, in that order on purpose. A
     courier that is unreachable must not keep the kitchen from being told: the
-    box has to be made either way, and `assign_or_dispatch` writes its own
+    box has to be made either way, and `courier_service.dispatch` writes its own
     failure to the delivery row where the retry ladder and the admin's
     needs-a-human list both read it.
     """
-    from app.services.delivery import batching_service
+    from app.services.couriers import courier_service
     from app.services.orders import order_lifecycle
 
     with acting_as(StatusSourceEnum.SYSTEM.value, note=because):
@@ -218,7 +207,7 @@ async def land(db: AsyncSession, order: Order, *, because: str) -> bool:
         return False
 
     try:
-        await batching_service.assign_or_dispatch(db, order)
+        await courier_service.dispatch(db, order)
     except Exception:  # noqa: BLE001 — a courier must not stop the kitchen
         logger.exception(
             "Booking a courier for %s blew up on arrival; it needs a person",
@@ -251,14 +240,12 @@ def _why(order: Order) -> str:
     """
     The reason this order is landing now, for its status history.
 
-    Three things bring an order here and they are different questions later: a
-    run leaving, a shop opening, and an order whose stamp went missing. A
-    history that recorded only "arrived" would answer none of them — and the
-    third is the one worth being able to find, because it means something went
-    wrong at confirmation and the sweep is covering for it.
+    Two things bring an order here and they are different questions later: a
+    shop opening, and an order whose stamp went missing. A history that recorded
+    only "arrived" would answer neither — and the second is the one worth being
+    able to find, because it means something went wrong at confirmation and the
+    sweep is covering for it.
     """
-    if order.delivery is not None and order.delivery.batch_id is not None:
-        return "its run left"
     if order.arrives_at is None:
         return "no arrival was scheduled; swept up"
     return "its arrival fell due"

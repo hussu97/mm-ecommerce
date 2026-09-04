@@ -1,60 +1,43 @@
 """
 When an order will arrive, and why.
 
-**One resolver, four rules, tried in order, first match wins.** That ordering is
-the contract. What it replaces is an if-chain over `books_itself` / `is_batched`
-with a single hardcoded hour applied to every zone alike — where the answer
-depended on which branch a zone happened to fall through, and where changing a
-polygon's courier or a batch's schedule could move a promise without anyone
-being able to say which change did it.
+**One resolver, three rules, tried in order, first match wins.** That ordering
+is the contract. What it replaces is an if-chain over `books_itself` with a
+single hardcoded hour applied to every zone alike — where the answer depended on
+which branch a zone happened to fall through, and where changing a polygon's
+courier could move a promise without anyone being able to say which change did
+it.
 
     1. No zone            -> no promise. The address cannot be priced or served.
-    2. Zone in a batch     -> that group's next window close, plus the group's
-       group                 own minutes-to-door.
-    3. Courier promises    -> the first day the kitchen can hand it over, plus
+    2. Courier promises    -> the first day the kitchen can hand it over, plus
        next_day              that courier's transit days. A day, never an hour:
                              the van is somebody else's and its schedule is not
                              ours to name.
-    4. Courier promises    -> now plus its minutes, or the next opening plus its
+    3. Courier promises    -> now plus its minutes, or the next opening plus its
        minutes               minutes if the kitchen is shut.
 
-Every number in rules 2–4 is a column, not a constant: the group's
-`delivery_minutes_after_dispatch`, the courier's `unbatched_promise_minutes`
-and its `unbatched_promise_days`. All three are commercial figures that move
-without the code moving — an SLA renegotiated, a route re-timed — and all three
-used to need a deploy. The admin's delivery Estimates screen writes them.
+Every number in rules 2–3 is a column, not a constant: the courier's
+`unbatched_promise_minutes` and its `unbatched_promise_days`. Both are commercial
+figures that move without the code moving — an SLA renegotiated, a route re-timed
+— and both used to need a deploy. The admin's delivery Estimates screen writes
+them. Every order dispatches directly now, so a same-day courier (Lalamove, noon
+Send, Slider) resolves rule 3 and a next-day partner rule 2.
 
 Every promise carries a `reason` naming the rule and the numbers that produced
-it. It is a plain string for a log or an order record, not a screen. Its job is
-that when somebody moves a polygon between groups or edits a window, the promise
-says what it was computed from, so "why did this customer see 90 minutes" has an
-answer that does not require re-deriving the code by hand.
+it. It is a plain string for a log or an order record, not a screen, so "why did
+this customer see 60 minutes" has an answer without re-deriving the code by hand.
 
-**Store hours apply to rules 3 and 4 only.** A batch window already encodes when
-the kitchen can pack — the 23:00–12:00 slot exists precisely because nothing
-leaves overnight — so applying trading hours on top of it would subtract the
-same closure twice.
-
-**A branch holiday applies to all four**, because it is not an hours question.
-One rule, stated once: *a promise never names a day the branch is shut.* It
-reaches the three live rules by three different routes, and all three are the
-same sentence —
-
-    2. a run does not leave on a closed day, so the order joins the first slot
-       on the next open one;
-    3. the day the kitchen can hand it over walks forward past the closure, and
-       so does the arrival day;
-    4. `is_open` is false on a closed day, so the clock already starts at the
-       next opening — and that opening now skips closures too.
-
-Rule 4 needed no new code at all, which is the argument for the closed day
-living in `core.trading_hours` next to the hours rather than here: the
-dispatcher's `kitchen_is_open` is the same function, so a shut day cannot mean
-one thing to the customer and another to the van.
+**Store hours apply to both live rules. A branch holiday applies to both too**,
+because it is not an hours question. One rule, stated once: *a promise never names
+a day the branch is shut.* The day the kitchen can hand it over walks forward past
+a closure, and `is_open` is false on a closed day so the minutes clock starts at
+the next opening — and that opening skips closures too. The closed day lives in
+`core.trading_hours` next to the hours, so a shut day cannot mean one thing to the
+customer and another to the van.
 
 The dispatcher itself is deliberately untouched. An order becomes dispatchable
-when a human packs it, and nobody packs on a holiday — so there is no batch to
-hold back, only a promise not to make.
+when a human packs it, and nobody packs on a holiday — so there is only a promise
+not to make.
 """
 
 from __future__ import annotations
@@ -69,9 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import trading_hours
 from app.models.branch import Branch
 from app.models.courier import Courier, UnbatchedPromiseEnum
-from app.models.delivery_batch import DeliveryBatchGroup, DeliveryBatchWindow
 from app.services import branch_holiday_service
-from app.services.delivery import batching_service
 from app.services.delivery.delivery_zone_service import Zone
 
 __all__ = [
@@ -106,8 +87,6 @@ class _Context:
 
     zone: Zone | None
     courier: Courier | None
-    group: DeliveryBatchGroup | None
-    windows: list[DeliveryBatchWindow]
     opens_at: str | None
     closes_at: str | None
     #: Whole days the serving branch does not trade, as `YYYY-MM-DD`. Defaulted
@@ -118,43 +97,13 @@ class _Context:
 
 async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Context:
     if zone is None:
-        return _Context(None, None, None, [], None, None)
+        return _Context(None, None, None, None)
 
     courier = (
         await db.execute(
             select(Courier).where(Courier.code == zone.fulfilment_provider)
         )
     ).scalar_one_or_none()
-
-    group: DeliveryBatchGroup | None = None
-    windows: list[DeliveryBatchWindow] = []
-    if zone.batch_group_id is not None:
-        group = (
-            await db.execute(
-                select(DeliveryBatchGroup).where(
-                    DeliveryBatchGroup.id == zone.batch_group_id,
-                    DeliveryBatchGroup.is_active.is_(True),
-                )
-            )
-        ).scalar_one_or_none()
-        if group is not None:
-            windows = list(
-                (
-                    await db.execute(
-                        select(DeliveryBatchWindow)
-                        .where(
-                            DeliveryBatchWindow.group_id == group.id,
-                            DeliveryBatchWindow.is_active.is_(True),
-                        )
-                        .order_by(
-                            DeliveryBatchWindow.start_hour,
-                            DeliveryBatchWindow.start_minute,
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
 
     branch = await _serving_branch(db, zone.branch_id)
     # From the day being quoted rather than from "today". They are the same
@@ -171,8 +120,6 @@ async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Conte
     return _Context(
         zone,
         courier,
-        group,
-        windows,
         branch.opening_from if branch is not None else None,
         branch.opening_to if branch is not None else None,
         closed,
@@ -212,49 +159,6 @@ async def _serving_branch(
     return branch
 
 
-#: How many days rule 2 will step over before giving up on finding an open one.
-#: Bounded for the same reason `trading_hours.MAX_CLOSED_RUN` is: a checkout
-#: must not hang because somebody marked a year shut.
-_MAX_CLOSED_STEPS = 30
-
-
-def _next_run(
-    windows: list[DeliveryBatchWindow],
-    moment: datetime,
-    closed_dates: frozenset[str] = frozenset(),
-) -> tuple[DeliveryBatchWindow, datetime] | None:
-    """
-    The run this order will actually join, using the dispatcher's own matcher.
-
-    `batching_service.find_window` rather than "the earliest close from here",
-    and the difference is not cosmetic. Windows are half-open, so 18:00 belongs
-    to the slot *starting* at 18:00, not to the one closing on it — an order
-    landing exactly on a boundary must not be promised a van that is pulling
-    away as it arrives.
-
-    It also returns None in a gap between slots, and that is the answer worth
-    having: `assign_or_dispatch` dispatches such an order immediately rather
-    than making it wait, so falling through to the courier's own promise is what
-    makes this agree with what the dispatcher does. Two matchers would be two
-    answers, and the one the customer sees would be the one that is wrong.
-
-    A run that would leave on a closed day does not leave: nothing was packed
-    that day. Rather than special-casing which slot survives a holiday, the
-    search restarts from the top of the next day and asks the dispatcher's
-    matcher again — so the answer is still "whatever `find_window` says", only
-    asked at a moment the kitchen is actually working.
-    """
-    probe = moment
-    for _ in range(_MAX_CLOSED_STEPS):
-        match = batching_service.find_window(windows, probe)
-        if match is None:
-            return None
-        if not trading_hours.is_closed(match.dispatch_at.date(), closed_dates):
-            return match.window, match.dispatch_at
-        probe = trading_hours.at_minute(match.dispatch_at.date() + timedelta(days=1), 0)
-    return None
-
-
 # ── the resolver ─────────────────────────────────────────────────────────────
 
 
@@ -268,24 +172,6 @@ def resolve(context: _Context, moment: datetime) -> DeliveryPromise | None:
     # 1. Nowhere we can deliver.
     if context.zone is None:
         return None
-
-    # 2. A declared batch group. Its windows already account for the kitchen
-    #    being shut *on an ordinary day*, so trading hours are deliberately not
-    #    applied again — but a holiday is a day with no ordinary schedule at
-    #    all, and no slot on it fires.
-    if context.group is not None and context.windows:
-        found = _next_run(context.windows, here, context.closed_dates)
-        if found is not None:
-            window, closes = found
-            minutes = context.group.delivery_minutes_after_dispatch
-            return DeliveryPromise(
-                at=closes + timedelta(minutes=minutes),
-                precision="time",
-                reason=(
-                    f"batch:{context.group.name}/{window.label} "
-                    f"closes {closes:%Y-%m-%d %H:%M} +{minutes}m"
-                ),
-            )
 
     courier = context.courier
     # A courier with no row is one nobody has configured. Treat it the way an

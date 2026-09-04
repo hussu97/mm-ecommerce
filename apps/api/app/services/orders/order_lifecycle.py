@@ -149,8 +149,8 @@ VALID_TRANSITIONS: dict[OrderStatusEnum, set[OrderStatusEnum]] = {
     #
     # `packed` rather than `out_for_delivery` is the way back in. That is where
     # the box actually is — on a shelf, made — and it is where dispatch hangs
-    # off, so a second attempt runs through `assign_or_dispatch` like any other
-    # packed order instead of down a path of its own.
+    # off, so a second attempt runs through `courier_service.dispatch` like any
+    # other packed order instead of down a path of its own.
     OrderStatusEnum.UNDELIVERED: {
         OrderStatusEnum.PACKED,
         OrderStatusEnum.CANCELLED,
@@ -405,7 +405,7 @@ def _mm_owns_fulfilment(order: Order) -> bool:
 
     True only for the storefront. A counter sale is settled on the till; an
     aggregator order is delivered by the aggregator's own rider and was paid
-    through the aggregator, so the courier, batching and refund machinery below
+    through the aggregator, so the courier and refund machinery below
     has nothing to act on and must not try — there is no MM delivery row to
     cancel and no MM card to refund. What an aggregator order *does* still get
     is its stock back (`_move_stock`) and its register check voided, because
@@ -461,30 +461,22 @@ async def _consequences(
 
             await order_service.publish_to_register(db, order)
 
-    # The backstop, not the trigger. Arrival is what calls a driver now, and on
-    # a batched zone the run has already gone out by the time anything is
-    # packed. But an admin can mark an order packed that the sweep has not
-    # reached — a branch with no terminal, a run whose window is still open and
-    # a box the kitchen finished early — and that order still needs a van.
-    # `assign_or_dispatch` returns untouched on anything already batched or
-    # already booked, so on the ordinary path this is free. Nothing happens for
-    # a third-party zone, exactly as before.
+    # The backstop, not the trigger. Arrival is what calls a driver now. But an
+    # admin can mark an order packed that the sweep has not reached — a branch
+    # with no terminal, a box the kitchen finished early — and that order still
+    # needs a van. `dispatch` returns untouched on anything already booked, so on
+    # the ordinary path this is free. Nothing happens for a third-party zone,
+    # exactly as before.
     elif new_status == OrderStatusEnum.PACKED:
         if _mm_owns_fulfilment(order):
-            from app.services.delivery import batching_service
+            from app.services.couriers import courier_service
 
-            await batching_service.assign_or_dispatch(db, order)
+            await courier_service.dispatch(db, order)
 
     elif new_status == OrderStatusEnum.CANCELLED:
         if _mm_owns_fulfilment(order):
-            from app.services.couriers import courier_service, lalamove_service
-            from app.services.delivery import batching_service
+            from app.services.couriers import courier_service
 
-            delivery = await lalamove_service.get_delivery(db, order.id)
-            if delivery is not None:
-                # Off the run first, so a batch that is now empty does not go
-                # out to collect nothing.
-                await batching_service.cancel_assignment(db, delivery)
             await courier_service.cancel(db, order)
 
         # And closes on the register, if it ever reached one. Without this the

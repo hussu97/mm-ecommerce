@@ -32,9 +32,9 @@ from app.core.exceptions import (
     NotFoundError,
 )
 from app.core.phone import describe_phone
+from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
-from app.models.delivery_batch import DELIVERY_TIMEZONE
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_status_event import StatusSourceEnum, acting_as
@@ -607,8 +607,8 @@ async def stamp_packed(db: AsyncSession, order: Order, *, note: str) -> bool:
     column. That function owns the transition rules, the status event and the
     mail; a second implementation here is how the register and the console would
     come to disagree about what packing an order does. It calls
-    `assign_or_dispatch` on the way through, which returns untouched because
-    whatever called this has just booked the driver.
+    `courier_service.dispatch` on the way through, which returns untouched
+    because whatever called this has just booked the driver.
 
     **The shop is told first, if it has not been told yet.** `confirmed →
     packed` is a legal transition, so an order whose van was booked before its
@@ -619,18 +619,15 @@ async def stamp_packed(db: AsyncSession, order: Order, *, note: str) -> bool:
     by the arrival sweep afterwards, because that sweep looks for orders still
     at `confirmed` and this one was already `packed`.
 
-    Both bookings reach here, so both were affected: an admin pressing Dispatch
-    now on a single order, and a run going out — including on schedule, where
-    the batch is booked in the same sweep tick that would otherwise have landed
-    its orders a moment later. A driver was called for a box nobody in the
-    kitchen had been asked to make.
+    An admin pressing Dispatch now on a single order reaches here: a driver was
+    called for a box nobody in the kitchen had been asked to make.
 
     So a booking that finds the order still at `confirmed` lands it first, which
     is the same act the sweep would have performed and in the same order: the
     register hears about it with the courier reference already on the ticket,
     and then the box is stamped finished. `land` is idempotent about the
-    dispatch — `assign_or_dispatch` returns untouched on an order that already
-    has a courier order — so telling the shop cannot book a second van.
+    dispatch — `courier_service.dispatch` returns untouched on an order that
+    already has a courier order — so telling the shop cannot book a second van.
     """
     if order.status == OrderStatusEnum.CONFIRMED:
         # Imported here for the same reason as `order_service` below: this

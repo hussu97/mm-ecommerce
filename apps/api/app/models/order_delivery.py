@@ -21,7 +21,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
-    from .delivery_batch import DeliveryBatch
     from .order import Order
 
 
@@ -314,9 +313,8 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     #: The polygon that priced this order, by name, at the time it was placed.
     #: A snapshot: the map is versioned and the zone may be redrawn tomorrow.
     zone_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    #: The row behind that name, so batching can find the zone's schedule.
-    #: Nulled rather than cascaded if the map version is deleted — the name
-    #: above is the part that has to survive.
+    #: The row behind that name. Nulled rather than cascaded if the map version
+    #: is deleted — the name above is the part that has to survive.
     polygon_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("delivery_polygons.id", ondelete="SET NULL"),
@@ -336,19 +334,9 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
-    # ── batching ──────────────────────────────────────────────────────────────
-    #: The run this order is travelling on, if it is sharing one. Null means it
-    #: went alone — either its zone has no schedule, or nothing covered the
-    #: moment it was ready.
-    batch_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("delivery_batches.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    #: When the order became something a driver could be called for. This is the
-    #: moment a window is matched against, and it is now **acceptance**, not
-    #: packing.
+    # ── readiness ───────────────────────────────────────────────────────────
+    #: When the order became something a driver could be called for. It is now
+    #: **acceptance**, not packing.
     #:
     #: It used to be the moment the box was finished, because that was the only
     #: event the shop published. Calling the driver then meant the prep time and
@@ -356,19 +344,9 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     #: press that produced the event was a person being interrupted to state
     #: something the register already knew. Acceptance is the same fact early
     #: enough to be useful: the kitchen has committed to making it.
-    #:
-    #: The column keeps its name rather than being renamed to `accepted_at` —
-    #: `reschedule_group` re-derives every waiting order's window from it, and
-    #: what that code needs is "the moment this order entered the queue",
-    #: which is exactly what it still holds.
     dispatchable_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: Position in the courier's optimised route, 1-based. Which drop is whose.
-    stop_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    #: Lalamove's id for this order's own stop, so a per-stop POD update can be
-    #: matched to the right customer rather than the whole van.
-    stop_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # ── the booking ───────────────────────────────────────────────────────────
     #: A seven-digit number a driver can read back down a phone, unique across
@@ -518,16 +496,10 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
 
     # ── retry ─────────────────────────────────────────────────────────────────
     #
-    # Deliberately the same two columns, with the same names and the same
-    # meaning, as `delivery_batches`. Both paths answer "when do we try this
-    # again"; giving each its own vocabulary is how they would come to answer it
-    # differently.
-    #
-    # Before these existed, a failure on the un-batched path was terminal in
-    # everything but name: `dispatch_due_batches` sweeps batches, an order that
-    # went alone is in no batch, and the `packed` transition that first tried it
-    # had already happened. It waited for somebody to notice a red box on an
-    # admin screen.
+    # Before these existed, a failed dispatch was terminal in everything but
+    # name: the `packed` transition that first tried it had already happened, so
+    # it waited for somebody to notice a red box on an admin screen. The sweep
+    # (`courier_service.retry_failed_dispatches`) now walks these two columns.
     #
     #: How many times a driver has been asked for and refused us. Zero on an
     #: order that has never failed, which is almost all of them.
@@ -542,9 +514,6 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     )
 
     order: Mapped[Order] = relationship("Order", back_populates="delivery")
-    batch: Mapped[DeliveryBatch | None] = relationship(
-        "DeliveryBatch", back_populates="deliveries"
-    )
 
     @property
     def is_booked(self) -> bool:
@@ -575,11 +544,6 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
         return not is_collected(self.provider, self.courier_status) and not is_terminal(
             self.provider, self.courier_status
         )
-
-    @property
-    def is_waiting_for_a_batch(self) -> bool:
-        """Assigned to a run that has not left yet."""
-        return bool(self.batch_id) and not self.courier_order_id
 
     @property
     def is_awaiting_retry(self) -> bool:

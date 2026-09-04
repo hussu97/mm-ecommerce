@@ -57,14 +57,6 @@ from .custom_order import (  # noqa: F401
     CustomOrderSourceEnum,
     CustomOrderStatusEnum,
 )
-from .delivery_batch import (  # noqa: F401
-    DELIVERY_TIMEZONE,
-    MAX_DROPS_PER_ORDER,
-    BatchStatusEnum,
-    DeliveryBatch,
-    DeliveryBatchGroup,
-    DeliveryBatchWindow,
-)
 from .delivery_polygon import (  # noqa: F401
     DeliveryPolygon,
     DeliveryPolygonVersion,
@@ -252,10 +244,6 @@ __all__ = [
     "PaymentMethodEnum",
     "PaymentTransaction",
     "PaymentTransactionStatusEnum",
-    "DeliveryBatch",
-    "DeliveryBatchGroup",
-    "DeliveryBatchWindow",
-    "BatchStatusEnum",
     "OrderDelivery",
     "OrderStatusEvent",
     "StatusActor",

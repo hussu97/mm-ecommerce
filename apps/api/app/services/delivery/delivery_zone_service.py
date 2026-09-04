@@ -53,11 +53,6 @@ class Zone:
     #: The basket that earns free delivery here. Required on the row; defaulted
     #: here only so a zone built by hand in a test does not have to name one.
     free_delivery_threshold: Decimal | None = None
-    #: The run schedule this zone follows, or None for a zone that dispatches the
-    #: moment an order is ready. Read by `delivery_promise` — a zone in a group
-    #: is promised its group's next window close, a zone without one is promised
-    #: its courier's own answer.
-    batch_group_id: uuid.UUID | None = None
     #: The couriers an order here may be *moved* to when `fulfilment_provider`
     #: will not carry it. Read by `fulfilment_reassignment`, and only on the
     #: fallback path — an order normally answers this from the polygon its own
@@ -79,25 +74,10 @@ class Zone:
     def books_itself(self) -> bool:
         """A zone we dispatch over an API rather than by hand.
 
-        Wider than `is_batched`: noon Send is ours to dispatch but never shares a
-        run, so the two questions stopped having the same answer the moment a
-        second courier arrived. "When will it arrive" turns on this one — we know
-        the schedule for anything we dispatch — while "does it wait for a van"
-        turns on the other.
+        "When will it arrive" turns on this one — we know the schedule for
+        anything we dispatch — and everything but a third-party zone is ours.
         """
         return self.fulfilment_provider != FulfilmentProviderEnum.THIRD_PARTY.value
-
-    @property
-    def is_batched(self) -> bool:
-        """Whether orders here wait for a shared run rather than going alone.
-
-        A property of the zone's **group membership**, not of its courier. It
-        used to return `is_lalamove`, which was true of the courier and only
-        accidentally true of the zones: a Lalamove zone with no schedule went
-        out immediately and still answered "batched" here. Now a zone is batched
-        exactly when somebody put it in a group.
-        """
-        return self.batch_group_id is not None
 
     @property
     def is_dynamic(self) -> bool:
@@ -212,7 +192,6 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         ),
         pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
         free_delivery_eligible=bool(p.free_delivery_eligible),
-        batch_group_id=p.batch_group_id,
         free_delivery_threshold=(
             None
             if p.free_delivery_threshold is None

@@ -855,13 +855,6 @@ export interface DeliveryZone {
    * not them.
    */
   alternate_providers: FulfilmentProvider[];
-  /**
-   * The run this zone travels on, or null for one that leaves alone.
-   *
-   * Read-only — only a migration attaches a zone to a group. Shown because
-   * changing the courier detaches it: a run is one booking with one courier.
-   */
-  batch_group_id: string | null;
   display_order: number;
   point_count: number;
 }
@@ -983,59 +976,16 @@ export interface DeliveryZoneMap {
 }
 
 /**
- * A slot of the day whose orders travel together, in Dubai time.
- * End hour 24 means midnight closing the day.
- */
-export interface BatchWindow {
-  id: string;
-  /** Windows belong to a group, not a zone — see `BatchGroup`. */
-  group_id: string;
-  label: string;
-  start_hour: number;
-  start_minute: number;
-  end_hour: number;
-  end_minute: number;
-  is_active: boolean;
-  wraps_midnight: boolean;
-}
-
-export type BatchWindowWrite = Omit<BatchWindow, 'id' | 'group_id' | 'wraps_midnight'>;
-
-/**
- * A set of zones whose orders ride together, and the schedule they share.
- *
- * Which zones share a courier booking used to fall out of two schedules
- * coincidentally ending on the same minute — nobody declared it and nothing
- * displayed it. It is a row now, so this screen can show it.
- */
-export interface BatchGroup {
-  id: string;
-  name: string;
-  courier_code: string;
-  /** Minutes from the van leaving to the last drop. Dubai 90, northern 120. */
-  delivery_minutes_after_dispatch: number;
-  is_active: boolean;
-  zone_names: string[];
-  windows: BatchWindow[];
-}
-
-/**
  * A carrier, and the two numbers that decide what a zone of its own is quoted.
  *
  * Only one of them is ever read: `unbatched_promise_kind` says which. A courier
  * we dispatch ourselves leaves when we say so, and the honest answer is minutes
  * from ready; one that collects on its own schedule is one we cannot see, and
  * the only thing we can commit to is a number of days.
- *
- * These apply when there is no batch group to wait for — which is every noon
- * Send zone and every third-party one, and any Lalamove zone left off a
- * schedule.
  */
 export interface Courier {
   code: string;
   name: string;
-  /** Read-only here. Whether this carrier can appear on the Batching screen. */
-  supports_batching: boolean;
   unbatched_promise_kind: 'minutes' | 'next_day';
   unbatched_promise_minutes: number | null;
   unbatched_promise_days: number;
@@ -1079,36 +1029,6 @@ export type CourierWrite = Partial<
     | 'payment_fee_fixed'
   >
 >;
-
-/** One courier order carrying several of ours. */
-export interface DeliveryBatch {
-  id: string;
-  group_id: string;
-  zone_name: string | null;
-  window_label: string | null;
-  dispatch_at: string;
-  status: 'pending' | 'dispatching' | 'dispatched' | 'failed' | 'cancelled';
-  stop_count: number;
-  courier_order_id: string | null;
-  courier_status: string | null;
-  share_link: string | null;
-  driver_name: string | null;
-  distance_m: number | null;
-  cost_total: number | null;
-  /** What the run worked out at per order — the number batching exists to move. */
-  cost_per_delivery: number | null;
-  dispatched_at: string | null;
-  last_error: string | null;
-  /** How many times this run has been offered to the courier. */
-  attempt_count: number;
-  /**
-   * When it will be offered again on its own. Null means nothing more happens
-   * without somebody pressing the button — it went out, or another attempt
-   * cannot change the answer.
-   */
-  next_attempt_at: string | null;
-  order_numbers: string[];
-}
 
 /** The live map, flattened, plus the settings that apply to every zone in it. */
 export interface DeliveryZoneSummary {

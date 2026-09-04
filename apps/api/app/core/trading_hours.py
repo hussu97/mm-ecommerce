@@ -28,9 +28,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Collection
 from zoneinfo import ZoneInfo
 
-from app.models.delivery_batch import DELIVERY_TIMEZONE
-
 __all__ = [
+    "DELIVERY_TIMEZONE",
     "TZ",
     "at_minute",
     "first_open_day",
@@ -42,6 +41,12 @@ __all__ = [
     "is_after_close",
     "trading_date",
 ]
+
+#: The one clock the shop runs on — every branch trades on Gulf time, and every
+#: window, promise and daily-email cutoff is read against it. Lived in the old
+#: `delivery_batch` model until batching was removed; it was never batching's,
+#: only defined there.
+DELIVERY_TIMEZONE = "Asia/Dubai"
 
 TZ = ZoneInfo(DELIVERY_TIMEZONE)
 

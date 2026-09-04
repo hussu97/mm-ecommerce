@@ -11,7 +11,7 @@ from .base import Base, TimestampMixin, UUIDMixin
 
 class UnbatchedPromiseEnum(str, enum.Enum):
     """
-    What a courier promises when an order is not waiting for a shared run.
+    What a courier promises for an order.
 
     Two shapes, because there are two kinds of knowledge. A courier we dispatch
     ourselves leaves when we say so, and the honest answer is a number of
@@ -28,15 +28,13 @@ class UnbatchedPromiseEnum(str, enum.Enum):
 
 class Courier(Base, UUIDMixin, TimestampMixin):
     """
-    A carrier, and the two things about it that decide a delivery promise.
+    A carrier, and the thing about it that decides a delivery promise.
 
     The provider was already a value on the polygon (`FulfilmentProviderEnum`).
-    What it was not was *configurable*: "only Lalamove batches" lived in a
-    property called `is_batched` that returned `is_lalamove`, and "noon Send
-    means an hour" lived in a module constant applied to every courier alike.
-    Both are commercial facts that change without the code changing — a courier
-    renegotiates, a new one arrives, an SLA moves — and both were only
-    changeable by a deploy.
+    What it was not was *configurable*: "noon Send means an hour" lived in a
+    module constant applied to every courier alike. That is a commercial fact
+    that changes without the code changing — a courier renegotiates, a new one
+    arrives, an SLA moves — and it was only changeable by a deploy.
 
     This table does not replace the enum. `delivery_polygons.fulfilment_provider`
     still holds the code, and `code` here is the same string. It hangs the
@@ -51,19 +49,7 @@ class Courier(Base, UUIDMixin, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(60), nullable=False)
 
-    #: Whether orders on this courier can wait for a shared run.
-    #:
-    #: Only Lalamove, today. A multi-drop Lalamove booking is one order with up
-    #: to fifteen stops; noon Send's equivalent is a different product with a cap
-    #: of three that we do not use, and a third party is collected on a schedule
-    #: we cannot see. A batch group may only be attached to a courier where this
-    #: is true — otherwise the schedule is a promise nothing can keep.
-    supports_batching: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default="false"
-    )
-
-    #: What this courier promises when there is no batch to wait for — either
-    #: because the polygon has no group, or because this courier cannot batch.
+    #: What this courier promises for an order.
     unbatched_promise_kind: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
