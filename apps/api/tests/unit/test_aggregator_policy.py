@@ -13,6 +13,7 @@ from app.models.aggregator import (
     CHANNEL_CAREEM,
     CHANNEL_DELIVEROO,
     CHANNEL_KEETA,
+    CHANNEL_LOGIN_METHODS,
     CHANNEL_NOON,
     CHANNEL_TALABAT,
 )
@@ -51,6 +52,41 @@ def test_policy_for_unknown_channel_is_a_safe_default():
     p = policy.policy_for("not-a-channel")
     assert p.cookie_expiry_advisory is False
     assert p.health_stale_after == timedelta(days=2)
+
+
+def test_descriptor_login_method_does_not_drift_from_the_model():
+    """The consolidation guard: `policy` and `models.CHANNEL_LOGIN_METHODS` must
+    agree, so login metadata cannot diverge across the two places it lives."""
+    for ch, method in CHANNEL_LOGIN_METHODS.items():
+        assert policy.policy_for(ch).login_method == method, ch
+
+
+def test_only_deliveroo_is_server_refreshable():
+    """Deliveroo alone can be renewed by the API itself (httpx `_login`); every
+    other channel needs the headed worker. This is the seam the unified refresh
+    path branches on, so it is asserted rather than assumed."""
+    assert policy.server_refreshable(CHANNEL_DELIVEROO) is True
+    for ch in _ALL - {CHANNEL_DELIVEROO}:
+        assert policy.server_refreshable(ch) is False, ch
+    assert policy.policy_for(CHANNEL_DELIVEROO).refresh_strategy == (
+        policy.REFRESH_SERVER_HTTPX
+    )
+    assert policy.policy_for(CHANNEL_KEETA).refresh_strategy == (
+        policy.REFRESH_IN_PAGE_SIGNED
+    )
+
+
+def test_every_channel_declares_a_token_shape_and_anti_bot():
+    shapes = {
+        CHANNEL_CAREEM: policy.TOKEN_BEARER_HEADER,
+        CHANNEL_NOON: policy.TOKEN_AKAMAI_COOKIE,
+        CHANNEL_TALABAT: policy.TOKEN_JWT_COOKIE,
+        CHANNEL_KEETA: policy.TOKEN_SESSION_STORAGE,
+        CHANNEL_DELIVEROO: policy.TOKEN_BEARER_AND_COOKIE,
+    }
+    for ch, shape in shapes.items():
+        assert policy.policy_for(ch).token_shape == shape, ch
+        assert policy.policy_for(ch).anti_bot, ch
 
 
 def test_next_backoff_without_jitter_is_capped_exponential():
