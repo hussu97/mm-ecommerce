@@ -33,9 +33,14 @@ jobs:
           KEY="$HOME/.ssh/deploy_key"
           SSH="ssh -i $KEY -o ConnectTimeout=30 $HOST"
 
-          # The probe script rides in from this checkout, not the deployed image,
-          # so it can be newer than what is running.
+          # The script and the area/cost data ride in from this checkout, not the
+          # deployed image, so the probe surveys exactly the areas on this ref
+          # (new points included) and keeps this ref's committed fares. Mutating
+          # the container's copies is harmless: the running app serves its map
+          # from the database, not these files.
           scp -i "$KEY" apps/api/scripts/probe_courier_fares.py "$HOST:/tmp/probe_courier_fares.py"
+          scp -i "$KEY" apps/api/app/data/uae_delivery_areas.json "$HOST:/tmp/uae_delivery_areas.json"
+          scp -i "$KEY" apps/api/app/data/courier_costs.json "$HOST:/tmp/courier_costs_in.json"
 
           # The live api slot (api-1 or api-green-1 — 'cakes-api' adjacency
           # excludes pos-api). Only the running one shows in `docker ps`.
@@ -44,6 +49,8 @@ jobs:
           test -n "$SLOT"
 
           $SSH "docker cp /tmp/probe_courier_fares.py $SLOT:/app/scripts/probe_courier_fares.py"
+          $SSH "docker cp /tmp/uae_delivery_areas.json $SLOT:/app/app/data/uae_delivery_areas.json"
+          $SSH "docker cp /tmp/courier_costs_in.json $SLOT:/app/app/data/courier_costs.json"
           $SSH "docker exec -w /app $SLOT sh -lc 'PYTHONPATH=/app python -u scripts/probe_courier_fares.py'"
           $SSH "docker cp $SLOT:/tmp/courier_costs.json /tmp/courier_costs.json"
           $SSH "cat /tmp/courier_costs.json" > courier_costs.json

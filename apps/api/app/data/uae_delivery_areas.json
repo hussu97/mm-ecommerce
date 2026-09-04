@@ -755,6 +755,251 @@
       "zone": "Dubai Outer",
       "lat": 24.76,
       "lng": 55.62
+    },
+    {
+      "label": "Al Rifaa",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.348,
+      "lng": 55.383
+    },
+    {
+      "label": "Al Ramtha",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.335,
+      "lng": 55.407
+    },
+    {
+      "label": "Al Goaz",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.312,
+      "lng": 55.41
+    },
+    {
+      "label": "Al Sharq",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.362,
+      "lng": 55.392
+    },
+    {
+      "label": "Al Riqa (Sharjah)",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.353,
+      "lng": 55.399
+    },
+    {
+      "label": "Halwan",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.33,
+      "lng": 55.43
+    },
+    {
+      "label": "Al Suyoh",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.278,
+      "lng": 55.478
+    },
+    {
+      "label": "Al Tai",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.29,
+      "lng": 55.52
+    },
+    {
+      "label": "Muweilah Commercial",
+      "emirate": "Sharjah",
+      "zone": "Sharjah City",
+      "lat": 25.3,
+      "lng": 55.44
+    },
+    {
+      "label": "Al Hamriyah (Sharjah)",
+      "emirate": "Sharjah",
+      "zone": "Sharjah North",
+      "lat": 25.47,
+      "lng": 55.5
+    },
+    {
+      "label": "Al Rashidiya (Ajman)",
+      "emirate": "Ajman",
+      "zone": "Ajman City",
+      "lat": 25.408,
+      "lng": 55.47
+    },
+    {
+      "label": "Al Rawda (Ajman)",
+      "emirate": "Ajman",
+      "zone": "Ajman City",
+      "lat": 25.393,
+      "lng": 55.492
+    },
+    {
+      "label": "Al Zahra (Ajman)",
+      "emirate": "Ajman",
+      "zone": "Ajman City",
+      "lat": 25.397,
+      "lng": 55.462
+    },
+    {
+      "label": "Al Bustan (Ajman)",
+      "emirate": "Ajman",
+      "zone": "Ajman City",
+      "lat": 25.405,
+      "lng": 55.478
+    },
+    {
+      "label": "Al Qusais",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.283,
+      "lng": 55.397
+    },
+    {
+      "label": "Muhaisnah",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.288,
+      "lng": 55.418
+    },
+    {
+      "label": "Al Twar",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.272,
+      "lng": 55.388
+    },
+    {
+      "label": "Al Warqa",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.2,
+      "lng": 55.4
+    },
+    {
+      "label": "Nad Al Hamar",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.21,
+      "lng": 55.37
+    },
+    {
+      "label": "Al Khawaneej",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.225,
+      "lng": 55.478
+    },
+    {
+      "label": "Mizhar",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.24,
+      "lng": 55.45
+    },
+    {
+      "label": "Al Jaddaf",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.222,
+      "lng": 55.33
+    },
+    {
+      "label": "Oud Metha",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.235,
+      "lng": 55.312
+    },
+    {
+      "label": "Za'abeel",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.22,
+      "lng": 55.29
+    },
+    {
+      "label": "Nad Al Sheba",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.16,
+      "lng": 55.32
+    },
+    {
+      "label": "Meydan",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.168,
+      "lng": 55.3
+    },
+    {
+      "label": "Umm Suqeim",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.14,
+      "lng": 55.195
+    },
+    {
+      "label": "Arjan",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.07,
+      "lng": 55.24
+    },
+    {
+      "label": "Dubai Sports City",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.04,
+      "lng": 55.22
+    },
+    {
+      "label": "Dubai Production City",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.03,
+      "lng": 55.19
+    },
+    {
+      "label": "Arabian Ranches",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.05,
+      "lng": 55.27
+    },
+    {
+      "label": "Damac Hills",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 25.02,
+      "lng": 55.25
+    },
+    {
+      "label": "Town Square",
+      "emirate": "Dubai",
+      "zone": "Dubai City",
+      "lat": 24.98,
+      "lng": 55.28
+    },
+    {
+      "label": "Al Salamah (UAQ)",
+      "emirate": "Umm Al Quwain",
+      "zone": "Umm Al Quwain City",
+      "lat": 25.55,
+      "lng": 55.55
+    },
+    {
+      "label": "Al Hamra (RAK)",
+      "emirate": "Ras Al Khaimah",
+      "zone": "Ras Al Khaimah South",
+      "lat": 25.685,
+      "lng": 55.79
     }
   ]
 }

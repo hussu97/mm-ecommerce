@@ -16,6 +16,11 @@ It is deliberately **minimal** — it imports only the Slider provider (no DB, n
 other services), because a full-app probe running beside the live process OOMs
 the 1 GB e2-small. Fare calls are read-only (no bookings).
 
+**By default only areas missing a Slider fare are probed** — an area already in
+`courier_costs.json` keeps its committed fare, which preserves a hand-tuned or
+averaged survey while filling in newly-added areas. Set `PROBE_ALL=1` to re-probe
+every area from scratch.
+
 Lalamove and noon Send were never IP-blocked and come from the rate card, not a
 live call. Every area already priced keeps its committed lalamove / noon; an
 area new since the last probe is modelled from the Slider road distance:
@@ -32,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 # Slider only — importing DB/session or the other courier services is what OOMs
@@ -144,13 +150,26 @@ async def main() -> None:
 
     existing = json.loads(COSTS.read_text())
     prior = existing.get("costs", {})
+    probe_all = os.environ.get("PROBE_ALL") == "1"
 
     costs: dict[str, dict] = {}
-    fresh = 0
+    fresh = kept = 0
     for area in areas:
         label = area["label"]
         lat, lng = float(area["lat"]), float(area["lng"])
         emirate = area["emirate"]
+
+        # Keep an already-surveyed area's committed fare (preserves a hand-tuned
+        # or averaged Slider survey); only fill in the new ones. `PROBE_ALL=1`
+        # forces a full re-probe.
+        was_slider = prior.get(label, {})
+        if not probe_all and (
+            was_slider.get("slider_bike") is not None
+            or was_slider.get("slider_car") is not None
+        ):
+            costs[label] = was_slider
+            kept += 1
+            continue
 
         bike = car = road_km = None
         minutes = None
@@ -199,8 +218,11 @@ async def main() -> None:
 
     out = {
         "source": (
-            "slider: PROD probe from VM 34.18.98.2 via scripts.probe_courier_fares; "
-            "lalamove + noon_send: rate card (committed values kept, new areas modelled)"
+            "slider: PROD probe from VM 34.18.98.2 via scripts.probe_courier_fares "
+            "(already-surveyed areas kept, new areas probed); lalamove + noon_send: "
+            "rate card (committed kept, new modelled)"
+            if not probe_all
+            else existing.get("source", "")
         ),
         "note": existing.get("note", ""),
         "costs": costs,
@@ -208,7 +230,8 @@ async def main() -> None:
     COSTS.write_text(json.dumps(out, indent=2) + "\n")
     Path("/tmp/courier_costs.json").write_text(json.dumps(out, indent=2) + "\n")
     print(
-        f"\nprobed {fresh}/{len(areas)} areas fresh; wrote {COSTS} and /tmp/courier_costs.json"
+        f"\nprobed {fresh} new area(s), kept {kept} already-surveyed; total "
+        f"{len(costs)}. wrote {COSTS} and /tmp/courier_costs.json"
     )
 
 
