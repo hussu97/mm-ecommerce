@@ -547,6 +547,8 @@ def _month_windows(from_date: date, to_date: date) -> list[tuple[date, date]]:
 #: bearer + `x-global-entity-id` the SPA sends, and request_json's TLS impersonation
 #: passes PerimeterX, so the menu reads with the same session the sales ingest uses.
 _MENU_API = "https://vendor-api-gdp-ae.me.restaurant-partners.com/api/5/platforms/TB_AE"
+#: DeliveryHero Vendor Time Service — opening hours (not on the menu API).
+_VTS = "https://vts.eu.restaurant-partners.com/opening-times/v1"
 
 
 class TalabatClient(BaseAggregatorClient):
@@ -708,6 +710,24 @@ class TalabatClient(BaseAggregatorClient):
             f"{_MENU_API}/vendors/{vendor}/catalogs/{catalog_id}"
             f"/categories/{category_id}/products",
             params={"locale": "en-AE", "sizeSupport": "true"},
+        )
+
+    async def get_delivery_calendars(self, session: LoadedSession, vendor: str) -> Any:
+        """The vendor's DELIVERY opening-hours calendars, read server-side.
+
+        Opening hours live on the DeliveryHero Vendor Time Service
+        (`vts.eu.restaurant-partners.com`), NOT the menu API — the portal's
+        Opening-Times page fetches `.../opening-times/v1/vendor/TB_AE;{v}/
+        calendars/DELIVERY`. It replays fine over the same TLS-impersonating
+        session + vendor-portal bearer the menu/sales reads use (verified live
+        2026-09-02: 200 for all three MM vendors). Returns
+        `{calendars:[{name, schedule:{openingTimesByDay:[{day, openingTimes:
+        [{from, to}]}]}}]}` — `from`/`to` are minutes-from-midnight, `day` is
+        0=Monday..6=Sunday (`entity/configuration.firstDOW=0`)."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{_VTS}/vendor/TB_AE;{vendor}/calendars/DELIVERY",
         )
 
     async def prepare_session(

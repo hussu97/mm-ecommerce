@@ -423,6 +423,61 @@ async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
     return parse_talabat_catalog(catalogs, products_by_cat)
 
 
+def _min_hhmm(value: Any) -> str:
+    """Minutes-from-midnight (e.g. 495) → `"08:15"`. Wraps 1440 to 00:00."""
+    try:
+        m = int(value) % 1440
+    except (TypeError, ValueError):
+        return "00:00"
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def parse_talabat_hours(raw: Any) -> NormalizedHours:
+    """The DeliveryHero Vendor Time Service `calendars/DELIVERY` payload → the
+    channel-neutral schedule. Uses the `Normal` calendar's `openingTimesByDay`;
+    `from`/`to` are minutes-from-midnight and `day` is 0=Monday..6=Sunday
+    (`firstDOW=0`), so `weekday = (day + 1) % 7` maps to MM's 0=Sunday. A day
+    absent from the list is closed (e.g. Karama is shut Friday)."""
+    calendars = raw.get("calendars") if isinstance(raw, dict) else None
+    calendars = calendars or []
+    normal = next(
+        (c for c in calendars if isinstance(c, dict) and c.get("name") == "Normal"),
+        calendars[0] if calendars else {},
+    )
+    by_day = (normal.get("schedule") or {}).get("openingTimesByDay") or []
+    shifts: list[NormalizedShift] = []
+    for entry in by_day:
+        if not isinstance(entry, dict):
+            continue
+        day = entry.get("day")
+        if not isinstance(day, int) or not (0 <= day <= 6):
+            continue
+        weekday = (day + 1) % 7  # DH 0=Mon..6=Sun → MM 0=Sun
+        for window in entry.get("openingTimes") or []:
+            if not isinstance(window, dict):
+                continue
+            opens, closes = window.get("from"), window.get("to")
+            if opens is not None and closes is not None:
+                shifts.append(
+                    NormalizedShift(weekday, _min_hhmm(opens), _min_hhmm(closes))
+                )
+    shifts.sort(key=lambda s: (s.weekday, s.opens))
+    return NormalizedHours(source="talabat", shifts=shifts)
+
+
+async def _read_talabat_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
+    """Talabat opening hours, read live server-side from the DeliveryHero Vendor
+    Time Service — the same TLS-impersonated session the menu/sales reads use, no
+    headed browser (verified live 2026-09-02 for all 3 vendors)."""
+    from app.services.aggregators import session_store
+    from app.services.providers import talabat_provider as tp
+
+    session = await session_store.load(db, "talabat")
+    vendor = await _talabat_vendor(db, branch_id)
+    raw = await tp.provider.get_delivery_calendars(session, vendor)
+    return parse_talabat_hours(raw)
+
+
 # ── Noon RMS menu reader ──────────────────────────────────────────────────────
 # Verified live from the VM session (2026-09-01). GET /menu/list -> the menus;
 # POST /menu/details {menuCode} -> {items:[{itemCode,nameEn,price,isActive,isOos,
@@ -842,4 +897,5 @@ _HOURS_READERS: dict[str, Any] = {
     "careem": _read_careem_hours,
     "noon": _read_noon_hours,
     "deliveroo": _read_deliveroo_hours,
+    "talabat": _read_talabat_hours,
 }

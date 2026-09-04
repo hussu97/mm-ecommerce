@@ -836,3 +836,32 @@ def test_deliveroo_hours_parser_day_origin():
     assert by_weekday[0] == ("17:00", "22:00")  # Sunday
     assert by_weekday[1] == ("08:00", "22:00")  # Monday
     assert by_weekday[5] == ("12:00", "22:00")  # Friday (later start, prayer day)
+
+
+def test_talabat_hours_parser_day_origin_minutes_and_closed_day():
+    from app.services.aggregators.menu_readers import parse_talabat_hours
+
+    # Real DeliveryHero VTS shape: `Normal` calendar, day 0=Monday..6=Sunday
+    # (firstDOW=0), from/to in minutes-from-midnight. Karama is closed Friday
+    # (DH day 4 absent -> MM weekday 5).
+    raw = {
+        "calendars": [
+            {"name": "Holiday", "schedule": {"openingTimesByDay": []}},
+            {
+                "name": "Normal",
+                "schedule": {
+                    "openingTimesByDay": [
+                        {"day": 6, "openingTimes": [{"from": 495, "to": 1410}]},
+                        {"day": 0, "openingTimes": [{"from": 780, "to": 1365}]},
+                        {"day": 4, "openingTimes": []},  # closed
+                    ]
+                },
+            },
+        ]
+    }
+    hours = parse_talabat_hours(raw)
+    assert hours.source == "talabat"
+    by_weekday = {s.weekday: (s.opens, s.closes) for s in hours.shifts}
+    assert by_weekday[0] == ("08:15", "23:30")  # DH day 6 (Sun) -> weekday 0
+    assert by_weekday[1] == ("13:00", "22:45")  # DH day 0 (Mon) -> weekday 1
+    assert 5 not in by_weekday  # DH day 4 (Fri) empty -> no shift
