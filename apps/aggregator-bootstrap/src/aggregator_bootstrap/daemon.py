@@ -115,13 +115,28 @@ def _timeout_for(kind: JobKind) -> int:
     return int(getattr(settings, _TIMEOUT_FIELDS[kind]))
 
 
-async def _dispatch(job: Job) -> None:
+def _relogin_in_cooldown(channel: str) -> bool:
+    """True when `channel` is inside its reauth backoff or its post-success floor.
+
+    The same gate the heal poll applies, so an on-demand RELOGIN escalated from a
+    failed job cannot tight-loop headed Chrome (each login pegs both vCPUs). Reads
+    the two persisted cooldown files; called via `to_thread` off the event loop.
+    """
+    return (
+        reauth._reauth_cooldown_remaining(channel) > 0
+        or reauth._success_cooldown_remaining(channel) > 0
+    )
+
+
+async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
     """Map a job to the existing coroutine that does the work — reuse, not reimpl.
 
     RELOGIN drives the stored login in a worker thread: `reauth._try_auto_relogin`
     is synchronous and starts its own event loop (`asyncio.run`), which cannot run
     inside the daemon's loop, so `to_thread` gives it one. It never raises; its
-    outcome decides whether the channel's backoff is cleared or armed.
+    outcome decides whether the channel's backoff is cleared or armed — and is
+    returned so the consumer can chain follow-up work (a keeta orders pull while
+    the fresh session is still valid).
     """
     if job.kind is JobKind.RELOGIN:
         outcome = await asyncio.to_thread(reauth._try_auto_relogin, job.channel)
@@ -137,7 +152,7 @@ async def _dispatch(job: Job) -> None:
                 job.channel,
                 transient=(outcome is reauth.ReloginOutcome.TRANSIENT),
             )
-        return
+        return outcome
     if job.kind is JobKind.WARM:
         await warm.warm_channel(job.channel)
         return
@@ -179,8 +194,9 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
     budget = _timeout_for(job.kind)
     label = f"{job.kind.name}{('/' + job.channel) if job.channel else ''}"
     logger.info("daemon: running %s (budget %ss)", label, budget)
+    outcome: reauth.ReloginOutcome | None = None
     try:
-        await asyncio.wait_for(_dispatch(job), timeout=budget)
+        outcome = await asyncio.wait_for(_dispatch(job), timeout=budget)
     except (asyncio.TimeoutError, TimeoutError):
         logger.error("daemon: %s exceeded %ss — killing Chrome", label, budget)
         observability.note_job_timeout(job.kind.name, job.channel, budget)
@@ -191,12 +207,26 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
             )
     except (NeedsHumanLogin, NotLoggedInError) as exc:
         if job.kind is not JobKind.RELOGIN and job.channel:
-            logger.warning(
-                "daemon: %s stored session is dead (%s) — enqueuing RELOGIN",
-                label,
-                exc,
-            )
-            await queue.put(JobKind.RELOGIN, job.channel)
+            # A job found its stored session dead. Escalate to a RELOGIN — but
+            # honour the SAME cooldowns the heal poll uses, or a job that keeps
+            # failing signed-out (a keeta session that dies within seconds of a
+            # relogin) would tight-loop headed Chrome logins, each pegging this
+            # e2-small's CPU. The job-failure path used to enqueue unconditionally;
+            # the success floor just stamped by that relogin now blocks the loop,
+            # and the next scheduled run (or heal poll, out of cooldown) retries.
+            in_cooldown = await asyncio.to_thread(_relogin_in_cooldown, job.channel)
+            if in_cooldown:
+                logger.info(
+                    "daemon: %s is dead but in relogin cooldown — not re-driving",
+                    label,
+                )
+            else:
+                logger.warning(
+                    "daemon: %s stored session is dead (%s) — enqueuing RELOGIN",
+                    label,
+                    exc,
+                )
+                await queue.put(JobKind.RELOGIN, job.channel)
         else:
             logger.warning("daemon: %s needs a human login: %s", label, exc)
     except Exception as exc:  # noqa: BLE001 — one job must never kill the consumer
@@ -206,6 +236,19 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
         )
     else:
         logger.info("daemon: finished %s", label)
+        # Capture-while-fresh: keeta's merchant session signs out server-side within
+        # minutes (its cookie TTL is long but the session is not), so waiting for the
+        # 3-hourly KEETA_ORDERS to hydrate the session it just minted finds it dead —
+        # the silent zero-orders gap. Pull orders NOW, while the session is fresh. The
+        # queue dedupes, and the success floor stamped above stops a failed pull from
+        # re-driving a relogin, so this cannot loop.
+        if (
+            job.kind is JobKind.RELOGIN
+            and job.channel == "keeta"
+            and outcome is reauth.ReloginOutcome.OK
+        ):
+            logger.info("daemon: keeta relogin OK — pulling orders while fresh")
+            await queue.put(JobKind.KEETA_ORDERS, "keeta")
 
 
 async def _heal_poll(queue: JobQueue) -> None:
