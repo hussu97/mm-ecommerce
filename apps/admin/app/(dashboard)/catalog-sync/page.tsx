@@ -93,103 +93,6 @@ function DeltaTable({ title, diff }: { title: string; diff?: Diff | null }) {
   );
 }
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-type Shift = { weekday: number; opens: string; closes: string };
-
-function HoursEditor({ branchId }: { branchId: string }) {
-  const toast = useToast();
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!branchId) return;
-    setLoading(true);
-    try {
-      const res = await catalogSyncApi.getHours(branchId);
-      setShifts((res.shifts ?? []) as Shift[]);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Failed to load hours');
-    } finally {
-      setLoading(false);
-    }
-  }, [branchId, toast]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const addShift = (weekday: number) =>
-    setShifts((s) => [...s, { weekday, opens: '09:00', closes: '22:00' }]);
-  const removeShift = (idx: number) => setShifts((s) => s.filter((_, i) => i !== idx));
-  const editShift = (idx: number, field: 'opens' | 'closes', value: string) =>
-    setShifts((s) => s.map((sh, i) => (i === idx ? { ...sh, [field]: value } : sh)));
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await catalogSyncApi.setHours(branchId, { shifts });
-      setShifts((res.shifts ?? []) as Shift[]);
-      toast.success('Weekly hours saved');
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Save failed');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="border border-gray-200 rounded-sm p-4 mb-6">
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="text-lg font-display">Weekly hours (source of truth)</h2>
-        <Button size="sm" onClick={save} loading={saving}>Save hours</Button>
-      </div>
-      <p className="text-sm text-gray-500 mb-3">
-        MM&apos;s canonical per-day schedule the hours writer fans out to every channel. A day
-        with no shift is closed. Times are HH:MM.
-      </p>
-      {loading ? (
-        <Spinner />
-      ) : (
-        <div className="space-y-2">
-          {DAYS.map((label, weekday) => {
-            const dayShifts = shifts
-              .map((s, i) => ({ s, i }))
-              .filter(({ s }) => s.weekday === weekday);
-            return (
-              <div key={weekday} className="flex items-start gap-3 text-sm py-1 border-t border-gray-100">
-                <div className="w-24 pt-1 font-medium">{label}</div>
-                <div className="flex-1 flex flex-wrap gap-2 items-center">
-                  {dayShifts.length === 0 && <span className="text-gray-400 pt-1">closed</span>}
-                  {dayShifts.map(({ s, i }) => (
-                    <span key={i} className="inline-flex items-center gap-1 border border-gray-200 rounded-sm px-2 py-1">
-                      <input
-                        type="time"
-                        value={s.opens}
-                        onChange={(e) => editShift(i, 'opens', e.target.value)}
-                        className="text-sm outline-none"
-                      />
-                      <span className="text-gray-400">–</span>
-                      <input
-                        type="time"
-                        value={s.closes}
-                        onChange={(e) => editShift(i, 'closes', e.target.value)}
-                        className="text-sm outline-none"
-                      />
-                      <button onClick={() => removeShift(i)} className="text-red-500 ml-1" aria-label="Remove shift">×</button>
-                    </span>
-                  ))}
-                  <button onClick={() => addShift(weekday)} className="text-primary text-xs uppercase tracking-wide">+ shift</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CreateItemPanel({ branches }: { branches: Branch[] }) {
   const toast = useToast();
   const [productId, setProductId] = useState('');
@@ -400,7 +303,11 @@ export default function CatalogSyncPage() {
 
       <CreateItemPanel branches={branches} />
 
-      {branchId && <HoursEditor branchId={branchId} />}
+      <p className="text-sm text-gray-500 mb-4">
+        Weekly hours are edited per branch in the{' '}
+        <a href="/branches" className="text-primary underline">Branches</a> tab. This page shows
+        the read-only hours drift between MM&apos;s schedule and each channel below.
+      </p>
 
       {driftLoading ? (
         <div className="py-8 flex justify-center"><Spinner /></div>

@@ -463,6 +463,40 @@ def delete_keeta_item(
         raise typer.Exit(code=1)
 
 
+@app.command("fetch-keeta-hours")
+def fetch_keeta_hours() -> None:
+    """Audit each Keeta shop's business status + today's opening hours.
+
+    Keeta exposes only *today's* hours (no weekly schedule), signed in-page. Reads
+    the hydrated Keeta session; open a headed `login --channel keeta` first if the
+    session is dead. Read-only — never part of a sweep.
+    """
+    from .warm import pull_keeta_hours_in_page
+
+    def _hhmm(seconds: object) -> str:
+        s = int(seconds or 0)
+        return f"{s // 3600:02d}:{(s % 3600) // 60:02d}"
+
+    try:
+        shops = asyncio.run(pull_keeta_hours_in_page())
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta hours need a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    if not shops:
+        logger.warning("keeta hours: nothing returned (no shops or signed out)")
+        raise typer.Exit(code=1)
+    for shop in shops:
+        wins = "; ".join(
+            f"{_hhmm(w.get('startTime'))}-{_hhmm(w.get('endTime'))}"
+            for w in (shop.get("todayBusinessHours") or [])
+        )
+        status = shop.get("businessStatus")
+        print(  # noqa: T201 — operator output
+            f"keeta shop {shop.get('shopId')}: businessStatus={status} "
+            f"(1=open) today={wins or 'closed'}"
+        )
+
+
 @app.command("serve")
 def serve() -> None:
     """Run the always-on worker daemon (compose `serve`).

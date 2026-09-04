@@ -30175,7 +30175,7 @@
         "type": "object"
       },
       "WeeklyHoursUpdate": {
-        "description": "Replace a branch's whole canonical weekly schedule (empty = fully closed).",
+        "description": "Replace a branch's whole weekly schedule (a weekday with no shift = closed).\n\nAt most one shift per weekday \u2014 the model is one continuous shift a day.",
         "properties": {
           "shifts": {
             "items": {
@@ -30195,14 +30195,18 @@
         "description": "One open shift. weekday 0=Sunday \u2026 6=Saturday; times HH:MM.",
         "properties": {
           "closes": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
             "title": "Closes",
             "type": "string"
           },
           "opens": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
             "title": "Opens",
             "type": "string"
           },
           "weekday": {
+            "maximum": 6.0,
+            "minimum": 0.0,
             "title": "Weekday",
             "type": "integer"
           }
@@ -36298,6 +36302,163 @@
         ]
       }
     },
+    "/api/v1/branches/{branch_id}/sync-hours": {
+      "post": {
+        "description": "Derive this branch's window from its weekly schedule now.\n\nThe branch-hours loop does this hourly on its own; this is the manual trigger\nfor right after editing the hours or adding a holiday, so the storefront and\nthe integrators reflect the change immediately rather than at the next tick.",
+        "operationId": "sync_branch_hours_api_v1_branches__branch_id__sync_hours_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Branch Hours Api V1 Branches  Branch Id  Sync Hours Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Sync Branch Hours",
+        "tags": [
+          "Branches"
+        ]
+      }
+    },
+    "/api/v1/branches/{branch_id}/weekly-hours": {
+      "get": {
+        "description": "The branch's weekly schedule (source of truth for trading hours).",
+        "operationId": "get_weekly_hours_api_v1_branches__branch_id__weekly_hours_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyHoursResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Weekly Hours",
+        "tags": [
+          "Branches"
+        ]
+      },
+      "put": {
+        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).\n\nChanging this moves what every customer in the branch's zones is quoted and\nwhat the marketplaces are sent \u2014 the same reach as a holiday.\n`opening_from`/`opening_to` catches up when the branch-hours cron next runs, or\nimmediately on a manual sync.",
+        "operationId": "set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WeeklyHoursUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyHoursResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Weekly Hours",
+        "tags": [
+          "Branches"
+        ]
+      }
+    },
     "/api/v1/bulk/products/visibility": {
       "post": {
         "description": "Put products on the website or the register, or take them off.\n\nSeparate from the status endpoint because \"not sold here\" and \"not sold at\nall\" are different decisions: deactivating a product withdraws it\neverywhere, which is not what someone means when they take lattes off the\ncake site.",
@@ -36965,112 +37126,6 @@
         "summary": "Set Cart Promo",
         "tags": [
           "Cart"
-        ]
-      }
-    },
-    "/api/v1/catalog-sync/branches/{branch_id}/hours": {
-      "get": {
-        "description": "The branch's canonical per-day marketplace schedule (source of truth).",
-        "operationId": "get_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "branch_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Branch Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WeeklyHoursResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Get Weekly Hours",
-        "tags": [
-          "Catalog Sync"
-        ]
-      },
-      "put": {
-        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).",
-        "operationId": "set_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "branch_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Branch Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WeeklyHoursUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WeeklyHoursResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Set Weekly Hours",
-        "tags": [
-          "Catalog Sync"
         ]
       }
     },

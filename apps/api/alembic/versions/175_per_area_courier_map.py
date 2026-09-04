@@ -35,8 +35,8 @@ always recomputes the zone live against the active version. So the faithful
 it against this map. Orders keep their `polygon_id`/`zone_name` — those are the
 historical record of the map an order was priced against and must not move.
 
-Revision ID: 174_per_area_courier_map
-Revises: 173_slider_vehicle_couriers
+Revision ID: 175_per_area_courier_map
+Revises: 174_slider_vehicle_couriers
 Create Date: 2026-09-04
 """
 
@@ -51,8 +51,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "174_per_area_courier_map"
-down_revision: Union[str, None] = "173_slider_vehicle_couriers"
+revision: str = "175_per_area_courier_map"
+down_revision: Union[str, None] = "174_slider_vehicle_couriers"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
 from app.models.branch import BranchHoliday
+from app.services import branch_hours_service
 
 __all__ = ["HORIZON_DAYS", "closed_dates_for", "listing", "shop_today"]
 
@@ -45,6 +46,15 @@ async def closed_dates_for(
     """
     This branch's closed days, as `YYYY-MM-DD`, from today to the horizon.
 
+    Two kinds of closed day, one set: the explicit holidays somebody wrote down,
+    and the **weekdays the branch does not trade** in its weekly schedule — a
+    branch closed every Monday is closed on each Monday in the window exactly as
+    if each were a holiday. Folding both here keeps this the single reader of
+    "is the shop shut that day", so every consumer that already threads
+    `closed_dates` through `trading_hours` becomes weekly-schedule-aware with no
+    change of its own. A branch with no weekly schedule yet contributes no
+    weekday closures — only its holidays close it, as before.
+
     Empty for a branch that is None — a zone with no branch predates zones
     knowing about branches, and inventing closures for it would be inventing
     them for the shop that has always served it.
@@ -63,7 +73,16 @@ async def closed_dates_for(
             )
         )
     ).scalars()
-    return frozenset(rows)
+    closed = set(rows)
+
+    sched = await branch_hours_service.schedule(db, branch_id)
+    if sched is not None:
+        day = start
+        while day <= end:
+            if branch_hours_service.window_for(sched, day) is None:
+                closed.add(day.isoformat())
+            day += timedelta(days=1)
+    return frozenset(closed)
 
 
 async def listing(

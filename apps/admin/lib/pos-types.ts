@@ -86,6 +86,28 @@ export type BranchHolidayWrite = Pick<BranchHoliday, 'holiday_date' | 'name'> & 
   note?: string | null;
 };
 
+/**
+ * One open shift on one weekday. `weekday` is 0=Sunday…6=Saturday; times are
+ * `HH:MM`. One shift per day — a weekday with no shift is closed.
+ */
+export interface WeeklyShift {
+  weekday: number;
+  opens: string;
+  closes: string;
+}
+
+/**
+ * A branch's weekly schedule — the source of truth for when it trades. The
+ * derived `opening_from`/`opening_to` window and the marketplace hours are both
+ * kept in step with this by the branch-hours cron.
+ */
+export interface WeeklyHours {
+  branch_id: string;
+  shifts: WeeklyShift[];
+}
+
+export type WeeklyHoursWrite = { shifts: WeeklyShift[] };
+
 export interface Tax {
   id: string;
   name: string;

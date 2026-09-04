@@ -1,7 +1,7 @@
 """
 The committed per-area map says what the rules say.
 
-The map that migration `174_per_area_courier_map` seeds is generated data —
+The map that migration `175_per_area_courier_map` seeds is generated data —
 `scripts.build_delivery_areas` writes the geometry and the assignments, and a
 person commits them. This is what stops the committed files drifting from the
 rules that are supposed to have produced them: it re-derives every polygon's

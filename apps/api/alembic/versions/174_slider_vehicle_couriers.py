@@ -25,8 +25,8 @@ does arrives in a later migration and sets each polygon's `alternate_providers`
 explicitly on the way in — so the guarded UPDATE below matches nothing today and
 seeds the default the moment such a zone exists without one.
 
-Revision ID: 173_slider_vehicle_couriers
-Revises: 172_agg_item_map_seed
+Revision ID: 174_slider_vehicle_couriers
+Revises: 173_branch_weekly_single_shift
 Create Date: 2026-09-04
 """
 
@@ -39,8 +39,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "173_slider_vehicle_couriers"
-down_revision: Union[str, None] = "172_agg_item_map_seed"
+revision: str = "174_slider_vehicle_couriers"
+down_revision: Union[str, None] = "173_branch_weekly_single_shift"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

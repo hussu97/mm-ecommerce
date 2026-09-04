@@ -75,8 +75,8 @@ def test_a_courier_the_seed_migration_never_saw_is_seeded_by_a_later_one():
     """
     later = {
         "slider": "128_slider_zones.py",
-        "slider_bike": "173_slider_vehicle_couriers.py",
-        "slider_car": "173_slider_vehicle_couriers.py",
+        "slider_bike": "174_slider_vehicle_couriers.py",
+        "slider_car": "174_slider_vehicle_couriers.py",
     }
     for provider in set(DEFAULT_ALTERNATES) - set(_seeded()):
         assert provider in later, (

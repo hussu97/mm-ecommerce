@@ -645,6 +645,29 @@ _CAREEM_BEARER_SURFACES = (
 #: immediately and nothing is slower in the good case.
 _CAREEM_BEARER_SETTLE_SECONDS = 15
 
+#: Cap on the request URLs kept for diagnosis — enough to identify the API the
+#: page really talks to, small enough that a chatty SPA cannot grow it unbounded.
+_CAREEM_SEEN_LIMIT = 40
+
+
+def _record_seen(seen: list[str], url: str) -> None:
+    """Remember an api-ish request URL so a failed capture can say what DID fire.
+
+    On 2026-09-04 the bearer capture reported "no saturn-ext request seen" after a
+    fully authenticated login — which rules out timing but not much else. The next
+    question is always "then what did the page call instead?", and answering it
+    from a workstation is not possible: the surfaces 302 when unauthenticated, and
+    driving a second Chrome on the production VM to find out loses a race with the
+    daemon's own. So the daemon records it itself.
+    """
+    if len(seen) >= _CAREEM_SEEN_LIMIT:
+        return
+    if not any(k in url for k in ("/api", "saturn", "graphql", "/v1/", "/v2/")):
+        return
+    path = url.split("?", 1)[0][:120]
+    if path not in seen:
+        seen.append(path)
+
 
 async def _await_careem_bearer(
     page,
@@ -682,7 +705,9 @@ async def _await_careem_bearer(
             pass
 
 
-def _assert_careem_bearer_captured(channel: str, captured: dict[str, str]) -> None:
+def _assert_careem_bearer_captured(
+    channel: str, captured: dict[str, str], seen: list[str] | None = None
+) -> None:
     """Refuse to push a careem session that carries no partner bearer.
 
     A careem session replays cookies + the Authorization bearer + the
@@ -700,12 +725,20 @@ def _assert_careem_bearer_captured(channel: str, captured: dict[str, str]) -> No
         # `authorization` means the call fired unauthenticated, which is a
         # different bug entirely. Guessing between those cost a diagnosis cycle
         # on 2026-09-04.
-        seen = ", ".join(sorted(captured)) or "<no saturn-ext request seen>"
-        logger.warning("careem: bearer capture missed; headers seen: %s", seen)
+        headers = ", ".join(sorted(captured)) or "<no saturn-ext request seen>"
+        logger.warning("careem: bearer capture missed; headers seen: %s", headers)
+        if seen is not None:
+            # The decisive line: if the page called a DIFFERENT api path, Careem
+            # moved it and `ChannelProbe.match` needs updating — no amount of
+            # waiting will help.
+            logger.warning(
+                "careem: api-ish requests the page actually made: %s",
+                "; ".join(seen) or "<none at all>",
+            )
         raise NeedsHumanLogin(
             "careem: captured a session with no partner bearer — the "
-            "/api/saturn-ext/ call never fired its Authorization header "
-            f"(headers seen: {seen}). Not pushing it live; the reauth cron "
+            "/saturn-ext/ call never fired its Authorization header "
+            f"(headers seen: {headers}). Not pushing it live; the reauth cron "
             "will retry."
         )
 
@@ -992,6 +1025,7 @@ async def login_with_account(
     start_url = LOGIN_START_URLS[channel]
     probe: ChannelProbe = CHANNEL_PROBES[channel]
     captured: dict[str, str] = {}
+    seen_urls: list[str] = []  # diagnosis only — see `_record_seen`
     profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
     port = free_debug_port()
     chrome = _spawn_chrome(profile=profile, port=port, url=start_url)
@@ -1059,6 +1093,7 @@ async def login_with_account(
                         attached = True
 
                         def _on_request(request) -> None:
+                            _record_seen(seen_urls, request.url)
                             if probe.match in request.url:
                                 captured.update(request.headers)
 
@@ -1176,7 +1211,7 @@ async def login_with_account(
     finally:
         _stop_chrome(chrome)
 
-    _assert_careem_bearer_captured(channel, result.request_headers)
+    _assert_careem_bearer_captured(channel, result.request_headers, seen=seen_urls)
     print(f"Captured {channel} session ({len(result.cookies)} cookies).", flush=True)
     return result
 

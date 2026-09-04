@@ -21,7 +21,16 @@ UPSTREAMS_FILE="${UPSTREAMS_FILE:-$DEPLOY_DIR/nginx/runtime/upstreams.conf}"
 # Must match keepalive_timeout in nginx/runtime/upstreams.conf.
 DRAIN_SECONDS="${DRAIN_SECONDS:-5}"
 STOP_GRACE="${STOP_GRACE:-10}"
-WAIT_TIMEOUT="${WAIT_TIMEOUT:-90}"
+# The idle slot must pass its container healthcheck within this window or cutover
+# aborts (leaving the live slot up). /ping is served only after the lifespan i18n
+# seed, and the healthcheck has a 60s start_period + 10s interval — so on a
+# CPU-capped e2-small the app can take ~85-90s from container start to its first
+# passing probe, especially on a heavy deploy (a big migration, or the one-time
+# full worker-image re-pull that strains the box right before cutover). At 90s
+# that raced the timeout and aborted a deploy whose app was in fact healthy 3s
+# later (2026-09-04). 150s gives real headroom; a genuinely-broken slot still
+# aborts, just 60s later, with the live slot untouched throughout.
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-150}"
 HEALTH_ATTEMPTS="${HEALTH_ATTEMPTS:-10}"
 
 API_HOST="${API_HOST:-api.meltingmomentscakes.com}"

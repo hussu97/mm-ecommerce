@@ -191,6 +191,15 @@ def make_lifespan(service: str, *, seed: bool, dispatch_batches: bool = False):
 
             background.append(asyncio.create_task(daily_sales_email.run_forever()))
 
+            # Branch hours sync. Same reasoning as its neighbours — no cron here,
+            # an advisory lock so a second copy is harmless, storefront app only.
+            # Hourly it re-derives each branch's `opening_from`/`opening_to` from
+            # its weekly schedule (the source of truth) and, once writers exist,
+            # pushes the day's hours to the marketplaces.
+            from app.services import branch_hours_sync
+
+            background.append(asyncio.create_task(branch_hours_sync.run_forever()))
+
             # Same reasoning, its own flag: this one talks to somebody else's
             # private API, so it has to be switchable off without taking the
             # dispatcher down with it. Storefront only, like its neighbours —

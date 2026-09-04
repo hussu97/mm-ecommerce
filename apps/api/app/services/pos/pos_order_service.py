@@ -14,6 +14,7 @@ import logging
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Collection
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -143,7 +144,11 @@ def paid_for_clause():
     )
 
 
-def may_auto_accept(order: Order, branch: Branch | None) -> bool:
+def may_auto_accept(
+    order: Order,
+    branch: Branch | None,
+    closed_dates: Collection[str] = (),
+) -> bool:
     """
     Whether a terminal set to accept by itself may accept *this* order by itself.
 
@@ -169,6 +174,11 @@ def may_auto_accept(order: Order, branch: Branch | None) -> bool:
 
     Counter orders are never in question: a cashier is ringing one up in person,
     which is as accepted as an order gets.
+
+    `closed_dates` carries the branch's closed days — holidays and the weekdays it
+    does not trade in its weekly schedule — so an order placed on a day the shop
+    was shut is not auto-accepted either. Empty by default, which reads as the
+    old always-trading behaviour for a caller that has no closed set to hand.
     """
     if order.source != OrderSourceEnum.ONLINE.value:
         return True
@@ -181,7 +191,9 @@ def may_auto_accept(order: Order, branch: Branch | None) -> bool:
     placed_at = order.created_at or order.opened_at
     if placed_at is None:  # pragma: no cover — both columns are populated
         return True
-    return trading_hours.is_open(placed_at, branch.opening_from, branch.opening_to)
+    return trading_hours.is_open(
+        placed_at, branch.opening_from, branch.opening_to, closed_dates
+    )
 
 
 # ─── Loading ──────────────────────────────────────────────────────────────────

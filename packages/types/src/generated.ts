@@ -1750,6 +1750,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/branches/{branch_id}/sync-hours": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Branch Hours
+         * @description Derive this branch's window from its weekly schedule now.
+         *
+         *     The branch-hours loop does this hourly on its own; this is the manual trigger
+         *     for right after editing the hours or adding a holiday, so the storefront and
+         *     the integrators reflect the change immediately rather than at the next tick.
+         */
+        post: operations["sync_branch_hours_api_v1_branches__branch_id__sync_hours_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/branches/{branch_id}/weekly-hours": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weekly Hours
+         * @description The branch's weekly schedule (source of truth for trading hours).
+         */
+        get: operations["get_weekly_hours_api_v1_branches__branch_id__weekly_hours_get"];
+        /**
+         * Set Weekly Hours
+         * @description Replace the branch's weekly schedule (a weekday with no shift = closed).
+         *
+         *     Changing this moves what every customer in the branch's zones is quoted and
+         *     what the marketplaces are sent — the same reach as a holiday.
+         *     `opening_from`/`opening_to` catches up when the branch-hours cron next runs, or
+         *     immediately on a manual sync.
+         */
+        put: operations["set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bulk/products/visibility": {
         parameters: {
             query?: never;
@@ -1948,30 +2001,6 @@ export interface paths {
          *     any other.
          */
         put: operations["set_cart_promo_api_v1_cart_promo_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/catalog-sync/branches/{branch_id}/hours": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Weekly Hours
-         * @description The branch's canonical per-day marketplace schedule (source of truth).
-         */
-        get: operations["get_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_get"];
-        /**
-         * Set Weekly Hours
-         * @description Replace the branch's weekly schedule (a weekday with no shift = closed).
-         */
-        put: operations["set_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -17915,7 +17944,9 @@ export interface components {
         };
         /**
          * WeeklyHoursUpdate
-         * @description Replace a branch's whole canonical weekly schedule (empty = fully closed).
+         * @description Replace a branch's whole weekly schedule (a weekday with no shift = closed).
+         *
+         *     At most one shift per weekday — the model is one continuous shift a day.
          */
         WeeklyHoursUpdate: {
             /** Shifts */
@@ -21259,6 +21290,105 @@ export interface operations {
             };
         };
     };
+    sync_branch_hours_api_v1_branches__branch_id__sync_hours_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weekly_hours_api_v1_branches__branch_id__weekly_hours_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyHoursResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeeklyHoursUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklyHoursResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     bulk_update_visibility_api_v1_bulk_products_visibility_post: {
         parameters: {
             query?: never;
@@ -21639,72 +21769,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CartResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                branch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WeeklyHoursResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_weekly_hours_api_v1_catalog_sync_branches__branch_id__hours_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                branch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WeeklyHoursUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WeeklyHoursResponse"];
                 };
             };
             /** @description Validation Error */

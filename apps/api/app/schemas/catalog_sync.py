@@ -101,22 +101,3 @@ class MappingResolveResult(BaseModel):
     options_unmatched: list[str] = []
     categories_matched: int
     approved: int
-
-
-class WeeklyShift(BaseModel):
-    """One open shift. weekday 0=Sunday … 6=Saturday; times HH:MM."""
-
-    weekday: int
-    opens: str
-    closes: str
-
-
-class WeeklyHoursUpdate(BaseModel):
-    """Replace a branch's whole canonical weekly schedule (empty = fully closed)."""
-
-    shifts: list[WeeklyShift]
-
-
-class WeeklyHoursResponse(BaseModel):
-    branch_id: str
-    shifts: list[WeeklyShift]

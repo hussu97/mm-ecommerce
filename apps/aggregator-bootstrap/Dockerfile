@@ -24,22 +24,35 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml ./
-COPY src ./src
 
-# Install the package (which brings the playwright python driver), then ONLY
-# Google Chrome and its OS deps — not the firefox/webkit the all-browsers base
-# carried. `--with-deps` is the apt half and needs root, which we still are here.
+# Google Chrome + its OS deps + Xvfb, as a STABLE layer installed BEFORE any app
+# code. This is the ~1GB of the image, and it must not depend on `src/`: it used
+# to sit in the same RUN as `pip install .` (right after `COPY src`), so a one-line
+# code change invalidated `COPY src`, invalidated this layer, and forced the VM to
+# re-pull the whole ~1GB browser layer on every bootstrap deploy — ~9 min of dead
+# time in the cutover. Installing it here, keyed only on this Dockerfile, means a
+# code change never touches it and a code-only deploy pulls just the small app
+# layer below.
 #
-# `xvfb` + `xauth` give real Chrome a virtual display so it can run HEADED: the
-# anti-bot edges (Akamai/PerimeterX/Cloudflare) drop headless Chrome, so the warm
-# and login run under Xvfb via the entrypoint below. Both packages are small and
-# the only addition beyond the browser itself.
-RUN pip install --no-cache-dir . \
+# The Playwright python driver is installed explicitly first (matching pyproject's
+# floor) because `playwright install` needs it; `pip install .` below reuses that
+# same already-satisfied version, so the branded Google Chrome fetched here stays
+# version-matched. We install ONLY Google Chrome (channel=chrome, a system apt
+# package under /opt/google/chrome — which is why `rm -rf /root/.cache` is safe,
+# that cache only holds the unused bundled chromium), not the firefox/webkit an
+# all-browsers base would carry. `xvfb`/`xauth` give real Chrome a virtual display
+# so it runs HEADED (anti-bot edges drop headless).
+RUN pip install --no-cache-dir "playwright>=1.52" \
  && playwright install --with-deps chrome \
  && apt-get update \
  && apt-get install -y --no-install-recommends xvfb xauth \
  && rm -rf /var/lib/apt/lists/* /root/.cache
+
+# App code + the package install — the ONLY layers a code change invalidates, and
+# both tiny. `pip install .` reuses the Playwright driver + browser installed above.
+COPY pyproject.toml ./
+COPY src ./src
+RUN pip install --no-cache-dir .
 
 # storage_state (the logged-in Playwright sessions) persists under /data, which
 # MUST be a mounted volume in production (see the README "Operations" section) or

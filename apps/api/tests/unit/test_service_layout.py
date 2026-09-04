@@ -45,6 +45,13 @@ CROSS_CUTTING = {
     "audit_service",
     "blog_service",
     "branch_holiday_service",
+    # Resolves a branch's trading window from its weekly schedule; read by the
+    # holiday service, the POS/delivery open-checks and the branch-hours cron —
+    # genuinely cross-cutting, like branch_holiday_service beside it.
+    "branch_hours_service",
+    # The daily loop that stamps the derived window from the schedule and (later)
+    # pushes it to the marketplaces — spans branches + aggregators, no one domain.
+    "branch_hours_sync",
     "cart_service",
     "cms_service",
     "crud_service",

@@ -352,32 +352,30 @@ class BranchHoliday(Base, UUIDMixin, TimestampMixin):
 
 
 class BranchWeeklyHours(Base, UUIDMixin, TimestampMixin):
-    """One open shift, on one weekday, for the marketplace-hours sync.
+    """One open shift, on one weekday. **One shift per day.**
 
-    A **canonical per-day, multi-shift schedule** MM has not had until now. The
-    `Branch` above carries a single `opening_from`/`opening_to` window — enough
-    for the storefront's trading-hours check, but it cannot express a marketplace
-    schedule (Careem closed Wednesdays, a split morning/evening shift), so the
-    catalog-&-hours sync had nothing to fan out. This table is that source of
-    truth: rows are the shifts a branch is OPEN, so a weekday with no rows is
-    **closed** (the same "absence is the ordinary state" idiom `branch_holidays`
-    uses). Multiple rows per weekday give split shifts; each channel's writer
-    (a later phase) normalises them to that portal's shape (Keeta caps at 5
-    periods/day, Careem/Talabat take multiple slots).
+    The **canonical per-weekday schedule** and the single source of truth for
+    every "is the branch open" decision. Each weekday has at most one row — one
+    open + one close — and a weekday with no row is **closed** (the same
+    "absence is the ordinary state" idiom `branch_holidays` uses). One shift per
+    day is deliberate: Melting Moments trades one continuous shift a day, and a
+    second shift would be a second answer to "when does it open". `weekday` is
+    0=Sunday…6=Saturday (the UAE week and the order every portal lists days in).
 
-    Separate from `Branch.opening_from`/`opening_to` on purpose — that window is
-    the storefront's, this schedule is the marketplaces'; the audit found the two
-    legitimately differ (Foodics 08:00–23:00 vs Talabat 08:00–22:00). Times are
-    "HH:MM" strings like the branch window, so a shift can cross midnight without
-    date arithmetic; the CHECK holds the shape. `weekday` is 0=Sunday…6=Saturday
-    (the UAE week and the order every portal lists days in).
+    `Branch.opening_from`/`opening_to` is now a **derived cache** of *today's*
+    shift, stamped daily by `branch_hours_service` / the branch-hours cron so the
+    storefront and any reader still on the single window stay correct. This table
+    is what business logic and the marketplace fan-out both read.
+
+    Times are "HH:MM" strings like the branch window, so a shift can cross
+    midnight without date arithmetic; the CHECK holds the shape. `shift_index` is
+    vestigial (always 0) — kept from the multi-shift scaffold so old INSERTs that
+    name it still work; uniqueness is now `(branch_id, weekday)` (migration 173).
     """
 
     __tablename__ = "branch_weekly_hours"
     __table_args__ = (
-        UniqueConstraint(
-            "branch_id", "weekday", "shift_index", name="uq_branch_weekly_hours_shift"
-        ),
+        UniqueConstraint("branch_id", "weekday", name="uq_branch_weekly_hours_day"),
         CheckConstraint(
             "weekday >= 0 AND weekday <= 6", name="ck_branch_weekly_hours_weekday"
         ),
