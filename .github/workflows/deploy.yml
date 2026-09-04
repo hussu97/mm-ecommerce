@@ -638,13 +638,23 @@ jobs:
           echo "Pulling pre-built API image from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:latest
 
-          # The ~4.7GB Playwright bootstrap image is pulled + the worker restarted
-          # further down, and ONLY when its sources changed (see "aggregator worker
-          # daemon"). It is not on the API request path, so it must not slow a
-          # routine API deploy — that is why the pull is gated on BOOTSTRAP_CHANGED
-          # there rather than pulled inline here.
+          # The ~4.7GB Playwright bootstrap image is pulled ONLY when its sources
+          # changed, and it is not on the API request path — so it must not slow a
+          # deploy by blocking it. It used to be pulled inline right before cutover,
+          # where the ~9-minute pull (GHCR → me-central1) was pure dead time added
+          # to every bootstrap-touching deploy: the VM step went from ~7min to
+          # ~16min. Start it in the BACKGROUND now so it overlaps the DB backup,
+          # the migrations and the API/POS cutover (~6min of work that does not
+          # need this image); `wait` for it just before cutover restarts the worker
+          # on it. Nothing between here and there touches the worker image, and a
+          # pull only writes layers to the local store, so it is safe to run
+          # alongside the backup/migrate/cutover.
+          WORKER_PULL_PID=""
           if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
-            echo "Bootstrap image changed — the worker step below will pull + restart it."
+            echo "Bootstrap image changed — pulling it in the background (overlaps backup/migrate/cutover)..."
+            docker compose -f docker-compose.prod.yml pull aggregator-worker \
+              < /dev/null > /tmp/worker_pull.log 2>&1 &
+            WORKER_PULL_PID=$!
           else
             echo "Bootstrap sources unchanged — worker keeps its current image."
           fi
@@ -737,10 +747,19 @@ jobs:
           # cutover means cutover's own restart (below) lands the daemon on the new
           # image — `docker compose up -d` recreates the container when the image
           # changed.
-          if [ "$BOOTSTRAP_CHANGED" = "true" ]; then
-            echo "Pulling the rebuilt aggregator-bootstrap image..."
-            docker compose -f docker-compose.prod.yml pull aggregator-worker < /dev/null \
-              || echo "WARNING: could not pull aggregator-bootstrap image"
+          # The worker image pull was kicked off in the background right after the
+          # API pull; it has had the backup + migrations to run under. Reap it here
+          # so cutover restarts the worker on the freshly-pulled image. `set -e` is
+          # on, so guard the `wait` — a pull failure stays non-fatal (the worker
+          # simply keeps its current image), exactly as the old inline pull did.
+          if [ -n "$WORKER_PULL_PID" ]; then
+            echo "Waiting for the background aggregator-bootstrap image pull..."
+            if wait "$WORKER_PULL_PID"; then
+              echo "aggregator-bootstrap image ready."
+            else
+              echo "WARNING: could not pull aggregator-bootstrap image; worker keeps its current image"
+              tail -n 5 /tmp/worker_pull.log 2>/dev/null || true
+            fi
           fi
 
           echo "Cutting over API then POS onto the new image (idle slot, nginx reload, drain)..."
