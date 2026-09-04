@@ -228,6 +228,11 @@ async def _heal_poll(queue: JobQueue) -> None:
         if reauth._channel_needs_reauth(bundle) is None:
             await asyncio.to_thread(reauth._clear_reauth_backoff, ch)
             continue
+        if bundle.get("server_refreshable"):
+            # The API renews this channel itself over httpx (Deliveroo re-mints its
+            # token before every sweep). A headed RELOGIN here would burn a Chrome
+            # on this e2-small doing what the next API sweep does for free.
+            continue
         if reauth._reauth_cooldown_remaining(ch) > 0:
             continue
         # A channel that re-logged in successfully within the floor is not re-driven

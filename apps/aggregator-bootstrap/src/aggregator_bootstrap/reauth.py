@@ -354,6 +354,15 @@ def _heal_once(only: set[str] | None = None) -> int:
         if reason is None:
             _clear_reauth_backoff(ch)  # healthy → forget any past failures
             continue
+        if bundle.get("server_refreshable"):
+            # The API re-mints this channel's session itself (httpx); a headed
+            # relogin would waste a Chrome on work the next API sweep does.
+            logger.info(
+                "reauth: %s is %s but server-refreshable — leaving it to the API",
+                ch,
+                reason,
+            )
+            continue
         remaining = _reauth_cooldown_remaining(ch)
         if remaining > 0:
             logger.info(

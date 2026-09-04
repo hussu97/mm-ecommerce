@@ -532,6 +532,12 @@ async def list_worker_bundles(db: AsyncSession) -> list[dict]:
                     cookie_expires_at=row.cookie_expires_at,
                     now=now,
                 ),
+                # The API renews this channel itself over httpx (Deliveroo's
+                # `prepare_session` re-mints the token before every sweep), so the
+                # worker must NOT spend a headed Chrome re-logging it in — that is
+                # pure wasted CPU for a session the next API sweep refreshes anyway.
+                # From the one auth descriptor (`policy.server_refreshable`).
+                "server_refreshable": policy.server_refreshable(row.channel),
             }
         )
     return bundles
