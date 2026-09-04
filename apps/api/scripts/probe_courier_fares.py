@@ -227,11 +227,20 @@ async def main() -> None:
         "note": existing.get("note", ""),
         "costs": costs,
     }
-    COSTS.write_text(json.dumps(out, indent=2) + "\n")
-    Path("/tmp/courier_costs.json").write_text(json.dumps(out, indent=2) + "\n")
+    payload = json.dumps(out, indent=2) + "\n"
+    # /tmp is the one the caller retrieves and must always be written. The
+    # in-place copy is a convenience for a local run and is best-effort: inside
+    # the deployed image the data dir is owned by the app user, so a container
+    # exec cannot write it, and that must not fail the probe.
+    Path("/tmp/courier_costs.json").write_text(payload)
+    try:
+        COSTS.write_text(payload)
+        where = f"{COSTS} and /tmp/courier_costs.json"
+    except OSError:
+        where = "/tmp/courier_costs.json (in-place copy not writable here)"
     print(
         f"\nprobed {fresh} new area(s), kept {kept} already-surveyed; total "
-        f"{len(costs)}. wrote {COSTS} and /tmp/courier_costs.json"
+        f"{len(costs)}. wrote {where}"
     )
 
 
