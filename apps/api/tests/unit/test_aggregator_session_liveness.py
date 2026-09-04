@@ -169,3 +169,82 @@ async def test_await_reauth_times_out_when_daemon_never_heals(monkeypatch):
 
     out = await ingest._await_reauth("careem", provider=object())
     assert out is None
+
+
+# ── the verdict the worker consumes ─────────────────────────────────────────────
+# `list_worker_bundles` publishes `unusable_reason` so the heal daemon stops
+# re-deriving liveness. It derived it wrong for a year: it never learned Talabat's
+# cookie expiry is advisory, so it re-logged Talabat in every 15 minutes around the
+# clock. These pin the publish so the worker cannot be starved of the field.
+
+
+def test_unusable_reason_for_matches_the_loaded_session_path():
+    """The row-shaped helper and the LoadedSession path are one implementation."""
+    for channel in ("noon", "talabat"):
+        for cookie_exp in (
+            None,
+            _NOW - timedelta(minutes=5),
+            _NOW + timedelta(hours=1),
+        ):
+            for status in (SESSION_LIVE, SESSION_NEEDS_BOOTSTRAP):
+                s = _sess(channel=channel, status=status, cookie_expires_at=cookie_exp)
+                assert session_store.unusable_reason_for(
+                    channel=channel,
+                    status=status,
+                    token_expires_at=None,
+                    cookie_expires_at=cookie_exp,
+                    now=_NOW,
+                ) == session_store.session_unusable_reason(s, now=_NOW), (
+                    channel,
+                    status,
+                    cookie_exp,
+                )
+
+
+def test_unusable_reason_for_skips_talabats_advisory_cookie():
+    expired = _NOW - timedelta(minutes=5)
+    assert (
+        session_store.unusable_reason_for(
+            channel="talabat",
+            status=SESSION_LIVE,
+            token_expires_at=None,
+            cookie_expires_at=expired,
+            now=_NOW,
+        )
+        is None
+    )
+    # …and every other channel still honours it.
+    assert (
+        session_store.unusable_reason_for(
+            channel="noon",
+            status=SESSION_LIVE,
+            token_expires_at=None,
+            cookie_expires_at=expired,
+            now=_NOW,
+        )
+        == "cookie expired"
+    )
+
+
+def test_talabats_token_expiry_is_still_authoritative_in_the_published_verdict():
+    """Only the ROTATING cookie is advisory — a dead bearer is still dead."""
+    assert (
+        session_store.unusable_reason_for(
+            channel="talabat",
+            status=SESSION_LIVE,
+            token_expires_at=_NOW - timedelta(minutes=1),
+            cookie_expires_at=None,
+            now=_NOW,
+        )
+        == "token expired"
+    )
+
+
+def test_worker_bundles_publish_the_unusable_reason():
+    """The wire contract the worker's heal loop reads. Without this key the worker
+    silently falls back to its own (drifted) derivation, so it must never go
+    missing from the bundle."""
+    import inspect
+
+    src = inspect.getsource(session_store.list_worker_bundles)
+    assert '"unusable_reason": unusable_reason_for(' in src

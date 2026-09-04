@@ -237,12 +237,41 @@ def session_unusable_reason(
     """
     if session is None:
         return "no session — never bootstrapped"
-    if session.status != SESSION_LIVE:
-        return session.status
+    return unusable_reason_for(
+        channel=session.channel,
+        status=session.status,
+        token_expires_at=session.token_expires_at,
+        cookie_expires_at=session.cookie_expires_at,
+        now=now,
+    )
+
+
+def unusable_reason_for(
+    *,
+    channel: str,
+    status: str,
+    token_expires_at: datetime | None,
+    cookie_expires_at: datetime | None,
+    now: datetime | None = None,
+) -> str | None:
+    """`session_unusable_reason` over loose columns, for callers holding a row.
+
+    The single place the advisory-cookie policy is applied. It exists so
+    `list_worker_bundles` can publish the same verdict the replay path uses
+    without decrypting a blob to build a `LoadedSession` first — and, more to the
+    point, so there is exactly ONE implementation of "is this dead". The worker
+    kept its own copy of this rule and drifted: it never learned that Talabat's
+    cookie expiry is advisory, so it re-logged Talabat in every 15 minutes,
+    around the clock, on a session that was fine (96 re-logins in 16.8h of
+    production on 2026-09-03, against a 23/day baseline). A second copy of a
+    liveness rule is not a style problem; it is that outage.
+    """
+    if status != SESSION_LIVE:
+        return status
     now = now or utcnow()
-    checks = [("token", session.token_expires_at)]
-    if not policy.policy_for(session.channel).cookie_expiry_advisory:
-        checks.append(("cookie", session.cookie_expires_at))
+    checks = [("token", token_expires_at)]
+    if not policy.policy_for(channel).cookie_expiry_advisory:
+        checks.append(("cookie", cookie_expires_at))
     for label, exp in checks:
         if exp is not None:
             if exp.tzinfo is None:
@@ -469,12 +498,18 @@ async def list_worker_bundles(db: AsyncSession) -> list[dict]:
     the next container start. `needs_bootstrap` rows are still returned: they
     may hold a storage_state that a headed login can resume from, and the
     worker decides whether the probe still authenticates.
+
+    Each bundle carries `unusable_reason` — this API's authoritative verdict on
+    whether the session is dead, so the worker's heal loop does not have to
+    re-derive it and drift from us again (see `unusable_reason_for`). `None`
+    means healthy; the worker re-logs in only when it is set.
     """
     rows = await db.scalars(
         select(AggregatorSession)
         .where(AggregatorSession.status != SESSION_DEAD)
         .order_by(AggregatorSession.channel)
     )
+    now = utcnow()  # one clock for every row's verdict
     bundles: list[dict] = []
     for row in rows:
         bundles.append(
@@ -490,6 +525,13 @@ async def list_worker_bundles(db: AsyncSession) -> list[dict]:
                 "cookie_expires_at": row.cookie_expires_at,
                 "status": row.status,
                 "last_warmed_at": row.last_warmed_at,
+                "unusable_reason": unusable_reason_for(
+                    channel=row.channel,
+                    status=row.status,
+                    token_expires_at=row.token_expires_at,
+                    cookie_expires_at=row.cookie_expires_at,
+                    now=now,
+                ),
             }
         )
     return bundles

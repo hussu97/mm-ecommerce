@@ -62,6 +62,11 @@ class AggregatorWorkerSession(BaseModel):
     cookie_expires_at: datetime | None = None
     status: str
     last_warmed_at: datetime | None = None
+    #: The API's authoritative "why this session is dead", or None when it is
+    #: healthy. The worker's heal loop honours this instead of re-deriving the
+    #: rule — its own copy drifted and missed that Talabat's rotating cookie
+    #: expiry is advisory, which cost ~6x the re-logins it should have run.
+    unusable_reason: str | None = None
 
 
 class AggregatorWorkerHealChannel(BaseModel):

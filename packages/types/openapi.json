@@ -2406,6 +2406,17 @@
             "additionalProperties": true,
             "title": "Tokens",
             "type": "object"
+          },
+          "unusable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unusable Reason"
           }
         },
         "required": [

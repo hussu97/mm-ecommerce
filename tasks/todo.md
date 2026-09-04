@@ -1,3 +1,33 @@
+# ACTIVE: worker/API cookie-expiry parity fix (2026-09-04)
+
+## Problem
+`reauth._channel_needs_reauth` (worker) treated `cookie_expires_at <= now` as dead
+for EVERY channel. The API's `session_store.session_unusable_reason` skips the
+cookie expiry where `ChannelPolicy.cookie_expiry_advisory` is True (talabat only —
+its PerimeterX `_px3` rotates on replay). The worker never got that exemption, so
+it called talabat dead on every 2-min heal poll forever. Measured on prod
+2026-09-03: 96 re-logins in 16.8h (~137/day) vs a 23/day baseline; talabat 41 of
+them, on a metronomic 15-16min cadence set by the 900s success floor.
+
+## Approach
+Do NOT copy the policy into the worker — that recreates the duplication that
+drifted. The API publishes its authoritative verdict (`unusable_reason`) on every
+worker bundle; the worker consumes it and keeps its local derivation only as a
+fallback for blue/green deploy skew.
+
+## Plan
+- [x] Extract `session_store.unusable_reason_for` so one policy site serves both callers
+- [x] `list_worker_bundles` publishes `unusable_reason` per row
+- [x] Add `unusable_reason` to the `AggregatorWorkerSession` schema
+- [x] Worker `_channel_needs_reauth` prefers the API verdict, falls back locally
+- [x] Regenerate OpenAPI + `packages/types` (CLAUDE.md rule 8)
+- [x] Tests: API publishes the reason; worker honours it; fallback still works
+- [x] Lint + format + test suites green
+- [ ] Commit + deploy
+- [ ] Verify re-login rate on prod after 24h
+
+---
+
 # Central Catalog & Hours Sync — Phase 1 (read + diff, writes gated OFF)
 
 Implements `docs/aggregator-portal-operations-map.md` §"Plan". **Safety rule from the

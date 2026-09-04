@@ -8676,6 +8676,8 @@ export interface components {
             tokens?: {
                 [key: string]: unknown;
             };
+            /** Unusable Reason */
+            unusable_reason?: string | null;
         };
         /** ApplePayEligibilityResponse */
         ApplePayEligibilityResponse: {

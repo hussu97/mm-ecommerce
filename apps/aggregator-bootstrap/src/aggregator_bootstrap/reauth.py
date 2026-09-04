@@ -133,10 +133,25 @@ def _try_auto_relogin(channel: str) -> ReloginOutcome:
 def _channel_needs_reauth(bundle: dict) -> str | None:
     """Why a channel's session needs a headed re-login, or None if it is fine.
 
-    Dead outright (`status != live`), or live but past a stored token/cookie
-    expiry — the same proactive check the API's `session_store.is_session_usable`
-    makes, so the daemon and the ingest agree on what "dead" means.
+    The API decides. It ships its verdict as `unusable_reason` on every worker
+    bundle (`session_store.unusable_reason_for`), and we take it as given, so the
+    daemon and the ingest cannot disagree about what "dead" means.
+
+    They did disagree, expensively. This function used to re-derive the rule and
+    claimed in its own docstring to match `session_store.is_session_usable` — but
+    the API had since learned that a channel whose anti-bot cookie ROTATES on
+    replay (Talabat's PerimeterX `_px3`, ~5-min nominal TTL) outlives that TTL,
+    so its cookie expiry is advisory. This copy never learned it, called Talabat
+    dead on every 2-minute heal poll, and re-drove a headed Chrome the moment the
+    success floor let it: 41 Talabat re-logins in 16.8h of production on
+    2026-09-03 against a 15/day baseline, on a session that was fine.
+
+    The local derivation below is kept ONLY as a fallback for the minutes of a
+    blue/green deploy when a new worker may talk to an old API that does not send
+    the field yet. Absent key ⇒ fall back; present-and-null ⇒ healthy, full stop.
     """
+    if "unusable_reason" in bundle:
+        return bundle["unusable_reason"] or None
     status = bundle.get("status")
     if status != "live":
         return status or "missing"
