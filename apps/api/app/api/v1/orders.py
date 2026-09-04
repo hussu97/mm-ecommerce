@@ -447,7 +447,11 @@ async def refresh_order_delivery(
     # happen and a needless call besides.
     refreshers = {
         FulfilmentProviderEnum.NOON_SEND.value: noon_send_service.refresh,
+        # Every Slider tier reads back the same way — bike and car are one
+        # courier — so all three map to the one refresh.
         FulfilmentProviderEnum.SLIDER.value: slider_service.refresh,
+        FulfilmentProviderEnum.SLIDER_BIKE.value: slider_service.refresh,
+        FulfilmentProviderEnum.SLIDER_CAR.value: slider_service.refresh,
     }
     ask = refreshers.get(delivery.provider)
     if ask is None:

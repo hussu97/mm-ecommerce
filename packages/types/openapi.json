@@ -18693,6 +18693,78 @@
         "title": "PinLoginResponse",
         "type": "object"
       },
+      "PolygonPage": {
+        "description": "One page of a version's zones, for the admin table \u2014 the per-area map has\n~97 of them, too many for the all-at-once shape `VersionResponse` returns.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PolygonResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolygonPageVersion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages",
+          "version"
+        ],
+        "title": "PolygonPage",
+        "type": "object"
+      },
+      "PolygonPageVersion": {
+        "description": "Just enough of the version for the table header: which map, and whether\nediting a row writes to the live storefront (it does, in place, when active).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_active"
+        ],
+        "title": "PolygonPageVersion",
+        "type": "object"
+      },
       "PolygonResponse": {
         "properties": {
           "alternate_providers": {
@@ -39442,9 +39514,174 @@
         ]
       }
     },
+    "/api/v1/delivery-zones/polygons": {
+      "get": {
+        "description": "One page of a version's zones, filtered, searched and sorted in SQL.\n\nThe all-at-once `/map` is for drawing the country; this is for the table. The\nper-area map has ~97 zones, too many to render in one block and awkward to\nscan, so this pages them and lets the admin search by name and filter by\ncourier, kitchen or batch group. Defaults to the live version, because that\nis the one an admin almost always means.",
+        "operationId": "list_polygons_api_v1_delivery_zones_polygons_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "version_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Version Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "batch_group_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Batch Group Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "display_order",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "default": "asc",
+              "title": "Direction",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolygonPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Polygons",
+        "tags": [
+          "Delivery Zones"
+        ]
+      }
+    },
     "/api/v1/delivery-zones/polygons/{polygon_id}": {
       "put": {
-        "description": "Change a draft zone's fee, courier or precedence.\n\nRefuses to touch the live map. Editing prices under the storefront's feet\nis exactly the failure the versioning exists to prevent \u2014 clone it, change\nthe copy, publish the copy.",
+        "description": "Change a zone's fee, courier, threshold or precedence \u2014 in place.\n\nThese are the *attributes* of a zone, not its shape, and they are editable on\nthe live map directly: a new map version is for a change of geometry, not for\ncorrecting a fee or re-pointing a courier. Geometry has no edit route \u2014 it\nonly changes by cloning a version \u2014 so the \"a new version for a new shape\"\nrule holds without a guard here.\n\nThe active version's parsed zones are cached in-process, so an edit to the\nlive map invalidates that cache below and the next quote prices against the\nnew value.",
         "operationId": "update_polygon_api_v1_delivery_zones_polygons__polygon_id__put",
         "parameters": [
           {
@@ -39878,7 +40115,7 @@
     },
     "/api/v1/delivery/calculate": {
       "post": {
-        "description": "The delivery fee for a pin and an order subtotal.\n\nThe identity is read for one reason only: a trial account pays nothing, and\nthis endpoint has to agree with what the order will actually charge.",
+        "description": "The delivery fee for a pin and an order subtotal.",
         "operationId": "calculate_delivery_api_v1_delivery_calculate_post",
         "requestBody": {
           "content": {
@@ -39912,11 +40149,6 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
         "summary": "Calculate Delivery",
         "tags": [
           "Delivery"
@@ -39925,7 +40157,7 @@
     },
     "/api/v1/delivery/quote": {
       "post": {
-        "description": "What delivery costs to a specific point, and how far the basket is from\nfree. The checkout calls this whenever the pin or the basket changes, so the\nfigure on screen is the one the order will be written with.\n\nThe identity is used to find the basket the courier's own estimate gets\nfiled against, and to spot a trial account, who pays no delivery fee.\nNothing about the courier appears in the response either way.",
+        "description": "What delivery costs to a specific point, and how far the basket is from\nfree. The checkout calls this whenever the pin or the basket changes, so the\nfigure on screen is the one the order will be written with.\n\nThe identity is used to find the basket the courier's own estimate gets\nfiled against. Nothing about the courier appears in the response either way.",
         "operationId": "quote_delivery_api_v1_delivery_quote_post",
         "parameters": [
           {

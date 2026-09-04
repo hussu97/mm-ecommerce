@@ -85,7 +85,16 @@ __all__ = [
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
 NOON_SEND = FulfilmentProviderEnum.NOON_SEND.value
 SLIDER = FulfilmentProviderEnum.SLIDER.value
+SLIDER_BIKE = FulfilmentProviderEnum.SLIDER_BIKE.value
+SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
 THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
+
+#: The bare legacy value and the two tier-pinned ones. All three book through
+#: Slider; the tier only decides the vehicle. A move *to* one of them is how a
+#: Slider bike is upgraded to a car by hand — and only that direction, because a
+#: car zone lists no Slider alternate, so `slider_car -> slider_bike` is never
+#: an option `allowed_targets` can offer.
+SLIDER_PROVIDERS = frozenset({SLIDER, SLIDER_BIKE, SLIDER_CAR})
 
 #: Where an order may be standing and still be moved.
 #:
@@ -275,6 +284,13 @@ async def allowed_targets(
         alternates = tuple(DEFAULT_ALTERNATES.get(preferred, ()))
 
     allowed = ({preferred} | set(alternates)) - {delivery.provider}
+    if delivery.provider == SLIDER_CAR:
+        # A Slider car never becomes a bike — the one directional rule. A car
+        # zone lists no Slider alternate, so this normally removes nothing; it
+        # matters for a *bike* zone that Slider had only a car free for at
+        # dispatch, whose `preferred` is still `slider_bike` and would otherwise
+        # be offered back.
+        allowed -= {SLIDER_BIKE}
     return preferred, tuple(sorted(allowed))
 
 
@@ -417,12 +433,12 @@ async def quote(
     * **third party** is not booked and not priced. There is no number, and
       inventing one would be worse than the honest blank.
 
-    **A human pressing this button is outside the pilot gate.** Automatic
-    routing hands a Slider zone back to noon Send or Lalamove for everyone off
-    `SLIDER_TRIAL_EMAILS`; this does not, and deliberately. The gate exists so
-    the rollout changes nothing on its own, not to stop somebody rescuing a
-    stuck order with the courier standing right there — and whoever presses it
-    is looking at the courier's name and its price.
+    **A human pressing this button is not bound by the automatic routing.**
+    Automatic routing hands a Slider zone back to noon Send or Lalamove only when
+    Slider is unconfigured; this does not consult that at all, and deliberately —
+    the fallback exists so a paid order is never stranded, not to stop somebody
+    rescuing a stuck order with the courier standing right there, and whoever
+    presses it is looking at the courier's name and its price.
     """
     delivery = await _locked(db, order, lock=False)
     await _assert_may_move(db, order, delivery, target)
@@ -480,7 +496,7 @@ async def quote(
             None,
         )
 
-    if target == SLIDER:
+    if target in SLIDER_PROVIDERS:
         allowed, why_not = await slider_service.may_serve(db, order)
         if not allowed:
             return None, why_not or "Slider will not take this order"
@@ -490,11 +506,13 @@ async def quote(
             float(address.get("latitude")),
             float(address.get("longitude")),
             branch_id=order.branch_id,
-            # The drop's emirate decides the vehicle, and the vehicle decides
-            # the fare. Without it every quote here would price the car, and an
-            # order inside Sharjah would be shown a number it will not be
-            # charged.
+            # The drop's emirate decides the vehicle for a legacy `slider` target;
+            # a tier-pinned target (`slider_car` when a bike is upgraded) names it
+            # outright. Without one or the other every quote here would price the
+            # car, and an order inside Sharjah would be shown a number it will not
+            # be charged.
             drop_emirate=str(address.get("city") or ""),
+            vehicle=slider_service.vehicle_for_provider(target),
         )
         if estimate is None:
             return None, error
@@ -711,11 +729,13 @@ async def move(
             raise ConflictError(
                 delivery.last_error or "noon Send would not take this order"
             )
-    elif target == SLIDER:
-        # Their only serviceability answer is a 422 at creation — the fare
-        # endpoint priced Riyadh and Muscat — so this is where an address
-        # outside their area is discovered, and it has to reach the person who
-        # pressed the button rather than being logged.
+    elif target in SLIDER_PROVIDERS:
+        # `delivery.provider` was set to `target` above, so `dispatch_order` books
+        # the tier the move chose — a `slider_car` target books a car. Their only
+        # serviceability answer is a 422 at creation (the fare endpoint priced
+        # Riyadh and Muscat), so this is where an address outside their area is
+        # discovered, and it has to reach the person who pressed the button
+        # rather than being logged.
         result = await slider_service.dispatch_order(db, order)
         if result is not None:
             delivery = result

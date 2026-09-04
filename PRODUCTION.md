@@ -1002,33 +1002,19 @@ gh secret set GRUBOPS_SYNC_ENABLED --repo hussu97/mm-ecommerce
 
 #### Slider (the third courier)
 
-Slider is gated to one account while the pilot runs. Six zones on the map name
-it — `Sharjah Core`, `Ajman City`, the three Dubai bands and `Umm al-Quwain
-City` — and for every customer who is **not** on `SLIDER_TRIAL_EMAILS` those
-zones resolve to exactly the courier that carried them before: noon Send inside
-Sharjah, Lalamove everywhere else. So publishing the map and shipping the code
-is a no-op for every customer but one, deliberately.
-
-> **`SLIDER_TRIAL_EMAILS` is one switch with two halves.** Setting it starts the
-> pilot: Slider carries that account's orders, *and* its delivery is free
-> anywhere it can be delivered to. Emptying it ends both together — Slider opens
-> to its zones and nobody gets free delivery. It is matched against a
-> **signed-in** customer's own account email; a guest typing the same address
-> never qualifies. It is deliberately not tied to `APP_ENV` or to any
-> environment selector, because an environment-shaped gate opens a trial to
-> everybody the moment the environment changes.
->
-> The waiver zeroes what the **customer** pays and nothing else. `quoted_cost`
-> and `cost_total` on `order_deliveries` still record what Slider charged us, so
-> cost the pilot from those two columns — the margin figure shows every pilot
-> order as fully negative, correctly.
+Slider is **live for everyone** in its zones. The pilot allow-list
+(`SLIDER_TRIAL_EMAILS`) and the free delivery it carried are gone: a Slider zone
+resolves to Slider whenever the credentials are present, exactly as a
+`noon_send` or `lalamove` zone resolves to its own courier, and the customer
+pays the zone's fee like anyone else. The only fallback left is the one every
+courier has — an absent credential or a refusal at booking drops the order to
+noon Send inside Sharjah, Lalamove elsewhere, so a paid order is never stranded.
 
 | Secret | Value | Notes |
 |--------|-------|-------|
 | `SLIDER_API_KEY` | from the Slider dashboard | `sk_live_…`. The sandbox and the `SLIDER_ENV` selector were removed when the pilot went to production, so there is one host now. Swap it and `SLIDER_ACCOUNT_ID` together. Sent as `X-Slider-Key` — their API ignores a Bearer token, and answers one exactly as it answers no credentials at all. Empty means every Slider zone falls back, exactly as an empty Lalamove or noon Send key does. Not an outage |
 | `SLIDER_ACCOUNT_ID` | from the Slider dashboard | Sent in the request **body** as `account_id`; an `X-Account-Id` header is ignored. This is the **production** account, not the sandbox one it was proved against |
 | `SLIDER_WEBHOOK_TOKEN` | a secret you generate | Set the same value in Slider's dashboard. **Enforced** — an empty token rejects every push, unlike `NOON_SEND_ENFORCE_WEBHOOK_KEY` |
-| `SLIDER_TRIAL_EMAILS` | empty until the pilot starts | Then `h_abbasi97@hotmail.com`. Comma-separated |
 
 The rest fall back in the deploy workflow:
 
@@ -1049,30 +1035,13 @@ the sandbox.
 gh secret set SLIDER_API_KEY --repo hussu97/mm-ecommerce
 gh secret set SLIDER_ACCOUNT_ID --repo hussu97/mm-ecommerce
 gh secret set SLIDER_WEBHOOK_TOKEN --repo hussu97/mm-ecommerce
-gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 ```
 
-> **Blocker, confirmed on the PRODUCTION host 2026-08-27 — the VM's IP is
-> refused, and it is the only thing left.** The block was previously recorded
-> only against the sandbox; it is now proven against `api.slider-app.com`
-> itself. The same `POST /deliveries/fare`, with the same `User-Agent`, differs
-> only by source IP:
->
-> * From the GCP VM (`34.18.98.2`): **`403`**, an HTML page from
->   `server: awselb/2.0` — refused at Slider's AWS load balancer, at the edge,
->   before the request reaches the app. Credentials are never evaluated.
-> * From any other IP, no key: **`401` JSON** (`"X-Slider-Key header is
->   required"`) — the request reaches the app.
-> * From any other IP, **with the real production key**: **`200`** and a live
->   fare (Sharjah→Ajman quoted a bike at AED 18.15, a car at AED 21.77).
->
-> So the production key and account are valid and the integration works end to
-> end; **the sole blocker is that Slider must allowlist `34.18.98.2`** on their
-> production API. Nothing below matters until they do. Do not read the VM's 403
-> as the `User-Agent` one in the provider's module docstring — the UA is sent on
-> every call above and this 403 persists through it; it is an ELB IP block, not
-> a WAF UA block. Re-check from the VM after they allowlist — `401`/`422` (JSON)
-> means reachable, a `403` HTML page means still blocked:
+> **The VM's egress IP was the last blocker, and it is resolved (2026-09-04).**
+> Slider allowlisted `34.18.98.2` on their production API. The same
+> `POST /deliveries/fare` from the VM now returns a live fare instead of the
+> `awselb/2.0` `403` HTML page it used to — re-probe any time from the live api
+> slot with `provider.fare`, or from the VM:
 >
 > ```bash
 > curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
@@ -1081,11 +1050,9 @@ gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 >   -H 'Content-Type: application/json' -d '{}'
 > ```
 >
-> Until then the pilot may stay switched on without harm: a trial order attempts
-> Slider, the 403 fails the booking, and `courier_service._dispatch_once` falls
-> it back to noon Send (Sharjah) or Lalamove (elsewhere) — the same courier that
-> carries everyone else. Nothing is stranded; only Slider-carried delivery,
-> which is the thing the pilot exists to prove, cannot happen yet.
+> A `401`/`422` (JSON) means reachable; a `403` HTML page would mean the
+> allowlist lapsed. The production key and account are valid and the integration
+> works end to end.
 
 **Fix in the Slider dashboard first.**
 
@@ -1097,27 +1064,20 @@ gh secret set SLIDER_TRIAL_EMAILS --repo hussu97/mm-ecommerce
 3. Clear any staging webhook — the inert `/api/v1/webhooks/slider/staging` route
    was removed when the pilot went to production, so that URL is now a 404.
 
-**Cutover.** Migrations `126_cost_banded_map_v2`, `127_slider_courier` and
-`128_slider_zones` shipped the re-split map, the courier row and the six Slider
-zones; each keeps naming the courier that carries it today, so publishing them
-was a no-op for everyone but the pilot account. Confirm they are applied
-(`alembic current`), then:
+**Cutover (done).** The pilot allow-list is gone: a Slider zone routes to Slider
+for everyone whenever the credentials are set, and there is no pilot free
+delivery. To confirm a live deploy:
 
-1. Merge the staging-removal change and deploy with `SLIDER_TRIAL_EMAILS`
-   **empty**. Set `SLIDER_API_KEY`, `SLIDER_ACCOUNT_ID` and
-   `SLIDER_WEBHOOK_TOKEN`; delete the now-unknown `SLIDER_ENV`,
-   `SLIDER_STAGING_WEBHOOK_TOKEN` and `SLIDER_STAGING_WEBHOOK_HEADER` secrets.
-   Still a no-op: with nobody on the list every Slider zone is quoted, stamped
-   and dispatched on its fallback (noon Send inside Sharjah, Lalamove elsewhere)
-   by `courier_service.effective_provider`.
+1. Set `SLIDER_API_KEY`, `SLIDER_ACCOUNT_ID` and `SLIDER_WEBHOOK_TOKEN`; there is
+   no `SLIDER_TRIAL_EMAILS` any more (nor `SLIDER_ENV` / `SLIDER_STAGING_*`).
 2. Confirm the config reached the container — the 2026-08-05 failure was secrets
    on the VM that no container was passed:
    `docker compose -f docker-compose.prod.yml exec api env | grep SLIDER`.
-   Expect the four set values, the numeric fallbacks and an empty
-   `SLIDER_TRIAL_EMAILS`; expect **no** `SLIDER_ENV` and no `SLIDER_STAGING_*`.
-3. Set `SLIDER_TRIAL_EMAILS` to `h_abbasi97@hotmail.com` and redeploy. The pilot
-   begins, one account, and that one setting grants both halves at once.
-4. Empty the list to end it.
+   Expect the three set values and the numeric fallbacks; expect **no**
+   `SLIDER_TRIAL_EMAILS`, `SLIDER_ENV` or `SLIDER_STAGING_*`.
+3. With the credentials present, every Slider zone is quoted, stamped and
+   dispatched on Slider; only an absent credential or a booking refusal falls
+   back (noon Send inside Sharjah, Lalamove elsewhere).
 
 > **Verified end-to-end 2026-08-21 — create, fetch and cancel all work.** Run
 > against the sandbox from a permitted IP: `POST /deliveries` returned

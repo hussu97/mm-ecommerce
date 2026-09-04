@@ -37,7 +37,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
-from app.services import trial_customer
 from app.services.delivery import delivery_service
 from app.services.delivery.delivery_zone_service import Zone
 from app.services.pos import pos_order_service, pos_pricing
@@ -303,8 +302,6 @@ async def compute_order_totals(
     address: str | None = None,
     settings: DeliverySettings | None = None,
     priced: delivery_service.DeliveryPrice | None = None,
-    user_id: uuid.UUID | None = None,
-    email: str | None = None,
     strict: bool = True,
 ) -> OrderTotals:
     """
@@ -334,17 +331,6 @@ async def compute_order_totals(
       `total` excludes it, and the checkout renders "—" or "fee from your
       address" exactly as it always has. A preview must never refuse: the
       customer is still filling the form in.
-
-    `user_id` and `email` are here for one reason: a pilot account pays no
-    delivery fee anywhere it can be delivered to. The waiver is applied here as
-    well as in `delivery_service.quote`, because these are the two places the
-    number a customer sees is produced, and a waiver in only one of them is a
-    checkout that shows free delivery and an order that charges for it.
-    `test_delivery_fee_agreement` is what holds the two together.
-
-    The identity is passed in rather than looked up, so the two callers that
-    know it — the preview and the order being written — are the only two that
-    can grant it, and both grant it identically.
 
     Everything else is identical in both modes, which is the point — see the
     module docstring.
@@ -378,11 +364,6 @@ async def compute_order_totals(
                 longitude=longitude,
                 address=address,
                 settings=settings,
-                # The same identity the waiver below reads, so a non-pilot
-                # Slider zone is costed against the courier the pilot gate would
-                # actually book rather than against Slider's dead fare endpoint.
-                user_id=user_id,
-                email=email,
             )
         zone = priced.zone
         serviceable = priced.serviceable
@@ -394,19 +375,6 @@ async def compute_order_totals(
             delivery_fee_known = False
         else:
             delivery_fee = fee
-
-        # After the pin has been priced, never before: a pilot account still may
-        # not order somewhere we cannot deliver to. Free is a discount, not an
-        # exemption from geography — which is why this sits below the
-        # `fee is None` branch above rather than short-circuiting it.
-        #
-        # It zeroes what the *customer* pays and nothing else. `quoted_cost` and
-        # `cost_total` on `order_deliveries` still record what the courier
-        # charges us, so the pilot can be costed truthfully from those two
-        # columns; the margin figure will show every pilot order as fully
-        # negative, correctly.
-        if delivery_fee_known and trial_customer.is_trial_customer(user_id, email):
-            delivery_fee = ZERO
 
     taxes = await tax_breakdown(db, lines=lines, discount_amount=discount_amount)
 

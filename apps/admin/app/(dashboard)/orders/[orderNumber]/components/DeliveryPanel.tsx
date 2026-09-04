@@ -5,7 +5,7 @@ import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { cn, formatCurrency, formatDateTime, formatTimeAgo, ordinal } from '@/lib/utils';
 
-import { COURIER_STATUS_LABEL, DELIVERED_STATUSES, PROVIDER_LABEL } from './courier-labels';
+import { COURIER_STATUS_LABEL, DELIVERED_STATUSES, PROVIDER_LABEL, SLIDER_PROVIDERS } from './courier-labels';
 
 
 /**
@@ -79,7 +79,7 @@ export function DeliveryPanel({
           variant={
             delivery.provider === 'noon_send'
               ? 'success'
-              : delivery.provider === 'slider'
+              : SLIDER_PROVIDERS.has(delivery.provider)
                 ? 'warning'
                 : isCourier
                   ? 'info'
@@ -288,7 +288,7 @@ export function DeliveryPanel({
               retries them for a day, so the endpoint refuses it and a button
               here would be a 400 waiting to happen. */}
           {!isSettled &&
-            (delivery.provider === 'noon_send' || delivery.provider === 'slider') &&
+            (delivery.provider === 'noon_send' || SLIDER_PROVIDERS.has(delivery.provider)) &&
             delivery.courier_order_id && (
             <Button size="sm" variant="ghost" onClick={onRefresh} disabled={busy}>
               <span className="material-icons text-[14px]">sync</span>

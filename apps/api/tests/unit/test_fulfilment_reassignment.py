@@ -173,6 +173,41 @@ async def test_a_noon_send_zone_may_go_either_way():
 
 
 @pytest.mark.asyncio
+async def test_a_slider_bike_may_be_upgraded_to_a_car():
+    """The one move within Slider. A bike zone lists the car among its
+    alternates, so an admin can upgrade when bikes are scarce."""
+    delivery = _delivery(provider="slider_bike")
+    db = _Db(
+        delivery, _polygon("slider_bike", ["slider_car", "lalamove", "third_party"])
+    )
+    _, allowed = await reassign.allowed_targets(db, _order(), delivery)
+    assert set(allowed) == {"slider_car", LALAMOVE, THIRD_PARTY}
+
+
+@pytest.mark.asyncio
+async def test_a_slider_car_is_never_offered_a_bike():
+    """A car never becomes a bike — the one directional rule. A genuine car zone
+    lists no Slider alternate; and a bike zone that Slider had only a car free
+    for at dispatch, whose preferred is still `slider_bike`, does not offer it
+    back either."""
+    # A genuine car zone.
+    delivery = _delivery(provider="slider_car")
+    db = _Db(delivery, _polygon("slider_car", ["lalamove", "third_party"]))
+    _, allowed = await reassign.allowed_targets(db, _order(), delivery)
+    assert set(allowed) == {LALAMOVE, THIRD_PARTY}
+    assert "slider_bike" not in allowed
+
+    # A bike zone substituted to a car at dispatch: preferred is `slider_bike`,
+    # but the current provider is `slider_car`, so the guard still removes it.
+    delivery = _delivery(provider="slider_car")
+    db = _Db(
+        delivery, _polygon("slider_bike", ["slider_car", "lalamove", "third_party"])
+    )
+    _, allowed = await reassign.allowed_targets(db, _order(), delivery)
+    assert "slider_bike" not in allowed
+
+
+@pytest.mark.asyncio
 async def test_an_order_can_be_moved_back_to_its_zones_own_courier():
     """
     The return leg, and the reason the preferred courier is in the allowed set

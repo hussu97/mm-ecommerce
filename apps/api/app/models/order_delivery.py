@@ -195,11 +195,23 @@ _STATUS_SETS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 
 
+def _status_family(provider: str | None) -> str:
+    """The courier whose status vocabulary a provider speaks.
+
+    Slider's bike and car are two providers (`slider_bike`, `slider_car`) but one
+    courier with one set of statuses, so both resolve to `slider` for a status
+    lookup. Everything else is itself.
+    """
+    if provider in ("slider_bike", "slider_car"):
+        return "slider"
+    return provider or ""
+
+
 def is_terminal(provider: str | None, status: str | None) -> bool:
     """Nothing more will happen to this booking on the courier's side."""
     return (
         bool(status)
-        and status in _STATUS_SETS.get(provider or "", (frozenset(),) * 2)[0]
+        and status in _STATUS_SETS.get(_status_family(provider), (frozenset(),) * 2)[0]
     )
 
 
@@ -241,7 +253,7 @@ _COLLECTED_STATUSES: dict[str, frozenset[str]] = {
 def is_collected(provider: str | None, status: str | None) -> bool:
     """The driver has the parcel; they are no longer coming to the kitchen."""
     return bool(status) and status in _COLLECTED_STATUSES.get(
-        provider or "", frozenset()
+        _status_family(provider), frozenset()
     )
 
 
@@ -254,7 +266,7 @@ def is_failed(provider: str | None, status: str | None) -> bool:
     """
     return (
         bool(status)
-        and status in _STATUS_SETS.get(provider or "", (frozenset(),) * 2)[1]
+        and status in _STATUS_SETS.get(_status_family(provider), (frozenset(),) * 2)[1]
     )
 
 

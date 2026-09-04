@@ -46,8 +46,6 @@ def noon_send_is_off(monkeypatch):
     monkeypatch.setattr(cfg.settings, "NOON_SEND_API_KEY", "")
 
 
-USER_ID = uuid.uuid4()
-
 SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),
 )
@@ -90,7 +88,7 @@ def _pinned():
     )
 
 
-async def _fee(user_id, email, subtotal="100.00"):
+async def _fee(subtotal="100.00"):
     settings_patch, zone_patch, promise_patch = _pinned()
     with settings_patch, zone_patch, promise_patch:
         return await delivery_service.calculate_fee(
@@ -99,12 +97,10 @@ async def _fee(user_id, email, subtotal="100.00"):
             AsyncMock(),
             latitude=25.3304,
             longitude=55.3736,
-            user_id=user_id,
-            email=email,
         )
 
 
-async def _quote(user_id, email, subtotal="100.00"):
+async def _quote(subtotal="100.00"):
     settings_patch, zone_patch, promise_patch = _pinned()
     with settings_patch, zone_patch, promise_patch:
         return await delivery_service.quote(
@@ -112,19 +108,16 @@ async def _quote(user_id, email, subtotal="100.00"):
             Decimal(subtotal),
             latitude=25.3304,
             longitude=55.3736,
-            user_id=user_id,
-            email=email,
         )
 
 
 async def test_the_zone_fee_is_what_everyone_pays():
     """
-    Everyone. Signed in, signed out, whoever they are — the pin decides the
-    price and nothing about the customer does.
+    The pin decides the price and nothing about the customer does — the identity
+    that used to waive it for a trial account is gone, so there is only the one
+    answer left, whoever asks.
     """
-    assert await _fee(USER_ID, "someone@example.com") == Decimal("15.00")
-    assert await _fee(None, None) == Decimal("15.00")
-    assert await _fee(None, "h_abbasi97@hotmail.com") == Decimal("15.00")
+    assert await _fee() == Decimal("15.00")
 
 
 async def test_an_anonymous_call_still_prices_normally():
@@ -147,26 +140,18 @@ async def test_an_anonymous_call_still_prices_normally():
 
 async def test_free_delivery_over_the_threshold_reaches_both():
     """The one discount that does exist has to agree with itself as well."""
-    shown = await _quote(USER_ID, "someone@example.com", subtotal="250.00")
+    shown = await _quote(subtotal="250.00")
     assert shown["delivery_fee"] == 0.0
     assert shown["free_delivery_applied"] is True
     # Otherwise the summary reads "free delivery" and "AED 100 to go" at once.
     assert shown["remaining_for_free"] == 0.0
     # Still the real zone price, so the strike-through has something to strike.
     assert shown["base_fee"] == 15.0
-    assert await _fee(USER_ID, "someone@example.com", subtotal="250.00") == Decimal(
-        "0.00"
-    )
+    assert await _fee(subtotal="250.00") == Decimal("0.00")
 
 
 async def test_the_quote_and_the_order_never_disagree():
     for subtotal in ("100.00", "199.99", "200.00", "250.00"):
-        for user_id, email in (
-            (USER_ID, "someone@example.com"),
-            (None, None),
-        ):
-            shown = (await _quote(user_id, email, subtotal))["delivery_fee"]
-            charged = float(await _fee(user_id, email, subtotal))
-            assert shown == charged, (
-                f"{email} at {subtotal} is shown {shown} and charged {charged}"
-            )
+        shown = (await _quote(subtotal))["delivery_fee"]
+        charged = float(await _fee(subtotal))
+        assert shown == charged, f"{subtotal} is shown {shown} and charged {charged}"

@@ -790,8 +790,22 @@ export interface PaginatedEmailLogs {
   pages: number;
 }
 
-/** Who carries an order out of the kitchen. */
-export type FulfilmentProvider = 'lalamove' | 'noon_send' | 'slider' | 'third_party';
+/**
+ * Who carries an order out of the kitchen.
+ *
+ * `slider_bike` and `slider_car` are the two Slider fleets, priced apart because
+ * a bike run inside Sharjah and a car to Jebel Ali cost nothing like each other.
+ * Bare `slider` is the legacy single value they grew out of: still spoken by
+ * older maps and historical orders, so it stays in the union rather than being
+ * migrated away underneath them.
+ */
+export type FulfilmentProvider =
+  | 'lalamove'
+  | 'noon_send'
+  | 'slider_bike'
+  | 'slider_car'
+  | 'slider'
+  | 'third_party';
 
 /**
  * Where a zone's fee comes from. `static` charges the zone's own published
@@ -915,6 +929,24 @@ export interface DeliveryMapVersion {
   created_at: string;
   activated_at: string | null;
   polygons: DeliveryZone[];
+}
+
+/**
+ * One page of a version's zones, from `GET /delivery-zones/polygons`.
+ *
+ * The map now carries ~97 per-area zones, far too many to hand over whole and
+ * far too many to scroll as one table — so this endpoint pages, searches, sorts
+ * and filters them in SQL. Geometry is deliberately absent: the rows are for
+ * pricing, and the outlines are the Map tab's job. `version` echoes which map
+ * these rows belong to (the active one when no `version_id` was asked for).
+ */
+export interface PolygonPage {
+  items: DeliveryZone[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+  version: { id: string; name: string; is_active: boolean } | null;
 }
 
 /** GeoJSON as the API hands it over — [lng, lat], MultiPolygon, holes after the outline. */

@@ -368,18 +368,17 @@ async def test_a_noon_send_zone_is_costed_on_its_own_rate_card(cart, monkeypatch
     assert cart.delivery_quote_reference is None
 
 
-async def test_a_non_pilot_slider_zone_parks_its_fallback_courier(cart, monkeypatch):
+async def test_a_slider_zone_parks_slider_when_configured(cart, monkeypatch):
     """
     The provider filed against the basket is the one the quote was costed
-    against, not the zone's raw `slider`. A non-pilot customer in a Slider zone
-    is quoted — and later dispatched — on the fallback, so parking `slider` here
-    would disagree with the courier the estimate actually belongs to and would
-    reintroduce the Slider name onto an order that never touches Slider.
+    against. A Slider zone with Slider configured is quoted — and later
+    dispatched — on Slider, so `slider` is the courier the estimate belongs to
+    and the courier that belongs beside it on the basket.
     """
     from app.core.config import settings as app_settings
+    from app.services.couriers import slider_service
 
     monkeypatch.setattr(app_settings, "SLIDER_API_KEY", "sk_test")
-    monkeypatch.setattr(app_settings, "SLIDER_TRIAL_EMAILS", "pilot@example.com")
 
     ajman = Zone(
         id=uuid.uuid4(),
@@ -395,8 +394,15 @@ async def test_a_non_pilot_slider_zone_parks_its_fallback_courier(cart, monkeypa
         free_delivery_threshold=Decimal("75.00"),
     )
 
+    # A configured Slider zone is costed on Slider's own estimate, so stub that
+    # one — `_patches` only stubs Lalamove's.
+    slider_p = patch.object(
+        slider_service,
+        "estimate_for_point",
+        new=AsyncMock(return_value=(ESTIMATE, None)),
+    )
     settings_p, zone_p, est_p, windows_p = _patches(ESTIMATE, None, ajman)
-    with settings_p, zone_p, est_p, windows_p:
+    with settings_p, zone_p, est_p, windows_p, slider_p:
         await delivery_service.quote(
             AsyncMock(),
             Decimal("100.00"),
@@ -404,11 +410,9 @@ async def test_a_non_pilot_slider_zone_parks_its_fallback_courier(cart, monkeypa
             longitude=55.4384,
             cart=cart,
             address="Ajman",
-            user_id=uuid.uuid4(),
-            email="someone@else.com",
         )
 
-    assert cart.delivery_quote_provider == "lalamove"
+    assert cart.delivery_quote_provider == "slider"
     assert cart.delivery_quote_zone == "Ajman City"
 
 

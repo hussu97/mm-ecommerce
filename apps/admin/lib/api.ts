@@ -7,7 +7,7 @@ import type {
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
   BatchGroup,
-  BatchWindow, BatchWindowWrite, Courier, CourierWrite, DeliveryBatch, DeliveryZoneMap,
+  BatchWindow, BatchWindowWrite, Courier, CourierWrite, DeliveryBatch, DeliveryZoneMap, PolygonPage,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
@@ -492,6 +492,23 @@ export const ordersApi = {
 
 export const deliveryZonesApi = {
   listVersions: () => api.get<DeliveryMapVersion[]>('/delivery-zones/versions'),
+  /**
+   * One paged, searched, sorted, filtered slice of a version's zones — the
+   * ~97-row map is far too long to hand over whole. Defaults to the active
+   * version when `version_id` is omitted. Carries no geometry: this is the
+   * pricing table, not the map. `updateZone` edits a row in place.
+   */
+  listPolygons: (params: {
+    version_id?: string;
+    page?: number;
+    per_page?: number;
+    search?: string;
+    provider?: string;
+    branch_id?: string;
+    batch_group_id?: string;
+    sort?: string;
+    direction?: 'asc' | 'desc';
+  }) => api.get<PolygonPage>(`/delivery-zones/polygons${buildQs(params)}`),
   summary: () => api.get<DeliveryZoneSummary>('/delivery-zones/summary'),
   /** The three numbers that apply in every zone. */
   getSettings: () => api.get<DeliverySettings>('/delivery-zones/settings'),
@@ -500,7 +517,12 @@ export const deliveryZonesApi = {
   /** Copy a map into an editable draft. Defaults to copying the live one. */
   createVersion: (data: { name: string; notes?: string; source_version_id?: string }) =>
     api.post<DeliveryMapVersion>('/delivery-zones/versions', data),
-  /** Only works on a draft — the live map is read-only by design. */
+  /**
+   * Edit a zone's attributes (fee, threshold, courier, alternates, branch,
+   * precedence) in place — allowed on the live map too, since a new version is
+   * for a change of *geometry*, not for correcting a fee. Older, superseded
+   * versions stay read-only.
+   */
   updateZone: (
     zoneId: string,
     data: {

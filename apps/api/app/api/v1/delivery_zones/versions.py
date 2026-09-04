@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -34,7 +34,14 @@ from app.services import audit_service
 from app.services.couriers import courier_service
 from app.services.delivery import delivery_service, delivery_zone_service
 
-from .schemas import PolygonResponse, PolygonUpdate, VersionCreate, VersionResponse
+from .schemas import (
+    PolygonPage,
+    PolygonPageVersion,
+    PolygonResponse,
+    PolygonUpdate,
+    VersionCreate,
+    VersionResponse,
+)
 
 router = APIRouter()
 
@@ -180,6 +187,93 @@ async def zone_map(
     }
 
 
+#: Which column a `sort` name maps to. Anything else falls back to the drawing
+#: order, which is also the tiebreaker on every sort so a page is deterministic.
+_SORTABLE = {
+    "name": DeliveryPolygon.name,
+    "delivery_fee": DeliveryPolygon.delivery_fee,
+    "free_delivery_threshold": DeliveryPolygon.free_delivery_threshold,
+    "fulfilment_provider": DeliveryPolygon.fulfilment_provider,
+    "display_order": DeliveryPolygon.display_order,
+}
+
+
+@router.get("/polygons", response_model=PolygonPage)
+async def list_polygons(
+    version_id: uuid.UUID | None = None,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=2000),
+    search: str | None = None,
+    provider: str | None = None,
+    branch_id: uuid.UUID | None = None,
+    batch_group_id: uuid.UUID | None = None,
+    sort: str = "display_order",
+    direction: str = "asc",
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("delivery.manage")),
+):
+    """
+    One page of a version's zones, filtered, searched and sorted in SQL.
+
+    The all-at-once `/map` is for drawing the country; this is for the table. The
+    per-area map has ~97 zones, too many to render in one block and awkward to
+    scan, so this pages them and lets the admin search by name and filter by
+    courier, kitchen or batch group. Defaults to the live version, because that
+    is the one an admin almost always means.
+    """
+    version = None
+    if version_id is None:
+        active = await delivery_zone_service.get_active_version(db)
+        if active is None:
+            return PolygonPage(
+                items=[], total=0, page=page, per_page=per_page, pages=0, version=None
+            )
+        version = active
+        version_id = active.id
+    else:
+        version = await db.get(DeliveryPolygonVersion, version_id)
+        if version is None:
+            raise NotFoundError("Map version not found")
+
+    filters = [DeliveryPolygon.version_id == version_id]
+    if search:
+        filters.append(DeliveryPolygon.name.ilike(f"%{search.strip()}%"))
+    if provider:
+        filters.append(DeliveryPolygon.fulfilment_provider == provider)
+    if branch_id is not None:
+        filters.append(DeliveryPolygon.branch_id == branch_id)
+    if batch_group_id is not None:
+        filters.append(DeliveryPolygon.batch_group_id == batch_group_id)
+
+    total = await db.scalar(
+        select(func.count()).select_from(DeliveryPolygon).where(*filters)
+    )
+
+    column = _SORTABLE.get(sort, DeliveryPolygon.display_order)
+    order = column.desc() if direction == "desc" else column.asc()
+    stmt = (
+        select(DeliveryPolygon)
+        .where(*filters)
+        # `display_order` is the tiebreaker on every sort, so equal fees (there
+        # are many) come back in a stable order rather than shuffling per page.
+        .order_by(order, DeliveryPolygon.display_order)
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    return PolygonPage(
+        items=[PolygonResponse.of(p) for p in rows],
+        total=total or 0,
+        page=page,
+        per_page=per_page,
+        pages=((total or 0) + per_page - 1) // per_page,
+        version=PolygonPageVersion(
+            id=str(version.id), name=version.name, is_active=version.is_active
+        ),
+    )
+
+
 @router.get("/polygons/{polygon_id}/geometry", response_model=dict[str, Any])
 async def get_polygon_geometry(
     polygon_id: uuid.UUID,
@@ -315,11 +409,17 @@ async def update_polygon(
     admin: User = Depends(require("delivery.manage")),
 ):
     """
-    Change a draft zone's fee, courier or precedence.
+    Change a zone's fee, courier, threshold or precedence — in place.
 
-    Refuses to touch the live map. Editing prices under the storefront's feet
-    is exactly the failure the versioning exists to prevent — clone it, change
-    the copy, publish the copy.
+    These are the *attributes* of a zone, not its shape, and they are editable on
+    the live map directly: a new map version is for a change of geometry, not for
+    correcting a fee or re-pointing a courier. Geometry has no edit route — it
+    only changes by cloning a version — so the "a new version for a new shape"
+    rule holds without a guard here.
+
+    The active version's parsed zones are cached in-process, so an edit to the
+    live map invalidates that cache below and the next quote prices against the
+    new value.
     """
     result = await db.execute(
         select(DeliveryPolygon)
@@ -329,10 +429,6 @@ async def update_polygon(
     polygon = result.scalars().first()
     if polygon is None:
         raise NotFoundError("Zone not found")
-    if polygon.version.is_active:
-        raise ConflictError(
-            "This map is live. Copy it to a draft, edit the draft, then publish it.",
-        )
 
     before = {
         "delivery_fee": float(polygon.delivery_fee),
@@ -472,6 +568,10 @@ async def update_polygon(
         },
         request=request,
     )
+    if polygon.version.is_active:
+        # The active version's zones are parsed and cached in-process; an in-place
+        # edit has to clear it or the next quote prices against the stale value.
+        delivery_zone_service.invalidate_cache()
     return PolygonResponse.of(polygon)
 
 

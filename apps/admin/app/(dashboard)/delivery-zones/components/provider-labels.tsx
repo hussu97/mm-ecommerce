@@ -4,20 +4,24 @@
  * The courier vocabulary the delivery-map screens share, and the two small
  * components that render an alternate-provider choice.
  *
- * Named "provider" rather than "Courier API": there are three of them now, they
- * cost different amounts, and only one can be batched — so which is which
- * matters.
+ * Named "provider" rather than "Courier API": there are five fulfilment types
+ * now — Lalamove, noon Send, the two Slider fleets (bike and car) and a third
+ * party — they cost different amounts, and only one can be batched, so which is
+ * which matters. Bare `slider` lingers as the legacy value the two fleets split
+ * out of, kept last so a new map is nudged towards the fleet it actually means.
  */
 
 import type { DeliveryPricingMode, FulfilmentProvider } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
-// Named rather than called "Courier API": there are three of them now, they
-// cost different amounts, and only one can be batched — so which is which
-// matters.
+// Named rather than called "Courier API": there are five fulfilment types now,
+// they cost different amounts, and only one can be batched — so which is which
+// matters. `slider` is the legacy single fleet the bike/car pair replaced.
 export const PROVIDER_LABEL: Record<FulfilmentProvider, string> = {
   lalamove: 'Lalamove',
   noon_send: 'noon Send',
+  slider_bike: 'Slider (bike)',
+  slider_car: 'Slider (car)',
   slider: 'Slider',
   third_party: 'Third party',
 };
@@ -25,6 +29,8 @@ export const PROVIDER_LABEL: Record<FulfilmentProvider, string> = {
 export const PROVIDER_OPTIONS = [
   { value: 'lalamove', label: PROVIDER_LABEL.lalamove },
   { value: 'noon_send', label: PROVIDER_LABEL.noon_send },
+  { value: 'slider_bike', label: PROVIDER_LABEL.slider_bike },
+  { value: 'slider_car', label: PROVIDER_LABEL.slider_car },
   { value: 'slider', label: PROVIDER_LABEL.slider },
   { value: 'third_party', label: PROVIDER_LABEL.third_party },
 ];
@@ -42,17 +48,23 @@ export const DEFAULT_ALTERNATES: Record<FulfilmentProvider, FulfilmentProvider[]
   lalamove: ['third_party'],
   third_party: ['lalamove'],
   noon_send: ['third_party', 'lalamove'],
-  // Slider is offered Lalamove, which has none of noon Send's limits, and a
-  // third party as the manual escape. Not noon Send by default: five of the six
-  // Slider zones are outside Sharjah, where noon Send cannot go. `Sharjah Core`
-  // is the exception and is seeded with them explicitly, which is exactly what
-  // the pilot gate falls back to there.
+  // A bike zone falls back to the car first — same fleet, no new integration —
+  // then to Lalamove and a third party as the manual escape.
+  slider_bike: ['slider_car', 'lalamove', 'third_party'],
+  // A car zone has no smaller Slider to drop to, so it goes straight to
+  // Lalamove and a third party.
+  slider_car: ['lalamove', 'third_party'],
+  // Legacy single-fleet Slider is offered Lalamove, which has none of noon
+  // Send's limits, and a third party as the manual escape. Not noon Send by
+  // default: most Slider zones are outside Sharjah, where noon Send cannot go.
   slider: ['lalamove', 'third_party'],
 };
 
 export const ALL_PROVIDERS: FulfilmentProvider[] = [
   'lalamove',
   'noon_send',
+  'slider_bike',
+  'slider_car',
   'slider',
   'third_party',
 ];
@@ -136,6 +148,10 @@ export function AlternatePicker({
 export const PROVIDER_BADGE: Record<FulfilmentProvider, 'info' | 'success' | 'warning' | 'neutral'> = {
   lalamove: 'info',
   noon_send: 'success',
+  // The whole Slider family shares the one amber badge — the fleet is read from
+  // the label, not the colour, and three amber variants would only muddy it.
+  slider_bike: 'warning',
+  slider_car: 'warning',
   slider: 'warning',
   third_party: 'neutral',
 };

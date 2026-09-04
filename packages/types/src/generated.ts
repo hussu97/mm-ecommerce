@@ -2700,6 +2700,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/delivery-zones/polygons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Polygons
+         * @description One page of a version's zones, filtered, searched and sorted in SQL.
+         *
+         *     The all-at-once `/map` is for drawing the country; this is for the table. The
+         *     per-area map has ~97 zones, too many to render in one block and awkward to
+         *     scan, so this pages them and lets the admin search by name and filter by
+         *     courier, kitchen or batch group. Defaults to the live version, because that
+         *     is the one an admin almost always means.
+         */
+        get: operations["list_polygons_api_v1_delivery_zones_polygons_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delivery-zones/polygons/{polygon_id}": {
         parameters: {
             query?: never;
@@ -2710,11 +2736,17 @@ export interface paths {
         get?: never;
         /**
          * Update Polygon
-         * @description Change a draft zone's fee, courier or precedence.
+         * @description Change a zone's fee, courier, threshold or precedence — in place.
          *
-         *     Refuses to touch the live map. Editing prices under the storefront's feet
-         *     is exactly the failure the versioning exists to prevent — clone it, change
-         *     the copy, publish the copy.
+         *     These are the *attributes* of a zone, not its shape, and they are editable on
+         *     the live map directly: a new map version is for a change of geometry, not for
+         *     correcting a fee or re-pointing a courier. Geometry has no edit route — it
+         *     only changes by cloning a version — so the "a new version for a new shape"
+         *     rule holds without a guard here.
+         *
+         *     The active version's parsed zones are cached in-process, so an edit to the
+         *     live map invalidates that cache below and the next quote prices against the
+         *     new value.
          */
         put: operations["update_polygon_api_v1_delivery_zones_polygons__polygon_id__put"];
         post?: never;
@@ -2900,9 +2932,6 @@ export interface paths {
         /**
          * Calculate Delivery
          * @description The delivery fee for a pin and an order subtotal.
-         *
-         *     The identity is read for one reason only: a trial account pays nothing, and
-         *     this endpoint has to agree with what the order will actually charge.
          */
         post: operations["calculate_delivery_api_v1_delivery_calculate_post"];
         delete?: never;
@@ -2927,8 +2956,7 @@ export interface paths {
          *     figure on screen is the one the order will be written with.
          *
          *     The identity is used to find the basket the courier's own estimate gets
-         *     filed against, and to spot a trial account, who pays no delivery fee.
-         *     Nothing about the courier appears in the response either way.
+         *     filed against. Nothing about the courier appears in the response either way.
          */
         post: operations["quote_delivery_api_v1_delivery_quote_post"];
         delete?: never;
@@ -14160,6 +14188,37 @@ export interface components {
              */
             token_type: string;
         };
+        /**
+         * PolygonPage
+         * @description One page of a version's zones, for the admin table — the per-area map has
+         *     ~97 of them, too many for the all-at-once shape `VersionResponse` returns.
+         */
+        PolygonPage: {
+            /** Items */
+            items: components["schemas"]["PolygonResponse"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+            version: components["schemas"]["PolygonPageVersion"] | null;
+        };
+        /**
+         * PolygonPageVersion
+         * @description Just enough of the version for the table header: which map, and whether
+         *     editing a row writes to the live storefront (it does, in place, when active).
+         */
+        PolygonPageVersion: {
+            /** Id */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+        };
         /** PolygonResponse */
         PolygonResponse: {
             /** Alternate Providers */
@@ -23080,6 +23139,45 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_polygons_api_v1_delivery_zones_polygons_get: {
+        parameters: {
+            query?: {
+                version_id?: string | null;
+                page?: number;
+                per_page?: number;
+                search?: string | null;
+                provider?: string | null;
+                branch_id?: string | null;
+                batch_group_id?: string | null;
+                sort?: string;
+                direction?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolygonPage"];
                 };
             };
             /** @description Validation Error */

@@ -5,8 +5,9 @@ order list, the fulfilment panel — needs the same three things: a stable code,
 display name, and a logo. This module is the one place that answers that, for
 both kinds of carrier:
 
-* the couriers MM dispatches itself (`lalamove`, `noon_send`, `slider`,
-  `third_party`), keyed by the order's fulfilment `provider`; and
+* the couriers MM dispatches itself (`lalamove`, `noon_send`, `slider_bike`,
+  `slider_car`, the legacy bare `slider`, `third_party`), keyed by the order's
+  fulfilment `provider`; and
 * the marketplace channels an aggregator order arrives on (`talabat`, `keeta`,
   `noon_food`, `deliveroo`, `careem`), keyed by the order's `aggregator_channel`.
 
@@ -49,6 +50,13 @@ __all__ = [
 COURIER_NAMES: dict[str, str] = {
     "lalamove": "Lalamove",
     "noon_send": "noon Send",
+    # Slider's two vehicle tiers are two dispatch providers but one company; they
+    # each carry orders now (the bare `slider` is legacy, kept for old rows), so
+    # each is its own badge, filter chip and scorecard line. Without them a
+    # `slider_bike`/`slider_car` delivery is read as carrier-less and dropped from
+    # the per-courier breakdown.
+    "slider_bike": "Slider (bike)",
+    "slider_car": "Slider (car)",
     "slider": "Slider",
     "third_party": "Third party",
     "talabat": "Talabat",
@@ -122,10 +130,17 @@ def code_for_channel(channel: str | None) -> str | None:
 
 def logo_url_for(code: str) -> str:
     """The logo URL for a courier code — the DB value if loaded, else the
-    conventional ``{LOGO_BASE}/{code}.png`` in the public GCS image bucket."""
+    conventional ``{LOGO_BASE}/{code}.png`` in the public GCS image bucket.
+
+    Slider's bike and car share Slider's one badge — a company, not a vehicle,
+    is what a logo identifies — so absent a per-tier row in the database they
+    fall back to ``slider.png`` rather than to a ``slider_bike.png`` that does
+    not exist.
+    """
     if code in _LOGO_CACHE:
         return _LOGO_CACHE[code]
-    return f"{_LOGO_BASE}/{code}.png"
+    logo_code = "slider" if code in ("slider_bike", "slider_car") else code
+    return f"{_LOGO_BASE}/{logo_code}.png"
 
 
 def _badge(code: str | None) -> dict | None:

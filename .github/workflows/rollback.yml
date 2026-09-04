@@ -169,7 +169,6 @@ jobs:
           SLIDER_DETOUR_FACTOR=${{ secrets.SLIDER_DETOUR_FACTOR || '1.44' }}
           SLIDER_WEBHOOK_TOKEN=${{ secrets.SLIDER_WEBHOOK_TOKEN }}
           SLIDER_WEBHOOK_HEADER=${{ secrets.SLIDER_WEBHOOK_HEADER || 'X-Slider-Token' }}
-          SLIDER_TRIAL_EMAILS=${{ secrets.SLIDER_TRIAL_EMAILS }}
           MAPBOX_ACCESS_TOKEN=${{ secrets.MAPBOX_ACCESS_TOKEN }}
           MAPBOX_MIN_ROUTE_INTERVAL_S=${{ secrets.MAPBOX_MIN_ROUTE_INTERVAL_S || '60' }}
           MAPBOX_TIMEOUT_S=${{ secrets.MAPBOX_TIMEOUT_S || '5.0' }}
