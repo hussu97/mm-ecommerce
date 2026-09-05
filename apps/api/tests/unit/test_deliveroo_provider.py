@@ -23,6 +23,7 @@ from app.services.providers.deliveroo_provider import (
     DeliverooClient,
     _num,
     _parse_date,
+    _restaurant_records_from_login,
 )
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -687,3 +688,25 @@ async def test_request_json_does_not_remint_twice():
         with pytest.raises(AggregatorAuthError):
             await client.request_json(session, "GET", "https://hub/api/orders")
     assert remints["n"] == 1
+
+
+def test_restaurant_records_from_login_extracts_drn_and_status():
+    # The opening-hours WRITE addresses the drn_id (UUID), not the numeric id, and
+    # only persists for an OPEN restaurant — both come off the login/session body.
+    body = {
+        "restaurant_companies": [
+            {
+                "restaurants": [
+                    {"id": 693359, "drn_id": "uuid-barsha", "status": "OPEN"},
+                    {"id": "693361", "drn_id": "uuid-dso", "status": "READY_TO_OPEN"},
+                    {"id": "693360", "drn_id": "uuid-majaz", "status": "CLOSED"},
+                    {"id": "999", "status": "OPEN"},  # no drn -> dropped
+                ]
+            }
+        ]
+    }
+    recs = _restaurant_records_from_login(body)
+    assert set(recs) == {"693359", "693361", "693360"}
+    assert recs["693359"] == {"drn_id": "uuid-barsha", "status": "OPEN"}
+    assert recs["693361"]["status"] == "READY_TO_OPEN"
+    assert recs["693360"]["drn_id"] == "uuid-majaz"
