@@ -74,7 +74,7 @@ Three parallel audits. Real gaps found + FIXED:
 
 - [x] Fix every correctness or scalability defect found, keeping compatibility adapters intact.
 - [x] Add focused regression tests for the costing, recursive yield, report reconciliation, Foodics import, source-event atomicity, and POS validation failures found.
-- [x] Re-run migration upgrade/downgrade/re-upgrade on a fresh PostgreSQL database (`185_inventory_v2` head).
+- [x] Re-run migration upgrade/downgrade/re-upgrade on a fresh PostgreSQL database (`186_inventory_v2` head after rebasing onto current main).
 - [x] Run backend lint/tests, regenerate and verify OpenAPI contracts, and run admin type/lint checks.
 - [x] Run `swift test` and build both the iPad and iPhone schemes.
 - [x] Record the final findings and verification evidence here, then commit coherent audit fixes with the required author.
@@ -94,8 +94,8 @@ Three parallel audits. Real gaps found + FIXED:
 
 ## Verification
 
-- Backend: `2810 passed, 189 skipped`; Ruff clean.
-- Inventory-focused backend: `52 passed` after the final service changes.
+- Backend: `2812 passed, 189 skipped` on the rebased branch; Ruff clean.
+- Inventory-focused backend: `101 passed` after rebasing onto current main and the final service changes.
 - Contracts/admin: generated OpenAPI fresh; types `3 passed`; admin `62 passed`; TypeScript clean; ESLint has two pre-existing warnings outside inventory and no errors.
-- Database: fresh PostgreSQL upgrade to head, downgrade to 184, and re-upgrade to `185_inventory_v2` passed.
+- Database: fresh PostgreSQL upgrade to head, downgrade to main's 185, and re-upgrade to `186_inventory_v2` passed.
 - POS: `332 passed`; `MMPos` iPad simulator build passed; `MMPosPhone` iPhone simulator build passed.
