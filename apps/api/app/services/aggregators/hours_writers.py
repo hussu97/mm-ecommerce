@@ -614,11 +614,20 @@ async def _deliveroo_push_weekly(
     session = await _load_session(db, "deliveroo")
     row = await _branch_map(db, "deliveroo", branch.id)
     outlet = row.external_outlet_id
-    # Deliveroo's payload is only the hours list (no envelope to preserve); the
-    # read confirms the outlet/session before a live PUT would replace it. The live
-    # write goes to the outlet's drn_id (UUID), not this numeric id — resolved
-    # inside put_opening_hours; the numeric id is what get/orders use.
-    await dp.provider.get_opening_hours(session, outlet)
+    # Deliveroo's payload is only the hours list (no envelope to preserve). The live
+    # write goes to the outlet's drn_id (UUID), not this numeric id — resolved inside
+    # put_opening_hours; the numeric id is what get/orders use. Deliveroo only RETAINS
+    # an hours PUT for an OPEN restaurant (a READY_TO_OPEN / CLOSED outlet answers 204
+    # and silently drops it — verified live 2026-09-05), so skip a non-OPEN outlet
+    # rather than record a false "completed". This status read also confirms the
+    # session before a live PUT.
+    status = await dp.provider.restaurant_status(session, outlet)
+    if status.upper() != "OPEN":
+        raise HoursWriteUnsupported(
+            f"deliveroo outlet {outlet} is not OPEN on the marketplace "
+            f"(status={status or 'unknown'}); an opening-hours PUT is accepted (204) "
+            "but silently dropped until the restaurant goes live"
+        )
     return {
         "session": session,
         "outlet_id": outlet,

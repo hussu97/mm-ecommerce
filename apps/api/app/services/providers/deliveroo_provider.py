@@ -235,23 +235,29 @@ def _restaurant_ids_from_login(body: dict[str, Any]) -> list[str]:
     return ids
 
 
-def _restaurant_drns_from_login(body: dict[str, Any]) -> dict[str, str]:
-    """Map each outlet's numeric id -> its `drn_id` (the restaurant UUID).
+def _restaurant_records_from_login(body: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Map each outlet's numeric id -> `{"drn_id", "status"}`.
 
     The numeric id scopes the sales `GET /api/restaurants/{id}/orders` read; the
     opening-hours WRITE wants the `drn_id` instead. Verified live 2026-09-05: a
     `PUT /api/restaurants/{numericId}/opening_hours` returns 204 but does NOT
     persist (read-back empty — the old "vestigial" symptom), while the same PUT to
-    `/restaurants/{drnId}/opening_hours` with a bare-array body does persist. Both
-    ids live side by side on each `restaurant_companies[].restaurants[]` row of the
-    login / `GET /api/session` body."""
-    out: dict[str, str] = {}
+    `/restaurants/{drnId}/opening_hours` with a bare-array body does persist — but
+    ONLY for a restaurant whose `status` is `OPEN`. A `READY_TO_OPEN` / `CLOSED`
+    outlet answers the PUT 204 and silently drops it, so the write path checks the
+    status first. Both ids and the status live side by side on each
+    `restaurant_companies[].restaurants[]` row of the login / `GET /api/session`
+    body."""
+    out: dict[str, dict[str, str]] = {}
     for company in body.get("restaurant_companies") or []:
         if not isinstance(company, dict):
             continue
         for row in company.get("restaurants") or []:
             if isinstance(row, dict) and row.get("id") and row.get("drn_id"):
-                out[str(row["id"])] = str(row["drn_id"])
+                out[str(row["id"])] = {
+                    "drn_id": str(row["drn_id"]),
+                    "status": str(row.get("status") or ""),
+                }
     return out
 
 
@@ -388,27 +394,45 @@ class DeliverooClient(BaseAggregatorClient):
             session, "GET", f"{_API}/restaurants/{outlet_id}/opening_hours"
         )
 
-    async def restaurant_drn(self, session: LoadedSession, outlet_id: str) -> str:
-        """The `drn_id` (restaurant UUID) for a numeric outlet id — the id the
-        opening-hours WRITE must address. From the session's cached map (built at
-        login), else a live `GET /api/session`; the result is cached back onto the
-        in-memory session for the rest of the sweep. Raises if unresolved."""
+    async def _restaurant_record(
+        self, session: LoadedSession, outlet_id: str
+    ) -> dict[str, str]:
+        """The `{"drn_id", "status"}` record for a numeric outlet id. From the
+        session's cached map (built at login), else a live `GET /api/session`; the
+        result is cached back onto the in-memory session for the rest of the sweep.
+        Raises if the outlet is not found."""
         tokens = session.tokens or {}
-        drns = tokens.get("restaurant_drns")
-        if isinstance(drns, dict) and drns.get(str(outlet_id)):
-            return str(drns[str(outlet_id)])
+        recs = tokens.get("restaurant_records")
+        if isinstance(recs, dict) and isinstance(recs.get(str(outlet_id)), dict):
+            return recs[str(outlet_id)]
         body = await self.request_json(session, "GET", _LOGIN_URL)
-        fresh = _restaurant_drns_from_login(body if isinstance(body, dict) else {})
-        if fresh.get(str(outlet_id)):
+        fresh = _restaurant_records_from_login(body if isinstance(body, dict) else {})
+        if isinstance(fresh.get(str(outlet_id)), dict):
             session.tokens = {
                 **tokens,
-                "restaurant_drns": {**(drns or {}), **fresh},
+                "restaurant_records": {**(recs or {}), **fresh},
             }
-            return str(fresh[str(outlet_id)])
+            return fresh[str(outlet_id)]
         raise AggregatorUnavailableError(
-            f"deliveroo: no restaurant drn_id for outlet {outlet_id} "
+            f"deliveroo: no restaurant record for outlet {outlet_id} "
             "(GET /api/session returned none)"
         )
+
+    async def restaurant_drn(self, session: LoadedSession, outlet_id: str) -> str:
+        """The `drn_id` (restaurant UUID) for a numeric outlet id — the id the
+        opening-hours WRITE must address."""
+        drn = (await self._restaurant_record(session, outlet_id)).get("drn_id")
+        if not drn:
+            raise AggregatorUnavailableError(
+                f"deliveroo: no drn_id for outlet {outlet_id}"
+            )
+        return drn
+
+    async def restaurant_status(self, session: LoadedSession, outlet_id: str) -> str:
+        """The marketplace `status` for a numeric outlet id (e.g. `OPEN`,
+        `READY_TO_OPEN`, `CLOSED`). An opening-hours PUT only persists when this is
+        `OPEN` — the hours writer checks it before a live write."""
+        return (await self._restaurant_record(session, outlet_id)).get("status") or ""
 
     async def put_opening_hours(
         self, session: LoadedSession, outlet_id: str, hours: list[dict[str, Any]]
@@ -659,9 +683,9 @@ class DeliverooClient(BaseAggregatorClient):
             "session_id": body.get("session_id"),
             "restaurant_ids": restaurant_ids,
         }
-        restaurant_drns = _restaurant_drns_from_login(body)
-        if restaurant_drns:
-            tokens["restaurant_drns"] = restaurant_drns
+        restaurant_records = _restaurant_records_from_login(body)
+        if restaurant_records:
+            tokens["restaurant_records"] = restaurant_records
         if org_id:
             tokens["org_id"] = org_id
         await session_store.upsert_bootstrap(
