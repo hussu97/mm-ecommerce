@@ -722,6 +722,21 @@ class TalabatClient(BaseAggregatorClient):
             params={"locale": "en-AE", "sizeSupport": "true"},
         )
 
+    async def list_product_options(self, session: LoadedSession, vendor: str) -> Any:
+        """The vendor's product-option (modifier) groups — `GET /vendors/{v}/
+        catalogs/product-options` (verified live 2026-09-05). A bare array; each
+        group is `{id, name, names:[{locale,value}], quantity:{minimum,maximum},
+        options:[{id, name, names:[...], unitPrice, active, availability}]}`. This
+        is the mix-box "Options (Max N)" flavour groups a product references by
+        `productOptionIds` — distinct from a SIZED_PRODUCT's `nestedProducts` sizes.
+        A single group can also be fetched at `/catalogs/product-options/{id}`."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/product-options",
+            params={"locale": "en"},
+        )
+
     async def get_product_detail(
         self, session: LoadedSession, vendor: str, product_id: str
     ) -> Any:

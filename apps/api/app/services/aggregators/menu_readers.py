@@ -206,15 +206,14 @@ def _careem_image(obj: Any) -> str | None:
     return None
 
 
-def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
-    """A Careem product's `customizationGroups` → NormalizedModifierGroups (verified
-    live 2026-09-05, embedded in the catalog-products list itself — no detail call).
-    Group min/max come from `attributes.selection`; each option carries an `id` and
-    `price`. NOTE: on the portal-direct DSO menu the option *names* are often empty
-    (a GrubTech-import data-quality gap) — the group + option prices still drive the
-    diff; option-name mapping only works where Careem has named them."""
+def careem_groups_from_list(group_list: Any) -> list[NormalizedModifierGroup]:
+    """Parse a Careem customization-group list → NormalizedModifierGroups. Group
+    min/max come from `attributes.selection`; each option carries an `id`, `price`
+    and (only when the list was fetched with `options=true`) a name/nameLocalized.
+    Works for both the empty-name groups embedded in the catalog-products list and
+    the named groups from `catalog-customization-groups?...&options=true`."""
     groups: list[NormalizedModifierGroup] = []
-    for g in product.get("customizationGroups") or []:
+    for g in group_list or []:
         if not isinstance(g, dict):
             continue
         sel = (g.get("attributes") or {}).get("selection") or {}
@@ -245,7 +244,15 @@ def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
     return groups
 
 
-def _careem_items(products_payload: Any) -> list[NormalizedItem]:
+def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
+    """The groups embedded in a product's catalog-products row (option names empty)."""
+    return careem_groups_from_list(product.get("customizationGroups"))
+
+
+def _careem_items(
+    products_payload: Any, groups_by_pid: dict[str, Any] | None = None
+) -> list[NormalizedItem]:
+    groups_by_pid = groups_by_pid or {}
     products = (
         products_payload.get("products")
         if isinstance(products_payload, dict)
@@ -258,27 +265,38 @@ def _careem_items(products_payload: Any) -> list[NormalizedItem]:
         price = p.get("defaultPrice")
         if price is None and isinstance(p.get("prices"), list) and p["prices"]:
             price = (p["prices"][0] or {}).get("price")
+        pid = str(p["id"]) if p.get("id") is not None else None
+        # Prefer the named/priced groups fetched with options=true; fall back to
+        # the (empty-name) groups embedded in the products list.
+        if pid is not None and pid in groups_by_pid:
+            mgroups = careem_groups_from_list(groups_by_pid[pid])
+        else:
+            mgroups = careem_modifier_groups(p)
         items.append(
             NormalizedItem(
                 name=p["name"],
                 name_ar=_careem_ar(p),
-                external_id=str(p["id"]) if p.get("id") is not None else None,
+                external_id=pid,
                 description=_careem_localized(p, "description") or None,
                 description_ar=_careem_ar(p, "description"),
                 image_url=_careem_image(p),
                 price=Decimal(str(price)) if price is not None else None,
                 is_available=str(p.get("status", "ACTIVE")).upper() == "ACTIVE",
-                modifier_groups=careem_modifier_groups(p),
+                modifier_groups=mgroups,
             )
         )
     return items
 
 
 def parse_careem_catalog(
-    categories: Any, products_by_category: dict[str, Any]
+    categories: Any,
+    products_by_category: dict[str, Any],
+    groups_by_pid: dict[str, Any] | None = None,
 ) -> NormalizedMenu:
     """Careem categories (the catalog's `subCategories`) + per-category products →
-    a channel-neutral menu. Pure, unit-tested against the real shapes."""
+    a channel-neutral menu. Pure, unit-tested against the real shapes.
+    `groups_by_pid` (productId → the `options=true` customization-group list) gives
+    the named/priced options; without it, embedded empty-name groups are used."""
     subs = (
         categories.get("subCategories") if isinstance(categories, dict) else categories
     ) or []
@@ -290,7 +308,7 @@ def parse_careem_catalog(
                 cat.get("name", ""),
                 name_ar=_careem_ar(cat),
                 external_id=cid or None,
-                items=_careem_items(products_by_category.get(cid)),
+                items=_careem_items(products_by_category.get(cid), groups_by_pid),
             )
         )
     return NormalizedMenu(source="careem", categories=cats)
@@ -353,7 +371,24 @@ async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
             # must not abort the whole outlet's menu read; it contributes no items.
             logger.warning("careem: category %s has no products (%s)", cid, exc)
             products_by_cat[cid] = {"products": []}
-    return parse_careem_catalog(categories, products_by_cat)
+    # Option NAMES are empty in the embedded groups; fetch the expanded groups
+    # (options=true) for each product that has any customization group.
+    groups_by_pid: dict[str, Any] = {}
+    for payload in products_by_cat.values():
+        plist = payload.get("products") if isinstance(payload, dict) else payload
+        for p in plist or []:
+            if not isinstance(p, dict) or not p.get("customizationGroups"):
+                continue
+            pid = str(p.get("id"))
+            try:
+                groups_by_pid[pid] = await cp.provider.list_customization_groups(
+                    session, company, brand, outlet, pid, with_options=True
+                )
+            except AggregatorUnavailableError as exc:
+                logger.warning(
+                    "careem: product %s customizations unavailable (%s)", pid, exc
+                )
+    return parse_careem_catalog(categories, products_by_cat, groups_by_pid)
 
 
 # ── Careem hours reader ───────────────────────────────────────────────────────
@@ -415,6 +450,49 @@ def _talabat_availability(obj: Any) -> bool:
     return bool(True if available is None else available)
 
 
+def _talabat_ar(names: Any) -> str | None:
+    """The Arabic value from a Talabat `names`/`descriptions` array
+    (`[{"locale":"ar-AE","value":...}, ...]`), or None."""
+    for n in names or []:
+        if isinstance(n, dict) and str(n.get("locale", "")).startswith("ar"):
+            return n.get("value") or None
+    return None
+
+
+def talabat_option_group(group: Any) -> NormalizedModifierGroup | None:
+    """A Talabat product-option group (the mix-box "Options (Max N)" flavour
+    picker) → NormalizedModifierGroup (verified live 2026-09-05). Name/AR come from
+    `names`, min/max from `quantity`, and each option carries `names` (en+ar) and
+    `unitPrice` (0 for flavours). Distinct from a SIZED_PRODUCT's sizes."""
+    if not isinstance(group, dict) or not group.get("name"):
+        return None
+    q = group.get("quantity") if isinstance(group.get("quantity"), dict) else {}
+    options: list[NormalizedOption] = []
+    for o in group.get("options") or []:
+        if not isinstance(o, dict) or not o.get("name"):
+            continue
+        price = o.get("unitPrice")
+        options.append(
+            NormalizedOption(
+                name=o["name"],
+                name_ar=_talabat_ar(o.get("names")),
+                external_ref=str(o["id"]) if o.get("id") is not None else None,
+                price=Decimal(str(price)) if price is not None else None,
+                is_available=bool(o.get("active", True)) and _talabat_availability(o),
+            )
+        )
+    if not options:
+        return None
+    return NormalizedModifierGroup(
+        name=group["name"],
+        name_ar=_talabat_ar(group.get("names")),
+        external_ref=str(group["id"]) if group.get("id") is not None else None,
+        min_options=q.get("minimum"),
+        max_options=q.get("maximum"),
+        options=options,
+    )
+
+
 def talabat_size_group(detail: Any) -> NormalizedModifierGroup | None:
     """A SIZED_PRODUCT's sizes → a single "Size" modifier group (verified live
     2026-09-05). The category-products list carries only `productOptionIds`; the
@@ -443,9 +521,12 @@ def talabat_size_group(detail: Any) -> NormalizedModifierGroup | None:
 
 
 def _talabat_items(
-    products: Any, details_by_id: dict[str, Any] | None = None
+    products: Any,
+    details_by_id: dict[str, Any] | None = None,
+    options_by_id: dict[str, Any] | None = None,
 ) -> list[NormalizedItem]:
     details_by_id = details_by_id or {}
+    options_by_id = options_by_id or {}
     items: list[NormalizedItem] = []
     for p in products if isinstance(products, list) else []:
         if not isinstance(p, dict) or not p.get("name"):
@@ -474,6 +555,12 @@ def _talabat_items(
             group = talabat_size_group(detail)
             if group is not None:
                 item.modifier_groups.append(group)
+        # Flavour groups the product references by id (the mix-box "Options (Max
+        # N)" pickers) — resolved from the vendor's product-options list.
+        for oid in p.get("productOptionIds") or []:
+            grp = talabat_option_group(options_by_id.get(str(oid)))
+            if grp is not None:
+                item.modifier_groups.append(grp)
         items.append(item)
     return items
 
@@ -482,10 +569,13 @@ def parse_talabat_catalog(
     catalogs: Any,
     products_by_category: dict[str, Any],
     details_by_id: dict[str, Any] | None = None,
+    options_by_id: dict[str, Any] | None = None,
 ) -> NormalizedMenu:
     """Talabat catalogs (categories inline) + per-category products → menu. Pure,
     unit-tested against the real shapes. `details_by_id` (productId → product-detail
-    payload) carries the sizes for SIZED_PRODUCTs, attached as a "Size" group."""
+    payload) carries the sizes for SIZED_PRODUCTs, attached as a "Size" group;
+    `options_by_id` (optionGroupId → group) carries the flavour groups a product
+    references by `productOptionIds`."""
     catalog_list = (
         catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
     ) or []
@@ -497,7 +587,9 @@ def parse_talabat_catalog(
                 NormalizedCategory(
                     cat.get("name", ""),
                     external_id=cid or None,
-                    items=_talabat_items(products_by_category.get(cid), details_by_id),
+                    items=_talabat_items(
+                        products_by_category.get(cid), details_by_id, options_by_id
+                    ),
                 )
             )
     return NormalizedMenu(source="talabat", categories=cats)
@@ -564,7 +656,20 @@ async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
             # One product's detail failing must not lose the whole menu read; that
             # item simply carries no sizes this pass.
             logger.warning("talabat: product %s detail unavailable (%s)", pid, exc)
-    return parse_talabat_catalog(catalogs, products_by_cat, details_by_id)
+    # The vendor's flavour groups, once, indexed by id for productOptionIds lookup.
+    options_by_id: dict[str, Any] = {}
+    try:
+        groups = await tp.provider.list_product_options(session, vendor)
+        for g in (
+            groups if isinstance(groups, list) else (groups.get("productOptions") or [])
+        ):
+            if isinstance(g, dict) and g.get("id") is not None:
+                options_by_id[str(g["id"])] = g
+    except AggregatorUnavailableError as exc:
+        logger.warning("talabat: product-options unavailable (%s)", exc)
+    return parse_talabat_catalog(
+        catalogs, products_by_cat, details_by_id, options_by_id
+    )
 
 
 def _min_hhmm(value: Any) -> str:

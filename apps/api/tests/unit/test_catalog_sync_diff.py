@@ -682,6 +682,73 @@ def test_talabat_sizes_attach_from_product_detail():
     assert {o.name: o.is_available for o in grp.options}["6 Pieces"] is False
 
 
+def test_talabat_flavour_options_attach_from_product_options():
+    # Real product-options shape (VM, 2026-09-05): a mix box references a flavour
+    # group by id in `productOptionIds`; the group (name/AR, quantity, options with
+    # names/AR/unitPrice) comes from the vendor's /catalogs/product-options list.
+    from app.services.aggregators.menu_readers import parse_talabat_catalog
+
+    catalogs = {
+        "catalogs": [
+            {"id": "1334277", "categories": [{"id": 111, "name": "Mix Boxes"}]}
+        ]
+    }
+    products = {
+        "111": [
+            {
+                "id": "2747116435",
+                "name": "Mix Brownies Box Of 6",
+                "unitPrice": 100,
+                "availability": {"available": True},
+                "active": True,
+                "productOptionIds": ["1126897"],
+            }
+        ]
+    }
+    options_by_id = {
+        "1126897": {
+            "id": "1126897",
+            "name": "Options (Max 6)",
+            "names": [
+                {"locale": "ar-AE", "value": "الخيارات (الحد الأقصى 6)"},
+                {"locale": "en-AE", "value": "Options (Max 6)"},
+            ],
+            "quantity": {"minimum": 6, "maximum": 6},
+            "options": [
+                {
+                    "id": "2747057537",
+                    "name": "Pistachio Kunafa Brownie",
+                    "names": [
+                        {"locale": "ar-AE", "value": "براوني الكنافة بالفستق"},
+                        {"locale": "en-AE", "value": "Pistachio Kunafa Brownie"},
+                    ],
+                    "unitPrice": 0,
+                    "active": True,
+                    "availability": {"available": True},
+                },
+                {
+                    "id": "2747057538",
+                    "name": "Fudge Brownie",
+                    "names": [{"locale": "ar-AE", "value": "براوني فادج"}],
+                    "unitPrice": 0,
+                    "active": True,
+                    "availability": {"available": True},
+                },
+            ],
+        }
+    }
+    menu = parse_talabat_catalog(catalogs, products, {}, options_by_id)
+    item = menu.categories[0].items[0]
+    assert len(item.modifier_groups) == 1
+    grp = item.modifier_groups[0]
+    assert grp.name == "Options (Max 6)"
+    assert grp.name_ar == "الخيارات (الحد الأقصى 6)"
+    assert (grp.min_options, grp.max_options) == (6, 6)
+    opts = {o.name: o for o in grp.options}
+    assert opts["Pistachio Kunafa Brownie"].name_ar == "براوني الكنافة بالفستق"
+    assert opts["Pistachio Kunafa Brownie"].price == Decimal("0")
+
+
 def test_noon_parser_uses_real_shapes():
     # Real Noon /menu/details shape (VM, 2026-09-01): categories reference items by
     # code; a product's price is `price`, availability is `isActive AND NOT isOos`.

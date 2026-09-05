@@ -505,6 +505,106 @@ class NoonClient(BaseAggregatorClient):
             json_body={"menuCode": menu_code, "itemCode": item_code},
         )
 
+    #: The item fields `menu/item/edit` accepts — the exact envelope the RMS
+    #: console posts (captured live 2026-09-05). A `menu/details` item already
+    #: carries every one of these, so an update is read-modify-write: take the
+    #: current item, overlay the changed fields, and post the whole thing back.
+    _EDIT_FIELDS = (
+        "itemCode",
+        "itemType",
+        "posSku",
+        "image",
+        "price",
+        "discountPrice",
+        "discountPercentage",
+        "fakeOriginalPrice",
+        "categoryCode",
+        "position",
+        "schedule",
+        "modifiers",
+        "tags",
+        "nutritionInfo",
+        "nameEn",
+        "nameAr",
+        "descEn",
+        "descAr",
+        "isOos",
+        "oosUntil",
+        "maxQty",
+        "isActive",
+        "dietType",
+        "itemIdentifier",
+    )
+
+    async def update_menu_item(
+        self,
+        session: LoadedSession,
+        *,
+        menu_code: str,
+        item: dict[str, Any],
+        name: str | None = None,
+        name_ar: str | None = None,
+        description: str | None = None,
+        description_ar: str | None = None,
+        price: Any | None = None,
+        image: str | None = None,
+        active: bool | None = None,
+        publish: bool = True,
+    ) -> Any:
+        """Edit one item on a noon menu — read-modify-write, verified live
+        2026-09-05.
+
+        `POST /_food-restaurant/menu/item/edit` takes the FULL item object (not a
+        partial patch), so pass the item as `menu/details` returned it and this
+        overlays only the fields given (`nameEn`/`nameAr`/`descEn`/`descAr`/`price`/
+        `image`/`isActive`). The edit only STAGES the change on the draft menu; a
+        change "eligible for auto approval" then needs a per-item publish, so by
+        default this follows the edit with `publish_menu_item`. `image` is a noon
+        media path (`food/menu/<menuCode>/<name>.png`), not a foreign URL."""
+        body = {k: item.get(k) for k in self._EDIT_FIELDS}
+        body["menuCode"] = menu_code
+        if name is not None:
+            body["nameEn"] = name
+        if name_ar is not None:
+            body["nameAr"] = name_ar
+        if description is not None:
+            body["descEn"] = description
+        if description_ar is not None:
+            body["descAr"] = description_ar
+        if price is not None:
+            body["price"] = price
+        if image is not None:
+            body["image"] = image
+        if active is not None:
+            body["isActive"] = active
+        result = await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/menu/item/edit",
+            headers=self._rms_headers(session),
+            json_body=body,
+        )
+        if publish and body.get("itemCode"):
+            await self.publish_menu_item(
+                session, menu_code=menu_code, item_code=str(body["itemCode"])
+            )
+        return result
+
+    async def publish_menu_item(
+        self, session: LoadedSession, *, menu_code: str, item_code: str
+    ) -> Any:
+        """Publish one staged item edit to the live menu — `POST /_food-restaurant/
+        menu/item/publish` `{menuCode, itemCode}` (verified live 2026-09-05). This
+        is the per-item auto-approval the console fires after an eligible edit; it
+        publishes only this item, leaving any other draft changes staged."""
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/menu/item/publish",
+            headers=self._rms_headers(session),
+            json_body={"menuCode": menu_code, "itemCode": item_code},
+        )
+
     # ── anti-bot ─────────────────────────────────────────────────────────────
     def _is_auth_failure(self, response: Any) -> bool:
         """A dead cookie *or* an Akamai block. Both need a browser, not a retry."""
