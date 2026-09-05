@@ -444,6 +444,72 @@ def test_talabat_parser_uses_real_shapes():
     assert menu.categories[1].items[0].price == Decimal("55")
 
 
+def test_talabat_sizes_attach_from_product_detail():
+    # Real product-detail shape (VM, 2026-09-05): a SIZED_PRODUCT's sizes live in
+    # `nestedProducts` (each type "SIZE", named + unitPrice), not in the list call.
+    from app.services.aggregators.menu_readers import parse_talabat_catalog
+
+    catalogs = {
+        "catalogs": [
+            {"id": "1334277", "categories": [{"id": 20241870, "name": "Brownies"}]}
+        ]
+    }
+    products = {
+        "20241870": [
+            {
+                "id": "2747116483",
+                "name": "Pistachio Kunafa Brownies",
+                "unitPrice": 0,
+                "type": "SIZED_PRODUCT",
+                "availability": {"available": True},
+                "active": True,
+            }
+        ]
+    }
+    details = {
+        "2747116483": {
+            "id": "2747116483",
+            "type": "SIZED_PRODUCT",
+            "nestedProducts": [
+                {
+                    "id": "s3",
+                    "name": "3 Pieces",
+                    "unitPrice": 55,
+                    "type": "SIZE",
+                    "availability": {"available": True},
+                },
+                {
+                    "id": "s6",
+                    "name": "6 Pieces",
+                    "unitPrice": 100,
+                    "type": "SIZE",
+                    "availability": {"available": False},
+                },
+                {
+                    "id": "s9",
+                    "name": "9 Pieces",
+                    "unitPrice": 145,
+                    "type": "SIZE",
+                    "availability": {"available": True},
+                },
+            ],
+        }
+    }
+    menu = parse_talabat_catalog(catalogs, products, details)
+    item = menu.categories[0].items[0]
+    assert len(item.modifier_groups) == 1
+    grp = item.modifier_groups[0]
+    assert grp.name == "Size"
+    assert (grp.min_options, grp.max_options) == (1, 1)
+    assert {(o.name, o.price) for o in grp.options} == {
+        ("3 Pieces", Decimal("55")),
+        ("6 Pieces", Decimal("100")),
+        ("9 Pieces", Decimal("145")),
+    }
+    # size availability carried through (6 Pieces is off)
+    assert {o.name: o.is_available for o in grp.options}["6 Pieces"] is False
+
+
 def test_noon_parser_uses_real_shapes():
     # Real Noon /menu/details shape (VM, 2026-09-01): categories reference items by
     # code; a product's price is `price`, availability is `isActive AND NOT isOos`.

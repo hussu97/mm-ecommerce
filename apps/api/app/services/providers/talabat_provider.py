@@ -722,6 +722,20 @@ class TalabatClient(BaseAggregatorClient):
             params={"locale": "en-AE", "sizeSupport": "true"},
         )
 
+    async def get_product_detail(
+        self, session: LoadedSession, vendor: str, product_id: str
+    ) -> Any:
+        """One product's full record, including its sizes. The category-products
+        list carries only `productOptionIds`; the sizes (name + price) live in this
+        detail call's `nestedProducts` (each `type:"SIZE"`). Endpoint captured live
+        from the portal 2026-09-05 (`/catalogs/products/{id}?mode=READ_ONLY`)."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/products/{product_id}",
+            params={"locale": "en", "mode": "READ_ONLY"},
+        )
+
     async def create_menu_item(
         self,
         session: LoadedSession,

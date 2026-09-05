@@ -339,33 +339,73 @@ async def _read_careem_hours(db: AsyncSession, branch_id: Any) -> NormalizedHour
 # carries the DeliveryHero bearer); request_json's TLS impersonation passes PX.
 
 
-def _talabat_items(products: Any) -> list[NormalizedItem]:
+def _talabat_availability(obj: Any) -> bool:
+    avail = obj.get("availability") if isinstance(obj, dict) else None
+    available = avail.get("available") if isinstance(avail, dict) else avail
+    return bool(True if available is None else available)
+
+
+def talabat_size_group(detail: Any) -> NormalizedModifierGroup | None:
+    """A SIZED_PRODUCT's sizes → a single "Size" modifier group (verified live
+    2026-09-05). The category-products list carries only `productOptionIds`; the
+    named, priced sizes are in the product-detail's `nestedProducts` (each
+    `type:"SIZE"`, e.g. 3/6/9 Pieces at 55/100/145). One size is chosen, so
+    min=max=1. Returns None when the product has no sizes."""
+    nested = detail.get("nestedProducts") if isinstance(detail, dict) else None
+    options: list[NormalizedOption] = []
+    for n in nested or []:
+        if not isinstance(n, dict) or str(n.get("type")) != "SIZE" or not n.get("name"):
+            continue
+        price = n.get("unitPrice")
+        options.append(
+            NormalizedOption(
+                name=n["name"],
+                external_ref=str(n["id"]) if n.get("id") is not None else None,
+                price=Decimal(str(price)) if price is not None else None,
+                is_available=_talabat_availability(n),
+            )
+        )
+    if not options:
+        return None
+    return NormalizedModifierGroup(
+        name="Size", min_options=1, max_options=1, options=options
+    )
+
+
+def _talabat_items(
+    products: Any, details_by_id: dict[str, Any] | None = None
+) -> list[NormalizedItem]:
+    details_by_id = details_by_id or {}
     items: list[NormalizedItem] = []
     for p in products if isinstance(products, list) else []:
         if not isinstance(p, dict) or not p.get("name"):
             continue
-        avail = p.get("availability")
-        available = avail.get("available") if isinstance(avail, dict) else avail
-        items.append(
-            NormalizedItem(
-                name=p["name"],
-                external_id=str(p["id"]) if p.get("id") is not None else None,
-                description=p.get("description"),
-                price=Decimal(str(p["unitPrice"]))
-                if p.get("unitPrice") is not None
-                else None,
-                is_available=bool(p.get("active", True))
-                and bool(True if available is None else available),
-            )
+        item = NormalizedItem(
+            name=p["name"],
+            external_id=str(p["id"]) if p.get("id") is not None else None,
+            description=p.get("description"),
+            price=Decimal(str(p["unitPrice"]))
+            if p.get("unitPrice") is not None
+            else None,
+            is_available=bool(p.get("active", True)) and _talabat_availability(p),
         )
+        detail = details_by_id.get(str(p.get("id")))
+        if detail is not None:
+            group = talabat_size_group(detail)
+            if group is not None:
+                item.modifier_groups.append(group)
+        items.append(item)
     return items
 
 
 def parse_talabat_catalog(
-    catalogs: Any, products_by_category: dict[str, Any]
+    catalogs: Any,
+    products_by_category: dict[str, Any],
+    details_by_id: dict[str, Any] | None = None,
 ) -> NormalizedMenu:
     """Talabat catalogs (categories inline) + per-category products → menu. Pure,
-    unit-tested against the real shapes."""
+    unit-tested against the real shapes. `details_by_id` (productId → product-detail
+    payload) carries the sizes for SIZED_PRODUCTs, attached as a "Size" group."""
     catalog_list = (
         catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
     ) or []
@@ -377,7 +417,7 @@ def parse_talabat_catalog(
                 NormalizedCategory(
                     cat.get("name", ""),
                     external_id=cid or None,
-                    items=_talabat_items(products_by_category.get(cid)),
+                    items=_talabat_items(products_by_category.get(cid), details_by_id),
                 )
             )
     return NormalizedMenu(source="talabat", categories=cats)
@@ -415,15 +455,36 @@ async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
         catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
     ) or []
     products_by_cat: dict[str, Any] = {}
+    sized_ids: set[str] = set()
     for catalog in catalog_list:
         catalog_id = str(catalog["id"])
         for cat in catalog.get("categories", []) or []:
             cid = str(cat.get("id")) if cat.get("id") is not None else ""
-            if cid:
-                products_by_cat[cid] = await tp.provider.list_category_products(
-                    session, vendor, catalog_id, cid
-                )
-    return parse_talabat_catalog(catalogs, products_by_cat)
+            if not cid:
+                continue
+            prods = await tp.provider.list_category_products(
+                session, vendor, catalog_id, cid
+            )
+            products_by_cat[cid] = prods
+            for p in prods if isinstance(prods, list) else []:
+                # A SIZED_PRODUCT's sizes are only in its product-detail call.
+                if (
+                    isinstance(p, dict)
+                    and str(p.get("type")) == "SIZED_PRODUCT"
+                    and p.get("id") is not None
+                ):
+                    sized_ids.add(str(p["id"]))
+    details_by_id: dict[str, Any] = {}
+    for pid in sized_ids:
+        try:
+            details_by_id[pid] = await tp.provider.get_product_detail(
+                session, vendor, pid
+            )
+        except AggregatorUnavailableError as exc:
+            # One product's detail failing must not lose the whole menu read; that
+            # item simply carries no sizes this pass.
+            logger.warning("talabat: product %s detail unavailable (%s)", pid, exc)
+    return parse_talabat_catalog(catalogs, products_by_cat, details_by_id)
 
 
 def _min_hhmm(value: Any) -> str:
