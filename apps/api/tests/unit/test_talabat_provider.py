@@ -1224,3 +1224,26 @@ async def test_create_menu_item_posts_captured_add_product_path():
         "type": "Simple",
         "active": False,
     }
+
+
+# ── delete endpoints (verified live removing the Ramadan boxes) ────────────────
+
+
+@pytest.mark.asyncio
+async def test_delete_product_and_category_urls(monkeypatch):
+    from app.services.providers.talabat_provider import provider
+
+    calls: list[tuple[str, str]] = []
+
+    async def fake_raw(session, method, url, **kwargs):
+        calls.append((method, url))
+        return None
+
+    monkeypatch.setattr(provider, "request_raw", fake_raw)
+    await provider.delete_product(object(), "V1", "P1")
+    await provider.delete_category(object(), "V1", "CAT1", "C9")
+    assert calls[0][0] == "DELETE" and calls[0][1].endswith(
+        "/vendors/V1/catalogs/products/P1"
+    )
+    assert calls[1][0] == "DELETE"
+    assert calls[1][1].endswith("/vendors/V1/catalogs/CAT1/categories/C9")

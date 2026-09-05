@@ -872,6 +872,35 @@ class TalabatClient(BaseAggregatorClient):
             json_body={"available": bool(available), "availableTimeChanges": []},
         )
 
+    async def delete_product(
+        self, session: LoadedSession, vendor: str, product_id: str
+    ) -> Any:
+        """Delete a product from the menu — DELETE `/catalogs/products/{id}`
+        (verified live 2026-09-05, removing the seasonal Ramadan boxes). Async:
+        returns 202 `{commandId}` and the product disappears a few seconds later;
+        a follow-up delete of the same id then 404s ("Entity ... not found"), which
+        is the success signal. Use this to drop channel items that are not in MM's
+        sync set, for 1:1 parity."""
+        return await self.request_raw(
+            session,
+            "DELETE",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/products/{product_id}",
+        )
+
+    async def delete_category(
+        self, session: LoadedSession, vendor: str, catalog_id: str, category_id: str
+    ) -> Any:
+        """Delete a category — DELETE `/catalogs/{catalogId}/categories/{id}`
+        (verified live 2026-09-05). Async (202 `{commandId}`). The category must be
+        EMPTY first: a delete while it still holds a product 400s with
+        `"Product <id> is in use by this category"`, so delete the members with
+        `delete_product` and wait for them to clear before deleting the category."""
+        return await self.request_raw(
+            session,
+            "DELETE",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/{catalog_id}/categories/{category_id}",
+        )
+
     async def get_delivery_calendars(self, session: LoadedSession, vendor: str) -> Any:
         """The vendor's DELIVERY opening-hours calendars, read server-side.
 
