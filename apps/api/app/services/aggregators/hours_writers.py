@@ -45,14 +45,25 @@ __all__ = [
 #: httpx writers. Keeta is deliberately absent — see module docstring.
 _HTTPX_CHANNELS = frozenset({"talabat", "deliveroo", "noon", "careem"})
 
+#: Channels whose httpx write is not yet correct, so a push is skipped rather
+#: than recorded as a (false) success. Deliveroo's `/api/restaurants/{id}/
+#: opening_hours` PUT returns 204 but is VESTIGIAL — verified live 2026-09-05 the
+#: hours read back empty; the Partner Hub keeps hours ZONE-scoped
+#: (`/api/zones/{zoneId}/opening_hours` + the `/api-gw/site-status/schedules`
+#: gateway, a rider-availability-band model). A real writer needs each outlet's
+#: Deliveroo zone id and that band model — a tracked follow-up. Until then this
+#: skips (like keeta) so the run log tells the truth.
+_PENDING_HTTPX_CHANNELS = frozenset({"deliveroo"})
+
 
 class HoursWriteUnsupported(NotImplementedError):
     """No writer exists for this channel, or writes are gated off."""
 
 
 def supported_channels() -> frozenset[str]:
-    """The channels a live hours writer exists for (httpx only; not keeta)."""
-    return _HTTPX_CHANNELS
+    """The channels a working live hours writer exists for (httpx; not keeta, and
+    not a channel whose writer is still pending — see `_PENDING_HTTPX_CHANNELS`)."""
+    return _HTTPX_CHANNELS - _PENDING_HTTPX_CHANNELS
 
 
 def _mm_weekday_today() -> int:
@@ -123,6 +134,11 @@ def _ensure_writable(channel: str) -> None:
         )
     if channel not in _HTTPX_CHANNELS:
         raise HoursWriteUnsupported(f"no hours writer for {channel} yet")
+    if channel in _PENDING_HTTPX_CHANNELS:
+        raise HoursWriteUnsupported(
+            f"{channel} hours are zone-scoped; the restaurant-endpoint write is "
+            "vestigial (204 but does not persist) — zone-scoped writer pending"
+        )
     if not settings.CATALOG_SYNC_ENABLED:
         raise HoursWriteUnsupported("hours writes are disabled (CATALOG_SYNC_ENABLED)")
 
