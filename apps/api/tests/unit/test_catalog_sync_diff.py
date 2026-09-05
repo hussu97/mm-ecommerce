@@ -17,11 +17,16 @@ from app.core.exceptions import ServiceUnavailableError
 from app.services.aggregators import catalog_sync
 from app.services.aggregators.catalog_diff import (
     K_CATEGORY_MISSING,
+    K_CATEGORY_NAME_AR,
     K_CATEGORY_RENAME,
     K_HOURS_DAY_CLOSED_CHANNEL,
     K_HOURS_SHIFT,
+    K_ITEM_DESC_AR,
+    K_ITEM_IMAGE,
+    K_ITEM_NAME_AR,
     K_ITEM_PRICE,
     K_ITEM_UNAVAILABLE,
+    K_OPTION_NAME_AR,
     K_OPTION_PRICE,
     diff_hours,
     diff_menu,
@@ -152,6 +157,82 @@ def test_menu_diff_catches_the_real_drift():
     assert kinds.get(K_CATEGORY_MISSING) == 1
     # "& Walnut" vs "and Walnut" normalises equal → no spurious rename.
     assert "item_name_drift" not in kinds
+
+
+def test_ar_and_image_drift_flagged_when_mm_has_them_and_channel_missing():
+    # MM (superset) carries AR + image; the channel item lacks both. Each is a
+    # delta to write — a blank channel localisation IS drift (unlike an unknown
+    # price). Options match by name, so the AR option-name drift fires too.
+    mm = NormalizedMenu(
+        source="mm",
+        categories=[
+            NormalizedCategory(
+                "Cakes",
+                name_ar="كيك",
+                items=[
+                    NormalizedItem(
+                        "Basque Cheesecake",
+                        name_ar="تشيز كيك الباسك",
+                        description="Creamy",
+                        description_ar="وصف",
+                        image_url="https://mm/basque.jpg",
+                        price=Decimal("30"),
+                        modifier_groups=[
+                            NormalizedModifierGroup(
+                                "Your Choice of Quantity",
+                                options=[
+                                    NormalizedOption(
+                                        "3 Pieces", price=Decimal("45"), name_ar="3 قطع"
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    ch = NormalizedMenu(
+        source="careem",
+        categories=[
+            NormalizedCategory(
+                "Cakes",
+                name_ar=None,
+                items=[
+                    NormalizedItem(
+                        "Basque Cheesecake",
+                        name_ar=None,
+                        description="Creamy",
+                        description_ar=None,
+                        image_url=None,
+                        price=Decimal("30"),
+                        modifier_groups=[
+                            NormalizedModifierGroup(
+                                "Your Choice of Quantity",
+                                options=[
+                                    NormalizedOption(
+                                        "3 Pieces", price=Decimal("45"), name_ar=None
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    kinds = diff_menu(mm, ch, target="careem").summary
+    assert kinds.get(K_ITEM_NAME_AR) == 1
+    assert kinds.get(K_ITEM_DESC_AR) == 1
+    assert kinds.get(K_ITEM_IMAGE) == 1
+    assert kinds.get(K_CATEGORY_NAME_AR) == 1
+    assert kinds.get(K_OPTION_NAME_AR) == 1
+    # AR/image present on both sides → no localisation drift (image host differs,
+    # which is not a delta since only a MISSING channel image is actionable).
+    same = diff_menu(mm, mm, target="careem").summary
+    assert K_ITEM_NAME_AR not in same
+    assert K_ITEM_IMAGE not in same
+    assert K_OPTION_NAME_AR not in same
 
 
 def test_price_parity_toggle_suppresses_price_deltas():

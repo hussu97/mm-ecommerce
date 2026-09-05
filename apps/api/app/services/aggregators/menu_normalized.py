@@ -43,10 +43,14 @@ class NormalizedOption:
     #: Option price. None = the integrator did not tell us (not free).
     price: Decimal | None = None
     is_available: bool = True
+    #: Arabic option name, when the portal exposes it. None = not given (which the
+    #: diff treats as "unknown", never as "should be blank").
+    name_ar: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "name_ar": self.name_ar,
             "external_ref": self.external_ref,
             "price": _dec_str(self.price),
             "is_available": self.is_available,
@@ -56,6 +60,7 @@ class NormalizedOption:
     def from_dict(cls, d: dict[str, Any]) -> NormalizedOption:
         return cls(
             name=d.get("name", ""),
+            name_ar=d.get("name_ar"),
             external_ref=d.get("external_ref"),
             price=_dec(d.get("price")),
             is_available=bool(d.get("is_available", True)),
@@ -71,10 +76,13 @@ class NormalizedModifierGroup:
     min_options: int | None = None
     max_options: int | None = None
     options: list[NormalizedOption] = field(default_factory=list)
+    #: Arabic group name, when the portal exposes it.
+    name_ar: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "name_ar": self.name_ar,
             "external_ref": self.external_ref,
             "min_options": self.min_options,
             "max_options": self.max_options,
@@ -85,6 +93,7 @@ class NormalizedModifierGroup:
     def from_dict(cls, d: dict[str, Any]) -> NormalizedModifierGroup:
         return cls(
             name=d.get("name", ""),
+            name_ar=d.get("name_ar"),
             external_ref=d.get("external_ref"),
             min_options=d.get("min_options"),
             max_options=d.get("max_options"),
@@ -108,13 +117,22 @@ class NormalizedItem:
     is_available: bool = True
     category_ref: str | None = None
     modifier_groups: list[NormalizedModifierGroup] = field(default_factory=list)
+    #: Arabic title/description, when the portal exposes them.
+    name_ar: str | None = None
+    description_ar: str | None = None
+    #: The item's image URL (the portal's hosted URL, or MM's on the desired side).
+    #: None = not given; the diff never treats that as "should be cleared".
+    image_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "name_ar": self.name_ar,
             "external_id": self.external_id,
             "external_ref": self.external_ref,
             "description": self.description,
+            "description_ar": self.description_ar,
+            "image_url": self.image_url,
             "price": _dec_str(self.price),
             "is_available": self.is_available,
             "category_ref": self.category_ref,
@@ -125,9 +143,12 @@ class NormalizedItem:
     def from_dict(cls, d: dict[str, Any]) -> NormalizedItem:
         return cls(
             name=d.get("name", ""),
+            name_ar=d.get("name_ar"),
             external_id=d.get("external_id"),
             external_ref=d.get("external_ref"),
             description=d.get("description"),
+            description_ar=d.get("description_ar"),
+            image_url=d.get("image_url"),
             price=_dec(d.get("price")),
             is_available=bool(d.get("is_available", True)),
             category_ref=d.get("category_ref"),
@@ -145,10 +166,13 @@ class NormalizedCategory:
     name: str
     external_id: str | None = None
     items: list[NormalizedItem] = field(default_factory=list)
+    #: Arabic category name, when the portal exposes it.
+    name_ar: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            "name_ar": self.name_ar,
             "external_id": self.external_id,
             "items": [i.to_dict() for i in self.items],
         }
@@ -157,6 +181,7 @@ class NormalizedCategory:
     def from_dict(cls, d: dict[str, Any]) -> NormalizedCategory:
         return cls(
             name=d.get("name", ""),
+            name_ar=d.get("name_ar"),
             external_id=d.get("external_id"),
             items=[NormalizedItem.from_dict(i) for i in d.get("items", [])],
         )
