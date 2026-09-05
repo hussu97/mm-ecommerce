@@ -31,13 +31,15 @@ def test_revision_fits_alembic_column_and_chains_head():
 
 def test_seed_set_is_the_live_marketplace_set():
     skus = set(migration._SKUS)
-    # 46 Grubtech price-tag SKUs + FG0052 (Brookies, portal-direct only).
-    assert len(migration._SKUS) == 47
-    assert len(skus) == 47  # no duplicates
-    assert "FG0052" in skus  # the audited coverage gap is included
-    # Not the Grubtech set's exclusions: FG0050 (Gift Note Card) and the ₿15
-    # "Single" SKUs (FG0001..FG0017) are not live on the marketplaces.
-    assert "FG0050" not in skus
+    # 45 = Grubtech tag (46) − seasonal boxes {FG0118, FG0127, FG0128} + Brookies
+    # (FG0052) + Gift Note Card (FG0050).
+    assert len(migration._SKUS) == 45
+    assert len(skus) == 45  # no duplicates
+    assert "FG0052" in skus  # Brookies coverage gap included
+    assert "FG0050" in skus  # Gift Note Card meant to be everywhere
+    # Seasonal boxes must NOT sync (deactivate on every aggregator).
+    assert skus.isdisjoint({"FG0118", "FG0127", "FG0128"})
+    # The ₿15 "Single" SKUs (FG0001..FG0017) are still not live on the marketplaces.
     assert skus.isdisjoint({f"FG{n:04d}" for n in range(1, 18)})
 
 
