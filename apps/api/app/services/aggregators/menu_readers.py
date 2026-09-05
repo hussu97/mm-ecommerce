@@ -190,6 +190,22 @@ def _careem_localized(obj: Any, key: str = "name") -> str:
     return obj.get(key) or (obj.get(f"{key}Localized") or {}).get("en") or ""
 
 
+def _careem_ar(obj: Any, key: str = "name") -> str | None:
+    """A Careem entity's Arabic value from `<key>Localized.ar`, or None."""
+    if not isinstance(obj, dict):
+        return None
+    return (obj.get(f"{key}Localized") or {}).get("ar") or None
+
+
+def _careem_image(obj: Any) -> str | None:
+    """First image URL on a Careem product (`images:[{url}]`), or None."""
+    for img in (obj.get("images") or []) if isinstance(obj, dict) else []:
+        url = (img or {}).get("url") if isinstance(img, dict) else None
+        if url:
+            return url
+    return None
+
+
 def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
     """A Careem product's `customizationGroups` → NormalizedModifierGroups (verified
     live 2026-09-05, embedded in the catalog-products list itself — no detail call).
@@ -210,6 +226,7 @@ def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
             options.append(
                 NormalizedOption(
                     name=_careem_localized(o),
+                    name_ar=_careem_ar(o),
                     external_ref=str(o["id"]) if o.get("id") is not None else None,
                     price=Decimal(str(price)) if price is not None else None,
                     is_available=str(o.get("status", "ACTIVE")).upper() != "INACTIVE",
@@ -218,6 +235,7 @@ def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
         groups.append(
             NormalizedModifierGroup(
                 name=_careem_localized(g),
+                name_ar=_careem_ar(g),
                 external_ref=str(g["id"]) if g.get("id") is not None else None,
                 min_options=sel.get("min"),
                 max_options=sel.get("max"),
@@ -243,7 +261,11 @@ def _careem_items(products_payload: Any) -> list[NormalizedItem]:
         items.append(
             NormalizedItem(
                 name=p["name"],
+                name_ar=_careem_ar(p),
                 external_id=str(p["id"]) if p.get("id") is not None else None,
+                description=_careem_localized(p, "description") or None,
+                description_ar=_careem_ar(p, "description"),
+                image_url=_careem_image(p),
                 price=Decimal(str(price)) if price is not None else None,
                 is_available=str(p.get("status", "ACTIVE")).upper() == "ACTIVE",
                 modifier_groups=careem_modifier_groups(p),
@@ -266,6 +288,7 @@ def parse_careem_catalog(
         cats.append(
             NormalizedCategory(
                 cat.get("name", ""),
+                name_ar=_careem_ar(cat),
                 external_id=cid or None,
                 items=_careem_items(products_by_category.get(cid)),
             )
@@ -427,10 +450,14 @@ def _talabat_items(
     for p in products if isinstance(products, list) else []:
         if not isinstance(p, dict) or not p.get("name"):
             continue
+        image_urls = p.get("imageUrls") or p.get("images") or []
         item = NormalizedItem(
             name=p["name"],
             external_id=str(p["id"]) if p.get("id") is not None else None,
             description=p.get("description"),
+            image_url=image_urls[0]
+            if isinstance(image_urls, list) and image_urls
+            else None,
             price=Decimal(str(p["unitPrice"]))
             if p.get("unitPrice") is not None
             else None,
@@ -634,6 +661,7 @@ def _noon_modifier_groups(
             options.append(
                 NormalizedOption(
                     name=name,
+                    name_ar=ref_item.get("nameAr") or opt.get("nameAr"),
                     external_ref=str(opt.get("itemCode"))
                     if opt.get("itemCode")
                     else None,
@@ -644,6 +672,7 @@ def _noon_modifier_groups(
         groups.append(
             NormalizedModifierGroup(
                 name=grp.get("nameEn", ""),
+                name_ar=grp.get("nameAr"),
                 external_ref=str(code) if code else None,
                 min_options=grp.get("minTotalOptions"),
                 max_options=grp.get("maxTotalOptions"),
@@ -683,9 +712,12 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
             items.append(
                 NormalizedItem(
                     name=it["nameEn"],
+                    name_ar=it.get("nameAr"),
                     external_id=str(it.get("itemCode")) if it.get("itemCode") else None,
                     external_ref=it.get("posSku"),
                     description=it.get("descEn"),
+                    description_ar=it.get("descAr"),
+                    image_url=it.get("image") or None,
                     price=Decimal(str(price)) if price is not None else None,
                     is_available=_noon_item_available(it),
                     modifier_groups=_noon_modifier_groups(it, groups_by_code, by_code),
@@ -694,6 +726,7 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
         cats.append(
             NormalizedCategory(
                 cat.get("nameEn", ""),
+                name_ar=cat.get("nameAr"),
                 external_id=str(cat.get("categoryCode"))
                 if cat.get("categoryCode")
                 else None,
