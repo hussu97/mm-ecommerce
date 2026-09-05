@@ -209,17 +209,32 @@ def test_noon_weekly_builder_maps_days_and_keeps_envelope():
 def test_deliveroo_weekly_builder_bare_array_open_days_only():
     # A bare array (no {"hours":...} wrapper is applied here — that lives in the
     # plan envelope); day_of_week == MM weekday directly (0=Sun); closed weekdays
-    # are omitted (Deliveroo full-replace closes any absent day).
+    # are omitted (Deliveroo full-replace closes any absent day). Times are HH:MM —
+    # Deliveroo silently drops any entry carrying seconds.
     rows = hw._deliveroo_hours_weekly(_WEEKLY)
     assert isinstance(rows, list)
     assert [r["day_of_week"] for r in rows] == [0, 1]  # Sun, Mon open; 2..6 closed
     assert rows[0] == {
         "day_of_week": 0,
-        "local_start_time": "08:00:00",
-        "local_end_time": "22:00:00",
+        "local_start_time": "08:00",
+        "local_end_time": "22:00",
     }
-    assert rows[1]["local_start_time"] == "09:00:00"  # Mon 09:00-23:00
-    assert rows[1]["local_end_time"] == "23:00:00"
+    assert rows[1]["local_start_time"] == "09:00"  # Mon 09:00-23:00
+    assert rows[1]["local_end_time"] == "23:00"
+
+
+def test_deliveroo_hhmm_trims_seconds():
+    # The WRITE must carry HH:MM; a carried read-back row (HH:MM:SS) is trimmed too.
+    assert hw._hhmm("08:00:00") == "08:00"
+    assert hw._hhmm("8:5") == "08:05"
+    trimmed = hw._deliveroo_trim(
+        {"day_of_week": 3, "local_start_time": "08:00:00", "local_end_time": "23:30:00"}
+    )
+    assert trimmed == {
+        "day_of_week": 3,
+        "local_start_time": "08:00",
+        "local_end_time": "23:30",
+    }
 
 
 def test_careem_weekly_builder_all_seven_rows():

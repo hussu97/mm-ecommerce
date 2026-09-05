@@ -82,6 +82,18 @@ def _hhmmss(clock: str) -> str:
     return clock
 
 
+def _hhmm(clock: str) -> str:
+    """`"08:00:00"` / `"08:00"` → `"08:00"`. Deliveroo's opening-hours WRITE takes
+    HH:MM and SILENTLY DROPS any entry carrying seconds (verified live 2026-09-05:
+    a full week sent as `08:00:00` did not persist; the same week as `08:00` did),
+    so every value in a Deliveroo hours payload — new or carried from the read —
+    must be trimmed to HH:MM."""
+    parts = (clock or "").split(":")
+    if len(parts) >= 2:
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    return clock
+
+
 def _minutes(clock: str) -> int:
     """`"08:15"` → 495 (minutes from midnight)."""
     parts = (clock or "0:0").split(":")
@@ -319,15 +331,15 @@ async def _deliveroo_push(
     outlet = row.external_outlet_id
     current = await dp.provider.get_opening_hours(session, outlet)
     hours = [
-        h
+        _deliveroo_trim(h)
         for h in (current.get("hours") if isinstance(current, dict) else current) or []
         if isinstance(h, dict) and h.get("day_of_week") != weekday
     ]
     hours.append(
         {
             "day_of_week": weekday,
-            "local_start_time": _hhmmss(opens),
-            "local_end_time": _hhmmss(closes),
+            "local_start_time": _hhmm(opens),
+            "local_end_time": _hhmm(closes),
         }
     )
     hours.sort(key=lambda h: int(h.get("day_of_week") or 0))
@@ -349,7 +361,7 @@ async def _deliveroo_close(
     outlet = row.external_outlet_id
     current = await dp.provider.get_opening_hours(session, outlet)
     hours = [
-        h
+        _deliveroo_trim(h)
         for h in (current.get("hours") if isinstance(current, dict) else current) or []
         if isinstance(h, dict) and h.get("day_of_week") != weekday
     ]
@@ -652,12 +664,22 @@ def _deliveroo_hours_weekly(
     return [
         {
             "day_of_week": wd,
-            "local_start_time": _hhmmss(win[0]),
-            "local_end_time": _hhmmss(win[1]),
+            "local_start_time": _hhmm(win[0]),
+            "local_end_time": _hhmm(win[1]),
         }
         for wd in range(7)
         if (win := weekly.get(wd)) is not None
     ]
+
+
+def _deliveroo_trim(h: dict[str, Any]) -> dict[str, Any]:
+    """A read-back hours row with its times trimmed to HH:MM — so an existing day
+    carried through a one-day push/close is not silently dropped for its seconds."""
+    return {
+        **h,
+        "local_start_time": _hhmm(str(h.get("local_start_time") or "")),
+        "local_end_time": _hhmm(str(h.get("local_end_time") or "")),
+    }
 
 
 def _deliveroo_hours_key(hours: Any) -> frozenset[tuple[int, str, str]]:
