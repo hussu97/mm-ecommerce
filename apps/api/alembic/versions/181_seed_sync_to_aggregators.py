@@ -6,15 +6,16 @@ seeded it, so live production has zero synced products — meaning the desired m
 empty and the whole sync would read as "delete everything". This is the initial
 load.
 
-The set is "what is actually live on the marketplaces today" (audited 2026-09-05),
-so the first diff against each portal is near-empty — the safe way to switch the
-feature on:
-- the 46 SKUs in the Foodics **Grubtech price tag** (the aggregator menu that
-  cascades to the two integrated branches, Barsha + Sharjah), read live from the
-  console on 2026-09-05; plus
-- **FG0052 (Brookies)**, which is carried on the portal-direct branches (Karama/DSO)
-  but is *not* in the Grubtech tag — an audited coverage gap. Including it makes MM's
-  desired set the union of what is live anywhere.
+The set is what *should* be live on the marketplaces (audited 2026-09-05, operator-
+confirmed): 45 SKUs =
+- the Foodics **Grubtech price tag** (the aggregator menu that cascades to the two
+  integrated branches, Barsha + Sharjah), read live from the console; MINUS
+- the **seasonal boxes that must not sync** — Christmas Advent Calendar (FG0118) and
+  the two Ramadan Advent Gift Boxes (FG0127, FG0128) — which are therefore to be
+  deactivated on every aggregator; PLUS
+- **FG0052 (Brookies)**, carried on the portal-direct branches but absent from the
+  tag (an audited coverage gap); and
+- **FG0050 (Gift Note Card)**, an Extras item meant to be available everywhere.
 
 Guarded so it cannot fight the admin: it only flips a row that is still `false`
 (the exact value it means to replace), matched by the account-stable `FG####` SKU.
@@ -40,8 +41,12 @@ down_revision: Union[str, None] = "180_foodics_branch_map_seed"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# 46 Grubtech price-tag SKUs (live 2026-09-05) + FG0052 (Brookies, portal-direct
-# only). Account-stable FG#### product SKUs; matched by value, not by name.
+# The products that should be live on the marketplaces (operator-confirmed
+# 2026-09-05): the Grubtech price-tag set MINUS the seasonal boxes that must NOT
+# sync — Christmas Advent Calendar (FG0118) and the two Ramadan Advent Gift Boxes
+# (FG0127, FG0128) — PLUS FG0052 (Brookies, portal-direct only, absent from the
+# tag) and FG0050 (Gift Note Card, an Extras item meant to be available
+# everywhere). Account-stable FG#### SKUs; matched by value, not by name.
 _SKUS: tuple[str, ...] = (
     "FG0018",
     "FG0019",
@@ -75,6 +80,7 @@ _SKUS: tuple[str, ...] = (
     "FG0047",
     "FG0048",
     "FG0049",
+    "FG0050",
     "FG0051",
     "FG0052",
     "FG0053",
@@ -82,11 +88,8 @@ _SKUS: tuple[str, ...] = (
     "FG0055",
     "FG0056",
     "FG0057",
-    "FG0118",
     "FG0125",
     "FG0126",
-    "FG0127",
-    "FG0128",
     "FG0129",
     "FG0130",
     "FG0131",
