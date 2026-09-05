@@ -639,18 +639,42 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     await _drive_status(db, order, agg)
 
 
+def _marketplace_line_ids(agg: AggregatorOrder) -> list[str]:
+    """Ids a statement line might carry for this aggregator order.
+
+    Deliveroo invoice CSV `Order ID` is detail `drn_id`, not `external_order_id`
+    (sales `order_id`) and not `display_ref` (short `order_number`).
+    """
+    ids = [agg.external_order_id]
+    if agg.display_ref:
+        ids.append(agg.display_ref)
+    raw = agg.raw if isinstance(getattr(agg, "raw", None), dict) else {}
+    detail = raw.get("detail") if isinstance(raw.get("detail"), dict) else {}
+    drn = str((detail or {}).get("drn_id") or raw.get("drn_id") or "").strip()
+    if drn:
+        ids.append(drn)
+    return ids
+
+
 async def _backfill_statement_lines(
-    db: AsyncSession, channel: str, external_order_id: str, mm_order_id
+    db: AsyncSession, channel: str, marketplace_ids: list[str] | str, mm_order_id
 ) -> None:
-    """Link statement lines for the same (channel, external_order_id) to the MM
-    order just promoted, so finance queries can join without a separate
-    aggregator_order hop. Only touches rows that are still null — a row already
-    linked by an earlier promotion or by a direct write is left as is."""
+    """Link statement lines for the same marketplace ids to the MM order just
+    promoted, so finance queries can join without a separate aggregator_order hop.
+    Only touches rows that are still null — a row already linked by an earlier
+    promotion or by a direct write is left as is."""
+    ids = (
+        [marketplace_ids]
+        if isinstance(marketplace_ids, str)
+        else [i for i in marketplace_ids if i]
+    )
+    if not ids:
+        return
     await db.execute(
         sql_update(AggregatorStatementLine)
         .where(
             AggregatorStatementLine.channel == channel,
-            AggregatorStatementLine.external_order_id == external_order_id,
+            AggregatorStatementLine.external_order_id.in_(ids),
             AggregatorStatementLine.mm_order_id.is_(None),
         )
         .values(mm_order_id=mm_order_id)
@@ -714,7 +738,7 @@ async def promote_order(
             agg.mm_order_id = grubops_order.id
             agg.promoted_at = utcnow()
             await _backfill_statement_lines(
-                db, agg.channel, agg.external_order_id, grubops_order.id
+                db, agg.channel, _marketplace_line_ids(agg), grubops_order.id
             )
             # Fill-only overlay of the scraped customer + rider. The GrubOps push
             # often lands with an empty (or masked) customer, and linking alone left
@@ -773,7 +797,9 @@ async def promote_order(
     agg.mm_order_id = order.id
     agg.promoted_at = utcnow()
     await db.flush()
-    await _backfill_statement_lines(db, agg.channel, agg.external_order_id, order.id)
+    await _backfill_statement_lines(
+        db, agg.channel, _marketplace_line_ids(agg), order.id
+    )
     await _record_fulfilment(db, order)
     return order
 

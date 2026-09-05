@@ -146,15 +146,17 @@ async def _open_persistent(pw, channel: str):
     return await _open_context(pw, channel, headed=not settings.HEADLESS)
 
 
-async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
+async def pull_keeta_orders_in_page(*, months_back: int = 0) -> dict[str, Any]:
     """Fetch Keeta ORDERS in-page and push them. Finance is a SEPARATE nightly job
     (`pull_keeta_finance_in_page`) so its slow file downloads never block a heal or
     an orders pull behind them on the daemon's single consumer.
 
     Orders are the time-critical half: Keeta masks each order's customer
     name/phone/address to `***` a few hours after the order, so this runs every few
-    hours to capture them first. Playwright is imported lazily so this module
-    imports without the browser lib.
+    hours to capture them first. Default lookback is the current month only —
+    last-month history does not fit the daemon's 600s budget and is not what
+    a 3-hourly unmask-PII pull is for. Playwright is imported lazily so this
+    module imports without the browser lib.
     """
     from .engine import async_playwright
 

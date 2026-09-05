@@ -1902,7 +1902,7 @@ async def test_coverage_backfill_disabled_by_zero_guard(monkeypatch):
 
 
 async def test_mm_order_for_external_matches_display_ref():
-    """Deliveroo invoice Order ID is the short display_ref, not the sales UUID."""
+    """A short ticket still matches `display_ref` (Noon / GrubOps-style ids)."""
     captured = {}
 
     class _DB:
@@ -1921,8 +1921,45 @@ async def test_mm_order_for_external_matches_display_ref():
 def test_upsert_statement_links_orders_on_display_ref():
     import inspect
 
-    src = inspect.getsource(ingest._upsert_statement)
-    assert "AggregatorOrder.display_ref.in_(settled_order_ids)" in src
+    src = inspect.getsource(ingest._order_matches_line_ids)
+    assert "AggregatorOrder.display_ref.in_(ids)" in src
+    assert '["drn_id"]' in src or "drn_id" in src
+
+
+def test_deliveroo_settlement_joins_on_drn_id_not_short_or_order_number():
+    """Live Deliveroo ids that must not be confused with each other.
+
+    Sales list `order_id` is a v3 UUID; `order_number` / `display_ref` is the
+    short ticket (9170); invoice CSV `Order Number` is a long numeric
+    (51135384652) that the sales API never returns; CSV `Order ID` is the
+    order-detail `drn_id` (a different v4 UUID). The join is that last one.
+    """
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorOrder
+
+    sales_uuid = "bd627d5f-d304-3a4f-92e4-34f92fbd4304"
+    drn_uuid = "b9fa898d-83f7-44a6-a10a-71fe9f2cdbc5"
+    short_ticket = "9170"
+    csv_order_number = "51135384652"
+
+    compiled = str(
+        select(AggregatorOrder.id)
+        .where(ingest._order_matches_line_ids({drn_uuid}))
+        .compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "drn_id" in compiled
+    assert drn_uuid in compiled
+    assert sales_uuid not in compiled
+    assert short_ticket not in compiled
+    assert csv_order_number not in compiled
+
+    import inspect
+
+    src = inspect.getsource(ingest._order_matches_line_ids)
+    assert "external_order_id" in src
+    assert "display_ref" in src
+    assert "drn_id" in src
 
 
 async def test_careem_empty_payouts_notes_channel_limit(monkeypatch):

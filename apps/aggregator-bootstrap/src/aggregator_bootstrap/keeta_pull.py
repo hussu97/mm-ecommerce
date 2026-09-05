@@ -144,6 +144,7 @@ def _month_windows(months_back: int) -> list[tuple[date, date]]:
     `months_back=1` yields last month's full window and the current month up to
     today; `months_back=0` is just the current month. Each window is clamped to
     the requested span so the first and last are partial where they should be.
+    Returned newest-first so a budgeted pull captures last-2d before history.
     """
     today = datetime.now(_BUSINESS_TZ).date()
     from_date = _add_months(date(today.year, today.month, 1), -max(months_back, 0))
@@ -154,6 +155,10 @@ def _month_windows(months_back: int) -> list[tuple[date, date]]:
         last_day = date.fromordinal(next_month.toordinal() - 1)
         windows.append((max(from_date, current), min(today, last_day)))
         current = next_month
+    # Newest first so a 600s budget still captures last-2d before last-month
+    # history. Oldest-first spent the whole KEETA_ORDERS budget on four shops
+    # of prior-month pagination after LOGIN_ACCOUNTID was already restored.
+    windows.reverse()
     return windows
 
 
@@ -206,10 +211,12 @@ async def fetch_keeta_orders(context: Any, *, months_back: int = 1) -> list[dict
     """Pull raw Keeta `getOrders` payloads in-page from an open browser context.
 
     Opens the order-history page (so the session sits on merchant.mykeeta.com and
-    `SHOP_IDS` is primed), then for each shop and each month window in the lookback
+    `SHOP_IDS` is primed), then for each month window (newest first) and each shop
     calls the signed `getOrders` fetch through `page.evaluate`, paginating until
-    the window is exhausted. Returns the raw response payloads unchanged — one dict
-    per fetched page — for `keeta_provider.parse_orders` to walk downstream.
+    the window is exhausted. Newest-first is load-bearing: the daemon's 600s
+    budget otherwise spends itself on last-month history and last-2d stays 0.
+    Returns the raw response payloads unchanged — one dict per fetched page —
+    for `keeta_provider.parse_orders` to walk downstream.
     """
     page = await context.new_page()
     payloads: list[dict] = []
@@ -245,11 +252,14 @@ async def fetch_keeta_orders(context: Any, *, months_back: int = 1) -> list[dict
         shop_ids = await _read_shop_ids(page)
         # Iterate per shop (single-element shopIds list) so each shop paginates on
         # its own totals; if none are known, make one combined call with [].
+        # Windows are the outer loop (newest first) so every shop's current month
+        # lands before any shop's last-month history — a 600s kill must not leave
+        # last-2d at 0.
         shop_groups = [[shop_id] for shop_id in shop_ids] or [[]]
         windows = _month_windows(months_back)
 
-        for shop_group in shop_groups:
-            for window_start, window_end in windows:
+        for window_start, window_end in windows:
+            for shop_group in shop_groups:
                 page_number = 1
                 for _ in range(_MAX_ORDER_PAGES):
                     response_payload = await _get_orders_page(

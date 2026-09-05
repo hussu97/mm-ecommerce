@@ -1191,6 +1191,12 @@ class DeliverooClient(BaseAggregatorClient):
         so the header row is found by its `Restaurant Name` / `Order ID` shape,
         and each data row emits up to five non-zero lines (order value, an
         activity adjustment, commission, its VAT, and the net payable).
+
+        Live Partner Hub CSVs carry both `Order Number` (a long numeric, e.g.
+        ``51135384652``) and `Order ID` (a v4 UUID). `Order ID` is the sales
+        detail `drn_id` — not list `order_id` (a different v3 UUID) and not the
+        short `order_number` / `display_ref` (e.g. ``9170``). Line
+        `external_order_id` is therefore the CSV `Order ID`.
         """
         reader = csv.reader(io.StringIO(text))
         headers: list[str] | None = None

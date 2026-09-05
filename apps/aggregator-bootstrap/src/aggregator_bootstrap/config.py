@@ -145,11 +145,12 @@ class Settings(BaseSettings):
     #: or an orders pull behind it on the single consumer.
     WORKER_KEETA_PULL_INTERVAL_HOURS: int = 3
     #: Keeta MENU-pull cadence (hours). The menu changes rarely, so a slow cadence;
-    #: `<= 0` disables it. The API's catalog sync reads the pushed snapshot.
+    #: `<= 0` disables it. Local default stays 12; prod compose overrides to 0
+    #: while catalog read is off. Turn back on with CATALOG_SYNC_READ_ENABLED.
     WORKER_KEETA_MENU_INTERVAL_HOURS: int = 12
     #: Deliveroo MENU-pull cadence (hours). `<= 0` disables it (default OFF —
     #: the catalog-sync read feature is opt-in). Set > 0 to push the snapshot the
-    #: API's `_read_deliveroo_menu` parses. Hours are not captured here.
+    #: API's `_read_deliveroo_menu` parses. Hours are API httpx, not this job.
     WORKER_DELIVEROO_MENU_INTERVAL_HOURS: int = 0
     #: Dubai wall-clock hour for the nightly Keeta FINANCE pull (settled statement
     #: files). Split from the orders pull because it re-downloads settled files and
@@ -161,7 +162,12 @@ class Settings(BaseSettings):
     #: Dubai wall-clock hour for the Keeta HOURS write (today's window / close).
     #: Queued after `WORKER_KEETA_FINANCE_HOUR_DXB` on the same one-Chrome queue so
     #: the slow finance download finishes first; 05:00 DXB is still before trading.
+    #: Ignored unless `WORKER_KEETA_HOURS_ENABLED` is true.
     WORKER_KEETA_HOURS_HOUR_DXB: int = 5
+    #: Schedule the nightly KEETA_HOURS Chrome write. Default false — catalog
+    #: writes (`CATALOG_SYNC_ENABLED`) are off, and the worker does not read that
+    #: API flag. Turning catalog writes on must also set this true.
+    WORKER_KEETA_HOURS_ENABLED: bool = False
     #: How many months back the nightly Keeta finance pull lists — the LIST calls are
     #: newest-first, so this bounds how far back settled files are re-fetched (the
     #: pull used to re-download every historical file every run). 2 covers a
@@ -201,13 +207,11 @@ class Settings(BaseSettings):
     #: window (22:00–22:15, before the 23:00 ingest).
     WORKER_JITTER_SECONDS: int = 900
     #: Append a small set of BACKGROUND-ONLY Chrome flags (crash reporting, sync,
-    #: component/background networking, first-run) to the AUTOMATED warm/pull
-    #: launches to trim host CPU/RAM per browser. Every flag is host/background and
-    #: none is readable by page JS, so — by the exact criterion `fingerprint.py`
-    #: uses to justify `--no-sandbox` — none is an anti-bot signal. It is NOT
-    #: applied to the pristine standalone `login` spawn that faces the initial
-    #: Cloudflare/Akamai/PerimeterX challenge. A toggle, not a code change, so it
-    #: can be switched off instantly on the VM if a channel ever regresses.
+    #: component/background networking, first-run, Mesa `--use-angle=gl`) to the
+    #: AUTOMATED warm/pull launches to trim host CPU/RAM per browser. `--use-angle=gl`
+    #: can change the WebGL renderer string, so it is NOT applied to the pristine
+    #: standalone `login` spawn. A toggle, not a code change, so it can be switched
+    #: off instantly on the VM if a channel ever regresses.
     WORKER_LEAN_CHROME: bool = True
     #: Heartbeat file the daemon touches each tick; the compose healthcheck fails
     #: the container when it goes stale. On the persisted `/data` volume.

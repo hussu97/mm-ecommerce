@@ -19,7 +19,10 @@ import pytest
 # imports when the tests run under the api venv.
 _API_ROOT = Path(__file__).resolve().parents[2] / "api"
 
-from aggregator_bootstrap.keeta_pull import fetch_keeta_orders  # noqa: E402
+from aggregator_bootstrap.keeta_pull import (  # noqa: E402
+    _month_windows,
+    fetch_keeta_orders,
+)
 
 # A realistic getOrders response: `data.list[]` of the Keeta envelope
 # (baseOrder / merchantOrder / products / feeDtl.merchantFee) that parse_orders
@@ -133,6 +136,32 @@ async def test_fetch_keeta_orders_reseeds_login_accountid_after_spa_boot(
         if isinstance(arg, dict) and arg.get("LOGIN_ACCOUNTID") == "acc-1"
     ]
     assert writes, "LOGIN_ACCOUNTID was not written into the persistent page"
+
+
+def test_month_windows_newest_first():
+    """A budgeted pull must see this month before last month."""
+    windows = _month_windows(1)
+    assert len(windows) == 2
+    assert windows[0][0] > windows[1][0]
+
+
+async def test_fetch_keeta_orders_walks_current_month_before_older():
+    """Every shop's current month is fetched before any shop's last month.
+
+    Oldest-first, shop-outer spent the 600s KEETA_ORDERS budget on last-month
+    history and left last-2d at 0 even after LOGIN_ACCOUNTID restore worked.
+    """
+    page = _FakePage(SAMPLE_GET_ORDERS, ["shop-a", "shop-b"])
+    await fetch_keeta_orders(_FakeContext(page), months_back=1)
+    starts = [
+        int(arg["payload"]["startTime"])
+        for _, arg in page.evaluate_calls
+        if isinstance(arg, dict) and str(arg.get("endpoint", "")).endswith("getOrders")
+    ]
+    assert len(starts) == 4
+    assert starts[0] == starts[1]
+    assert starts[2] == starts[3]
+    assert starts[0] > starts[2]
 
 
 async def test_no_shop_ids_still_makes_one_combined_call():

@@ -560,6 +560,7 @@ jobs:
           CATALOG_SYNC_READ_ENABLED=${{ secrets.CATALOG_SYNC_READ_ENABLED || 'false' }}
           CATALOG_SYNC_ENABLED=${{ secrets.CATALOG_SYNC_ENABLED || 'false' }}
           BRANCH_HOURS_SYNC_LIVE=${{ secrets.BRANCH_HOURS_SYNC_LIVE || 'false' }}
+          WORKER_KEETA_HOURS_ENABLED=${{ secrets.WORKER_KEETA_HOURS_ENABLED || 'false' }}
           CATALOG_SYNC_ENFORCE_PRICE_PARITY=${{ secrets.CATALOG_SYNC_ENFORCE_PRICE_PARITY || 'true' }}
           CATALOG_SYNC_SWEEP_MINUTES=${{ secrets.CATALOG_SYNC_SWEEP_MINUTES || '0' }}
           SLIDER_API_KEY=${{ secrets.SLIDER_API_KEY }}

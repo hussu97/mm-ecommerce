@@ -107,6 +107,57 @@ def test_statement_lines_amounts_are_decimal():
         assert isinstance(line.amount, Decimal)
 
 
+# Live Partner Hub invoice shape (prod `79872485.csv`): Order Number is the long
+# numeric, Order ID is the last column and equals sales detail `drn_id`.
+_LIVE_CSV = textwrap.dedent("""\
+    Orders and related adjustments
+    Restaurant Name,Order Number,Delivery Date & Time (UTC),Activity,Order Value (د.إ),Adjustment Net (د.إ),Deliveroo Commission Rate,Deliveroo Commission (د.إ),Commission / Adjustment VAT Rate,Commission / Adjustment VAT (د.إ),Total Payable,Note,Order ID
+    Melting Moments Cakes-Barsha,51135384652,2026-08-24 10:32:59,Delivery,90.00,,31.00% + 0.00,-27.90,5.00,-1.40,60.70,"",b9fa898d-83f7-44a6-a10a-71fe9f2cdbc5
+""")
+
+_SALES_ORDER_ID = "bd627d5f-d304-3a4f-92e4-34f92fbd4304"
+_DRN_ID = "b9fa898d-83f7-44a6-a10a-71fe9f2cdbc5"
+_SHORT_TICKET = "9170"
+_CSV_ORDER_NUMBER = "51135384652"
+
+
+def test_statement_lines_key_on_csv_order_id_not_order_number():
+    """CSV `Order ID` (drn_id) is the line key; the long Order Number, the short
+    ticket, and the sales `order_id` UUID are different identifiers."""
+    client = DeliverooClient()
+    lines = client._statement_lines("79872485", _LIVE_CSV)
+    ids = {ln.external_order_id for ln in lines if ln.external_order_id}
+    assert ids == {_DRN_ID}
+    assert _CSV_ORDER_NUMBER not in ids
+    assert _SHORT_TICKET not in ids
+    assert _SALES_ORDER_ID not in ids
+
+
+def test_parse_list_order_does_not_use_drn_id_as_external_id():
+    """Sales `order_id` stays the aggregator_order key; drn_id lives on detail."""
+    client = DeliverooClient()
+    order = client._parse_list_order(
+        {
+            "order_id": _SALES_ORDER_ID,
+            "order_number": _SHORT_TICKET,
+            "amount": {"fractional": 7000},
+            "status": "cancelled",
+        },
+        "693360",
+    )
+    assert order is not None
+    assert order.external_order_id == _SALES_ORDER_ID
+    assert order.display_ref == _SHORT_TICKET
+    merged = client._merge_order_detail(
+        order,
+        {"id": _SALES_ORDER_ID, "drn_id": _DRN_ID, "order_number": _SHORT_TICKET},
+        "693360",
+    )
+    assert merged.external_order_id == _SALES_ORDER_ID
+    assert merged.display_ref == _SHORT_TICKET
+    assert (merged.raw or {}).get("detail", {}).get("drn_id") == _DRN_ID
+
+
 def test_statement_lines_no_header_returns_empty():
     client = DeliverooClient()
     lines = client._statement_lines("stmt-1", "no,header,here\n1,2,3\n")

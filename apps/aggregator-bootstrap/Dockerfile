@@ -54,6 +54,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
+# Mesa llvmpipe DRI for `--use-angle=gl` (WORKER_LEAN_CHROME warm/pull path).
+# Own layer so it does not invalidate the ~1GB Chrome layer above. Without these
+# drivers Chrome keeps using SwiftShader under Xvfb.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgl1-mesa-dri \
+ && rm -rf /var/lib/apt/lists/*
+
 # App code + the package install — the ONLY layers a code change invalidates, and
 # both tiny. `pip install .` reuses the Playwright driver + browser installed above.
 COPY pyproject.toml ./

@@ -87,14 +87,16 @@ def free_debug_port() -> int:
 #: developer's macOS where the sandbox would work anyway.
 CONTAINER_CHROME_ARGS: list[str] = ["--no-sandbox", "--disable-dev-shm-usage"]
 
-#: Background-only flags that trim host CPU/RAM per browser without touching the
-#: page-observable fingerprint. Each disables a HOST/BACKGROUND subsystem (crash
-#: upload, profile sync, component + background update pings, first-run UI, the
-#: hang monitor); NONE of them is readable by page JS — the same criterion the
-#: comment above uses to call `--no-sandbox` safe. Deliberately EXCLUDES anything
-#: page-observable (no `--disable-features`, no `--js-flags`, no automation flag,
-#: no UA/viewport change) and is applied ONLY to the automated warm/pull launches,
-#: never to the standalone `login` spawn that meets the initial anti-bot wall.
+#: Background-only flags that trim host CPU/RAM per browser. Most disable a
+#: HOST/BACKGROUND subsystem (crash upload, profile sync, component + background
+#: update pings, first-run UI, the hang monitor) and are not readable by page JS
+#: — the same criterion the comment above uses to call `--no-sandbox` safe.
+#: `--use-angle=gl` is the exception: it switches ANGLE from SwiftShader to the
+#: host GL driver (Mesa llvmpipe under Xvfb, needs `libgl1-mesa-dri`) to cut
+#: gpu-process CPU. That can change the WebGL renderer string, so it is applied
+#: ONLY to automated warm/pull launches, never to the standalone `login` spawn
+#: that meets the initial anti-bot wall. Deliberately omits `--disable-gpu` and
+#: `--bot-gpu-emulation` (WebGL off, or a third-party BotBrowser flag).
 #: Gated by `WORKER_LEAN_CHROME` so it is revertible on the VM without a deploy.
 LOW_OVERHEAD_CHROME_ARGS: list[str] = [
     "--disable-background-networking",
@@ -106,6 +108,7 @@ LOW_OVERHEAD_CHROME_ARGS: list[str] = [
     "--disable-hang-monitor",
     "--no-first-run",
     "--no-default-browser-check",
+    "--use-angle=gl",
 ]
 
 
