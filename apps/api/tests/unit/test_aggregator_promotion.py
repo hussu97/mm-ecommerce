@@ -965,6 +965,25 @@ async def test_find_mm_order_matches_either_id_under_the_channel_label():
     assert "2253" in db.sql
 
 
+def test_grubops_channel_names_including_resolves_the_whole_channel():
+    """Any one spelling resolves to the full set for that channel; an unknown name
+    falls back to itself so a scope built from it never widens to all channels."""
+    from app.services.aggregators import reconcile
+
+    assert set(reconcile.grubops_channel_names_including("Noon")) == {
+        "Noon",
+        "Noon Food",
+    }
+    assert set(reconcile.grubops_channel_names_including("Noon Food")) == {
+        "Noon",
+        "Noon Food",
+    }
+    assert "Careem Now" in reconcile.grubops_channel_names_including("Careem")
+    assert reconcile.grubops_channel_names_including("Deliveroo") == ["Deliveroo"]
+    assert reconcile.grubops_channel_names_including("Mystery") == ["Mystery"]
+    assert reconcile.grubops_channel_names_including(None) == []
+
+
 def test_branch_has_grubops_does_not_require_stock_push_to_be_on():
     """`is_active` on grubops_location_map gates stock-push, not maker-side recon.
 

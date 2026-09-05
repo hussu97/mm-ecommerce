@@ -53,6 +53,7 @@ from app.models.order_status_event import (
 )
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
+from app.services.aggregators import reconcile
 from app.services.orders import order_fees, order_lifecycle
 from app.services.providers.grubops_provider import provider
 
@@ -708,6 +709,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         placed_day = (
             placed.astimezone(ZoneInfo(_TZ)).date().isoformat() if placed else None
         )
+        # Scope the adopt to the SAME channel — every GrubTech spelling of it. The
+        # short externalId is a per-branch-per-day sequence that DIFFERENT channels
+        # reuse, so without a channel scope a Noon order and a Deliveroo order that
+        # both carry "6600" collapsed into one MM order. The relaxed
+        # `uq_orders_source_external_reference` (now keyed on aggregator_channel too,
+        # migration 183) lets the two coexist once the adopt no longer merges them.
+        channel_names = reconcile.grubops_channel_names_including(channel)
         match = [Order.external_reference == order_map.external_id]
         if placed_day:
             match.append(
@@ -722,6 +730,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             select(Order)
             .where(
                 Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.aggregator_channel.in_(channel_names),
                 or_(*match),
             )
             .options(selectinload(Order.items))

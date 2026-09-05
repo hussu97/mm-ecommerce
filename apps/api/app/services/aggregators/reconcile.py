@@ -132,6 +132,23 @@ def grubops_channel_names(channel: str) -> list[str]:
     ]
 
 
+def grubops_channel_names_including(name: str | None) -> list[str]:
+    """Every GrubTech spelling that belongs to the SAME channel as `name`.
+
+    Given any one spelling GrubTech might use ("Noon" or "Noon Food", "Careem" or
+    "Careem Now"), returns the full set for that channel. Falls back to `[name]`
+    when the channel is unrecognised, so a scope built from it never widens to
+    match every channel. Used by the GrubOps order-adopt to keep a short handoff
+    code from collapsing two channels' orders into one."""
+    if not name:
+        return []
+    for channel in CHANNEL_GRUBOPS_LABEL:
+        names = grubops_channel_names(channel)
+        if name in names:
+            return names
+    return [name]
+
+
 def leading_zero_stripped(ref: str | None) -> str | None:
     """A short numeric marketplace handoff code with its leading zeros removed, or
     None when `ref` is not a short numeric code.
