@@ -17,11 +17,16 @@ from app.core.exceptions import ServiceUnavailableError
 from app.services.aggregators import catalog_sync
 from app.services.aggregators.catalog_diff import (
     K_CATEGORY_MISSING,
+    K_CATEGORY_NAME_AR,
     K_CATEGORY_RENAME,
     K_HOURS_DAY_CLOSED_CHANNEL,
     K_HOURS_SHIFT,
+    K_ITEM_DESC_AR,
+    K_ITEM_IMAGE,
+    K_ITEM_NAME_AR,
     K_ITEM_PRICE,
     K_ITEM_UNAVAILABLE,
+    K_OPTION_NAME_AR,
     K_OPTION_PRICE,
     diff_hours,
     diff_menu,
@@ -44,7 +49,25 @@ def test_normalize_folds_ampersand_and_punctuation():
     assert normalize_name("Dark Chocolate & Walnut Brownies") == normalize_name(
         "Dark Chocolate and Walnut Brownies"
     )
-    assert normalize_name("  Mix  Boxes!! ") == "mix boxes"
+    # "boxes" folds to "boxe" (symmetric matching-only artefact, never shown).
+    assert normalize_name("  Mix  Boxes!! ") == "mix boxe"
+
+
+def test_normalize_folds_plurals():
+    # Aggregator names that differ from MM only by plural/singular must match.
+    assert normalize_name("Fudge Brownies") == normalize_name("Fudge Brownie")
+    assert normalize_name("Cookies and Cream Cookies") == normalize_name(
+        "Cookies and Cream Cookie"
+    )
+    assert normalize_name("Red Velvet and Nutella Cookies") == normalize_name(
+        "Red Velvet and Nutella Cookie"
+    )
+    # Ampersand + plural together.
+    assert normalize_name("Dark Chocolate & Walnut Brownies") == normalize_name(
+        "Dark Chocolate and Walnut Brownie"
+    )
+    # Guard: genuinely distinct items still differ.
+    assert normalize_name("Fudge Brownie") != normalize_name("Nutella Brownie")
 
 
 # ── Menu diff ─────────────────────────────────────────────────────────────────
@@ -134,6 +157,82 @@ def test_menu_diff_catches_the_real_drift():
     assert kinds.get(K_CATEGORY_MISSING) == 1
     # "& Walnut" vs "and Walnut" normalises equal → no spurious rename.
     assert "item_name_drift" not in kinds
+
+
+def test_ar_and_image_drift_flagged_when_mm_has_them_and_channel_missing():
+    # MM (superset) carries AR + image; the channel item lacks both. Each is a
+    # delta to write — a blank channel localisation IS drift (unlike an unknown
+    # price). Options match by name, so the AR option-name drift fires too.
+    mm = NormalizedMenu(
+        source="mm",
+        categories=[
+            NormalizedCategory(
+                "Cakes",
+                name_ar="كيك",
+                items=[
+                    NormalizedItem(
+                        "Basque Cheesecake",
+                        name_ar="تشيز كيك الباسك",
+                        description="Creamy",
+                        description_ar="وصف",
+                        image_url="https://mm/basque.jpg",
+                        price=Decimal("30"),
+                        modifier_groups=[
+                            NormalizedModifierGroup(
+                                "Your Choice of Quantity",
+                                options=[
+                                    NormalizedOption(
+                                        "3 Pieces", price=Decimal("45"), name_ar="3 قطع"
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    ch = NormalizedMenu(
+        source="careem",
+        categories=[
+            NormalizedCategory(
+                "Cakes",
+                name_ar=None,
+                items=[
+                    NormalizedItem(
+                        "Basque Cheesecake",
+                        name_ar=None,
+                        description="Creamy",
+                        description_ar=None,
+                        image_url=None,
+                        price=Decimal("30"),
+                        modifier_groups=[
+                            NormalizedModifierGroup(
+                                "Your Choice of Quantity",
+                                options=[
+                                    NormalizedOption(
+                                        "3 Pieces", price=Decimal("45"), name_ar=None
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    kinds = diff_menu(mm, ch, target="careem").summary
+    assert kinds.get(K_ITEM_NAME_AR) == 1
+    assert kinds.get(K_ITEM_DESC_AR) == 1
+    assert kinds.get(K_ITEM_IMAGE) == 1
+    assert kinds.get(K_CATEGORY_NAME_AR) == 1
+    assert kinds.get(K_OPTION_NAME_AR) == 1
+    # AR/image present on both sides → no localisation drift (image host differs,
+    # which is not a delta since only a MISSING channel image is actionable).
+    same = diff_menu(mm, mm, target="careem").summary
+    assert K_ITEM_NAME_AR not in same
+    assert K_ITEM_IMAGE not in same
+    assert K_OPTION_NAME_AR not in same
 
 
 def test_price_parity_toggle_suppresses_price_deltas():
@@ -391,6 +490,42 @@ def test_careem_parser_uses_real_shapes():
     assert menu.categories[1].items[0].price == Decimal("55")
 
 
+def test_careem_customization_groups_from_list_product():
+    # Real customizationGroups shape (VM, 2026-09-05), embedded in the list product:
+    # group min/max in attributes.selection; options carry id + price. DSO option
+    # names are often empty (data-quality gap) — a named option still resolves.
+    from app.services.aggregators.menu_readers import careem_modifier_groups
+
+    product = {
+        "id": 3147240407,
+        "name": "Pistachio Kunafa Brownies",
+        "customizationGroups": [
+            {
+                "id": 1282104241,
+                "name": "Options (Max 3)",
+                "nameLocalized": {"en": "Options (Max 3)"},
+                "attributes": {"selection": {"min": 1, "max": 3, "multiSelect": True}},
+                "options": [
+                    {"id": 3147240408, "name": "", "price": 0},
+                    {"id": 3147240409, "name": "Fudge Brownie", "price": 0},
+                ],
+            }
+        ],
+    }
+    groups = careem_modifier_groups(product)
+    assert len(groups) == 1
+    g = groups[0]
+    assert g.name == "Options (Max 3)"
+    assert g.external_ref == "1282104241"
+    assert (g.min_options, g.max_options) == (1, 3)
+    assert [o.external_ref for o in g.options] == ["3147240408", "3147240409"]
+    # empty name preserved (unmappable), a named option carried through
+    assert g.options[0].name == ""
+    assert g.options[1].name == "Fudge Brownie"
+    # no groups → no crash
+    assert careem_modifier_groups({"id": 1, "name": "x"}) == []
+
+
 def test_talabat_parser_uses_real_shapes():
     # The exact shapes the live Talabat/DeliveryHero vendor-api returned via the VM
     # session (2026-09-01): catalogs carry categories inline; a product's price is
@@ -444,6 +579,72 @@ def test_talabat_parser_uses_real_shapes():
     assert menu.categories[1].items[0].price == Decimal("55")
 
 
+def test_talabat_sizes_attach_from_product_detail():
+    # Real product-detail shape (VM, 2026-09-05): a SIZED_PRODUCT's sizes live in
+    # `nestedProducts` (each type "SIZE", named + unitPrice), not in the list call.
+    from app.services.aggregators.menu_readers import parse_talabat_catalog
+
+    catalogs = {
+        "catalogs": [
+            {"id": "1334277", "categories": [{"id": 20241870, "name": "Brownies"}]}
+        ]
+    }
+    products = {
+        "20241870": [
+            {
+                "id": "2747116483",
+                "name": "Pistachio Kunafa Brownies",
+                "unitPrice": 0,
+                "type": "SIZED_PRODUCT",
+                "availability": {"available": True},
+                "active": True,
+            }
+        ]
+    }
+    details = {
+        "2747116483": {
+            "id": "2747116483",
+            "type": "SIZED_PRODUCT",
+            "nestedProducts": [
+                {
+                    "id": "s3",
+                    "name": "3 Pieces",
+                    "unitPrice": 55,
+                    "type": "SIZE",
+                    "availability": {"available": True},
+                },
+                {
+                    "id": "s6",
+                    "name": "6 Pieces",
+                    "unitPrice": 100,
+                    "type": "SIZE",
+                    "availability": {"available": False},
+                },
+                {
+                    "id": "s9",
+                    "name": "9 Pieces",
+                    "unitPrice": 145,
+                    "type": "SIZE",
+                    "availability": {"available": True},
+                },
+            ],
+        }
+    }
+    menu = parse_talabat_catalog(catalogs, products, details)
+    item = menu.categories[0].items[0]
+    assert len(item.modifier_groups) == 1
+    grp = item.modifier_groups[0]
+    assert grp.name == "Size"
+    assert (grp.min_options, grp.max_options) == (1, 1)
+    assert {(o.name, o.price) for o in grp.options} == {
+        ("3 Pieces", Decimal("55")),
+        ("6 Pieces", Decimal("100")),
+        ("9 Pieces", Decimal("145")),
+    }
+    # size availability carried through (6 Pieces is off)
+    assert {o.name: o.is_available for o in grp.options}["6 Pieces"] is False
+
+
 def test_noon_parser_uses_real_shapes():
     # Real Noon /menu/details shape (VM, 2026-09-01): categories reference items by
     # code; a product's price is `price`, availability is `isActive AND NOT isOos`.
@@ -467,6 +668,20 @@ def test_noon_parser_uses_real_shapes():
                     "isActive": True,
                     "isOos": True,
                 },
+                # A variant-priced brownie (₿0 base) whose real prices live in a
+                # "Your Choice of Quantity" customization group (real shape, 2026-09-05).
+                {
+                    "itemCode": "I900000001A",
+                    "nameEn": "Pistachio Kunafa Brownies",
+                    "price": 0,
+                    "isActive": True,
+                    "isOos": False,
+                    "modifiers": ["MD793413946A"],
+                },
+                # The group's options are non-`main` items referenced by itemCode.
+                {"itemCode": "OPT3", "nameEn": "3 Pieces", "itemType": "modifier"},
+                {"itemCode": "OPT6", "nameEn": "6 Pieces", "itemType": "modifier"},
+                {"itemCode": "OPT9", "nameEn": "9 Pieces", "itemType": "modifier"},
             ],
             "categories": [
                 {
@@ -481,15 +696,48 @@ def test_noon_parser_uses_real_shapes():
                     "position": 1,
                     "items": ["I513758352A"],
                 },
+                {
+                    "categoryCode": "C3",
+                    "nameEn": "Brownies",
+                    "position": 2,
+                    "items": ["I900000001A"],
+                },
+            ],
+            "modifiers": [
+                {
+                    "modifierCode": "MD793413946A",
+                    "nameEn": "Your Choice of Quantity",
+                    "minTotalOptions": 1,
+                    "maxTotalOptions": 1,
+                    "options": [
+                        {"itemCode": "OPT3", "price": 55},
+                        {"itemCode": "OPT6", "price": 100},
+                        {"itemCode": "OPT9", "price": 145},
+                    ],
+                }
             ],
         }
     }
     menu = parse_noon_menu(details)
-    assert [c.name for c in menu.categories] == ["Cakes", "New In"]
+    assert [c.name for c in menu.categories] == ["Cakes", "New In", "Brownies"]
     assert menu.categories[0].items[0].price == Decimal("35.0")
     assert menu.categories[0].items[0].is_available is True
     # isOos=True -> unavailable even though isActive
     assert menu.categories[1].items[0].is_available is False
+    # The variant-priced brownie carries its quantity group with resolved option
+    # names + prices (the price lived in the modifier, not the item).
+    brownie = menu.categories[2].items[0]
+    assert brownie.price == Decimal("0")
+    assert len(brownie.modifier_groups) == 1
+    grp = brownie.modifier_groups[0]
+    assert grp.name == "Your Choice of Quantity"
+    assert grp.external_ref == "MD793413946A"
+    assert (grp.min_options, grp.max_options) == (1, 1)
+    assert {(o.name, o.price) for o in grp.options} == {
+        ("3 Pieces", Decimal("55")),
+        ("6 Pieces", Decimal("100")),
+        ("9 Pieces", Decimal("145")),
+    }
 
 
 def test_menu_ops_resolve_channel_id_from_last_read():
@@ -949,3 +1197,128 @@ def test_talabat_hours_parser_day_origin_minutes_and_closed_day():
     assert by_weekday[0] == ("08:15", "23:30")  # DH day 6 (Sun) -> weekday 0
     assert by_weekday[1] == ("13:00", "22:45")  # DH day 0 (Mon) -> weekday 1
     assert 5 not in by_weekday  # DH day 4 (Fri) empty -> no shift
+
+
+# ── Foodics apply executor (price parity + reversible removal) ─────────────────
+
+
+def _fake_plan(operations):
+    async def _plan(db, *, target, branch_id, kind):
+        return {"operations": operations}
+
+    return _plan
+
+
+@pytest.mark.asyncio
+async def test_apply_menu_push_gated_off_by_default(mock_db, monkeypatch):
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", False)
+    with pytest.raises(Exception):
+        await catalog_sync.apply_menu_push(mock_db, target="foodics")
+
+
+@pytest.mark.asyncio
+async def test_apply_menu_push_is_foodics_only(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.core.exceptions import BadRequestError
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    with pytest.raises(BadRequestError):
+        await catalog_sync.apply_menu_push(mock_db, target="careem")
+
+
+@pytest.mark.asyncio
+async def test_apply_dry_run_reports_but_writes_nothing(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.services.aggregators import catalog_diff as cd
+    from app.services.providers import foodics_provider as fp
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    ops = [
+        {
+            "kind": cd.K_ITEM_PRICE,
+            "action": cd.ACTION_UPDATE,
+            "entity": "Fudge Brownies",
+            "channel_external_id": "FP1",
+            "mm_value": "30",
+            "channel_value": "35",
+        },
+        {
+            "kind": cd.K_ITEM_EXTRA,
+            "action": cd.ACTION_DELETE,
+            "entity": "Discontinued Slice",
+            "channel_external_id": "FP2",
+            "mm_value": None,
+            "channel_value": None,
+        },
+    ]
+    monkeypatch.setattr(catalog_sync, "plan_push", _fake_plan(ops))
+    calls = []
+    monkeypatch.setattr(
+        fp.provider,
+        "set_price_tag_product_price",
+        lambda *a, **k: calls.append(("price", a)),
+    )
+    monkeypatch.setattr(
+        fp.provider,
+        "remove_price_tag_product",
+        lambda *a, **k: calls.append(("del", a)),
+    )
+
+    out = await catalog_sync.apply_menu_push(mock_db, target="foodics", dry_run=True)
+    assert out["dry_run"] is True
+    assert calls == []  # a dry run touches no portal
+    assert out["price_updates"][0]["to"] == "30"
+    assert out["removals"][0]["reported_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_live_sets_price_but_only_removes_with_flag(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.services.aggregators import catalog_diff as cd
+    from app.services.providers import foodics_provider as fp
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    ops = [
+        {
+            "kind": cd.K_ITEM_PRICE,
+            "action": cd.ACTION_UPDATE,
+            "entity": "Fudge Brownies",
+            "channel_external_id": "FP1",
+            "mm_value": "30",
+            "channel_value": "35",
+        },
+        {
+            "kind": cd.K_ITEM_EXTRA,
+            "action": cd.ACTION_DELETE,
+            "entity": "Discontinued Slice",
+            "channel_external_id": "FP2",
+            "mm_value": None,
+            "channel_value": None,
+        },
+    ]
+    monkeypatch.setattr(catalog_sync, "plan_push", _fake_plan(ops))
+    price_calls, del_calls = [], []
+
+    async def fake_price(tag, pid, price):
+        price_calls.append((tag, pid, price))
+
+    async def fake_del(tag, pid):
+        del_calls.append((tag, pid))
+
+    monkeypatch.setattr(fp.provider, "set_price_tag_product_price", fake_price)
+    monkeypatch.setattr(fp.provider, "remove_price_tag_product", fake_del)
+
+    # Live, but apply_deletes not set: price is written, removal is only reported.
+    out = await catalog_sync.apply_menu_push(mock_db, target="foodics", dry_run=False)
+    assert price_calls == [(fp.FOODICS_GRUBTECH_PRICE_TAG_ID, "FP1", "30")]
+    assert del_calls == []
+    assert out["removals"][0]["reported_only"] is True
+
+    # Live + apply_deletes: the removal is executed too.
+    out = await catalog_sync.apply_menu_push(
+        mock_db, target="foodics", dry_run=False, apply_deletes=True
+    )
+    assert del_calls == [(fp.FOODICS_GRUBTECH_PRICE_TAG_ID, "FP2")]
+    assert out["removals"][0]["applied"] is True

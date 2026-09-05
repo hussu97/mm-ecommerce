@@ -722,6 +722,38 @@ class TalabatClient(BaseAggregatorClient):
             params={"locale": "en-AE", "sizeSupport": "true"},
         )
 
+    async def get_product_detail(
+        self, session: LoadedSession, vendor: str, product_id: str
+    ) -> Any:
+        """One product's full record, including its sizes. The category-products
+        list carries only `productOptionIds`; the sizes (name + price) live in this
+        detail call's `nestedProducts` (each `type:"SIZE"`). Endpoint captured live
+        from the portal 2026-09-05 (`/catalogs/products/{id}?mode=READ_ONLY`).
+
+        Localisation note (verified live 2026-09-05): Talabat's Karama menu is
+        already fully bilingual — Arabic name/description AND Arabic size names are
+        present and match MM. They are NOT in the READ_ONLY `names`/`descriptions`
+        arrays (those come back empty); they live in the `?mode=EDITING` payload,
+        each as `[{"locale":"ar-AE","value":...},{"locale":"en-AE","value":...}]`.
+        `?mode=EDITING` also exposes `active` and `availability`
+        ({"available":bool,"status":"COMMITTED"}) which READ_ONLY carries too.
+
+        Writes (verified 2026-09-05, see `update_product`): **PATCH**
+        `/catalogs/products/{id}` (PUT 405s). Known fields are [unitPrice,
+        nestedProductOptions, names, vat, name, environmentalTax, pvcTax, posId,
+        allergens, productOptionIds, netAmount, descriptions, tags, type, id,
+        description, imageUrls, nutritionFacts, packagingCharge, nestedProducts,
+        categories, catalogIds] — so en+ar title/desc, price and image all go here;
+        there is NO `active` field on PATCH. On-shelf activation is a SEPARATE async
+        endpoint (`set_availability`). Mix-box flavour choices are a
+        `productOptionIds` group (Options (Max N)), not a SIZE."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/products/{product_id}",
+            params={"locale": "en", "mode": "READ_ONLY"},
+        )
+
     async def create_menu_item(
         self,
         session: LoadedSession,
@@ -753,6 +785,76 @@ class TalabatClient(BaseAggregatorClient):
                 "type": "Simple",
                 "active": bool(active),
             },
+        )
+
+    @staticmethod
+    def _locales(en: str | None, ar: str | None) -> list[dict[str, str]]:
+        """Talabat's localised-field array shape ([{locale, value}]) — the EDITING
+        payload uses `ar-AE`/`en-AE`. Only non-None values are emitted."""
+        out: list[dict[str, str]] = []
+        if ar is not None:
+            out.append({"locale": "ar-AE", "value": ar})
+        if en is not None:
+            out.append({"locale": "en-AE", "value": en})
+        return out
+
+    async def update_product(
+        self,
+        session: LoadedSession,
+        vendor: str,
+        product_id: str,
+        *,
+        name: str | None = None,
+        name_ar: str | None = None,
+        description: str | None = None,
+        description_ar: str | None = None,
+        price: Any | None = None,
+        image_url: str | None = None,
+    ) -> Any:
+        """Edit a product — PATCH `/catalogs/products/{id}` (verified live
+        2026-09-05). Only the passed fields are sent. Localised title/description
+        go as BOTH the scalar (`name`/`description`) and the `names`/`descriptions`
+        [{locale,value}] arrays (en-AE + ar-AE), which is how the console writes
+        bilingual copy. Price is `unitPrice`; image is `imageUrls` (a list). PUT
+        405s here; this is NOT how on-shelf status changes — use `set_availability`.
+        """
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+            payload["names"] = self._locales(name, name_ar)
+        elif name_ar is not None:
+            payload["names"] = self._locales(None, name_ar)
+        if description is not None:
+            payload["description"] = description
+            payload["descriptions"] = self._locales(description, description_ar)
+        elif description_ar is not None:
+            payload["descriptions"] = self._locales(None, description_ar)
+        if price is not None:
+            payload["unitPrice"] = float(price)
+        if image_url is not None:
+            payload["imageUrls"] = [image_url]
+        return await self.request_raw(
+            session,
+            "PATCH",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/products/{product_id}",
+            json_body=payload,
+        )
+
+    async def set_availability(
+        self, session: LoadedSession, vendor: str, product_id: str, *, available: bool
+    ) -> Any:
+        """Bring a product on/off shelf — PUT `/catalogs/products/{id}/availability`
+        `{"available": bool, "availableTimeChanges": []}` (verified live
+        2026-09-05). This is the on-shelf `active` toggle, distinct from a PATCH
+        edit. The call is **async**: it returns 202 and the product's `active`
+        flag flips a few seconds later (empty `availableTimeChanges` = always, no
+        schedule). Sending a bare `{"available": true}` is accepted (202) but does
+        NOT take effect — the `availableTimeChanges` key is required."""
+        return await self.request_raw(
+            session,
+            "PUT",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/products/{product_id}/availability",
+            json_body={"available": bool(available), "availableTimeChanges": []},
         )
 
     async def get_delivery_calendars(self, session: LoadedSession, vendor: str) -> Any:

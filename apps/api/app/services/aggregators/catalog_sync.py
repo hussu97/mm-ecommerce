@@ -59,6 +59,10 @@ from app.models.product import Product
 from app.services import branch_hours_service
 from app.services.aggregators import catalog_mapping, menu_readers
 from app.services.aggregators.catalog_diff import (
+    ACTION_DELETE,
+    K_ITEM_EXTRA,
+    K_ITEM_MISSING,
+    K_ITEM_PRICE,
     HoursDiff,
     MenuDiff,
     diff_hours,
@@ -98,6 +102,14 @@ def _syncs_to(row: Product | Category, target: str) -> bool:
     return target in channels
 
 
+def _ar(row: Any, field: str) -> str | None:
+    """The Arabic value of a translated field from a row's `translations` JSONB
+    (`{"ar": {"name": ..., "description": ...}}`), or None. MM is the source of
+    truth for localisation, so this feeds the desired side of the diff."""
+    tr = getattr(row, "translations", None) or {}
+    return (tr.get("ar") or {}).get(field)
+
+
 def _product_to_item(product: Product) -> NormalizedItem:
     groups: list[NormalizedModifierGroup] = []
     for pm in sorted(product.product_modifiers, key=lambda p: p.display_order):
@@ -105,12 +117,14 @@ def _product_to_item(product: Product) -> NormalizedItem:
         groups.append(
             NormalizedModifierGroup(
                 name=mod.name,
+                name_ar=_ar(mod, "name"),
                 external_ref=mod.reference,
                 min_options=pm.minimum_options,
                 max_options=pm.maximum_options,
                 options=[
                     NormalizedOption(
                         name=o.name,
+                        name_ar=_ar(o, "name"),
                         external_ref=o.sku,
                         price=Decimal(o.price) if o.price is not None else None,
                         is_available=o.is_active,
@@ -119,11 +133,15 @@ def _product_to_item(product: Product) -> NormalizedItem:
                 ],
             )
         )
+    images = getattr(product, "image_urls", None) or []
     return NormalizedItem(
         name=product.name,
+        name_ar=_ar(product, "name"),
         external_id=str(product.id),
         external_ref=product.sku,
         description=product.description,
+        description_ar=_ar(product, "description"),
+        image_url=images[0] if images else None,
         price=Decimal(product.base_price) if product.base_price is not None else None,
         is_available=product.is_active,
         category_ref=str(product.category_id) if product.category_id else None,
@@ -156,7 +174,9 @@ async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
         cat_key = str(cat.id) if cat else "uncategorised"
         if cat_key not in cats:
             cats[cat_key] = NormalizedCategory(
-                name=cat_name, external_id=str(cat.id) if cat else None
+                name=cat_name,
+                name_ar=_ar(cat, "name") if cat else None,
+                external_id=str(cat.id) if cat else None,
             )
             order.append(cat_key)
         cats[cat_key].items.append(_product_to_item(product))
@@ -580,6 +600,127 @@ async def plan_push(
             "would execute (menu ops carry the channel id resolved from the last "
             "read; the Foodics route targets the Grubtech group + price tag)."
         ),
+    }
+
+
+async def apply_menu_push(
+    db: AsyncSession,
+    *,
+    target: str = TARGET_FOODICS,
+    branch_id: Any = None,
+    dry_run: bool = True,
+    apply_deletes: bool = False,
+) -> dict[str, Any]:
+    """Execute the menu-drift plan for a target. Hard-gated by `CATALOG_SYNC_ENABLED`.
+
+    Foodics master path only (the two integrated branches): a write cascades to
+    every marketplace and covers Barsha + Sharjah at once, so Foodics snapshots
+    (and this apply) are account-level (`branch_id=None`). Two write actions, both
+    reversible and both leaving the POS product untouched:
+
+    - **price parity** — for each `item_price_mismatch` set the Grubtech price-tag
+      price to MM's via `set_price_tag_product_price`;
+    - **removal** — for each `item_extra_on_channel` remove the product from the
+      Grubtech price tag via `remove_price_tag_product` (drops it from the
+      marketplaces without deactivating it for the POS). Gated behind
+      `apply_deletes` because an `item_extra` can be a false positive from name
+      drift ("Cake" vs "Cakes", "&" vs "and"): default is to *report* removals, not
+      perform them, until the mappings are trusted.
+
+    **Creates** are reported, not performed here — they run through
+    `create_menu_item(target=foodics)`, which also records the mapping. Portal-direct
+    (Karama/DSO) and option-price executors are later phases. `dry_run` (the default)
+    resolves every call and returns exactly what it *would* do, mutating nothing.
+
+    Precondition for a live run: MM `base_price` must already be the true selling
+    price. The diff pushes MM→channel, so a stale MM price (e.g. cakes at 30 when
+    Foodics/marketplaces are at 35) would be pushed down. Reconcile MM first.
+    """
+    _ensure_write_enabled()
+    if target != TARGET_FOODICS:
+        raise BadRequestError(
+            f"apply_menu_push is Foodics-only for now; {target!r} portal-direct "
+            "executor is a later phase (use plan_push to preview its ops)."
+        )
+    plan = await plan_push(db, target=target, branch_id=branch_id, kind=SNAPSHOT_MENU)
+    from app.services.providers import foodics_provider as fp
+
+    tag_id = fp.FOODICS_GRUBTECH_PRICE_TAG_ID
+    price_updates: list[dict[str, Any]] = []
+    removals: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for op in plan["operations"]:
+        kind = op.get("kind")
+        product_id = op.get("channel_external_id")
+        mm_value = op.get("mm_value")
+        if kind == K_ITEM_PRICE and product_id and mm_value is not None:
+            record = {
+                "entity": op["entity"],
+                "foodics_product_id": product_id,
+                "from": op.get("channel_value"),
+                "to": mm_value,
+            }
+            if not dry_run:
+                await fp.provider.set_price_tag_product_price(
+                    tag_id, product_id, mm_value
+                )
+                record["applied"] = True
+            price_updates.append(record)
+        elif kind == K_ITEM_EXTRA and op.get("action") == ACTION_DELETE and product_id:
+            record = {
+                "entity": op["entity"],
+                "foodics_product_id": product_id,
+                "action": "remove_from_grubtech_price_tag",
+            }
+            if not dry_run and apply_deletes:
+                await fp.provider.remove_price_tag_product(tag_id, product_id)
+                record["applied"] = True
+            else:
+                record["reported_only"] = True
+                record["reason"] = (
+                    "pass apply_deletes=True to remove (guarded against name-drift "
+                    "false positives)"
+                )
+            removals.append(record)
+        elif kind in (K_ITEM_PRICE, K_ITEM_EXTRA) and not product_id:
+            skipped.append(
+                {**_op_summary(op), "reason": "no Foodics product id in last read"}
+            )
+        elif kind == K_ITEM_MISSING:
+            skipped.append(
+                {
+                    **_op_summary(op),
+                    "reason": "create via create_menu_item(target=foodics)",
+                }
+            )
+        else:
+            skipped.append(
+                {**_op_summary(op), "reason": f"{kind} not auto-applied (later phase)"}
+            )
+    return {
+        "dry_run": dry_run,
+        "apply_deletes": apply_deletes,
+        "target": target,
+        "route": _route_for(target),
+        "price_updates": price_updates,
+        "removals": removals,
+        "skipped": skipped,
+        "note": (
+            "Foodics apply. `price_updates` set the Grubtech price-tag price to MM's "
+            "for each item_price_mismatch; `removals` drop item_extra products from "
+            "the price tag (POS product untouched) — reported unless apply_deletes. "
+            "Both cascade to all marketplaces. Creates/other kinds: see `skipped`."
+            + ("" if dry_run else " Live run: writes were sent.")
+        ),
+    }
+
+
+def _op_summary(op: dict[str, Any]) -> dict[str, Any]:
+    """The reportable fields of a skipped op (drops internal keys)."""
+    return {
+        "entity": op.get("entity"),
+        "kind": op.get("kind"),
+        "action": op.get("action"),
     }
 
 

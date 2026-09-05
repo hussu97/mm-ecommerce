@@ -49,6 +49,8 @@ from app.services.aggregators.menu_normalized import (
     NormalizedHours,
     NormalizedItem,
     NormalizedMenu,
+    NormalizedModifierGroup,
+    NormalizedOption,
     NormalizedShift,
 )
 from app.services.providers.aggregator_base import AggregatorUnavailableError
@@ -173,10 +175,74 @@ async def _read_foodics_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
 
 # ── Careem catalog reader (non-Foodics outlets) ───────────────────────────────
 # Verified against the live partner-portal API (captured 2026-08-31, fields
-# confirmed 2026-09-01). Read flow: catalog-catalogs -> catalog-categories/<id>
-# ({subCategories}) -> catalog-products?categoryId=<cat> ({products:[...]}). A
-# product's price is `defaultPrice`, availability is `status == "ACTIVE"`. Replayed
-# through the same bearer session the sales ingest uses.
+# confirmed 2026-09-01, modifiers + category endpoint 2026-09-05). Read flow:
+# catalog-catalogs -> catalog-categories?catalogId=<id> ({subCategories}) ->
+# catalog-products?categoryId=<cat> ({products:[...]}). A product's price is
+# `defaultPrice`, availability is `status == "ACTIVE"`, and its `customizationGroups`
+# are embedded in the list product (no detail call). Replayed through the same
+# bearer session the sales ingest uses.
+
+
+def _careem_localized(obj: Any, key: str = "name") -> str:
+    """A Careem entity's English name: `name`, else `nameLocalized.en`, else ""."""
+    if not isinstance(obj, dict):
+        return ""
+    return obj.get(key) or (obj.get(f"{key}Localized") or {}).get("en") or ""
+
+
+def _careem_ar(obj: Any, key: str = "name") -> str | None:
+    """A Careem entity's Arabic value from `<key>Localized.ar`, or None."""
+    if not isinstance(obj, dict):
+        return None
+    return (obj.get(f"{key}Localized") or {}).get("ar") or None
+
+
+def _careem_image(obj: Any) -> str | None:
+    """First image URL on a Careem product (`images:[{url}]`), or None."""
+    for img in (obj.get("images") or []) if isinstance(obj, dict) else []:
+        url = (img or {}).get("url") if isinstance(img, dict) else None
+        if url:
+            return url
+    return None
+
+
+def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
+    """A Careem product's `customizationGroups` → NormalizedModifierGroups (verified
+    live 2026-09-05, embedded in the catalog-products list itself — no detail call).
+    Group min/max come from `attributes.selection`; each option carries an `id` and
+    `price`. NOTE: on the portal-direct DSO menu the option *names* are often empty
+    (a GrubTech-import data-quality gap) — the group + option prices still drive the
+    diff; option-name mapping only works where Careem has named them."""
+    groups: list[NormalizedModifierGroup] = []
+    for g in product.get("customizationGroups") or []:
+        if not isinstance(g, dict):
+            continue
+        sel = (g.get("attributes") or {}).get("selection") or {}
+        options: list[NormalizedOption] = []
+        for o in g.get("options") or []:
+            if not isinstance(o, dict):
+                continue
+            price = o.get("price")
+            options.append(
+                NormalizedOption(
+                    name=_careem_localized(o),
+                    name_ar=_careem_ar(o),
+                    external_ref=str(o["id"]) if o.get("id") is not None else None,
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=str(o.get("status", "ACTIVE")).upper() != "INACTIVE",
+                )
+            )
+        groups.append(
+            NormalizedModifierGroup(
+                name=_careem_localized(g),
+                name_ar=_careem_ar(g),
+                external_ref=str(g["id"]) if g.get("id") is not None else None,
+                min_options=sel.get("min"),
+                max_options=sel.get("max"),
+                options=options,
+            )
+        )
+    return groups
 
 
 def _careem_items(products_payload: Any) -> list[NormalizedItem]:
@@ -195,9 +261,14 @@ def _careem_items(products_payload: Any) -> list[NormalizedItem]:
         items.append(
             NormalizedItem(
                 name=p["name"],
+                name_ar=_careem_ar(p),
                 external_id=str(p["id"]) if p.get("id") is not None else None,
+                description=_careem_localized(p, "description") or None,
+                description_ar=_careem_ar(p, "description"),
+                image_url=_careem_image(p),
                 price=Decimal(str(price)) if price is not None else None,
                 is_available=str(p.get("status", "ACTIVE")).upper() == "ACTIVE",
+                modifier_groups=careem_modifier_groups(p),
             )
         )
     return items
@@ -217,6 +288,7 @@ def parse_careem_catalog(
         cats.append(
             NormalizedCategory(
                 cat.get("name", ""),
+                name_ar=_careem_ar(cat),
                 external_id=cid or None,
                 items=_careem_items(products_by_category.get(cid)),
             )
@@ -337,33 +409,77 @@ async def _read_careem_hours(db: AsyncSession, branch_id: Any) -> NormalizedHour
 # carries the DeliveryHero bearer); request_json's TLS impersonation passes PX.
 
 
-def _talabat_items(products: Any) -> list[NormalizedItem]:
+def _talabat_availability(obj: Any) -> bool:
+    avail = obj.get("availability") if isinstance(obj, dict) else None
+    available = avail.get("available") if isinstance(avail, dict) else avail
+    return bool(True if available is None else available)
+
+
+def talabat_size_group(detail: Any) -> NormalizedModifierGroup | None:
+    """A SIZED_PRODUCT's sizes → a single "Size" modifier group (verified live
+    2026-09-05). The category-products list carries only `productOptionIds`; the
+    named, priced sizes are in the product-detail's `nestedProducts` (each
+    `type:"SIZE"`, e.g. 3/6/9 Pieces at 55/100/145). One size is chosen, so
+    min=max=1. Returns None when the product has no sizes."""
+    nested = detail.get("nestedProducts") if isinstance(detail, dict) else None
+    options: list[NormalizedOption] = []
+    for n in nested or []:
+        if not isinstance(n, dict) or str(n.get("type")) != "SIZE" or not n.get("name"):
+            continue
+        price = n.get("unitPrice")
+        options.append(
+            NormalizedOption(
+                name=n["name"],
+                external_ref=str(n["id"]) if n.get("id") is not None else None,
+                price=Decimal(str(price)) if price is not None else None,
+                is_available=_talabat_availability(n),
+            )
+        )
+    if not options:
+        return None
+    return NormalizedModifierGroup(
+        name="Size", min_options=1, max_options=1, options=options
+    )
+
+
+def _talabat_items(
+    products: Any, details_by_id: dict[str, Any] | None = None
+) -> list[NormalizedItem]:
+    details_by_id = details_by_id or {}
     items: list[NormalizedItem] = []
     for p in products if isinstance(products, list) else []:
         if not isinstance(p, dict) or not p.get("name"):
             continue
-        avail = p.get("availability")
-        available = avail.get("available") if isinstance(avail, dict) else avail
-        items.append(
-            NormalizedItem(
-                name=p["name"],
-                external_id=str(p["id"]) if p.get("id") is not None else None,
-                description=p.get("description"),
-                price=Decimal(str(p["unitPrice"]))
-                if p.get("unitPrice") is not None
-                else None,
-                is_available=bool(p.get("active", True))
-                and bool(True if available is None else available),
-            )
+        image_urls = p.get("imageUrls") or p.get("images") or []
+        item = NormalizedItem(
+            name=p["name"],
+            external_id=str(p["id"]) if p.get("id") is not None else None,
+            description=p.get("description"),
+            image_url=image_urls[0]
+            if isinstance(image_urls, list) and image_urls
+            else None,
+            price=Decimal(str(p["unitPrice"]))
+            if p.get("unitPrice") is not None
+            else None,
+            is_available=bool(p.get("active", True)) and _talabat_availability(p),
         )
+        detail = details_by_id.get(str(p.get("id")))
+        if detail is not None:
+            group = talabat_size_group(detail)
+            if group is not None:
+                item.modifier_groups.append(group)
+        items.append(item)
     return items
 
 
 def parse_talabat_catalog(
-    catalogs: Any, products_by_category: dict[str, Any]
+    catalogs: Any,
+    products_by_category: dict[str, Any],
+    details_by_id: dict[str, Any] | None = None,
 ) -> NormalizedMenu:
     """Talabat catalogs (categories inline) + per-category products → menu. Pure,
-    unit-tested against the real shapes."""
+    unit-tested against the real shapes. `details_by_id` (productId → product-detail
+    payload) carries the sizes for SIZED_PRODUCTs, attached as a "Size" group."""
     catalog_list = (
         catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
     ) or []
@@ -375,7 +491,7 @@ def parse_talabat_catalog(
                 NormalizedCategory(
                     cat.get("name", ""),
                     external_id=cid or None,
-                    items=_talabat_items(products_by_category.get(cid)),
+                    items=_talabat_items(products_by_category.get(cid), details_by_id),
                 )
             )
     return NormalizedMenu(source="talabat", categories=cats)
@@ -413,15 +529,36 @@ async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
         catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
     ) or []
     products_by_cat: dict[str, Any] = {}
+    sized_ids: set[str] = set()
     for catalog in catalog_list:
         catalog_id = str(catalog["id"])
         for cat in catalog.get("categories", []) or []:
             cid = str(cat.get("id")) if cat.get("id") is not None else ""
-            if cid:
-                products_by_cat[cid] = await tp.provider.list_category_products(
-                    session, vendor, catalog_id, cid
-                )
-    return parse_talabat_catalog(catalogs, products_by_cat)
+            if not cid:
+                continue
+            prods = await tp.provider.list_category_products(
+                session, vendor, catalog_id, cid
+            )
+            products_by_cat[cid] = prods
+            for p in prods if isinstance(prods, list) else []:
+                # A SIZED_PRODUCT's sizes are only in its product-detail call.
+                if (
+                    isinstance(p, dict)
+                    and str(p.get("type")) == "SIZED_PRODUCT"
+                    and p.get("id") is not None
+                ):
+                    sized_ids.add(str(p["id"]))
+    details_by_id: dict[str, Any] = {}
+    for pid in sized_ids:
+        try:
+            details_by_id[pid] = await tp.provider.get_product_detail(
+                session, vendor, pid
+            )
+        except AggregatorUnavailableError as exc:
+            # One product's detail failing must not lose the whole menu read; that
+            # item simply carries no sizes this pass.
+            logger.warning("talabat: product %s detail unavailable (%s)", pid, exc)
+    return parse_talabat_catalog(catalogs, products_by_cat, details_by_id)
 
 
 def _min_hhmm(value: Any) -> str:
@@ -480,17 +617,77 @@ async def _read_talabat_hours(db: AsyncSession, branch_id: Any) -> NormalizedHou
 
 
 # ── Noon RMS menu reader ──────────────────────────────────────────────────────
-# Verified live from the VM session (2026-09-01). GET /menu/list -> the menus;
-# POST /menu/details {menuCode} -> {items:[{itemCode,nameEn,price,isActive,isOos,
-# categoryCode}], categories:[{categoryCode,nameEn,items:[itemCode]}]}. The
-# "Ext. grubtech" menus are Foodics-fed; the MM-managed one is read here. Availability
-# = isActive AND NOT isOos. Same RMS session/headers the finance ingest uses.
+# Verified live from the VM session (2026-09-01, modifiers 2026-09-05). GET
+# /menu/list -> the menus; POST /menu/details {menuCode} -> {items:[{itemCode,
+# nameEn,price,isActive,isOos,categoryCode,modifiers:[modifierCode]}], categories:
+# [{categoryCode,nameEn,items:[itemCode]}], modifiers:[{modifierCode,nameEn,
+# minTotalOptions,maxTotalOptions,options:[{itemCode,price}]}]}. An item's
+# customization groups are referenced by code in `item.modifiers`; an option's name
+# is the referenced item's nameEn (options are non-`main` items). The "Ext. grubtech"
+# menus are Foodics-fed; the MM-managed one is read here. Availability = isActive AND
+# NOT isOos. Same RMS session/headers the finance ingest uses.
+
+
+def _noon_item_available(it: dict) -> bool:
+    """Noon availability: `isActive AND NOT isOos` (used for items and options)."""
+    return bool(it.get("isActive", True)) and not bool(it.get("isOos", False))
+
+
+def _noon_modifier_groups(
+    item: dict,
+    groups_by_code: dict[str, dict],
+    by_code: dict[str, dict],
+) -> list[NormalizedModifierGroup]:
+    """The item's customization groups → NormalizedModifierGroups (verified live
+    2026-09-05): `item.modifiers` is a list of modifier codes; each resolves in
+    `data.modifiers` to a group `{modifierCode, nameEn, minTotalOptions,
+    maxTotalOptions, options:[{itemCode, price}]}`; an option's display name is the
+    referenced item's `nameEn` (options are non-`main` items in the same `items`
+    list), its price is the option's `price` override."""
+    groups: list[NormalizedModifierGroup] = []
+    for code in item.get("modifiers") or []:
+        grp = groups_by_code.get(code)
+        if not isinstance(grp, dict):
+            continue
+        options: list[NormalizedOption] = []
+        for opt in grp.get("options") or []:
+            if not isinstance(opt, dict):
+                continue
+            ref_item = by_code.get(opt.get("itemCode")) or {}
+            name = ref_item.get("nameEn") or opt.get("nameEn")
+            if not name:
+                continue
+            price = opt.get("price")
+            options.append(
+                NormalizedOption(
+                    name=name,
+                    name_ar=ref_item.get("nameAr") or opt.get("nameAr"),
+                    external_ref=str(opt.get("itemCode"))
+                    if opt.get("itemCode")
+                    else None,
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=_noon_item_available(ref_item),
+                )
+            )
+        groups.append(
+            NormalizedModifierGroup(
+                name=grp.get("nameEn", ""),
+                name_ar=grp.get("nameAr"),
+                external_ref=str(code) if code else None,
+                min_options=grp.get("minTotalOptions"),
+                max_options=grp.get("maxTotalOptions"),
+                options=options,
+            )
+        )
+    return groups
 
 
 def parse_noon_menu(details: Any) -> NormalizedMenu:
     """Noon `/menu/details` data → a channel-neutral menu (pure, unit-tested).
 
     Categories reference items by `itemCode`; the item objects live in `items`.
+    Variant-priced items (₿0 base) carry their real prices in a customization group
+    referenced from `item.modifiers`, parsed here via `_noon_modifier_groups`.
     """
     data = details.get("data") if isinstance(details, dict) else details
     data = data or {}
@@ -498,6 +695,11 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
         it.get("itemCode"): it
         for it in (data.get("items") or [])
         if isinstance(it, dict)
+    }
+    groups_by_code = {
+        g.get("modifierCode"): g
+        for g in (data.get("modifiers") or [])
+        if isinstance(g, dict) and g.get("modifierCode")
     }
     cats: list[NormalizedCategory] = []
     for cat in sorted(data.get("categories") or [], key=lambda c: c.get("position", 0)):
@@ -510,17 +712,21 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
             items.append(
                 NormalizedItem(
                     name=it["nameEn"],
+                    name_ar=it.get("nameAr"),
                     external_id=str(it.get("itemCode")) if it.get("itemCode") else None,
                     external_ref=it.get("posSku"),
                     description=it.get("descEn"),
+                    description_ar=it.get("descAr"),
+                    image_url=it.get("image") or None,
                     price=Decimal(str(price)) if price is not None else None,
-                    is_available=bool(it.get("isActive", True))
-                    and not bool(it.get("isOos", False)),
+                    is_available=_noon_item_available(it),
+                    modifier_groups=_noon_modifier_groups(it, groups_by_code, by_code),
                 )
             )
         cats.append(
             NormalizedCategory(
                 cat.get("nameEn", ""),
+                name_ar=cat.get("nameAr"),
                 external_id=str(cat.get("categoryCode"))
                 if cat.get("categoryCode")
                 else None,

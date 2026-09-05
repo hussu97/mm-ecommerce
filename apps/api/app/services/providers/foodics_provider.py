@@ -120,6 +120,10 @@ _UPDATING = "/core-api/updating"
 #: `{url, payload}` envelope as `_UPDATING`, so the resource is named in the
 #: body, not the path.
 _CREATING = "/core-api/creating"
+#: Delete (`{name:'deleting',method:'delete'}` in the same verb map). Used to
+#: remove a product from the Grubtech price tag — the surgical, reversible way to
+#: take an item off the aggregator menu without deactivating it for the POS.
+_DELETING = "/core-api/deleting"
 
 #: The "Grubtech" price tag + menu group that define the aggregator menu for the
 #: two Foodics-integrated branches. Account-stable ids (not secrets, not
@@ -809,20 +813,36 @@ class FoodicsClient:
     async def set_price_tag_product_price(
         self, price_tag_id: str, product_id: str, price: Any
     ) -> Any:
-        """Set one product's aggregator price on the price tag (the `pivot.price`).
+        """Set one product's aggregator price on the price tag (the `pivot.price`),
+        adding it to the tag if it is not on it yet — Foodics upserts on this route.
 
-        The write mirror of the read above. Same `PUT /core-api/updating` shape as
-        the order write; only ever called behind `CATALOG_SYNC_ENABLED`. The exact
-        payload key is confirmed at enablement against a live session — kept in one
-        place so that confirmation is a one-line change, not a hunt.
+        The `/price_tags/{tag}/products/{id}` route accepts **POST** (add/set) and
+        **DELETE** (remove) only — a PUT 405s ("Supported methods: POST, DELETE",
+        verified live 2026-09-05 when it added `Brookies`/FG0052 to the Grubtech
+        tag). So this uses the `creating` (POST) verb, not `updating`. Only ever
+        reached behind `CATALOG_SYNC_ENABLED`.
         """
         return await self._call(
-            "PUT",
-            _UPDATING,
+            "POST",
+            _CREATING,
             json_body={
                 "url": f"/price_tags/{price_tag_id}/products/{product_id}",
                 "payload": {"price": price},
             },
+        )
+
+    async def remove_price_tag_product(self, price_tag_id: str, product_id: str) -> Any:
+        """Remove one product from the price tag — the reversible "delete from the
+        aggregator menu" (drops its `pivot`, so it stops being on the marketplaces)
+        that does NOT deactivate the product for the POS. Same `/price_tags/{tag}/
+        products/{id}` URL as the price setter, via the `deleting` verb. Only ever
+        reached behind `CATALOG_SYNC_ENABLED`; the exact envelope is confirmed
+        against one controlled removal at enablement (same discipline as the create
+        and price writers), kept here so that is a one-line change."""
+        return await self._call(
+            "DELETE",
+            _DELETING,
+            json_body={"url": f"/price_tags/{price_tag_id}/products/{product_id}"},
         )
 
     # ── create (catalog sync writer) ─────────────────────────────────────────
