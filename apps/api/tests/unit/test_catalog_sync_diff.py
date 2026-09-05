@@ -44,7 +44,25 @@ def test_normalize_folds_ampersand_and_punctuation():
     assert normalize_name("Dark Chocolate & Walnut Brownies") == normalize_name(
         "Dark Chocolate and Walnut Brownies"
     )
-    assert normalize_name("  Mix  Boxes!! ") == "mix boxes"
+    # "boxes" folds to "boxe" (symmetric matching-only artefact, never shown).
+    assert normalize_name("  Mix  Boxes!! ") == "mix boxe"
+
+
+def test_normalize_folds_plurals():
+    # Aggregator names that differ from MM only by plural/singular must match.
+    assert normalize_name("Fudge Brownies") == normalize_name("Fudge Brownie")
+    assert normalize_name("Cookies and Cream Cookies") == normalize_name(
+        "Cookies and Cream Cookie"
+    )
+    assert normalize_name("Red Velvet and Nutella Cookies") == normalize_name(
+        "Red Velvet and Nutella Cookie"
+    )
+    # Ampersand + plural together.
+    assert normalize_name("Dark Chocolate & Walnut Brownies") == normalize_name(
+        "Dark Chocolate and Walnut Brownie"
+    )
+    # Guard: genuinely distinct items still differ.
+    assert normalize_name("Fudge Brownie") != normalize_name("Nutella Brownie")
 
 
 # ── Menu diff ─────────────────────────────────────────────────────────────────

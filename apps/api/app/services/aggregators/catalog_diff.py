@@ -112,17 +112,30 @@ _WS = re.compile(r"\s+")
 
 
 def normalize_name(name: str | None) -> str:
-    """Lower-case, `&`→`and`, drop punctuation, collapse whitespace.
+    """Lower-case, `&`→`and`, drop punctuation, collapse whitespace, singularise.
 
     So "Dark Chocolate & Walnut Brownies" and "Dark Chocolate and Walnut
     Brownies" normalise equal, and the diff reports the raw drift once rather
     than a spurious missing+extra pair.
+
+    The final step folds each token's trailing plural "s" so aggregator names
+    that differ from the MM Catalog only by plural/singular match — e.g. the
+    Noon mix-box option "Cookies and Cream Cookies" against MM's singular
+    "Cookies and Cream Cookie", or "Fudge Brownies" against "Fudge Brownie".
+    This is a SYMMETRIC, matching-only fold: it is applied identically to both
+    the desired (MM) and actual (channel) sides and is never stored or shown,
+    so minor artefacts like "boxes"→"boxe" are harmless — both sides get the
+    same transform. We strip a single trailing "s" only when the token is
+    longer than 3 chars (leaving short tokens like "is" alone); no "es"/"ies"
+    special-casing is needed since a plain "s" strip already turns "brownies"→
+    "brownie" and "cookies"→"cookie" correctly.
     """
     if not name:
         return ""
     s = name.strip().lower().replace("&", " and ")
     s = _PUNCT.sub(" ", s)
-    return _WS.sub(" ", s).strip()
+    s = _WS.sub(" ", s).strip()
+    return " ".join(t[:-1] if len(t) > 3 and t.endswith("s") else t for t in s.split())
 
 
 def _tokens(name: str) -> set[str]:
