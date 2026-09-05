@@ -876,17 +876,24 @@ class TalabatClient(BaseAggregatorClient):
         )
 
     async def put_delivery_calendars(
-        self, session: LoadedSession, vendor: str, calendars: Any
+        self, session: LoadedSession, vendor: str, calendar: Any
     ) -> Any:
-        """Write the vendor's DELIVERY calendars (same path the GET reads).
+        """Write ONE of the vendor's calendars (its whole object, from the GET).
 
-        Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
+        Verified live 2026-09-05: the write is `PUT .../calendars` (the collection,
+        NOT `/calendars/DELIVERY` — that path is GET-only and 405s every write
+        method), and the body is a **single calendar object** (the full shape the
+        GET returns: `{id, name, schedule:{type, openingTimesByDay}, comment,
+        visible, active}`), NOT an array or a `{calendars:[…]}` wrapper (both 400
+        "Failed to read request"). Sending only the "Normal" calendar edits that
+        one and leaves the alternative (ramadan/eid) calendars untouched. Returns
+        200. Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
         """
-        return await self.request_json(
+        return await self.request_raw(
             session,
             "PUT",
-            f"{_VTS}/vendor/TB_AE;{vendor}/calendars/DELIVERY",
-            json_body=calendars,
+            f"{_VTS}/vendor/TB_AE;{vendor}/calendars",
+            json_body=calendar,
         )
 
     async def put_vendor_status(

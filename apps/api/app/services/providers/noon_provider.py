@@ -435,16 +435,23 @@ class NoonClient(BaseAggregatorClient):
     async def save_outlet_schedule(
         self, session: LoadedSession, outlet_code: str, schedule: dict[str, Any]
     ) -> Any:
-        """Persist an outlet's weekly schedule (the matching save for outlet/details).
+        """Persist an outlet's weekly schedule.
 
+        Captured live 2026-09-05 from the Opening Hours editor: the save is
+        `POST /_food-restaurant/restaurant/outlet/edit/bulk` with body
+        `{"outlets":[{"outletCode":<code>,"schedule":{"periods":{…},"periodsDesc":""}}]}`
+        — NOT `/outlet/save` (that 404s). `periods` is keyed by day-index 0=Mon…6=Sun,
+        each `[[ "HH:MM:SS", "HH:MM:SS" ]]`. `periodsDesc` is required (empty string).
         Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
         """
+        sched = {**schedule}
+        sched.setdefault("periodsDesc", "")
         return await self.request_json(
             session,
             "POST",
-            f"{_RMS}/_food-restaurant/restaurant/outlet/save",
+            f"{_RMS}/_food-restaurant/restaurant/outlet/edit/bulk",
             headers=self._rms_headers(session),
-            json_body={"outletCode": outlet_code, "schedule": schedule},
+            json_body={"outlets": [{"outletCode": outlet_code, "schedule": sched}]},
         )
 
     # ── menu create/delete (catalog sync writer) ─────────────────────────────
