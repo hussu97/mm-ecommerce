@@ -67,7 +67,8 @@ def test_persistent_profile_or_raise_accepts_chrome_dir(tmp_path, monkeypatch):
 async def test_pull_keeta_orders_opens_persistent_profile(monkeypatch, tmp_path):
     opened = _stub_persistent(monkeypatch, tmp_path, "keeta")
 
-    async def fake_fetch(context, *, months_back=1):
+    async def fake_fetch(context, *, months_back):
+        assert months_back == 0
         assert context is _Opened.context
         return []
 
