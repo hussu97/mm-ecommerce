@@ -69,12 +69,19 @@ from app.services.providers._agg_parse import first_present as _first
 from app.services.providers._agg_parse import parse_money as _num
 from app.services.providers.aggregator_base import (
     AggregatorAuthError,
+    AggregatorUnavailableError,
     BaseAggregatorClient,
 )
 
 logger = logging.getLogger(__name__)
 
 _API = "https://partners.careem.com/api/saturn-ext"
+#: Careem hosts uploaded product images on its own media CDN. `upload_product_image`
+#: returns `{id: "<name>-<merchantId>.jpg"}`; the served URL is this host +
+#: `/catalogs/<id>` (verified live 2026-09-05 — GET 200 image/jpeg; note the CDN
+#: rejects HEAD, so probe with GET). This is the only URL `update_product(image_url=)`
+#: will actually serve, because Careem never fetches a foreign remote URL.
+_MEDIA_HOST = "https://careem-catalog-media.media.careem.com/catalogs"
 _TENANT = "FOOD"
 _PAGE_SIZE = 50
 #: Careem scopes the per-outlet orders endpoint by city id (1 = Dubai). The live
@@ -476,11 +483,12 @@ class CareemClient(BaseAggregatorClient):
         `status` ("ACTIVE"/"INACTIVE") — the last is how an item is
         activated/deactivated on Careem.
 
-        IMAGES are the exception: `image_url` writes `images:[{url}]`, but Careem
-        does NOT fetch/host a remote URL — a remote link 404s on its CDN and
-        `images:[]`/`null` will not clear it. A real image needs the console's
-        native upload (signed-URL + bytes), which is not reachable server-side yet.
-        Pass `image_url` only with a URL already on Careem's own media host.
+        IMAGES: `image_url` writes `images:[{url}]` and REPLACES the images array.
+        Careem never fetches a foreign remote URL, so `image_url` must already point
+        at Careem's own media host (`_MEDIA_HOST`). The full, verified flow is
+        two-step and lives in `set_product_image`: `upload_product_image` (multipart)
+        hosts the bytes and returns the media URL, then this PUT associates it. A PUT
+        here merges (only the passed fields change), verified live 2026-09-05.
         """
         payload: dict[str, Any] = {}
         if name is not None:
@@ -556,6 +564,212 @@ class CareemClient(BaseAggregatorClient):
             "PUT",
             f"{self._outlet_base(company, brand, outlet)}/catalog-categories/{category_id}",
             json_body=payload,
+        )
+
+    async def upload_product_image(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        product_id: Any,
+        *,
+        image_bytes: bytes,
+        filename: str = "image.jpg",
+        content_type: str = "image/jpeg",
+        field_name: str = "file",
+    ) -> Any:
+        """Upload a real product image (multipart) — the ONLY way to set a Careem
+        image (a remote URL via `update_product` is never fetched, see there).
+
+        Endpoint captured live 2026-09-05: POST `catalog-product/{id}/
+        catalog-products-images` (note the singular `catalog-product` segment before
+        the id, unlike the plural `catalog-products` used elsewhere), body is
+        `multipart/form-data` with the image file -> 201 `{"id": "<name>-<merchantId>
+        .jpg"}`. The bytes are hosted on Careem's media CDN immediately, but the
+        upload does NOT attach the image to the product — that needs the follow-up
+        PUT in `set_product_image`. Returns the served media URL (`_MEDIA_HOST/<id>`),
+        or the raw 201 body if the id can't be parsed."""
+        url = (
+            f"{self._outlet_base(company, brand, outlet)}"
+            f"/catalog-product/{product_id}/catalog-products-images"
+        )
+        resp = await self.request_raw(
+            session,
+            "POST",
+            url,
+            files={field_name: (filename, image_bytes, content_type)},
+        )
+        try:
+            body = resp.json()
+            image_id = body.get("id") if isinstance(body, dict) else None
+        except Exception:  # noqa: BLE001 - fall back to the raw response
+            image_id = None
+        return f"{_MEDIA_HOST}/{image_id}" if image_id else resp
+
+    async def set_product_image(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        product_id: Any,
+        *,
+        image_bytes: bytes,
+        filename: str = "image.jpg",
+        content_type: str = "image/jpeg",
+    ) -> str:
+        """Upload image bytes AND attach them to the product — the full, verified
+        (2026-09-05) way to set a Careem product image. Uploads via
+        `upload_product_image` (multipart -> media CDN), then `update_product` with
+        the returned media URL to associate it. Returns the media URL. Use a
+        distinctive `filename` per product (Careem names the media
+        `<filename-stem>-<merchantId>.jpg`, so a shared stem collides)."""
+        media_url = await self.upload_product_image(
+            session,
+            company,
+            brand,
+            outlet,
+            product_id,
+            image_bytes=image_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+        if not isinstance(media_url, str):
+            raise AggregatorUnavailableError(
+                f"{self.channel}: image upload returned no media id for {product_id}"
+            )
+        await self.update_product(
+            session, company, brand, outlet, product_id, image_url=media_url
+        )
+        return media_url
+
+    async def list_customization_groups(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        product_id: Any,
+    ) -> Any:
+        """A product's customization (modifier) groups — GET
+        `catalog-customization-groups?productId={id}` (the `productId` param is
+        required, verified live 2026-09-05). Returns a list of groups, each
+        `{id, name, nameLocalized, status, priority, attributes:{selection:{min,max,
+        multiSelect}}, products:[{productId}], options:[{id, ...}]}`. The group's
+        min/max lives in `attributes.selection`, and each option's real name/price
+        lives in its own option-product (the inline option fields read back empty)."""
+        return await self.request_json(
+            session,
+            "GET",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-customization-groups",
+            params={"productId": product_id},
+        )
+
+    async def create_customization_group(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        product_id: Any,
+        *,
+        catalog_id: Any,
+        name: str,
+        options: list[dict[str, Any]],
+        name_ar: str | None = None,
+        min_select: int = 1,
+        max_select: int = 1,
+    ) -> Any:
+        """Create a customization (modifier) group on a product — verified live
+        2026-09-05.
+
+        Careem models modifier OPTIONS as products: each `options[i]` becomes a
+        hidden option-product that Careem creates from the definition given here.
+        The group links to the parent via `products:[{productId}]` (note the key is
+        `productId`, NOT `id` — `id` makes the server resolve product 0 and 404).
+
+        `options` is a list of `{"name", "price", "name_ar"}` dicts (display order =
+        list order). Each is expanded to the required Careem shape (`catalogId`,
+        `status:"ACTIVE"`, `priority`, `nameLocalized`). The option `price` DOES
+        stick — for a price-carrying quantity group (base-0 item) that is the item's
+        real price; for a flavour group the options are price 0.
+
+        IMPORTANT: the create call does NOT honour min/max — the group lands with
+        `selection {min:0,max:0}` regardless. This method follows the POST with a PUT
+        to `catalog-customization-groups/{id}` writing `attributes.selection`
+        ({min, max, multiSelect}) so `min_select`/`max_select` actually take effect.
+        `multiSelect` is set true when `max_select > 1` (pick several, e.g. a
+        box-of-6 flavour group) and false for a single choice (quantity picker).
+        """
+        expanded = [
+            {
+                "name": o["name"],
+                "price": o.get("price", 0),
+                "catalogId": catalog_id,
+                "priority": i + 1,
+                "status": "ACTIVE",
+                "nameLocalized": {"en": o["name"], "ar": o.get("name_ar") or o["name"]},
+            }
+            for i, o in enumerate(options)
+        ]
+        created = await self.request_json(
+            session,
+            "POST",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-customization-groups",
+            json_body={
+                "name": name,
+                "nameLocalized": {"en": name, "ar": name_ar or name},
+                "catalogId": catalog_id,
+                "status": "ACTIVE",
+                "priority": 1,
+                "products": [{"productId": product_id}],
+                "options": expanded,
+            },
+        )
+        group_id = created.get("id") if isinstance(created, dict) else None
+        if group_id is not None:
+            await self.set_customization_group_selection(
+                session,
+                company,
+                brand,
+                outlet,
+                group_id,
+                min_select=min_select,
+                max_select=max_select,
+            )
+        return created
+
+    async def set_customization_group_selection(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        group_id: Any,
+        *,
+        min_select: int,
+        max_select: int,
+    ) -> Any:
+        """Set a customization group's min/max selection — PUT
+        `catalog-customization-groups/{id}` with `attributes.selection`
+        ({min, max, multiSelect}). This is the ONLY field that changes min/max; the
+        top-level minQuantity/maxQuantity on create are ignored (verified live
+        2026-09-05). Non-JSON response -> raw."""
+        return await self.request_raw(
+            session,
+            "PUT",
+            f"{self._outlet_base(company, brand, outlet)}"
+            f"/catalog-customization-groups/{group_id}",
+            json_body={
+                "attributes": {
+                    "selection": {
+                        "min": min_select,
+                        "max": max_select,
+                        "multiSelect": max_select > 1,
+                    }
+                }
+            },
         )
 
     def _billing_accounts(self, outlets: list[dict[str, Any]]) -> list[dict[str, str]]:
