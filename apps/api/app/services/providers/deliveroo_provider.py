@@ -375,8 +375,12 @@ class DeliverooClient(BaseAggregatorClient):
 
         `PUT /api/restaurants/{id}/opening_hours` with `{hours:[...]}`. Dry-run
         writers never reach here; a live write is behind `CATALOG_SYNC_ENABLED`.
+
+        Returns **204 No Content** on success (verified live 2026-09-05), so this
+        uses `request_raw`, not `request_json` — the empty body is the success, and
+        parsing it as JSON was mis-recording a successful write as a failure.
         """
-        return await self.request_json(
+        return await self.request_raw(
             session,
             "PUT",
             f"{_API}/restaurants/{outlet_id}/opening_hours",

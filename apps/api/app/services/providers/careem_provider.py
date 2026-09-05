@@ -389,15 +389,21 @@ class CareemClient(BaseAggregatorClient):
         outlet: str,
         rows: Any,
     ) -> Any:
-        """Write the outlet's weekly operational hours (same path the GET reads).
+        """Write the outlet's weekly operational hours.
 
-        Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
+        The PUT body is the object `{"operational_hours": [<day rows>]}` — NOT the
+        bare array the GET returns. Verified live 2026-09-05: a bare array 400s
+        ("cannot unmarshal array into dto.UpdateOperationalHoursRequest"), and the
+        wrapper key is snake_case `operational_hours` (camelCase `operationalHours`
+        fails the DTO's `required` validation); each row stays the GET's snake shape
+        `{day, active, shifts:[{start_time, end_time}]}`. Returns 204. Live writes
+        are behind `CATALOG_SYNC_ENABLED` and default dry-run.
         """
-        return await self.request_json(
+        return await self.request_raw(
             session,
             "PUT",
             f"{self._outlet_base(company, brand, outlet)}/food-outlet-operational-hours",
-            json_body=rows,
+            json_body={"operational_hours": rows},
         )
 
     # ── create / delete (catalog sync writer, non-Foodics outlets) ───────────

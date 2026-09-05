@@ -249,9 +249,9 @@ async def _execute(channel: str, plan: dict[str, Any]) -> None:
 
         if plan.get("status"):
             await tp.provider.put_vendor_status(session, plan["vendor"], plan["status"])
-        if plan.get("calendars") is not None:
+        if plan.get("calendar") is not None:
             await tp.provider.put_delivery_calendars(
-                session, plan["vendor"], plan["calendars"]
+                session, plan["vendor"], plan["calendar"]
             )
         return
     if channel == "noon":
@@ -331,13 +331,17 @@ async def _deliveroo_close(
 
 
 def _talabat_set_day(raw: Any, *, dh_day: int, opens: str, closes: str) -> Any:
-    """Copy the VTS calendars payload with `dh_day`'s window replaced."""
-    if not isinstance(raw, dict):
-        return {"calendars": []}
-    calendars = [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
-    if not calendars:
-        calendars = [{"name": "Normal", "schedule": {"openingTimesByDay": []}}]
-    target = next((c for c in calendars if c.get("name") == "Normal"), calendars[0])
+    """The `Normal` calendar object with `dh_day`'s window replaced (single object,
+    the shape `PUT .../calendars` takes)."""
+    calendars = (
+        [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
+        if isinstance(raw, dict)
+        else []
+    )
+    target = next(
+        (c for c in calendars if c.get("name") == "Normal"),
+        calendars[0] if calendars else {"name": "Normal", "schedule": {}},
+    )
     schedule = dict(target.get("schedule") or {})
     by_day = [
         dict(e)
@@ -353,7 +357,7 @@ def _talabat_set_day(raw: Any, *, dh_day: int, opens: str, closes: str) -> Any:
     by_day.sort(key=lambda e: int(e.get("day") or 0))
     schedule["openingTimesByDay"] = by_day
     target["schedule"] = schedule
-    return {"calendars": calendars}
+    return target
 
 
 def _talabat_clear_day(raw: Any, *, dh_day: int) -> Any:
@@ -381,14 +385,14 @@ async def _talabat_push(
     vendor = row.external_outlet_id
     current = await tp.provider.get_delivery_calendars(session, vendor)
     dh_day = (weekday - 1) % 7  # MM 0=Sun → DH 6; MM 1=Mon → DH 0
-    calendars = _talabat_set_day(current, dh_day=dh_day, opens=opens, closes=closes)
+    calendar = _talabat_set_day(current, dh_day=dh_day, opens=opens, closes=closes)
     return {
         "session": session,
         "vendor": vendor,
-        "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars/DELIVERY",
-        "calendars": calendars,
+        "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars",
+        "calendar": calendar,
         "status": "OPEN",
-        "payload": {"calendars": calendars, "status": "OPEN"},
+        "payload": {"calendar": calendar, "status": "OPEN"},
     }
 
 
@@ -614,14 +618,25 @@ async def _deliveroo_push_weekly(
     }
 
 
-def _talabat_set_weekly(raw: Any, *, weekly: dict[int, tuple[str, str]]) -> Any:
-    """Rebuild the VTS `Normal` calendar's whole week, keeping other calendars."""
-    if not isinstance(raw, dict):
-        return {"calendars": []}
-    calendars = [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
-    if not calendars:
-        calendars = [{"name": "Normal", "schedule": {"openingTimesByDay": []}}]
-    target = next((c for c in calendars if c.get("name") == "Normal"), calendars[0])
+def _talabat_normal_calendar_with_week(
+    raw: Any, *, weekly: dict[int, tuple[str, str]]
+) -> dict[str, Any]:
+    """The vendor's `Normal` calendar object with its whole week rebuilt from MM.
+
+    Returns the SINGLE calendar object the VTS `PUT .../calendars` write takes (its
+    full shape from the GET: id, name, schedule, comment, visible, active) — not a
+    `{calendars:[…]}` wrapper. Only the "Normal" calendar is touched; the vendor's
+    alternative (ramadan/eid) calendars are left as they are.
+    """
+    calendars = (
+        [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
+        if isinstance(raw, dict)
+        else []
+    )
+    target = next(
+        (c for c in calendars if c.get("name") == "Normal"),
+        calendars[0] if calendars else {"name": "Normal", "schedule": {}},
+    )
     schedule = dict(target.get("schedule") or {})
     by_day = [
         {
@@ -634,7 +649,7 @@ def _talabat_set_weekly(raw: Any, *, weekly: dict[int, tuple[str, str]]) -> Any:
     by_day.sort(key=lambda e: int(e.get("day") or 0))
     schedule["openingTimesByDay"] = by_day
     target["schedule"] = schedule
-    return {"calendars": calendars}
+    return target
 
 
 async def _talabat_push_weekly(
@@ -646,16 +661,16 @@ async def _talabat_push_weekly(
     row = await _branch_map(db, "talabat", branch.id)
     vendor = row.external_outlet_id
     current = await tp.provider.get_delivery_calendars(session, vendor)
-    calendars = _talabat_set_weekly(current, weekly=weekly)
+    calendar = _talabat_normal_calendar_with_week(current, weekly=weekly)
     # No `status`: the recurring calendar is the schedule; a transient
     # OPEN/CLOSED_TODAY override belongs to the holiday path, not the weekly
     # mirror, which must not undo a manager's same-day close.
     return {
         "session": session,
         "vendor": vendor,
-        "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars/DELIVERY",
-        "calendars": calendars,
-        "payload": {"calendars": calendars},
+        "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars",
+        "calendar": calendar,
+        "payload": {"calendar": calendar},
     }
 
 

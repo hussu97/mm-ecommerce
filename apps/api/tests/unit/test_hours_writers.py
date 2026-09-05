@@ -165,29 +165,32 @@ async def test_push_weekly_hours_dry_run_then_live(monkeypatch):
     assert executed == [("noon", "push_weekly_hours")]
 
 
-def test_talabat_weekly_builder_maps_days_and_keeps_envelope():
+def test_talabat_weekly_builder_returns_single_normal_calendar():
+    # The write takes ONE calendar object (the Normal one), not a {calendars:[...]}
+    # wrapper; the alternative "Special" calendar is left out (untouched on the
+    # portal).
     raw = {
         "calendars": [
             {
+                "id": "1",
                 "name": "Normal",
+                "comment": "",
                 "schedule": {
+                    "type": "REGULAR",
                     "openingTimesByDay": [{"day": 3, "openingTimes": []}],
-                    "extra": "keep",
                 },
             },
             {"name": "Special", "schedule": {"openingTimesByDay": [{"day": 1}]}},
         ]
     }
-    out = hw._talabat_set_weekly(raw, weekly=_WEEKLY)
-    normal = next(c for c in out["calendars"] if c["name"] == "Normal")
-    by_day = normal["schedule"]["openingTimesByDay"]
+    cal = hw._talabat_normal_calendar_with_week(raw, weekly=_WEEKLY)
+    assert cal["name"] == "Normal" and cal["id"] == "1"  # full object, not a wrapper
+    assert cal["schedule"]["type"] == "REGULAR"  # envelope preserved
+    by_day = cal["schedule"]["openingTimesByDay"]
     # MM Sun(0)→DH 6, Mon(1)→DH 0; closed weekdays absent; sorted by day.
     assert [e["day"] for e in by_day] == [0, 6]
     assert by_day[0]["openingTimes"] == [{"from": 540, "to": 1380}]  # Mon 09:00-23:00
     assert by_day[1]["openingTimes"] == [{"from": 480, "to": 1320}]  # Sun 08:00-22:00
-    assert normal["schedule"]["extra"] == "keep"  # envelope preserved
-    # Other calendars untouched.
-    assert any(c["name"] == "Special" for c in out["calendars"])
 
 
 def test_noon_weekly_builder_maps_days_and_keeps_envelope():
