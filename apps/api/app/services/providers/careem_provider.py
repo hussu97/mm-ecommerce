@@ -334,11 +334,18 @@ class CareemClient(BaseAggregatorClient):
         outlet: str,
         catalog_id: str,
     ) -> Any:
-        """A catalog's category tree (`{subCategories:[{id, name}]}`)."""
+        """A catalog's category tree (`{subCategories:[{id, name}]}`).
+
+        The catalog id goes in the `catalogId` query param, NOT the path: the path
+        form `catalog-categories/{id}` 404s ("unable to find entity, category ID")
+        for every outlet — it reads the id as a category. Verified live 2026-09-05
+        on both DSO and Barsha; the query form returns the subcategories for both.
+        """
         return await self.request_json(
             session,
             "GET",
-            f"{self._outlet_base(company, brand, outlet)}/catalog-categories/{catalog_id}",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-categories",
+            params={"catalogId": catalog_id},
         )
 
     async def list_catalog_products(
