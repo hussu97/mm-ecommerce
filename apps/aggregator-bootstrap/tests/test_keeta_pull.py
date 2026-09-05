@@ -59,6 +59,7 @@ class _FakePage:
         self._shop_ids = shop_ids
         self.evaluate_calls: list[tuple[str, object]] = []
         self.closed = False
+        self.url = "https://merchant.mykeeta.com/order-manager"
 
     async def goto(self, *args, **kwargs) -> None:
         return None
@@ -103,6 +104,30 @@ async def test_fetch_keeta_orders_returns_raw_payloads_via_page_evaluate():
         for _, arg in page.evaluate_calls
     )
     assert page.closed
+
+
+async def test_fetch_keeta_orders_reseeds_login_accountid_after_spa_boot(
+    tmp_path, monkeypatch
+):
+    """A pull on keeta.chrome after relogin must write LOGIN_ACCOUNTID into the
+    page after the SPA settle wait — cookies persist, sessionStorage does not,
+    and the SPA wipes an init-script seed during boot."""
+    from aggregator_bootstrap.browser import persist_extra_state
+    from aggregator_bootstrap.config import settings
+
+    monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
+    persist_extra_state(
+        "keeta",
+        {"https://merchant.mykeeta.com": {"LOGIN_ACCOUNTID": "acc-1", "SHOP_IDS": "[1]"}},
+    )
+    page = _FakePage(SAMPLE_GET_ORDERS, ["123"])
+    await fetch_keeta_orders(_FakeContext(page), months_back=0)
+    writes = [
+        arg
+        for _, arg in page.evaluate_calls
+        if isinstance(arg, dict) and arg.get("LOGIN_ACCOUNTID") == "acc-1"
+    ]
+    assert writes, "LOGIN_ACCOUNTID was not written into the persistent page"
 
 
 async def test_no_shop_ids_still_makes_one_combined_call():

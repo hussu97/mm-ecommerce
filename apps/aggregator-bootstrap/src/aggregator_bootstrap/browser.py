@@ -313,6 +313,17 @@ def _session_storage_init_script(by_origin: dict[str, dict[str, str]]) -> str:
 """
 
 
+async def restore_session_storage(page, channel: str) -> None:
+    """Write persisted extras into a page that has already landed on an origin.
+
+    Call after `goto` (and after the SPA settle wait). Persistent Chrome starts
+    a new session with empty sessionStorage; an init-script seed can still be
+    wiped by the SPA during boot. This is the write a subsequent in-page fetch
+    actually reads — LOGIN_ACCOUNTID included.
+    """
+    await _write_session_storage(page, load_extra_state(channel))
+
+
 async def _write_session_storage(
     page, extra: dict[str, dict[str, str]]
 ) -> None:
@@ -956,6 +967,7 @@ async def probe_channel(channel: str) -> ProbeResult:
                     str(exc).splitlines()[0][:120],
                 )
             await asyncio.sleep(3)
+            await restore_session_storage(page, channel)
             # Careem's SPA mints its bearer via an OIDC code-exchange (from the
             # session cookies) AFTER the page loads, then calls /api/saturn-ext/
             # with it — so the Authorization header lands a few seconds after the

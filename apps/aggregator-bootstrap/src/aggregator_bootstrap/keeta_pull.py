@@ -47,6 +47,18 @@ from .engine import evaluate_in_page
 
 logger = logging.getLogger(__name__)
 
+
+async def _reseed_keeta_storage(page: Any) -> None:
+    """Rewrite extras after the SPA has booted on persistent keeta.chrome.
+
+    Cookies survive a Chrome restart; sessionStorage does not. The SPA then
+    clears an init-script seed during boot, which is why a pull after relogin
+    saw empty LOGIN_ACCOUNTID. Reseed immediately before the signed fetch.
+    """
+    from .browser import restore_session_storage
+
+    await restore_session_storage(page, "keeta")
+
 #: The shop's clock. Keeta's history filter takes epoch-millis bounds, and the
 #: business day they mean is Dubai wall-clock — the same zone the parser emits.
 _BUSINESS_TZ = ZoneInfo("Asia/Dubai")
@@ -206,6 +218,7 @@ async def fetch_keeta_orders(context: Any, *, months_back: int = 1) -> list[dict
         )
         # Give the SPA a beat to boot and populate SHOP_IDS.
         await page.wait_for_timeout(6_000)
+        await _reseed_keeta_storage(page)
 
         # Assert the session is actually signed in before pulling. A blank
         # LOGIN_ACCOUNTID means the hydrated session is logged out; getOrders
@@ -342,6 +355,7 @@ async def fetch_keeta_menu(context: Any) -> list[dict]:
         # exactly like fetch_keeta_orders. Without this the read fires before the
         # portal JS sets them and looks "signed out" (seen on the first live run).
         await page.wait_for_timeout(6_000)
+        await _reseed_keeta_storage(page)
         account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
         if not account_id:
             logger.error("keeta menu: in-page session signed out (no LOGIN_ACCOUNTID)")
@@ -548,6 +562,7 @@ async def create_keeta_spu(
         account_id = ""
         for _ in range(12):  # poll up to ~24s for the SPA to prime the session
             await page.wait_for_timeout(2_000)
+            await _reseed_keeta_storage(page)
             account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
             if account_id:
                 break
@@ -637,6 +652,7 @@ async def delete_keeta_spu(context: Any, *, shop_id: Any, spu_id: Any) -> dict:
         account_id = ""
         for _ in range(12):  # poll up to ~24s for the SPA to prime the session
             await page.wait_for_timeout(2_000)
+            await _reseed_keeta_storage(page)
             account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
             if account_id:
                 break
@@ -703,6 +719,7 @@ async def fetch_keeta_today_hours(context: Any, shop_ids: list[str]) -> list[dic
         account_id = ""
         for _ in range(12):  # poll up to ~24s for the SPA to prime the session
             await page.wait_for_timeout(2_000)
+            await _reseed_keeta_storage(page)
             account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
             if account_id:
                 break
@@ -933,6 +950,7 @@ async def write_keeta_today_hours(
         account_id = ""
         for _ in range(12):
             await page.wait_for_timeout(2_000)
+            await _reseed_keeta_storage(page)
             account_id = str(
                 await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS) or ""
             ).strip()
@@ -1267,6 +1285,7 @@ async def fetch_keeta_finance(
             KEETA_FINANCE_ROUTE, wait_until="domcontentloaded", timeout=60_000
         )
         await page.wait_for_timeout(6_000)
+        await _reseed_keeta_storage(page)
 
         # ── monthly commission invoices (account-level) ───────────────────────
         try:
