@@ -255,6 +255,16 @@ def test_the_aggregator_worker_gets_twocaptcha_key():
     )
 
 
+def test_the_aggregator_worker_catalog_chrome_defaults_off():
+    """Catalog read/write is off — headed menu/hours Chrome must not be the prod default."""
+    worker_env = _load_compose()["services"]["aggregator-worker"]["environment"]
+    assert worker_env["HEADLESS"] == "false"
+    assert _default_of(worker_env["WORKER_DELIVEROO_MENU_INTERVAL_HOURS"]) == "0"
+    assert _default_of(worker_env["WORKER_KEETA_MENU_INTERVAL_HOURS"]) == "0"
+    assert _default_of(worker_env["WORKER_KEETA_HOURS_ENABLED"]) == "false"
+    assert _default_of(worker_env["WORKER_LEAN_CHROME"]) == "true"
+
+
 def _default_of(expression: str) -> str | None:
     """The `X` out of `${VAR:-X}`, or None if the entry has no default."""
     m = re.fullmatch(r"\$\{[A-Z0-9_]+:-(.*)\}", str(expression).strip())

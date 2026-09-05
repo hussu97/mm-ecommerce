@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aggregator_bootstrap.browser import chrome_cookie_names
 from aggregator_bootstrap.fingerprint import (
+    LOW_OVERHEAD_CHROME_ARGS,
     chrome_profile_dir,
     context_kwargs,
     headed_persistent_kwargs,
@@ -51,6 +52,15 @@ def test_context_passes_storage_state_when_given():
     assert kwargs["storage_state"] == "/data/sessions/noon.session.json"
 
 
+def test_lean_chrome_args_use_mesa_angle_not_disable_gpu():
+    """Warm/pull Mesa llvmpipe. Never --disable-gpu or BotBrowser emulation."""
+    assert "--use-angle=gl" in LOW_OVERHEAD_CHROME_ARGS
+    joined = " ".join(LOW_OVERHEAD_CHROME_ARGS)
+    assert "--disable-gpu" not in joined
+    assert "--bot-gpu-emulation" not in joined
+    assert "--disable-software-rasterizer" not in joined
+
+
 def test_standalone_chrome_has_no_automation_flags():
     args = standalone_chrome_args(
         binary="/usr/bin/google-chrome",
@@ -67,6 +77,9 @@ def test_standalone_chrome_has_no_automation_flags():
     assert "AutomationControlled" not in joined
     assert "--headless" not in joined
     assert "user-agent" not in joined.lower()
+    # Login spawn stays fingerprint-clean: no Mesa/ANGLE override.
+    assert "--use-angle=gl" not in joined
+    assert "--disable-gpu" not in joined
 
 
 def test_chrome_profile_dir_is_per_channel():

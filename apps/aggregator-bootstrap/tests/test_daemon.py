@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from aggregator_bootstrap import daemon, reauth, warm
 from aggregator_bootstrap.browser import NeedsHumanLogin
 from aggregator_bootstrap.queue import Job, JobKind, JobQueue
@@ -300,6 +302,7 @@ async def test_heal_poll_respects_backoff(monkeypatch, tmp_path):
 
 def test_daily_jobs_schedules_keeta_hours_after_finance(monkeypatch):
     """KEETA_HOURS is a daily job at 05:00 DXB, after KEETA_FINANCE at 04:00."""
+    monkeypatch.setattr(daemon.settings, "WORKER_KEETA_HOURS_ENABLED", True)
     monkeypatch.setattr(daemon, "_jitter", lambda: timedelta(0))
     monkeypatch.setattr(daemon, "_warm_channels", lambda: [])
     # 20:00 UTC = 00:00 Dubai — both 04:00 and 05:00 DXB are still ahead today.
@@ -316,3 +319,91 @@ def test_daily_jobs_schedules_keeta_hours_after_finance(monkeypatch):
     assert finance.next_at == datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
     assert hours.next_at == datetime(2026, 1, 2, 1, 0, tzinfo=timezone.utc)
     assert hours.next_at > finance.next_at
+
+
+def test_daily_jobs_skips_keeta_hours_when_disabled(monkeypatch):
+    """Catalog writes are off — do not launch Chrome for KEETA_HOURS."""
+    monkeypatch.setattr(daemon.settings, "WORKER_KEETA_HOURS_ENABLED", False)
+    monkeypatch.setattr(daemon, "_jitter", lambda: timedelta(0))
+    monkeypatch.setattr(daemon, "_warm_channels", lambda: [])
+    now = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc)
+    kinds = {j.kind for j in daemon._daily_jobs(now)}
+    assert JobKind.KEETA_HOURS not in kinds
+    assert JobKind.KEETA_FINANCE in kinds  # finance still runs nightly
+
+
+async def test_scheduler_skips_disabled_catalog_chrome(monkeypatch, tmp_path):
+    """Interval 0 / hours disabled: first tick must not enqueue catalog Chrome."""
+    monkeypatch.setattr(daemon.settings, "WORKER_KEETA_MENU_INTERVAL_HOURS", 0)
+    monkeypatch.setattr(daemon.settings, "WORKER_DELIVEROO_MENU_INTERVAL_HOURS", 0)
+    monkeypatch.setattr(daemon.settings, "WORKER_KEETA_HOURS_ENABLED", False)
+    monkeypatch.setattr(daemon.settings, "WORKER_JITTER_SECONDS", 0)
+    monkeypatch.setattr(daemon.settings, "WORKER_SCHEDULER_TICK_SECONDS", 1)
+    monkeypatch.setattr(daemon.settings, "WORKER_HEAL_POLL_SECONDS", 10_000)
+    monkeypatch.setattr(daemon.settings, "WORKER_HEARTBEAT_PATH", str(tmp_path / "hb"))
+    monkeypatch.setattr(daemon, "_jitter", lambda: timedelta(0))
+    monkeypatch.setattr(daemon, "_warm_channels", lambda: [])
+
+    async def _no_heal(_queue):
+        return None
+
+    monkeypatch.setattr(daemon, "_heal_poll", _no_heal)
+
+    enqueued: list[tuple[JobKind, str]] = []
+
+    class _Q:
+        async def put(self, kind, channel):
+            enqueued.append((kind, channel))
+            return True
+
+    async def _sleep(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await daemon._run_scheduler(_Q())
+
+    kinds = {kind for kind, _ in enqueued}
+    assert JobKind.KEETA_MENU not in kinds
+    assert JobKind.DELIVEROO_MENU not in kinds
+    assert JobKind.KEETA_HOURS not in kinds
+    assert JobKind.KEETA_ORDERS in kinds  # still fires on boot
+
+
+async def test_scheduler_enqueues_menu_when_interval_positive(monkeypatch, tmp_path):
+    """A positive interval still fires the menu job on the first tick."""
+    monkeypatch.setattr(daemon.settings, "WORKER_KEETA_MENU_INTERVAL_HOURS", 12)
+    monkeypatch.setattr(daemon.settings, "WORKER_DELIVEROO_MENU_INTERVAL_HOURS", 12)
+    monkeypatch.setattr(daemon.settings, "WORKER_KEETA_HOURS_ENABLED", False)
+    monkeypatch.setattr(daemon.settings, "WORKER_JITTER_SECONDS", 0)
+    monkeypatch.setattr(daemon.settings, "WORKER_SCHEDULER_TICK_SECONDS", 1)
+    monkeypatch.setattr(daemon.settings, "WORKER_HEAL_POLL_SECONDS", 10_000)
+    monkeypatch.setattr(daemon.settings, "WORKER_HEARTBEAT_PATH", str(tmp_path / "hb"))
+    monkeypatch.setattr(daemon, "_jitter", lambda: timedelta(0))
+    monkeypatch.setattr(daemon, "_warm_channels", lambda: [])
+
+    async def _no_heal(_queue):
+        return None
+
+    monkeypatch.setattr(daemon, "_heal_poll", _no_heal)
+
+    enqueued: list[tuple[JobKind, str]] = []
+
+    class _Q:
+        async def put(self, kind, channel):
+            enqueued.append((kind, channel))
+            return True
+
+    async def _sleep(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(asyncio, "sleep", _sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await daemon._run_scheduler(_Q())
+
+    kinds = {kind for kind, _ in enqueued}
+    assert JobKind.KEETA_MENU in kinds
+    assert JobKind.DELIVEROO_MENU in kinds
+    assert JobKind.KEETA_HOURS not in kinds

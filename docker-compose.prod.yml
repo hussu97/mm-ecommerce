@@ -682,11 +682,20 @@ services:
       # image's `ENV HEADLESS=false`; a "true" here silently reverts every warm to
       # headless and the sessions stop rotating (verified on the VM).
       HEADLESS: "false"
-      # Deliveroo menu+hours catalog-sync capture cadence (hours). Default 12h ON
-      # here (config.py's default is 0/off); the daemon's DELIVEROO_MENU job then
-      # re-logs-in, captures the menu + opening hours, and pushes the snapshot the
-      # API's `_read_deliveroo_menu`/`_read_deliveroo_hours` parse. Override per env.
-      WORKER_DELIVEROO_MENU_INTERVAL_HOURS: ${WORKER_DELIVEROO_MENU_INTERVAL_HOURS:-12}
+      # Background-only Chrome flags (incl. Mesa `--use-angle=gl`) on warm/pull.
+      # Never applied to the standalone login spawn. Flip false on the VM to
+      # revert the llvmpipe POC without a code change.
+      WORKER_LEAN_CHROME: ${WORKER_LEAN_CHROME:-true}
+      # Deliveroo MENU capture cadence (hours). `<= 0` disables headed Chrome.
+      # Hours are API httpx (`get_opening_hours`), not this job. Catalog read is
+      # off in prod; set > 0 together with CATALOG_SYNC_READ_ENABLED.
+      WORKER_DELIVEROO_MENU_INTERVAL_HOURS: ${WORKER_DELIVEROO_MENU_INTERVAL_HOURS:-0}
+      # Keeta MENU capture cadence (hours). `<= 0` disables it. Local code
+      # default is 12; prod stays off until catalog read is on.
+      WORKER_KEETA_MENU_INTERVAL_HOURS: ${WORKER_KEETA_MENU_INTERVAL_HOURS:-0}
+      # Keeta HOURS write (05:00 DXB). Off unless catalog writes are on —
+      # set true together with CATALOG_SYNC_ENABLED.
+      WORKER_KEETA_HOURS_ENABLED: ${WORKER_KEETA_HOURS_ENABLED:-false}
     volumes:
       - aggregator_sessions:/data
     # The daemon touches /data/worker.heartbeat every scheduler tick (~30s). If it

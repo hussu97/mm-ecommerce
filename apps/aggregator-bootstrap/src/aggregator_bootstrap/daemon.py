@@ -320,8 +320,10 @@ class _Daily:
 def _daily_jobs(now: datetime) -> list[_Daily]:
     """The once-a-day jobs pinned to a Dubai wall-clock hour, with jitter applied.
 
-    Pure enough to unit-test: Keeta hours sits after Keeta finance on the same
-    one-Chrome queue (05:00 vs 04:00 DXB) so the slow download finishes first.
+    Pure enough to unit-test: Keeta hours (when enabled) sits after Keeta finance
+    on the same one-Chrome queue (05:00 vs 04:00 DXB) so the slow download
+    finishes first. Hours Chrome is skipped unless WORKER_KEETA_HOURS_ENABLED —
+    catalog writes are a separate API flag the worker does not see.
     """
     daily: list[_Daily] = [
         _Daily(
@@ -353,15 +355,16 @@ def _daily_jobs(now: datetime) -> list[_Daily]:
             hour=settings.WORKER_KEETA_FINANCE_HOUR_DXB,
         )
     )
-    daily.append(
-        _Daily(
-            next_at=next_daily_dxb(settings.WORKER_KEETA_HOURS_HOUR_DXB, now)
-            + _jitter(),
-            kind=JobKind.KEETA_HOURS,
-            channel="keeta",
-            hour=settings.WORKER_KEETA_HOURS_HOUR_DXB,
+    if settings.WORKER_KEETA_HOURS_ENABLED:
+        daily.append(
+            _Daily(
+                next_at=next_daily_dxb(settings.WORKER_KEETA_HOURS_HOUR_DXB, now)
+                + _jitter(),
+                kind=JobKind.KEETA_HOURS,
+                channel="keeta",
+                hour=settings.WORKER_KEETA_HOURS_HOUR_DXB,
+            )
         )
-    )
     return daily
 
 
@@ -388,14 +391,22 @@ async def _run_scheduler(queue: JobQueue) -> None:
     del_menu_next = now
     tick = max(settings.WORKER_SCHEDULER_TICK_SECONDS, 1)
 
+    hours_note = (
+        f"@{settings.WORKER_KEETA_HOURS_HOUR_DXB:02d}:00 DXB"
+        if settings.WORKER_KEETA_HOURS_ENABLED
+        else "off"
+    )
     logger.info(
         "daemon: scheduler up — warm=%s@%02d:00 DXB, keeta orders every %sh, "
-        "keeta finance @%02d:00 DXB, keeta hours @%02d:00 DXB, heal every %ss",
+        "keeta finance @%02d:00 DXB, keeta hours %s, keeta menu every %sh, "
+        "deliveroo menu every %sh, heal every %ss",
         [d.channel for d in daily if d.kind is JobKind.WARM],
         settings.WORKER_WARM_HOUR_DXB,
         settings.WORKER_KEETA_PULL_INTERVAL_HOURS,
         settings.WORKER_KEETA_FINANCE_HOUR_DXB,
-        settings.WORKER_KEETA_HOURS_HOUR_DXB,
+        hours_note,
+        menu_hours if menu_hours > 0 else 0,
+        del_menu_hours if del_menu_hours > 0 else 0,
         settings.WORKER_HEAL_POLL_SECONDS,
     )
     while True:

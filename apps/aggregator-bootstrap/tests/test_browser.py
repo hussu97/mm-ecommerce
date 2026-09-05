@@ -14,6 +14,7 @@ from aggregator_bootstrap.browser import (
     _assert_keeta_account_captured,
     _await_careem_bearer,
     _clear_stale_singleton_locks,
+    _lean_args,
     _open_context,
     _session_storage_init_script,
     _wait_for_cdp,
@@ -103,6 +104,17 @@ def test_spawn_chrome_clears_locks_before_launch(tmp_path, monkeypatch):
         "stale SingletonLock was not cleared before Chrome was spawned"
     )
     assert not (profile / "SingletonLock").exists()
+
+
+def test_lean_args_include_mesa_angle_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "WORKER_LEAN_CHROME", True)
+    assert "--use-angle=gl" in _lean_args()
+    assert "--disable-gpu" not in _lean_args()
+
+
+def test_lean_args_empty_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "WORKER_LEAN_CHROME", False)
+    assert _lean_args() == []
 
 
 # ── careem bearer capture (the reauth 401 fix) ──────────────────────────────
