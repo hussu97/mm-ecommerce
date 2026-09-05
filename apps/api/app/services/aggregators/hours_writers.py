@@ -256,9 +256,24 @@ async def _execute(channel: str, plan: dict[str, Any]) -> None:
     if channel == "deliveroo":
         from app.services.providers import deliveroo_provider as dp
 
-        await dp.provider.put_opening_hours(
-            session, plan["outlet_id"], plan["payload"]["hours"]
-        )
+        outlet = plan["outlet_id"]
+        want = plan["payload"]["hours"]
+        await dp.provider.put_opening_hours(session, outlet, want)
+        # Deliveroo answers a PUT to a non-live restaurant (READY_TO_OPEN, or a
+        # deactivated CLOSED) with 204 but silently drops it — a live branch, open or
+        # trading-closed, persists it. Read back and confirm the write took, else this
+        # is not a writable target: raise HoursWriteUnsupported so the sync skips it
+        # honestly (debug, no false "completed") instead of recording a phantom push.
+        got = await dp.provider.get_opening_hours(session, outlet)
+        if _deliveroo_hours_key(got.get("hours") if isinstance(got, dict) else got) != (
+            _deliveroo_hours_key(want)
+        ):
+            status = await dp.provider.restaurant_status(session, outlet)
+            raise HoursWriteUnsupported(
+                f"deliveroo outlet {outlet}: opening-hours write did not persist "
+                f"(status={status or 'unknown'}); the restaurant is not live on the "
+                "marketplace, so the PUT is accepted (204) but dropped"
+            )
         return
     if channel == "talabat":
         from app.services.providers import talabat_provider as tp
@@ -609,25 +624,17 @@ async def _careem_close(
 async def _deliveroo_push_weekly(
     db: AsyncSession, branch: Any, *, weekly: dict[int, tuple[str, str]]
 ) -> dict[str, Any]:
-    from app.services.providers import deliveroo_provider as dp
-
     session = await _load_session(db, "deliveroo")
     row = await _branch_map(db, "deliveroo", branch.id)
     outlet = row.external_outlet_id
     # Deliveroo's payload is only the hours list (no envelope to preserve). The live
     # write goes to the outlet's drn_id (UUID), not this numeric id — resolved inside
-    # put_opening_hours; the numeric id is what get/orders use. Deliveroo only RETAINS
-    # an hours PUT for an OPEN restaurant (a READY_TO_OPEN / CLOSED outlet answers 204
-    # and silently drops it — verified live 2026-09-05), so skip a non-OPEN outlet
-    # rather than record a false "completed". This status read also confirms the
-    # session before a live PUT.
-    status = await dp.provider.restaurant_status(session, outlet)
-    if status.upper() != "OPEN":
-        raise HoursWriteUnsupported(
-            f"deliveroo outlet {outlet} is not OPEN on the marketplace "
-            f"(status={status or 'unknown'}); an opening-hours PUT is accepted (204) "
-            "but silently dropped until the restaurant goes live"
-        )
+    # put_opening_hours; the numeric id is what get/orders use. A LIVE restaurant
+    # accepts the write whether it is currently open or trading-closed (verified live
+    # 2026-09-05); only a NON-live outlet (READY_TO_OPEN, or a deactivated CLOSED)
+    # answers the PUT 204 and silently drops it — and that is NOT distinguishable from
+    # the `status` string (a live branch also reads CLOSED after hours), so `_execute`
+    # verifies persistence by reading back and skips honestly if the write did not take.
     return {
         "session": session,
         "outlet_id": outlet,
@@ -651,6 +658,22 @@ def _deliveroo_hours_weekly(
         for wd in range(7)
         if (win := weekly.get(wd)) is not None
     ]
+
+
+def _deliveroo_hours_key(hours: Any) -> frozenset[tuple[int, str, str]]:
+    """An hours list as a comparable set of `(day, HH:MM, HH:MM)`, ignoring order
+    and a trailing `:SS` — so a read-back can be compared to what was written."""
+    out: set[tuple[int, str, str]] = set()
+    for h in hours or []:
+        if isinstance(h, dict) and h.get("day_of_week") is not None:
+            out.add(
+                (
+                    int(h["day_of_week"]),
+                    str(h.get("local_start_time") or "")[:5],
+                    str(h.get("local_end_time") or "")[:5],
+                )
+            )
+    return frozenset(out)
 
 
 def _talabat_normal_calendar_with_week(
