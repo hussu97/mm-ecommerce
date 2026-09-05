@@ -10,11 +10,12 @@ from app.services.aggregators import hours_writers as hw
 
 
 def test_supported_channels_is_working_httpx_only():
-    # deliveroo's httpx write is vestigial (zone-scoped writer pending), so it is
-    # excluded; keeta is worker-only.
-    assert hw.supported_channels() == frozenset({"talabat", "noon", "careem"})
+    # All four httpx writers are live (deliveroo's write was fixed 2026-09-05:
+    # PUT the drn_id with a bare array); keeta is worker-only, never here.
+    assert hw.supported_channels() == frozenset(
+        {"talabat", "noon", "careem", "deliveroo"}
+    )
     assert "keeta" not in hw.supported_channels()
-    assert "deliveroo" not in hw.supported_channels()
 
 
 @pytest.mark.asyncio
@@ -203,6 +204,22 @@ def test_noon_weekly_builder_maps_days_and_keeps_envelope():
         "0": [["09:00:00", "23:00:00"]],
     }
     assert schedule["tz"] == "Asia/Dubai"  # sibling schedule key preserved
+
+
+def test_deliveroo_weekly_builder_bare_array_open_days_only():
+    # A bare array (no {"hours":...} wrapper is applied here — that lives in the
+    # plan envelope); day_of_week == MM weekday directly (0=Sun); closed weekdays
+    # are omitted (Deliveroo full-replace closes any absent day).
+    rows = hw._deliveroo_hours_weekly(_WEEKLY)
+    assert isinstance(rows, list)
+    assert [r["day_of_week"] for r in rows] == [0, 1]  # Sun, Mon open; 2..6 closed
+    assert rows[0] == {
+        "day_of_week": 0,
+        "local_start_time": "08:00:00",
+        "local_end_time": "22:00:00",
+    }
+    assert rows[1]["local_start_time"] == "09:00:00"  # Mon 09:00-23:00
+    assert rows[1]["local_end_time"] == "23:00:00"
 
 
 def test_careem_weekly_builder_all_seven_rows():

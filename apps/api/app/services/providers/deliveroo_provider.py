@@ -235,6 +235,26 @@ def _restaurant_ids_from_login(body: dict[str, Any]) -> list[str]:
     return ids
 
 
+def _restaurant_drns_from_login(body: dict[str, Any]) -> dict[str, str]:
+    """Map each outlet's numeric id -> its `drn_id` (the restaurant UUID).
+
+    The numeric id scopes the sales `GET /api/restaurants/{id}/orders` read; the
+    opening-hours WRITE wants the `drn_id` instead. Verified live 2026-09-05: a
+    `PUT /api/restaurants/{numericId}/opening_hours` returns 204 but does NOT
+    persist (read-back empty — the old "vestigial" symptom), while the same PUT to
+    `/restaurants/{drnId}/opening_hours` with a bare-array body does persist. Both
+    ids live side by side on each `restaurant_companies[].restaurants[]` row of the
+    login / `GET /api/session` body."""
+    out: dict[str, str] = {}
+    for company in body.get("restaurant_companies") or []:
+        if not isinstance(company, dict):
+            continue
+        for row in company.get("restaurants") or []:
+            if isinstance(row, dict) and row.get("id") and row.get("drn_id"):
+                out[str(row["id"])] = str(row["drn_id"])
+    return out
+
+
 def _outlet_ids_in(tokens: dict) -> bool:
     """Whether a token blob already carries this account's outlet ids."""
     raw = tokens.get("restaurant_ids") or tokens.get("restaurantIds")
@@ -368,23 +388,52 @@ class DeliverooClient(BaseAggregatorClient):
             session, "GET", f"{_API}/restaurants/{outlet_id}/opening_hours"
         )
 
+    async def restaurant_drn(self, session: LoadedSession, outlet_id: str) -> str:
+        """The `drn_id` (restaurant UUID) for a numeric outlet id — the id the
+        opening-hours WRITE must address. From the session's cached map (built at
+        login), else a live `GET /api/session`; the result is cached back onto the
+        in-memory session for the rest of the sweep. Raises if unresolved."""
+        tokens = session.tokens or {}
+        drns = tokens.get("restaurant_drns")
+        if isinstance(drns, dict) and drns.get(str(outlet_id)):
+            return str(drns[str(outlet_id)])
+        body = await self.request_json(session, "GET", _LOGIN_URL)
+        fresh = _restaurant_drns_from_login(body if isinstance(body, dict) else {})
+        if fresh.get(str(outlet_id)):
+            session.tokens = {
+                **tokens,
+                "restaurant_drns": {**(drns or {}), **fresh},
+            }
+            return str(fresh[str(outlet_id)])
+        raise AggregatorUnavailableError(
+            f"deliveroo: no restaurant drn_id for outlet {outlet_id} "
+            "(GET /api/session returned none)"
+        )
+
     async def put_opening_hours(
         self, session: LoadedSession, outlet_id: str, hours: list[dict[str, Any]]
     ) -> Any:
-        """Write one outlet's weekly opening hours (same shape the GET returns).
+        """Write one outlet's weekly opening hours.
 
-        `PUT /api/restaurants/{id}/opening_hours` with `{hours:[...]}`. Dry-run
-        writers never reach here; a live write is behind `CATALOG_SYNC_ENABLED`.
+        `PUT /api/restaurants/{drn_id}/opening_hours` with a **bare array** body of
+        `{day_of_week, local_start_time, local_end_time}` rows (day_of_week 0=Sunday,
+        matching MM's weekday numbering). Full-replace: any weekday absent from the
+        array is closed. `outlet_id` is the caller's numeric id; the path id is its
+        `drn_id` (UUID), resolved via `restaurant_drn` — verified live 2026-09-05
+        that the numeric-id PUT + `{hours:[...]}` wrapper returns 204 but does not
+        persist, while the drn-id PUT + bare array does. Dry-run writers never reach
+        here; a live write is behind `CATALOG_SYNC_ENABLED`.
 
-        Returns **204 No Content** on success (verified live 2026-09-05), so this
-        uses `request_raw`, not `request_json` — the empty body is the success, and
-        parsing it as JSON was mis-recording a successful write as a failure.
+        Returns **204 No Content** on success, so this uses `request_raw`, not
+        `request_json` — the empty body is the success, and parsing it as JSON was
+        mis-recording a successful write as a failure.
         """
+        drn = await self.restaurant_drn(session, outlet_id)
         return await self.request_raw(
             session,
             "PUT",
-            f"{_API}/restaurants/{outlet_id}/opening_hours",
-            json_body={"hours": hours},
+            f"{_API}/restaurants/{drn}/opening_hours",
+            json_body=hours,
         )
 
     async def request_json(
@@ -610,6 +659,9 @@ class DeliverooClient(BaseAggregatorClient):
             "session_id": body.get("session_id"),
             "restaurant_ids": restaurant_ids,
         }
+        restaurant_drns = _restaurant_drns_from_login(body)
+        if restaurant_drns:
+            tokens["restaurant_drns"] = restaurant_drns
         if org_id:
             tokens["org_id"] = org_id
         await session_store.upsert_bootstrap(
