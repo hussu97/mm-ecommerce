@@ -46,6 +46,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Integer, and_, cast, func, or_, select
@@ -157,11 +158,16 @@ async def _find_convergence_order(
     `orderRef`, which GrubTech mirrors as its `externalId`) matches on that too, so
     a Barsha/Sharjah order GrubOps filed under the short code and a promotion that
     knows only the long `orderNr` still converge. That match is SCOPED to the same
-    branch and business day, because the short code is only a per-branch-per-day
-    sequence number and would otherwise collide with the same code on another day
-    or channel — so this never merges two genuinely different orders. The day is
-    read off `created_at` (the marketplace placed-at, which BOTH paths stamp) in
-    Dubai time, because the GrubOps-made order carries no `business_date` column.
+    branch, business day AND channel: the short code is only a per-branch-per-day
+    sequence number that DIFFERENT channels reuse on the same branch and day (a
+    Keeta "127" and a Deliveroo "0127" are two unrelated orders), so without the
+    channel scope a masked Keeta backfill converged onto — and overwrote the money,
+    timestamps and blank customer of — a Deliveroo GrubOps order. The channel is
+    matched on `aggregator_channel` against every spelling GrubTech uses for the
+    channel (`reconcile.grubops_channel_names` — label plus aliases), the same set
+    `_find_mm_order` scopes by. The day is read off `created_at` (the marketplace
+    placed-at, which BOTH paths stamp) in Dubai time, because the GrubOps-made order
+    carries no `business_date` column.
     """
     conds = [Order.external_reference == agg.external_order_id]
     if agg.display_ref and agg.branch_id is not None and agg.business_date:
@@ -182,6 +188,9 @@ async def _find_convergence_order(
                 ref_match,
                 Order.branch_id == agg.branch_id,
                 created_dubai_day == agg.business_date,
+                Order.aggregator_channel.in_(
+                    reconcile.grubops_channel_names(agg.channel)
+                ),
             )
         )
     return await db.scalar(
@@ -555,6 +564,18 @@ async def _build_order(
     return order
 
 
+def _unmasked(value: Any) -> bool:
+    """True when `value` is present and NOT a marketplace-redacted placeholder.
+
+    A redactable field (customer/rider name, phone, address) comes back as `***`
+    once a marketplace redacts it; a JSONB address masks to `{"address": "***"}`.
+    Mirrors the SQL-side `ingest._prefer_unmasked_update` check (`*` anywhere in the
+    text form) so the fill-only backfill agrees with the never-downgrade upsert."""
+    if not value:
+        return False
+    return "*" not in str(value)
+
+
 def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
     """Fill-only backfill of the scraped customer + rider onto an MM order.
 
@@ -567,20 +588,25 @@ def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
     a GrubOps push that landed with an empty/masked customer, which the GrubOps-
     owned promotion path would otherwise link and leave blank forever. The
     `_PREFER_UNMASKED` upsert already keeps `agg.customer_*` at the best (unmasked)
-    value ever seen, so a fill here is the real value, not a mask that will later
-    be un-redacted out from under it.
+    value ever seen, so a fill here is normally the real value. But a channel that
+    only ever exposed the order masked (a Keeta order captured after its few-hour
+    redaction, then re-ingested from stored raw by a backfill) has `agg.customer_*`
+    == `***`, and writing that into a blank order is never useful — it just replaces
+    "no data" with "redacted" and, being truthy, blocks the real value from ever
+    filling in later. So skip a masked value here: leave the field blank until a
+    real one is captured. `driver_status` is a plain lifecycle word, never masked.
     """
-    if not order.customer_name and agg.customer_name:
+    if not order.customer_name and _unmasked(agg.customer_name):
         order.customer_name = agg.customer_name
-    if not order.customer_phone and agg.customer_phone:
+    if not order.customer_phone and _unmasked(agg.customer_phone):
         order.customer_phone = agg.customer_phone
-    if not order.shipping_address_snapshot and agg.customer_address:
+    if not order.shipping_address_snapshot and _unmasked(agg.customer_address):
         order.shipping_address_snapshot = agg.customer_address
     # DA info: fill-only against a GrubOps-sourced order, which carries its own rider
     # from GrubTech and must not be overwritten.
-    if not order.aggregator_driver_name and agg.driver_name:
+    if not order.aggregator_driver_name and _unmasked(agg.driver_name):
         order.aggregator_driver_name = agg.driver_name
-    if not order.aggregator_driver_phone and agg.driver_phone:
+    if not order.aggregator_driver_phone and _unmasked(agg.driver_phone):
         order.aggregator_driver_phone = agg.driver_phone
     if not order.aggregator_driver_status and agg.driver_status:
         order.aggregator_driver_status = agg.driver_status

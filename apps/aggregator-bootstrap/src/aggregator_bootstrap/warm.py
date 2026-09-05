@@ -354,12 +354,14 @@ async def write_keeta_hours_in_page(
     windows: list[dict[str, Any]] | None = None,
     wait_seconds: int = 8,
     persist: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Write Keeta hours in-page on the persistent profile.
 
-    The daemon's nightly `KEETA_HOURS` job passes `persist=True` (GET weekly +
-    POST `/api/scm/business-hour/update`). `probe-keeta-hours-save` keeps
-    `persist=False` so it only listens. One Chrome, torn down after.
+    The daemon's nightly `KEETA_HOURS` job pulls MM's weekly schedule from the
+    API, passes it as `windows` (each `{shop_id, weekly}`) with `persist=True`,
+    and `dry_run` echoing `BRANCH_HOURS_SYNC_LIVE`. `probe-keeta-hours-save`
+    keeps `persist=False` so it only listens. One Chrome, torn down after.
     """
     from .engine import async_playwright
     from .keeta_pull import write_keeta_today_hours
@@ -372,6 +374,7 @@ async def write_keeta_hours_in_page(
                 windows=windows,
                 wait_seconds=wait_seconds,
                 persist=persist,
+                dry_run=dry_run,
             )
         finally:
             await opened.close()

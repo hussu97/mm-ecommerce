@@ -236,11 +236,16 @@ async def test_dispatch_routes_warm_keeta_and_deliveroo(monkeypatch):
     async def _keeta_hours(**kwargs):
         seen.append(("keeta_hours", kwargs.get("persist")))
 
+    async def _pull_keeta_hours():
+        # No mapped shop has an MM schedule (sync gated off): keep-alive path.
+        return {"dry_run": True, "shops": []}
+
     monkeypatch.setattr(warm, "warm_channel", _warm)
     monkeypatch.setattr(warm, "warm_keeta_orders", _keeta_orders)
     monkeypatch.setattr(warm, "pull_deliveroo_invoices_in_page", _deliveroo)
     monkeypatch.setattr(warm, "pull_keeta_finance_in_page", _keeta_finance)
     monkeypatch.setattr(warm, "write_keeta_hours_in_page", _keeta_hours)
+    monkeypatch.setattr(daemon.push, "pull_keeta_hours", _pull_keeta_hours)
 
     await daemon._dispatch(Job(kind=JobKind.WARM, seq=0, channel="noon"))
     await daemon._dispatch(Job(kind=JobKind.KEETA_ORDERS, seq=1, channel="keeta"))
@@ -319,6 +324,30 @@ def test_daily_jobs_schedules_keeta_hours_after_finance(monkeypatch):
     assert finance.next_at == datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
     assert hours.next_at == datetime(2026, 1, 2, 1, 0, tzinfo=timezone.utc)
     assert hours.next_at > finance.next_at
+
+
+def test_keeta_hours_outcomes_maps_results():
+    """A dry-run shop carries `planned`, a live save is ok iff code==0, and a
+    shop with no weekly map to mirror records nothing."""
+    result = {
+        "results": [
+            {"shopId": "s-dry", "planned": {"shopId": "s-dry"}, "dry_run": True},
+            {"shopId": "s-ok", "raw": {"code": 0}},
+            {"shopId": "s-bad", "raw": {"code": 12, "msg": "nope"}},
+            {"shopId": "s-skip", "raw": {}, "skipped": True},
+        ]
+    }
+    live = daemon._keeta_hours_outcomes(result, dry_run=False)
+    by_shop = {o["shop_id"]: o for o in live}
+    assert set(by_shop) == {"s-dry", "s-ok", "s-bad"}  # skipped shop omitted
+    assert by_shop["s-dry"] == {
+        "shop_id": "s-dry",
+        "ok": True,
+        "dry_run": True,
+        "planned": {"shopId": "s-dry"},
+    }
+    assert by_shop["s-ok"]["ok"] is True and by_shop["s-ok"]["dry_run"] is False
+    assert by_shop["s-bad"]["ok"] is False and "12" in by_shop["s-bad"]["error"]
 
 
 def test_daily_jobs_skips_keeta_hours_when_disabled(monkeypatch):

@@ -371,6 +371,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/hours-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Hours Runs
+         * @description The working-hours fan-out trail for the admin panel — one row per
+         *     (branch, channel) push, newest first, with the total for the filter. Each
+         *     row carries the dry-run plan or the live result and, on a failure, why.
+         */
+        get: operations["list_hours_runs_api_v1_aggregators_hours_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/finance": {
         parameters: {
             query?: never;
@@ -392,6 +414,28 @@ export interface paths {
          *     returns 200 with zero counts and includes the note so the worker can log it.
          */
         post: operations["push_keeta_finance_api_v1_aggregators_keeta_finance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/keeta/hours-result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Worker Keeta Hours Result
+         * @description Record the worker's per-shop Keeta hours outcomes as
+         *     `branch_hours_sync_run` rows, alerting Sentry on a failed save with the same
+         *     stable per-channel fingerprint the httpx fan-out uses.
+         */
+        post: operations["worker_keeta_hours_result_api_v1_aggregators_keeta_hours_result_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -672,6 +716,33 @@ export interface paths {
          *     `/accounts` never returns passwords.
          */
         get: operations["hydrate_accounts_api_v1_aggregators_worker_accounts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/worker/keeta/hours": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Worker Keeta Hours
+         * @description MM's weekly schedule per Keeta shop, for the worker's in-page write.
+         *
+         *     Keeta's hours save is mtgsig-signed in the page, so the DB-less worker pulls
+         *     the schedule here (seconds-from-midnight, Sunday-first) and posts each shop's
+         *     outcome back to `/keeta/hours-result`. An empty list until
+         *     `CATALOG_SYNC_ENABLED`; `dry_run` echoes `BRANCH_HOURS_SYNC_LIVE` so the live
+         *     decision stays on the API side. A shop with no MM schedule is omitted, so the
+         *     worker keeps the portal's own map for it (never blanks a shop).
+         */
+        get: operations["worker_keeta_hours_api_v1_aggregators_worker_keeta_hours_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1791,9 +1862,8 @@ export interface paths {
          * @description Replace the branch's weekly schedule (a weekday with no shift = closed).
          *
          *     Changing this moves what every customer in the branch's zones is quoted and
-         *     what the marketplaces are sent — the same reach as a holiday.
-         *     `opening_from`/`opening_to` catches up when the branch-hours cron next runs, or
-         *     immediately on a manual sync.
+         *     what the marketplaces are sent — the same reach as a holiday — from the next
+         *     request, since every reader resolves its window from this schedule directly.
          */
         put: operations["set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put"];
         post?: never;
@@ -8899,16 +8969,6 @@ export interface components {
              * @default false
              */
             offers_pickup: boolean;
-            /**
-             * Opening From
-             * @default 00:00
-             */
-            opening_from: string;
-            /**
-             * Opening To
-             * @default 23:59
-             */
-            opening_to: string;
             /** Phone */
             phone?: string | null;
             /** Receipt Footer */
@@ -9013,6 +9073,60 @@ export interface components {
             /** Note */
             note?: string | null;
         };
+        /**
+         * BranchHoursSyncRunList
+         * @description A page of hours-sync rows, newest first, plus the unpaginated total.
+         */
+        BranchHoursSyncRunList: {
+            /** Items */
+            items: components["schemas"]["BranchHoursSyncRunOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * BranchHoursSyncRunOut
+         * @description One recorded working-hours push for one (branch, channel).
+         *
+         *     `planned` is the payload the writer would send (endpoint + a compact
+         *     day→window summary), captured even on a dry run so the enumeration is
+         *     auditable without touching a portal. `dry_run` says which mode wrote it;
+         *     `error` is the failure reason, null on a clean push.
+         */
+        BranchHoursSyncRunOut: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Channel */
+            channel: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Error */
+            error?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Planned */
+            planned?: {
+                [key: string]: unknown;
+            } | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+        };
         /** BranchLive */
         BranchLive: {
             /** Active Orders */
@@ -9112,10 +9226,6 @@ export interface components {
             noon_send_outlet_code: string | null;
             /** Offers Pickup */
             offers_pickup: boolean;
-            /** Opening From */
-            opening_from: string;
-            /** Opening To */
-            opening_to: string;
             /** Phone */
             phone: string | null;
             /** Receipt Footer */
@@ -9188,10 +9298,6 @@ export interface components {
             noon_send_outlet_code?: string | null;
             /** Offers Pickup */
             offers_pickup?: boolean | null;
-            /** Opening From */
-            opening_from?: string | null;
-            /** Opening To */
-            opening_to?: string | null;
             /** Phone */
             phone?: string | null;
             /** Receipt Footer */
@@ -11877,6 +11983,78 @@ export interface components {
             truncation_note?: string | null;
         };
         /**
+         * KeetaHoursOutcome
+         * @description One shop's result from the worker's in-page hours write.
+         */
+        KeetaHoursOutcome: {
+            /**
+             * Dry Run
+             * @default true
+             */
+            dry_run: boolean;
+            /** Error */
+            error?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Planned */
+            planned?: {
+                [key: string]: unknown;
+            } | null;
+            /** Shop Id */
+            shop_id: string;
+        };
+        /**
+         * KeetaHoursResult
+         * @description How many `branch_hours_sync_run` rows the pushed outcomes recorded.
+         */
+        KeetaHoursResult: {
+            /** Recorded */
+            recorded: number;
+        };
+        /**
+         * KeetaHoursResultPush
+         * @description The worker's per-shop outcomes from the Keeta hours job, to record as
+         *     `branch_hours_sync_run` rows (shop_id → branch via the keeta map).
+         */
+        KeetaHoursResultPush: {
+            /** Outcomes */
+            outcomes?: components["schemas"]["KeetaHoursOutcome"][];
+        };
+        /**
+         * KeetaHoursScheduleOut
+         * @description The MM hours the Keeta worker job applies in-page. `dry_run` echoes the
+         *     API's live flag so the worker builds the body but does not POST when false-
+         *     for-live, keeping the live decision on the API side.
+         */
+        KeetaHoursScheduleOut: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Shops */
+            shops?: components["schemas"]["KeetaHoursShop"][];
+        };
+        /**
+         * KeetaHoursShop
+         * @description One Keeta shop's whole weekly schedule, MM's source of truth, for the
+         *     worker's in-page write. `weekly` keys are `sun`..`sat` (MM Sunday-first),
+         *     each a list of `{startTime,endTime,option}` slots in seconds-from-midnight;
+         *     a closed day is `[{startTime:0,endTime:0,option:1}]`.
+         */
+        KeetaHoursShop: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Shop Id */
+            shop_id: string;
+            /** Weekly */
+            weekly: {
+                [key: string]: {
+                    [key: string]: unknown;
+                }[];
+            };
+        };
+        /**
          * KeetaMenuPush
          * @description The in-page-fetched Keeta menu (one payload per shop), pushed for the
          *     catalog sync. Keeta's menu API is mtgsig-signed in-page, so the worker reads it
@@ -13856,9 +14034,9 @@ export interface components {
             /** Name Ar */
             name_ar?: string | null;
             /** Opening From */
-            opening_from: string;
+            opening_from?: string | null;
             /** Opening To */
-            opening_to: string;
+            opening_to?: string | null;
             /** Phone */
             phone?: string | null;
             /** Reference */
@@ -18530,6 +18708,41 @@ export interface operations {
             };
         };
     };
+    list_hours_runs_api_v1_aggregators_hours_runs_get: {
+        parameters: {
+            query?: {
+                branch_id?: string | null;
+                channel?: string | null;
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchHoursSyncRunList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     push_keeta_finance_api_v1_aggregators_keeta_finance_post: {
         parameters: {
             query?: never;
@@ -18552,6 +18765,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KeetaFinanceResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_keeta_hours_result_api_v1_aggregators_keeta_hours_result_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeetaHoursResultPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaHoursResult"];
                 };
             };
             /** @description Validation Error */
@@ -18949,6 +19197,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorWorkerAccount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_keeta_hours_api_v1_aggregators_worker_keeta_hours_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaHoursScheduleOut"];
                 };
             };
             /** @description Validation Error */

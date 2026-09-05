@@ -33,8 +33,6 @@ def _branch() -> Branch:
         id=BRANCH_ID,
         name="Sharjah Central",
         reference="K001",
-        opening_from="09:00",
-        opening_to="23:00",
     )
 
 

@@ -47,10 +47,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
-from app.models.branch import Branch
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
+from app.services import branch_hours_service
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
 
 logger = logging.getLogger(__name__)
@@ -421,20 +421,22 @@ async def _record_outcome(
     # primary-key get rather than `resolve_pickup`: the zone's fallback logic is
     # for deciding where a driver collects from, and all this needs is two
     # strings off a row the session has usually already loaded.
-    branch = (
-        await db.get(Branch, order.branch_id)
+    sched = (
+        await branch_hours_service.schedule(db, order.branch_id)
         if getattr(order, "branch_id", None)
         else None
     )
+    window = branch_hours_service.effective_window(
+        sched, trading_hours.local(datetime.now(timezone.utc)).date()
+    )
+    opens_at, closes_at = window if window else ("00:00", "23:59")
     # `or 0` because the column default is applied by the database at INSERT: a
     # delivery row built in memory and not yet flushed still reads None, and a
     # dispatch can be attempted on one — the checkout writes the row and the
     # register accepts the order inside the same request.
     delivery.dispatch_attempts = (delivery.dispatch_attempts or 0) + 1
     delivery.next_attempt_at = _retry_at(
-        delivery,
-        opens_at=branch.opening_from if branch else "00:00",
-        closes_at=branch.opening_to if branch else "23:59",
+        delivery, opens_at=opens_at, closes_at=closes_at
     )
     if delivery.next_attempt_at is None:
         logger.warning(

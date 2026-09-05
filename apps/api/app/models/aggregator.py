@@ -427,6 +427,73 @@ class AggregatorSyncRun(Base, UUIDMixin, TimestampMixin):
         return f"<AggregatorSyncRun {self.channel} {self.mode} {self.status}>"
 
 
+#: The integrators the hours fan-out writes to. The five aggregators plus
+#: `foodics` — one more than `AGGREGATOR_CHANNELS`, because Foodics carries a
+#: single daily branch window even though it is not a marketplace, and its
+#: outcome belongs in the same run trail as the aggregators'.
+HOURS_SYNC_CHANNELS: tuple[str, ...] = (*AGGREGATOR_CHANNELS, "foodics")
+_HOURS_CHANNELS_SQL = ", ".join(f"'{c}'" for c in HOURS_SYNC_CHANNELS)
+
+
+class BranchHoursSyncRun(Base, UUIDMixin, TimestampMixin):
+    """The outcome of one hours push for one (branch, channel).
+
+    `branch_hours_sync` mirrors MM's weekly schedule out to each integrator a
+    branch is mapped to. This is the trail that makes each push reportable —
+    "did Barsha's hours reach Noon, and if not why" has an answer — and the row
+    the admin surface and Sentry read from. Its own table, not a `mode` on
+    `aggregator_sync_run`: that one is per-channel with no `branch_id` and a
+    channel CHECK that excludes Foodics, and the hours outcome is per
+    `(branch, channel)`.
+
+    `planned` holds the dry-run payload summary (endpoint + a compact
+    day→window map) so a dry-run pass is auditable without touching a portal;
+    `dry_run` records which mode wrote the row.
+    """
+
+    __tablename__ = "branch_hours_sync_run"
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    channel: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=RUN_PLANNED
+    )
+    dry_run: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    planned: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            f"channel IN ({_HOURS_CHANNELS_SQL})",
+            name="ck_branch_hours_sync_run_channel",
+        ),
+        CheckConstraint(
+            f"status IN ({', '.join(repr(s) for s in RUN_STATUSES)})",
+            name="ck_branch_hours_sync_run_status",
+        ),
+        Index("ix_branch_hours_sync_run_branch", "branch_id"),
+        Index("ix_branch_hours_sync_run_channel", "channel"),
+        Index("ix_branch_hours_sync_run_created", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<BranchHoursSyncRun {self.channel} branch={self.branch_id} {self.status}>"
+        )
+
+
 class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     """One order as one marketplace's ledger holds it — the sales truth.
 

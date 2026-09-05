@@ -760,6 +760,38 @@ class FoodicsClient:
             json_body={"url": f"/orders/{order_id}", "payload": data},
         )
 
+    # ── Branch hours (catalog-sync hours write) ──────────────────────────────
+    # Foodics is not a marketplace and carries no aggregator schedule, but a
+    # Foodics branch does hold ONE daily opening window (`opening_from`/
+    # `opening_to`). The hours sync mirrors MM's source of truth here too:
+    # each day it sets the branch's window to that weekday's MM window, so the
+    # POS/kitchen reflects the same trading hours as everywhere else.
+
+    async def set_branch_hours(
+        self, branch_id: str, *, opening_from: str, opening_to: str
+    ) -> Any:
+        """Set a Foodics branch's single daily opening window.
+
+        Mirror of `_update`: `PUT /core-api/updating` with `{url: /branches/<id>,
+        payload: {...}}`. Only ever reached behind `CATALOG_SYNC_ENABLED`; the
+        exact field names and time format are confirmed against one controlled
+        edit at enablement (same discipline as `set_price_tag_product_price`),
+        kept here so correcting the envelope is a one-line change. Captured shape
+        to verify: `opening_from`/`opening_to` as `"HH:MM"` on the `branches`
+        resource.
+        """
+        return await self._call(
+            "PUT",
+            _UPDATING,
+            json_body={
+                "url": f"/branches/{branch_id}",
+                "payload": {
+                    "opening_from": opening_from,
+                    "opening_to": opening_to,
+                },
+            },
+        )
+
     # ── Menu / price tag (catalog sync) ──────────────────────────────────────
     # Verified against the live console API 2026-08-31: the aggregator menu for
     # the integrated branches IS the "Grubtech" price tag — its products carry the

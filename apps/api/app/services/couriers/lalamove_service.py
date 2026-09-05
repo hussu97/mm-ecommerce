@@ -33,6 +33,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import trading_hours
 from app.core.config import settings
 
 # E.164 or nothing. Re-exported below, because it stopped being a courier
@@ -50,7 +51,7 @@ from app.models.order_delivery import (
 )
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.webhook_event import WebhookEvent
-from app.services import email_service
+from app.services import branch_hours_service, email_service
 from app.services.couriers import courier_reference
 from app.services.delivery import address_format, driver_assignment, driver_routing
 from app.services.delivery.delivery_zone_service import Zone
@@ -224,6 +225,15 @@ async def resolve_pickup(
         )
         return None
 
+    # Today's window from the weekly schedule (the source of truth); a branch
+    # with no schedule yet falls back to the all-day default the courier reads
+    # as "no pickup-hours restriction".
+    window = branch_hours_service.effective_window(
+        await branch_hours_service.schedule(db, branch.id),
+        trading_hours.local(datetime.now(timezone.utc)).date(),
+    )
+    opens_at, closes_at = window if window else ("00:00", "23:59")
+
     return PickupPoint(
         name=branch.name,
         phone=phone,
@@ -236,8 +246,8 @@ async def resolve_pickup(
         # admin — `scripts/register_noon_send_pickup.py` writes the code there.
         noon_send_outlet_code=branch.noon_send_outlet_code or "",
         noon_send_outlet_address_code=branch.noon_send_outlet_address_code or "",
-        opens_at=branch.opening_from,
-        closes_at=branch.opening_to,
+        opens_at=opens_at,
+        closes_at=closes_at,
     )
 
 

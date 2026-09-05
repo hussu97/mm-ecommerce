@@ -49,7 +49,7 @@ from app.models.email_log import EmailLog
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.pos_order import PosOrderStatusEnum
-from app.services import email_service
+from app.services import branch_hours_service, email_service
 from app.services.couriers import courier_catalog
 from app.services.pos import business_day_service
 
@@ -743,27 +743,30 @@ async def _already_sent(db: AsyncSession, business_date: str) -> bool:
     return count > 0
 
 
-def _branch_close(branch: Branch, day: date) -> datetime | None:
-    """The instant `branch` shuts on trading day `day`, or None if its configured
-    hours do not parse.
+def _branch_close(window: tuple[str, str] | None, day: date) -> datetime | None:
+    """The instant a branch with this `(opens, closes)` shuts on trading day
+    `day`, or None if the window is missing or its close does not parse.
 
-    `opening_to` is a wall-clock ``"HH:MM"`` on the shop's own clock. A branch
-    whose close is at or before its open trades past midnight (09:00 → 02:00), so
-    its close for `day` lands on the following morning — the +1440 shift, the same
-    reading `trading_hours` uses everywhere else. Returned as a real instant so
-    the caller can compare it to `now` without any date arithmetic of its own."""
-    opens = trading_hours.minutes_of(branch.opening_from)
-    closes = trading_hours.minutes_of(branch.opening_to)
+    `window` is the branch's window for `day`, resolved from its weekly schedule
+    (`branch_hours_service.effective_window`). `closes` is a wall-clock ``"HH:MM"``
+    on the shop's own clock. A branch whose close is at or before its open trades
+    past midnight (09:00 → 02:00), so its close for `day` lands on the following
+    morning — the +1440 shift, the same reading `trading_hours` uses everywhere
+    else. Returned as a real instant so the caller can compare it to `now`."""
+    if window is None:
+        return None
+    opens = trading_hours.minutes_of(window[0])
+    closes = trading_hours.minutes_of(window[1])
     if closes is None:
         return None
     minute = closes + 1440 if opens is not None and closes <= opens else closes
     return trading_hours.at_minute(day, minute)
 
 
-def _last_close(branches: list[Branch], day: date) -> datetime | None:
-    """When the *last* of these branches shuts on `day` — the moment the estate's
-    trading for that day is over. None if no branch's hours parse."""
-    closes = [c for b in branches if (c := _branch_close(b, day)) is not None]
+def _last_close(windows: list[tuple[str, str] | None], day: date) -> datetime | None:
+    """When the *last* of these windows shuts on `day` — the moment the estate's
+    trading for that day is over. None if none parse."""
+    closes = [c for w in windows if (c := _branch_close(w, day)) is not None]
     return max(closes) if closes else None
 
 
@@ -779,6 +782,11 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     if not branches:
         return
 
+    # Each branch's weekly schedule, fetched once, so the per-day close windows
+    # below resolve in memory (`branch_weekly_hours` is the source of truth now —
+    # there is no single-window column to read).
+    schedules = {b.id: await branch_hours_service.schedule(db, b.id) for b in branches}
+
     # Candidate business days: today back through the look-back, oldest first. A
     # day is due once the *last* branch's close for it, plus the settle buffer,
     # has passed. For a past-midnight branch that close is the following morning,
@@ -789,7 +797,11 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
     pending: list[str] = []
     for offset in range(_CATCHUP_DAYS, -1, -1):
         day = today - timedelta(days=offset)
-        last_close = _last_close(branches, day)
+        windows = [
+            branch_hours_service.effective_window(schedules[b.id], day)
+            for b in branches
+        ]
+        last_close = _last_close(windows, day)
         if last_close is None:
             continue
         # Due once the trading day has fully closed (last close + settle buffer)

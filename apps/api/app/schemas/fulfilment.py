@@ -50,11 +50,16 @@ class PickupBranchResponse(BaseModel):
     longitude: float | None = None
     #: Google Maps, built from the branch's own pin rather than its address text.
     maps_url: str | None = None
-    opening_from: str
-    opening_to: str
+    #: Today's trading window, resolved from the branch's weekly schedule
+    #: (`branch_hours_service.effective_window`) by the caller — the branch has no
+    #: single-window column of its own. None until a schedule is entered.
+    opening_from: str | None = None
+    opening_to: str | None = None
 
     @classmethod
-    def of(cls, branch: Branch) -> "PickupBranchResponse":
+    def of(
+        cls, branch: Branch, window: tuple[str, str] | None = None
+    ) -> "PickupBranchResponse":
         return cls(
             id=branch.id,
             reference=branch.reference,
@@ -68,8 +73,8 @@ class PickupBranchResponse(BaseModel):
             latitude=float(branch.latitude) if branch.latitude is not None else None,
             longitude=float(branch.longitude) if branch.longitude is not None else None,
             maps_url=branch.maps_url,
-            opening_from=branch.opening_from,
-            opening_to=branch.opening_to,
+            opening_from=window[0] if window else None,
+            opening_to=window[1] if window else None,
         )
 
 
@@ -112,7 +117,7 @@ class FulfilmentResponse(BaseModel):
             picked_up_at=fulfilment.picked_up_at,
             delivered_at=fulfilment.delivered_at,
             branch=(
-                PickupBranchResponse.of(fulfilment.branch)
+                PickupBranchResponse.of(fulfilment.branch, fulfilment.branch_window)
                 if fulfilment.branch is not None
                 else None
             ),

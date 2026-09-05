@@ -115,3 +115,101 @@ async def test_close_outlet_dry_run_does_not_execute(monkeypatch):
     assert plan["dry_run"] is True
     assert plan["op"] == "close_outlet"
     assert executed == []
+
+
+# ── full-weekly writers ───────────────────────────────────────────────────────
+
+# MM weekday 0=Sun, 1=Mon; days 2..6 absent = closed.
+_WEEKLY = {0: ("08:00", "22:00"), 1: ("09:00", "23:00")}
+
+
+@pytest.mark.asyncio
+async def test_push_weekly_hours_dry_run_then_live(monkeypatch):
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+
+    async def fake_mapper(_db, _branch, *, weekly):
+        return {
+            "endpoint": "POST /_food-restaurant/restaurant/outlet/save",
+            "schedule": {"periods": {}},
+            "session": object(),
+        }
+
+    executed: list[tuple] = []
+
+    async def fake_execute(channel, plan):
+        executed.append((channel, plan.get("op")))
+
+    monkeypatch.setattr(
+        hw, "_WEEKLY_PUSHERS", {**hw._WEEKLY_PUSHERS, "noon": fake_mapper}
+    )
+    monkeypatch.setattr(hw, "_execute", fake_execute)
+
+    branch = SimpleNamespace(id="b1")
+    plan = await hw.push_weekly_hours(
+        object(), channel="noon", branch=branch, weekly=_WEEKLY
+    )
+    assert plan["dry_run"] is True
+    assert plan["op"] == "push_weekly_hours"
+    # Every weekday present in the summary; closed days say so.
+    assert plan["weekly"]["0"] == "08:00-22:00"
+    assert plan["weekly"]["2"] == "closed"
+    assert set(plan["weekly"]) == {str(i) for i in range(7)}
+    assert executed == []
+
+    live = await hw.push_weekly_hours(
+        object(), channel="noon", branch=branch, weekly=_WEEKLY, dry_run=False
+    )
+    assert live["dry_run"] is False
+    assert executed == [("noon", "push_weekly_hours")]
+
+
+def test_talabat_weekly_builder_maps_days_and_keeps_envelope():
+    raw = {
+        "calendars": [
+            {
+                "name": "Normal",
+                "schedule": {
+                    "openingTimesByDay": [{"day": 3, "openingTimes": []}],
+                    "extra": "keep",
+                },
+            },
+            {"name": "Special", "schedule": {"openingTimesByDay": [{"day": 1}]}},
+        ]
+    }
+    out = hw._talabat_set_weekly(raw, weekly=_WEEKLY)
+    normal = next(c for c in out["calendars"] if c["name"] == "Normal")
+    by_day = normal["schedule"]["openingTimesByDay"]
+    # MM Sun(0)→DH 6, Mon(1)→DH 0; closed weekdays absent; sorted by day.
+    assert [e["day"] for e in by_day] == [0, 6]
+    assert by_day[0]["openingTimes"] == [{"from": 540, "to": 1380}]  # Mon 09:00-23:00
+    assert by_day[1]["openingTimes"] == [{"from": 480, "to": 1320}]  # Sun 08:00-22:00
+    assert normal["schedule"]["extra"] == "keep"  # envelope preserved
+    # Other calendars untouched.
+    assert any(c["name"] == "Special" for c in out["calendars"])
+
+
+def test_noon_weekly_builder_maps_days_and_keeps_envelope():
+    details = {"data": {"schedule": {"periods": {"0": [["old"]]}, "tz": "Asia/Dubai"}}}
+    schedule = hw._noon_schedule_weekly(details, weekly=_WEEKLY)
+    # MM Sun(0)→noon 6, Mon(1)→noon 0; closed days absent.
+    assert schedule["periods"] == {
+        "6": [["08:00:00", "22:00:00"]],
+        "0": [["09:00:00", "23:00:00"]],
+    }
+    assert schedule["tz"] == "Asia/Dubai"  # sibling schedule key preserved
+
+
+def test_careem_weekly_builder_all_seven_rows():
+    rows = [{"day": 1, "active": 0, "shifts": [], "extra": "keep"}]
+    out = hw._careem_rows_weekly(rows, weekly=_WEEKLY)
+    assert [r["day"] for r in out] == [1, 2, 3, 4, 5, 6, 7]
+    # Careem day = MM weekday + 1; Sun→1 open, Mon→2 open, rest closed.
+    sun = out[0]
+    assert sun["active"] == 1 and sun["shifts"] == [
+        {"start_time": "08:00:00", "end_time": "22:00:00"}
+    ]
+    assert sun["extra"] == "keep"  # existing row fields preserved
+    assert out[1]["active"] == 1  # Mon
+    assert all(r["active"] == 0 and r["shifts"] == [] for r in out[2:])

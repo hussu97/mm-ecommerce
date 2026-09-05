@@ -77,16 +77,14 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     address_localized: Mapped[str | None] = mapped_column(Text, nullable=True)
     city_localized: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    # Trading hours. `opening_from`/`opening_to` are "HH:MM" strings so a branch can
-    # trade past midnight (e.g. 09:00 → 02:00) without date arithmetic.
-    opening_from: Mapped[str] = mapped_column(
-        String(5), nullable=False, server_default="00:00"
-    )
-    opening_to: Mapped[str] = mapped_column(
-        String(5), nullable=False, server_default="23:59"
-    )
+    # Trading hours live in `branch_weekly_hours` (one shift per weekday, the
+    # single source of truth); `branch_hours_service` resolves the window for any
+    # day. There is no single opening_from/opening_to column — every "is the shop
+    # open / what are today's hours" reader goes through that resolver.
+    #
     # Cut-off that rolls the trading day over — orders before it belong to the
-    # previous business_date. Also used as the inventory end-of-day.
+    # previous business_date. Also used as the inventory end-of-day. Distinct from
+    # the opening hours: it is the accounting-day boundary, not when the shop trades.
     business_day_start: Mapped[str] = mapped_column(
         String(5), nullable=False, server_default="04:00"
     )
@@ -212,9 +210,10 @@ class Branch(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="BranchHoliday.holiday_date",
     )
-    #: The canonical per-day marketplace schedule (source of truth for the
-    #: catalog-&-hours sync), distinct from the single `opening_from`/`opening_to`
-    #: storefront window above. Empty until an operator fills it in.
+    #: The canonical per-weekday schedule — the single source of truth for when
+    #: the branch trades (storefront, POS, delivery promise, marketplace fan-out
+    #: all resolve their window from it via `branch_hours_service`). Empty until
+    #: an operator fills it in, which reads as "always open" until then.
     weekly_hours: Mapped[list[BranchWeeklyHours]] = relationship(
         "BranchWeeklyHours",
         back_populates="branch",
@@ -306,10 +305,10 @@ class BranchHoliday(Base, UUIDMixin, TimestampMixin):
     the same shape `branch_products` uses for "sold here".
 
     **Whole days only, and that is a design decision rather than a first cut.**
-    A branch already has `opening_from` / `opening_to` for the hours it trades;
-    giving a holiday its own hours would be a second answer to that question,
-    free to disagree with the first. A half-day is a trading-hours change. A
-    holiday is the day being gone.
+    A branch already has its weekly schedule for the hours it trades; giving a
+    holiday its own hours would be a second answer to that question, free to
+    disagree with the first. A half-day is a trading-hours change. A holiday is
+    the day being gone.
 
     Dated as `YYYY-MM-DD` text rather than a `Date`, matching `business_date`
     on the table above — the two are read side by side, and one shape for a
@@ -362,12 +361,12 @@ class BranchWeeklyHours(Base, UUIDMixin, TimestampMixin):
     second shift would be a second answer to "when does it open". `weekday` is
     0=Sunday…6=Saturday (the UAE week and the order every portal lists days in).
 
-    `Branch.opening_from`/`opening_to` is now a **derived cache** of *today's*
-    shift, stamped daily by `branch_hours_service` / the branch-hours cron so the
-    storefront and any reader still on the single window stay correct. This table
-    is what business logic and the marketplace fan-out both read.
+    There is no `Branch.opening_from`/`opening_to` column any more: every reader
+    resolves its window from this table via `branch_hours_service` (which gives
+    the day's window, or the next open day's), so this is the one place hours
+    live — business logic and the marketplace fan-out both read it.
 
-    Times are "HH:MM" strings like the branch window, so a shift can cross
+    Times are "HH:MM" strings, so a shift can cross
     midnight without date arithmetic; the CHECK holds the shape. `shift_index` is
     vestigial (always 0) — kept from the multi-shift scaffold so old INSERTs that
     name it still work; uniqueness is now `(branch_id, weekday)` (migration 173).

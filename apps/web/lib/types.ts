@@ -206,8 +206,10 @@ export interface PickupBranch {
   longitude: number | null;
   /** Google Maps, built from the branch's own pin rather than its address text. */
   maps_url: string | null;
-  opening_from: string;
-  opening_to: string;
+  /** Today's trading window, resolved from the branch's weekly schedule by the
+   *  API. Null until a schedule is entered. */
+  opening_from: string | null;
+  opening_to: string | null;
 }
 
 /** Where an order is in the journey. See `fulfilment_service.Fulfilment`. */

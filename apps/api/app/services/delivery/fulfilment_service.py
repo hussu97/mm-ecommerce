@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import trading_hours
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.branch import Branch
 from app.models.courier import Courier
@@ -40,6 +41,7 @@ from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_status_event import OrderStatusEvent
+from app.services import branch_hours_service
 
 __all__ = [
     "Fulfilment",
@@ -175,6 +177,11 @@ class Fulfilment:
     #: it — this object never outlives the session that built it, and
     #: `PickupBranchResponse` is where it becomes a payload.
     branch: Branch | None
+    #: The branch's `(opens, closes)` for today, resolved from its weekly schedule
+    #: (the source of truth — the branch has no single-window column). Carried so
+    #: the sync serializer can show pickup hours without a db handle. None for a
+    #: delivery order or a branch with no schedule yet.
+    branch_window: tuple[str, str] | None = None
 
 
 def estimate_state_of(order: Order) -> str:
@@ -249,8 +256,13 @@ async def for_order(
     reached = reached if reached is not None else await reached_at(db, order)
 
     branch = None
+    branch_window = None
     if is_pickup and order.branch_id is not None:
         branch = await db.get(Branch, order.branch_id)
+        branch_window = branch_hours_service.effective_window(
+            await branch_hours_service.schedule(db, order.branch_id),
+            trading_hours.local(now).date(),
+        )
 
     estimated_at, precision = _estimate(
         order,
@@ -285,6 +297,7 @@ async def for_order(
         picked_up_at=reached.get(OrderStatusEnum.OUT_FOR_DELIVERY.value),
         delivered_at=reached.get(OrderStatusEnum.DELIVERED.value),
         branch=branch,
+        branch_window=branch_window,
     )
 
 

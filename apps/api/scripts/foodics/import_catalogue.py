@@ -517,8 +517,8 @@ class Importer:
                     "phone": row.get("phone"),
                     "latitude": row.get("latitude"),
                     "longitude": row.get("longitude"),
-                    "opening_from": row.get("opening_from") or "08:00",
-                    "opening_to": row.get("opening_to") or "23:00",
+                    # Trading hours live in branch_weekly_hours now — set them in
+                    # the admin weekly editor, not on the branch row.
                     # Deliberately not carried over. Foodics has no structured
                     # TRN or address field, so operators type both into the
                     # free-text header. We print those from real columns, and

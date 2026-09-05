@@ -16,8 +16,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
-from app.models.branch import Branch
 from app.models.order import OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.services.couriers import courier_service
@@ -27,27 +27,34 @@ NOW = datetime(2026, 8, 15, 7, 21, tzinfo=timezone.utc)  # 11:21 in Dubai
 
 
 class _Db:
-    """The one row `_record_outcome` reaches for: the branch, for the retry
-    window."""
+    """Serves the branch's weekly schedule `_record_outcome` resolves the retry
+    window from. `window` is the same shift every weekday, or None for a branch
+    with no schedule (which reads as all-day)."""
 
-    def __init__(self, branch: Branch | None = None):
-        self.branch = branch
+    def __init__(self, window: tuple[str, str] | None = None):
+        self._window = window
 
     async def get(self, _model, _pk):
-        return self.branch
+        return None
 
     async def flush(self):
         return None
 
     async def execute(self, _statement):
-        from types import SimpleNamespace
-
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+        rows = (
+            [
+                SimpleNamespace(
+                    weekday=wd, opens=self._window[0], closes=self._window[1]
+                )
+                for wd in range(7)
+            ]
+            if self._window
+            else []
+        )
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
 
 
 def _order(status=OrderStatusEnum.PACKED, branch_id=None):
-    from types import SimpleNamespace
-
     return SimpleNamespace(
         id=uuid.uuid4(),
         order_number="MM-20260815-001",
@@ -111,11 +118,10 @@ async def test_a_retry_is_not_scheduled_into_a_shut_shop():
     that one waits for the morning and a human, which is what would have
     happened anyway.
     """
-    branch = Branch(name="Dubai", opening_from="09:00", opening_to="23:00")
     delivery = _delivery(last_error="Courier rejected the booking")
 
     await courier_service._record_outcome(
-        _Db(branch), _order(branch_id=uuid.uuid4()), delivery
+        _Db(window=("09:00", "23:00")), _order(branch_id=uuid.uuid4()), delivery
     )
 
     # `_retry_at` measures from now; the test's own clock decides whether five

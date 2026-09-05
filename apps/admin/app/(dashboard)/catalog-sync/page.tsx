@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { ApiError, catalogSyncApi } from '@/lib/api';
+import { ApiError, catalogSyncApi, hoursRunsApi } from '@/lib/api';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import type { Schemas } from '@mm/types';
@@ -174,6 +174,119 @@ function CreateItemPanel({ branches }: { branches: Branch[] }) {
   );
 }
 
+type HoursRun = Schemas['BranchHoursSyncRunOut'];
+
+const RUN_STATUS_VARIANT: Record<string, 'success' | 'danger' | 'warning' | 'info' | 'neutral'> = {
+  completed: 'success',
+  failed: 'danger',
+  partial: 'warning',
+  running: 'info',
+  planned: 'neutral',
+};
+
+function windowSummary(run: HoursRun): string {
+  const planned = (run.planned ?? {}) as Record<string, unknown>;
+  const weekly = planned.weekly as Record<string, string> | undefined;
+  if (weekly) {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return days
+      .map((d, i) => `${d} ${weekly[String(i)] ?? '—'}`)
+      .join(' · ');
+  }
+  if (typeof planned.window === 'string') return planned.window;
+  return (planned.endpoint as string) ?? '';
+}
+
+function HoursSyncRunsPanel() {
+  const [runs, setRuns] = useState<HoursRun[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  // Bumped by the refresh button to re-run the load below; the fetch lives in
+  // the effect rather than a callback the effect calls, so nothing sets state
+  // synchronously on the way in (react-hooks/set-state-in-effect).
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    void hoursRunsApi
+      .list({ limit: 100 })
+      .then((res) => {
+        setRuns(res.items);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
+  }, [reload]);
+
+  return (
+    <div className="border border-gray-200 rounded-sm p-4 mb-6">
+      <div className="flex items-center justify-between mb-1 gap-2">
+        <h2 className="text-lg font-display">Hours sync runs</h2>
+        <Button size="sm" variant="secondary" onClick={() => setReload((n) => n + 1)}>
+          Refresh
+        </Button>
+      </div>
+      <p className="text-sm text-gray-500 mb-3">
+        MM&apos;s weekly schedule mirrored to each integrator — the full week to the
+        five aggregators, today&apos;s window to Foodics, Keeta via the VM worker.
+        A <Badge variant="warning">dry-run</Badge> row shows the payload it would
+        send; a <Badge variant="danger">failed</Badge> row shows why. Runs on the
+        VM (hourly; Keeta nightly).
+      </p>
+      {failed ? (
+        <div className="text-sm text-red-600">Could not load hours-sync runs.</div>
+      ) : !runs ? (
+        <div className="py-4 flex justify-center"><Spinner /></div>
+      ) : runs.length === 0 ? (
+        <p className="text-sm text-gray-400">
+          No hours-sync runs yet. They appear once CATALOG_SYNC_ENABLED is on (dry-run first).
+        </p>
+      ) : (
+        <div className="overflow-x-auto border border-gray-200 rounded-sm">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="text-left px-3 py-2">When</th>
+                <th className="text-left px-3 py-2">Branch</th>
+                <th className="text-left px-3 py-2">Channel</th>
+                <th className="text-left px-3 py-2">Status</th>
+                <th className="text-left px-3 py-2">Mode</th>
+                <th className="text-left px-3 py-2">Schedule / reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => (
+                <tr
+                  key={r.id}
+                  className={`border-t border-gray-100 ${r.status === 'failed' ? 'bg-red-50/60' : ''}`}
+                >
+                  <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
+                    {r.created_at ? new Date(r.created_at).toLocaleString() : '—'}
+                  </td>
+                  <td className="px-3 py-2 font-medium">{r.branch_name ?? '—'}</td>
+                  <td className="px-3 py-2">{titleCase(r.channel)}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={RUN_STATUS_VARIANT[r.status] ?? 'neutral'}>{r.status}</Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge variant={r.dry_run ? 'warning' : 'info'}>
+                      {r.dry_run ? 'dry-run' : 'live'}
+                    </Badge>
+                  </td>
+                  <td className="px-3 py-2 text-gray-500">
+                    {r.error ? (
+                      <span className="text-red-600">{r.error}</span>
+                    ) : (
+                      <span className="text-xs">{windowSummary(r)}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CatalogSyncPage() {
   const toast = useToast();
   const [status, setStatus] = useState<Status | null>(null);
@@ -302,6 +415,8 @@ export default function CatalogSyncPage() {
       </div>
 
       <CreateItemPanel branches={branches} />
+
+      <HoursSyncRunsPanel />
 
       <p className="text-sm text-gray-500 mb-4">
         Weekly hours are edited per branch in the{' '}

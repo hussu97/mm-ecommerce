@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import alerting
 from app.core.config import settings
 from app.core.deps import get_db
 from app.core.exceptions import (
@@ -33,6 +34,7 @@ from app.core.exceptions import (
 from app.core.permissions import require
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
+    CHANNEL_KEETA,
     MATCH_MATCHED,
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
@@ -43,7 +45,9 @@ from app.models.aggregator import (
     AggregatorStatement,
     AggregatorStatementLine,
     AggregatorSyncRun,
+    BranchHoursSyncRun,
 )
+from app.models.base import utcnow
 from app.models.branch import Branch
 from app.schemas.aggregator import (
     AggregatorAccountPublic,
@@ -68,12 +72,18 @@ from app.schemas.aggregator import (
     AggregatorWorkerAccount,
     AggregatorWorkerHealChannel,
     AggregatorWorkerSession,
+    BranchHoursSyncRunList,
+    BranchHoursSyncRunOut,
     DeliverooFinancePush,
     DeliverooFinanceResult,
     DeliverooMenuPush,
     DeliverooMenuResult,
     KeetaFinancePush,
     KeetaFinanceResult,
+    KeetaHoursResult,
+    KeetaHoursResultPush,
+    KeetaHoursScheduleOut,
+    KeetaHoursShop,
     KeetaMenuPush,
     KeetaMenuResult,
     KeetaOrdersPush,
@@ -82,6 +92,7 @@ from app.schemas.aggregator import (
     ReconSummaryRow,
     SettlementReconOut,
 )
+from app.services import branch_hours_service
 from app.services.aggregators import (
     account_store,
     crypto,
@@ -989,6 +1000,195 @@ async def list_sync_runs(
     )
     runs = (await db.execute(stmt)).scalars().all()
     return AggregatorSyncRunList(items=[_run_out(r) for r in runs], total=total)
+
+
+# ── Working-hours sync (MM → integrators) ────────────────────────────────────
+# The run trail for `branch_hours_sync`'s fan-out, plus the two seams Keeta needs
+# because the headed worker has no DB: it pulls MM's weekly schedule from here and
+# reports each shop's in-page write back here to be recorded like the others.
+
+_KEETA_DAY_KEYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+
+
+def _hhmm_to_seconds(clock: str) -> int:
+    """`"08:15"` → 29700 (seconds from midnight). A 23:59 close becomes 86400 —
+    the day-end value Keeta stores (matching the worker's `_keeta_hour_slot`)."""
+    parts = (clock or "0:0").split(":")
+    secs = int(parts[0]) * 3600 + (int(parts[1]) if len(parts) > 1 else 0) * 60
+    return 86400 if secs == 86340 else secs
+
+
+def _keeta_weekly_from_schedule(
+    sched: dict[int, tuple[str, str]],
+) -> dict[str, list[dict]]:
+    """MM `{weekday: (opens,closes)}` → Keeta `businessHourOfTheWeek` day-map.
+
+    Sunday-first keys (MM 0=Sunday aligns with `_KEETA_DAY_KEYS`), seconds from
+    midnight; a closed weekday is `[{startTime:0,endTime:0,option:1}]`."""
+    weekly: dict[str, list[dict]] = {}
+    for wd in range(7):
+        win = sched.get(wd)
+        if win is None:
+            weekly[_KEETA_DAY_KEYS[wd]] = [{"startTime": 0, "endTime": 0, "option": 1}]
+        else:
+            weekly[_KEETA_DAY_KEYS[wd]] = [
+                {
+                    "startTime": _hhmm_to_seconds(win[0]),
+                    "endTime": _hhmm_to_seconds(win[1]),
+                    "option": 1,
+                }
+            ]
+    return weekly
+
+
+def _hours_run_out(
+    run: BranchHoursSyncRun, branch_name: str | None
+) -> BranchHoursSyncRunOut:
+    out = BranchHoursSyncRunOut.model_validate(run)
+    out.branch_name = branch_name
+    return out
+
+
+@router.get(
+    "/hours-runs",
+    response_model=BranchHoursSyncRunList,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def list_hours_runs(
+    branch_id: UUID | None = Query(None),
+    channel: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> BranchHoursSyncRunList:
+    """The working-hours fan-out trail for the admin panel — one row per
+    (branch, channel) push, newest first, with the total for the filter. Each
+    row carries the dry-run plan or the live result and, on a failure, why."""
+    filters = []
+    if branch_id:
+        filters.append(BranchHoursSyncRun.branch_id == branch_id)
+    if channel:
+        filters.append(BranchHoursSyncRun.channel == channel)
+    if status:
+        filters.append(BranchHoursSyncRun.status == status)
+
+    count_stmt = select(func.count()).select_from(BranchHoursSyncRun)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    stmt = select(BranchHoursSyncRun, Branch.name).join(
+        Branch, Branch.id == BranchHoursSyncRun.branch_id
+    )
+    if filters:
+        stmt = stmt.where(*filters)
+    stmt = (
+        stmt.order_by(BranchHoursSyncRun.created_at.desc()).offset(offset).limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    return BranchHoursSyncRunList(
+        items=[_hours_run_out(run, name) for run, name in rows], total=total
+    )
+
+
+@router.get("/worker/keeta/hours", response_model=KeetaHoursScheduleOut)
+async def worker_keeta_hours(
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> KeetaHoursScheduleOut:
+    """MM's weekly schedule per Keeta shop, for the worker's in-page write.
+
+    Keeta's hours save is mtgsig-signed in the page, so the DB-less worker pulls
+    the schedule here (seconds-from-midnight, Sunday-first) and posts each shop's
+    outcome back to `/keeta/hours-result`. An empty list until
+    `CATALOG_SYNC_ENABLED`; `dry_run` echoes `BRANCH_HOURS_SYNC_LIVE` so the live
+    decision stays on the API side. A shop with no MM schedule is omitted, so the
+    worker keeps the portal's own map for it (never blanks a shop)."""
+    if not settings.CATALOG_SYNC_ENABLED:
+        return KeetaHoursScheduleOut(dry_run=True, shops=[])
+    rows = (
+        (
+            await db.execute(
+                select(AggregatorBranchMap).where(
+                    AggregatorBranchMap.channel == CHANNEL_KEETA,
+                    AggregatorBranchMap.is_active.is_(True),
+                    AggregatorBranchMap.external_outlet_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    shops: list[KeetaHoursShop] = []
+    for row in rows:
+        sched = await branch_hours_service.schedule(db, row.branch_id)
+        if sched is None:
+            continue
+        shops.append(
+            KeetaHoursShop(
+                shop_id=str(row.external_outlet_id),
+                branch_id=row.branch_id,
+                weekly=_keeta_weekly_from_schedule(sched),
+            )
+        )
+    return KeetaHoursScheduleOut(
+        dry_run=not settings.BRANCH_HOURS_SYNC_LIVE, shops=shops
+    )
+
+
+@router.post("/keeta/hours-result", response_model=KeetaHoursResult)
+async def worker_keeta_hours_result(
+    body: KeetaHoursResultPush,
+    _: None = Depends(_require_push_token),
+    db: AsyncSession = Depends(get_db),
+) -> KeetaHoursResult:
+    """Record the worker's per-shop Keeta hours outcomes as
+    `branch_hours_sync_run` rows, alerting Sentry on a failed save with the same
+    stable per-channel fingerprint the httpx fan-out uses."""
+    map_rows = (
+        await db.execute(
+            select(
+                AggregatorBranchMap.external_outlet_id,
+                AggregatorBranchMap.branch_id,
+            ).where(
+                AggregatorBranchMap.channel == CHANNEL_KEETA,
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).all()
+    by_shop = {str(outlet): branch_id for outlet, branch_id in map_rows if outlet}
+    recorded = 0
+    for outcome in body.outcomes:
+        branch_id = by_shop.get(str(outcome.shop_id))
+        if branch_id is None:
+            continue
+        if not outcome.ok:
+            alerting.capture_issue(
+                "branch-hours weekly push failed: keeta",
+                level="warning",
+                fingerprint=["branch-hours-sync", "keeta", "weekly-push"],
+                tags={
+                    "channel": "keeta",
+                    "shop_id": str(outcome.shop_id),
+                    "branch_id": str(branch_id),
+                    "op": "push_weekly_hours",
+                    "dry_run": str(outcome.dry_run),
+                },
+            )
+        db.add(
+            BranchHoursSyncRun(
+                branch_id=branch_id,
+                channel="keeta",
+                status="completed" if outcome.ok else "failed",
+                dry_run=outcome.dry_run,
+                planned=outcome.planned,
+                error=outcome.error,
+                finished_at=utcnow(),
+            )
+        )
+        recorded += 1
+    return KeetaHoursResult(recorded=recorded)
 
 
 #: A single manual backfill spans at most a quarter — enough to re-pull a

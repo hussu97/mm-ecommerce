@@ -25,8 +25,6 @@ class BranchCreate(BaseModel):
     address_localized: str | None = None
     city: str | None = Field(None, max_length=100)
     city_localized: str | None = Field(None, max_length=100)
-    opening_from: str = Field("00:00", pattern=_TIME_RE)
-    opening_to: str = Field("23:59", pattern=_TIME_RE)
     business_day_start: str = Field("04:00", pattern=_TIME_RE)
     inventory_end_of_day_time: str = Field("04:00", pattern=_TIME_RE)
     receipt_header: str | None = None
@@ -65,8 +63,6 @@ class BranchUpdate(BaseModel):
     address_localized: str | None = None
     city: str | None = Field(None, max_length=100)
     city_localized: str | None = Field(None, max_length=100)
-    opening_from: str | None = Field(None, pattern=_TIME_RE)
-    opening_to: str | None = Field(None, pattern=_TIME_RE)
     business_day_start: str | None = Field(None, pattern=_TIME_RE)
     inventory_end_of_day_time: str | None = Field(None, pattern=_TIME_RE)
     receipt_header: str | None = None
@@ -100,8 +96,6 @@ class BranchResponse(ORMModel):
     address_localized: str | None
     city: str | None
     city_localized: str | None
-    opening_from: str
-    opening_to: str
     business_day_start: str
     inventory_end_of_day_time: str
     receipt_header: str | None

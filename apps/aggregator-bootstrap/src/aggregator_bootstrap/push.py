@@ -73,6 +73,38 @@ async def pull_sessions() -> list[dict[str, Any]]:
     return body.get("sessions") or []
 
 
+async def pull_keeta_hours() -> dict[str, Any]:
+    """GET MM's weekly schedule per Keeta shop for the in-page hours write.
+
+    Returns `{dry_run, shops:[{shop_id, branch_id, weekly}]}` — `weekly` keyed
+    `sun`..`sat` (seconds-from-midnight). The worker has no DB, so this is where
+    MM's source-of-truth schedule reaches the Keeta job. An empty `shops` list
+    (sync gated off, or no mapped shop has an MM schedule) means "leave the
+    portal as-is". A 401/5xx raises (config/availability fault)."""
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/keeta/hours"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+        body = resp.json()
+    if not isinstance(body, dict):
+        return {"dry_run": True, "shops": []}
+    return {
+        "dry_run": bool(body.get("dry_run", True)),
+        "shops": body.get("shops") or [],
+    }
+
+
+async def push_keeta_hours_result(outcomes: list[dict]) -> dict[str, Any]:
+    """POST per-shop Keeta hours outcomes to /aggregators/keeta/hours-result so
+    each is recorded as a `branch_hours_sync_run` row (and alerted on failure).
+    Each outcome is `{shop_id, ok, error?, dry_run, planned?}`."""
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/keeta/hours-result"
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(url, json={"outcomes": outcomes}, headers=_headers())
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def push_keeta_orders(payloads: list[dict]) -> dict[str, Any]:
     """POST in-page-fetched Keeta order payloads to /aggregators/keeta/orders.
 

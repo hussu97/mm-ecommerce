@@ -3221,18 +3221,6 @@
             "title": "Offers Pickup",
             "type": "boolean"
           },
-          "opening_from": {
-            "default": "00:00",
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-            "title": "Opening From",
-            "type": "string"
-          },
-          "opening_to": {
-            "default": "23:59",
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-            "title": "Opening To",
-            "type": "string"
-          },
           "phone": {
             "anyOf": [
               {
@@ -3523,6 +3511,128 @@
           }
         },
         "title": "BranchHolidayUpdate",
+        "type": "object"
+      },
+      "BranchHoursSyncRunList": {
+        "description": "A page of hours-sync rows, newest first, plus the unpaginated total.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BranchHoursSyncRunOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "BranchHoursSyncRunList",
+        "type": "object"
+      },
+      "BranchHoursSyncRunOut": {
+        "description": "One recorded working-hours push for one (branch, channel).\n\n`planned` is the payload the writer would send (endpoint + a compact\nday\u2192window summary), captured even on a dry run so the enumeration is\nauditable without touching a portal. `dry_run` says which mode wrote it;\n`error` is the failure reason, null on a clean push.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "channel",
+          "status",
+          "dry_run",
+          "created_at"
+        ],
+        "title": "BranchHoursSyncRunOut",
         "type": "object"
       },
       "BranchLive": {
@@ -3822,14 +3932,6 @@
             "title": "Offers Pickup",
             "type": "boolean"
           },
-          "opening_from": {
-            "title": "Opening From",
-            "type": "string"
-          },
-          "opening_to": {
-            "title": "Opening To",
-            "type": "string"
-          },
           "phone": {
             "anyOf": [
               {
@@ -3955,8 +4057,6 @@
           "address_localized",
           "city",
           "city_localized",
-          "opening_from",
-          "opening_to",
           "business_day_start",
           "inventory_end_of_day_time",
           "receipt_header",
@@ -4190,30 +4290,6 @@
               }
             ],
             "title": "Offers Pickup"
-          },
-          "opening_from": {
-            "anyOf": [
-              {
-                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Opening From"
-          },
-          "opening_to": {
-            "anyOf": [
-              {
-                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Opening To"
           },
           "phone": {
             "anyOf": [
@@ -12457,6 +12533,134 @@
         "title": "KeetaFinanceResult",
         "type": "object"
       },
+      "KeetaHoursOutcome": {
+        "description": "One shop's result from the worker's in-page hours write.",
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "shop_id": {
+            "title": "Shop Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shop_id",
+          "ok"
+        ],
+        "title": "KeetaHoursOutcome",
+        "type": "object"
+      },
+      "KeetaHoursResult": {
+        "description": "How many `branch_hours_sync_run` rows the pushed outcomes recorded.",
+        "properties": {
+          "recorded": {
+            "title": "Recorded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recorded"
+        ],
+        "title": "KeetaHoursResult",
+        "type": "object"
+      },
+      "KeetaHoursResultPush": {
+        "description": "The worker's per-shop outcomes from the Keeta hours job, to record as\n`branch_hours_sync_run` rows (shop_id \u2192 branch via the keeta map).",
+        "properties": {
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/KeetaHoursOutcome"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          }
+        },
+        "title": "KeetaHoursResultPush",
+        "type": "object"
+      },
+      "KeetaHoursScheduleOut": {
+        "description": "The MM hours the Keeta worker job applies in-page. `dry_run` echoes the\nAPI's live flag so the worker builds the body but does not POST when false-\nfor-live, keeping the live decision on the API side.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "shops": {
+            "items": {
+              "$ref": "#/components/schemas/KeetaHoursShop"
+            },
+            "title": "Shops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run"
+        ],
+        "title": "KeetaHoursScheduleOut",
+        "type": "object"
+      },
+      "KeetaHoursShop": {
+        "description": "One Keeta shop's whole weekly schedule, MM's source of truth, for the\nworker's in-page write. `weekly` keys are `sun`..`sat` (MM Sunday-first),\neach a list of `{startTime,endTime,option}` slots in seconds-from-midnight;\na closed day is `[{startTime:0,endTime:0,option:1}]`.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "shop_id": {
+            "title": "Shop Id",
+            "type": "string"
+          },
+          "weekly": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "title": "Weekly",
+            "type": "object"
+          }
+        },
+        "required": [
+          "shop_id",
+          "branch_id",
+          "weekly"
+        ],
+        "title": "KeetaHoursShop",
+        "type": "object"
+      },
       "KeetaMenuPush": {
         "description": "The in-page-fetched Keeta menu (one payload per shop), pushed for the\ncatalog sync. Keeta's menu API is mtgsig-signed in-page, so the worker reads it\nand pushes it here; it is stored as the keeta menu snapshot.",
         "properties": {
@@ -18219,12 +18423,26 @@
             "title": "Name Ar"
           },
           "opening_from": {
-            "title": "Opening From",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening From"
           },
           "opening_to": {
-            "title": "Opening To",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening To"
           },
           "phone": {
             "anyOf": [
@@ -18245,9 +18463,7 @@
         "required": [
           "id",
           "reference",
-          "name",
-          "opening_from",
-          "opening_to"
+          "name"
         ],
         "title": "PickupBranchResponse",
         "type": "object"
@@ -31432,6 +31648,117 @@
         ]
       }
     },
+    "/api/v1/aggregators/hours-runs": {
+      "get": {
+        "description": "The working-hours fan-out trail for the admin panel \u2014 one row per\n(branch, channel) push, newest first, with the total for the filter. Each\nrow carries the dry-run plan or the live result and, on a failure, why.",
+        "operationId": "list_hours_runs_api_v1_aggregators_hours_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchHoursSyncRunList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Hours Runs",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
     "/api/v1/aggregators/keeta/finance": {
       "post": {
         "description": "Ingest a batch of in-page-fetched Keeta finance payloads.\n\nKeeta's finance data is fetched in-page by the bootstrap worker (where the\nportal's JS signs the request) and pushed here. Each payload is parsed by\n`keeta_provider.parse_finance` into statements and payouts and upserted.\nWhen the payload is only download-task metadata (figures live in PDF invoices),\nthe parse returns empty lists with a truncation note \u2014 the response still\nreturns 200 with zero counts and includes the note so the worker can log it.",
@@ -31487,6 +31814,66 @@
           }
         },
         "summary": "Push Keeta Finance",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/keeta/hours-result": {
+      "post": {
+        "description": "Record the worker's per-shop Keeta hours outcomes as\n`branch_hours_sync_run` rows, alerting Sentry on a failed save with the same\nstable per-channel fingerprint the httpx fan-out uses.",
+        "operationId": "worker_keeta_hours_result_api_v1_aggregators_keeta_hours_result_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeetaHoursResultPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaHoursResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Keeta Hours Result",
         "tags": [
           "Aggregators"
         ]
@@ -32382,6 +32769,56 @@
           }
         },
         "summary": "Hydrate Accounts",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/keeta/hours": {
+      "get": {
+        "description": "MM's weekly schedule per Keeta shop, for the worker's in-page write.\n\nKeeta's hours save is mtgsig-signed in the page, so the DB-less worker pulls\nthe schedule here (seconds-from-midnight, Sunday-first) and posts each shop's\noutcome back to `/keeta/hours-result`. An empty list until\n`CATALOG_SYNC_ENABLED`; `dry_run` echoes `BRANCH_HOURS_SYNC_LIVE` so the live\ndecision stays on the API side. A shop with no MM schedule is omitted, so the\nworker keeps the portal's own map for it (never blanks a shop).",
+        "operationId": "worker_keeta_hours_api_v1_aggregators_worker_keeta_hours_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaHoursScheduleOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Keeta Hours",
         "tags": [
           "Aggregators"
         ]
@@ -36010,7 +36447,7 @@
         ]
       },
       "put": {
-        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).\n\nChanging this moves what every customer in the branch's zones is quoted and\nwhat the marketplaces are sent \u2014 the same reach as a holiday.\n`opening_from`/`opening_to` catches up when the branch-hours cron next runs, or\nimmediately on a manual sync.",
+        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).\n\nChanging this moves what every customer in the branch's zones is quoted and\nwhat the marketplaces are sent \u2014 the same reach as a holiday \u2014 from the next\nrequest, since every reader resolves its window from this schedule directly.",
         "operationId": "set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put",
         "parameters": [
           {

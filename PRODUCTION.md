@@ -955,6 +955,7 @@ it here and redeploying.
 | `AGGREGATOR_REQUESTS_PER_SECOND` | `1.0` | Ceiling on outbound calls per marketplace (PerimeterX/Akamai). `0` disables |
 | `CATALOG_SYNC_READ_ENABLED` | `false` | Gate on the catalog-sync **read** side (fetch each integrator's live menu/hours + compute drift). Off until watched — it opens marketplace sessions. Storefront only |
 | `CATALOG_SYNC_ENABLED` | `false` | Master gate on every catalog-sync **write** (Foodics Grubtech group/price tag, per-portal menu, hours fan-out). Off keeps the push endpoints 503; even on, Phase-1 push is a dry run |
+| `BRANCH_HOURS_SYNC_LIVE` | `false` | Takes the **working-hours** fan-out live on its own (still under `CATALOG_SYNC_ENABLED`). `false` = dry-run (branch_hours_sync records every branch/channel payload but POSTs nothing); flip to `true` only after the VM dry-run is audited. Echoed to the worker's Keeta hours job |
 | `CATALOG_SYNC_ENFORCE_PRICE_PARITY` | `true` | Policy: the Foodics Grubtech price-tag price must equal the product price — any difference is flagged drift (no seasonal-uplift exceptions) |
 | `CATALOG_SYNC_SWEEP_MINUTES` | `0` | Cadence (minutes) of the autonomous catalog-sync sweep (read → propose → drift). `0` disables it; still no-ops unless `CATALOG_SYNC_READ_ENABLED`, and only approves mappings when `CATALOG_SYNC_ENABLED`. Leader API slot only |
 

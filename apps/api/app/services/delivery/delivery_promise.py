@@ -52,7 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import trading_hours
 from app.models.branch import Branch
 from app.models.courier import Courier, UnbatchedPromiseEnum
-from app.services import branch_holiday_service
+from app.services import branch_holiday_service, branch_hours_service
 from app.services.delivery.delivery_zone_service import Zone
 
 __all__ = [
@@ -110,20 +110,21 @@ async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Conte
     # instant on every live call, and they stop being the same the moment
     # anything asks what a promise *would have been* — the window has to start
     # where the question starts, or the closures that mattered are missing.
+    day = trading_hours.local(moment).date()
     closed = (
-        await branch_holiday_service.closed_dates_for(
-            db, branch.id, today=trading_hours.local(moment).date()
-        )
+        await branch_holiday_service.closed_dates_for(db, branch.id, today=day)
         if branch is not None
         else frozenset()
     )
-    return _Context(
-        zone,
-        courier,
-        branch.opening_from if branch is not None else None,
-        branch.opening_to if branch is not None else None,
-        closed,
+    window = (
+        branch_hours_service.effective_window(
+            await branch_hours_service.schedule(db, branch.id), day
+        )
+        if branch is not None
+        else None
     )
+    opens_at, closes_at = window if window else (None, None)
+    return _Context(zone, courier, opens_at, closes_at, closed)
 
 
 async def _serving_branch(

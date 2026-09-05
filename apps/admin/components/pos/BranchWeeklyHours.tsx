@@ -16,9 +16,9 @@ import { useToast } from '@/components/ui/feedback';
  * answer to "when does it open". A closed weekday reads exactly like a holiday.
  *
  * This is what the delivery estimate, the POS and the storefront all follow:
- * the branch's single `opening_from`/`opening_to` window is derived from *this*
- * (stamped daily by the branch-hours cron, or immediately on "Sync now"), and
- * the marketplaces are sent this schedule. Editing here moves all of them.
+ * each resolves its window from *this* schedule directly (there is no separate
+ * single-window field any more), and the marketplaces are sent this schedule.
+ * Editing here moves all of them.
  */
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -81,13 +81,13 @@ export function BranchWeeklyHours() {
     if (!branchId && servable.length) setBranchId(servable[0].id);
   }, [servable, branchId]);
 
-  const branch = servable.find((b) => b.id === branchId);
-
   const load = useCallback(async () => {
     if (!branchId) return;
     setWeek(null);
-    const fallbackOpen = branch?.opening_from || '09:00';
-    const fallbackClose = branch?.opening_to || '23:00';
+    // Seed the "apply to whole week" bulk row with a sensible default; the
+    // saved schedule is the source of truth once loaded.
+    const fallbackOpen = '09:00';
+    const fallbackClose = '23:00';
     setBulk({ opens: fallbackOpen, closes: fallbackClose });
     try {
       const res = await branchesApi.weeklyHours(branchId);
@@ -97,7 +97,7 @@ export function BranchWeeklyHours() {
       setWeek(emptyWeek(fallbackOpen, fallbackClose));
       setError(err instanceof ApiError ? err.message : 'Could not load the hours.');
     }
-  }, [branchId, branch?.opening_from, branch?.opening_to]);
+  }, [branchId]);
 
   useEffect(() => {
     load();
@@ -117,9 +117,7 @@ export function BranchWeeklyHours() {
     setError('');
     try {
       const res = await branchesApi.setWeeklyHours(branchId, { shifts: toShifts(week) });
-      const fallbackOpen = branch?.opening_from || '09:00';
-      const fallbackClose = branch?.opening_to || '23:00';
-      setWeek(fromShifts(res.shifts ?? [], fallbackOpen, fallbackClose));
+      setWeek(fromShifts(res.shifts ?? [], '09:00', '23:00'));
       toast.success('Weekly hours saved');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed');

@@ -53,6 +53,7 @@ from app.models.order_status_event import (
 )
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
+from app.services.aggregators import reconcile
 from app.services.orders import order_fees, order_lifecycle
 from app.services.providers.grubops_provider import provider
 
@@ -611,6 +612,38 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
     await db.flush()
 
 
+def money_fields_from_info(info: dict) -> dict[str, Decimal]:
+    """The MM order money columns, verbatim from a GrubTech `getOrderInfo` payload.
+
+    Extracted so both `_create_order` and the cross-channel-merge cleanup
+    (`scripts.heal_cross_channel_merges`) derive money from the stored
+    `grubops_order_map.raw` the one way. `subtotal` is null on a cash order, so it
+    falls back to the taxable unit price; everything else is present. MM neither
+    sets nor collects the aggregator's delivery charge (it is not part of `total`),
+    so `delivery_fee`/`low_order_fee` stay zero and what the customer paid rides the
+    aggregator-only column, for the receipt alone."""
+    header = info.get("orderHeader") or {}
+    total = _num(header.get("totalPrice"))
+    vat_amount = _num(header.get("taxAmount"))
+    subtotal = header.get("subtotal")
+    subtotal = _num(subtotal) if subtotal is not None else _num(header.get("unitPrice"))
+    net = header.get("netPrice")
+    total_excl_vat = _num(net) if net is not None else money(total - vat_amount)
+    taxes = info.get("orderTaxes") or []
+    vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else Decimal("0.05")
+    return {
+        "delivery_fee": Decimal("0"),
+        "aggregator_delivery_fee": money(_num(header.get("deliveryTotalPrice"))),
+        "low_order_fee": Decimal("0"),
+        "subtotal": money(subtotal),
+        "discount_amount": money(_num(header.get("discountAmount"))),
+        "total": money(total),
+        "vat_rate": vat_rate.quantize(Decimal("0.0001")),
+        "vat_amount": money(vat_amount),
+        "total_excl_vat": money(total_excl_vat),
+    }
+
+
 async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | None:
     header = info.get("orderHeader") or {}
     customer = info.get("customer") or {}
@@ -637,16 +670,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     }
     products, options = await _reverse_maps(db, recipe_ids, modifier_ids)
 
-    # Money verbatim from GrubOps. `subtotal` is null on a cash order, so it
-    # falls back to the taxable unit price; everything else is present.
-    total = _num(header.get("totalPrice"))
-    vat_amount = _num(header.get("taxAmount"))
-    subtotal = header.get("subtotal")
-    subtotal = _num(subtotal) if subtotal is not None else _num(header.get("unitPrice"))
-    net = header.get("netPrice")
-    total_excl_vat = _num(net) if net is not None else money(total - vat_amount)
-    taxes = info.get("orderTaxes") or []
-    vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else Decimal("0.05")
+    money_fields = money_fields_from_info(info)
 
     # Name, normalised phone (E.164) with its country and line type, any Deliveroo
     # access code, and email — sorted out per channel; see `_customer_fields`.
@@ -685,6 +709,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         placed_day = (
             placed.astimezone(ZoneInfo(_TZ)).date().isoformat() if placed else None
         )
+        # Scope the adopt to the SAME channel — every GrubTech spelling of it. The
+        # short externalId is a per-branch-per-day sequence that DIFFERENT channels
+        # reuse, so without a channel scope a Noon order and a Deliveroo order that
+        # both carry "6600" collapsed into one MM order. The relaxed
+        # `uq_orders_source_external_reference` (now keyed on aggregator_channel too,
+        # migration 183) lets the two coexist once the adopt no longer merges them.
+        channel_names = reconcile.grubops_channel_names_including(channel)
         match = [Order.external_reference == order_map.external_id]
         if placed_day:
             match.append(
@@ -699,6 +730,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             select(Order)
             .where(
                 Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.aggregator_channel.in_(channel_names),
                 or_(*match),
             )
             .options(selectinload(Order.items))
@@ -732,15 +764,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # not part of `total`. Keep our `delivery_fee` at zero so no sales or
         # freight report counts it; carry what the customer paid on the
         # aggregator-only column, for the receipt alone.
-        delivery_fee=Decimal("0"),
-        aggregator_delivery_fee=money(_num(header.get("deliveryTotalPrice"))),
-        low_order_fee=Decimal("0"),
-        subtotal=money(subtotal),
-        discount_amount=money(_num(header.get("discountAmount"))),
-        total=money(total),
-        vat_rate=vat_rate.quantize(Decimal("0.0001")),
-        vat_amount=money(vat_amount),
-        total_excl_vat=money(total_excl_vat),
+        **money_fields,
         status=OrderStatusEnum.CREATED,
         source=OrderSourceEnum.AGGREGATOR.value,
         aggregator_channel=channel,
@@ -856,16 +880,17 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
 
     # One VAT row, the same shape a website order writes, so the receipt and the
     # admin show the tax breakdown rather than a blank line. GrubOps prices
-    # tax-inclusive at 5%; `total_excl_vat` is the taxable base.
-    if vat_amount > 0:
+    # tax-inclusive at 5%; `total_excl_vat` is the taxable base. Figures already
+    # quantised by `money_fields_from_info`.
+    if money_fields["vat_amount"] > 0:
         db.add(
             OrderTax(
                 order_id=order.id,
                 tax_id=None,
                 name="VAT",
-                rate=vat_rate.quantize(Decimal("0.0001")),
-                taxable_amount=money(total_excl_vat),
-                amount=money(vat_amount),
+                rate=money_fields["vat_rate"],
+                taxable_amount=money_fields["total_excl_vat"],
+                amount=money_fields["vat_amount"],
             )
         )
 
