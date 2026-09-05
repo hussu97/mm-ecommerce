@@ -901,6 +901,60 @@ async def test_convergence_without_display_ref_keys_on_long_id_only():
     assert "Asia/Dubai" not in db.sql
 
 
+async def test_convergence_short_code_is_channel_scoped():
+    """The short pickup code is a per-branch-per-day sequence that DIFFERENT
+    channels reuse, so the short-code branch must scope to the agg's own channel
+    (its GrubTech spellings). Without this a masked Keeta backfill converged onto —
+    and overwrote — a Deliveroo GrubOps order sharing the code on the same day."""
+    db = _RecordingDB()
+    agg = _agg(
+        channel="keeta",
+        external_order_id="1234567890123456",
+        display_ref="127",
+        branch_id=uuid.uuid4(),
+        business_date="2026-08-28",
+    )
+    await promote._find_convergence_order(db, agg)
+    # Keeta's own spelling scopes the short-code match; Deliveroo's does not appear.
+    assert "Keeta 2.0" in db.sql
+    assert "Deliveroo" not in db.sql
+    assert "127" in db.sql
+
+
+def test_fill_scraped_contact_skips_masked_values():
+    """A masked (`***`) customer/rider must never fill a blank order — it just
+    replaces "no data" with "redacted" and, being truthy, blocks the real value
+    from filling in later. Mirrors the never-downgrade upsert."""
+    agg = _agg(
+        customer_name="***",
+        customer_phone="***",
+        customer_address={"address": "***"},
+        driver_name="***",
+        driver_phone="***",
+    )
+    order = _mm_order()
+    promote._fill_scraped_contact(order, agg)
+    assert order.customer_name is None
+    assert order.customer_phone is None
+    assert order.shipping_address_snapshot is None
+    assert order.aggregator_driver_name is None
+    assert order.aggregator_driver_phone is None
+
+
+def test_fill_scraped_contact_fills_real_values():
+    """A real (unmasked) value still backfills a blank order."""
+    agg = _agg(
+        customer_name="Aisha",
+        customer_phone="+971500000000",
+        customer_address={"address": "Villa 4"},
+    )
+    order = _mm_order()
+    promote._fill_scraped_contact(order, agg)
+    assert order.customer_name == "Aisha"
+    assert order.customer_phone == "+971500000000"
+    assert order.shipping_address_snapshot == {"address": "Villa 4"}
+
+
 async def test_find_mm_order_matches_either_id_under_the_channel_label():
     from app.services.aggregators import reconcile
 

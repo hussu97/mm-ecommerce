@@ -113,6 +113,25 @@ _GRUBOPS_SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def grubops_channel_names(channel: str) -> list[str]:
+    """Every string GrubTech might write for a channel — its display label plus any
+    known aliases (Noon's "Noon" vs "Noon Food", Careem's "Careem Now").
+
+    Both `grubops_order_map.source_channel` and the MM order's `aggregator_channel`
+    carry one of these spellings, so this is the set to scope an id lookup by when
+    the id alone is not globally unique (a per-branch-per-day short pickup code,
+    which different channels reuse). Used by `_find_mm_order` and
+    `promote._find_convergence_order`."""
+    return [
+        name
+        for name in (
+            CHANNEL_GRUBOPS_LABEL.get(channel),
+            *_GRUBOPS_SOURCE_ALIASES.get(channel, ()),
+        )
+        if name
+    ]
+
+
 def leading_zero_stripped(ref: str | None) -> str | None:
     """A short numeric marketplace handoff code with its leading zeros removed, or
     None when `ref` is not a short numeric code.
@@ -144,14 +163,7 @@ async def _find_mm_order(
     or the short `display_ref` — under any source_channel string GrubTech uses for
     this channel (its display label plus any `_GRUBOPS_SOURCE_ALIASES`), which keeps
     the lookup channel-scoped without missing Noon's "Noon" vs "Noon Food" split."""
-    labels = [
-        label
-        for label in (
-            CHANNEL_GRUBOPS_LABEL.get(channel),
-            *_GRUBOPS_SOURCE_ALIASES.get(channel, ()),
-        )
-        if label
-    ]
+    labels = grubops_channel_names(channel)
     refs = [r for r in (external_order_id, display_ref) if r]
     # Also match a short numeric code against its zero-stripped form, so a scrape
     # that dropped Deliveroo's leading-zero pad ("127") still finds GrubTech's
