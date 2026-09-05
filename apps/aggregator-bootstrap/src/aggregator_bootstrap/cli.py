@@ -476,6 +476,73 @@ def delete_keeta_item(
         raise typer.Exit(code=1)
 
 
+@app.command("copy-keeta-menu")
+def copy_keeta_menu(
+    source_shop_id: str = typer.Option(
+        ...,
+        help="Source Keeta shop id (a Foodics-synced branch, e.g. Sharjah 1644174206)",
+    ),
+    target_shop_ids: str = typer.Option(
+        ...,
+        help="Comma-separated target Keeta shop ids (non-Foodics, e.g. 1644336388,1644170195)",
+    ),
+) -> None:
+    """Copy a Keeta store's FULL menu into other stores (mtgsig `synchronizeMenu`).
+
+    The easy path to sync the non-Foodics Keeta branches: copy from a Foodics-synced
+    source (Sharjah/Barsha) into the non-Foodics targets (Al Karama, DSO). Fully
+    replaces each target's menu via a server-side task that settles over a few
+    minutes — check it with `keeta-copy-tasks`. Endpoint + payload captured live
+    2026-09-05. A live storefront WRITE, deliberate, never part of a sweep. Foodics
+    branches are not valid targets (the portal locks them).
+    """
+    from .warm import copy_keeta_menu_in_page
+
+    targets = [t.strip() for t in target_shop_ids.split(",") if t.strip()]
+    if not targets:
+        logger.error("no target shop ids given")
+        raise typer.Exit(code=1)
+    try:
+        result = asyncio.run(
+            copy_keeta_menu_in_page(
+                source_shop_id=source_shop_id, target_shop_ids=targets
+            )
+        )
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta copy-menu needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    code = result.get("code") if isinstance(result, dict) else None
+    if code == 0:
+        logger.info(
+            "keeta copy-menu task created: source=%s targets=%s — poll keeta-copy-tasks",
+            source_shop_id,
+            targets,
+        )
+    else:
+        logger.error("keeta copy-menu did not succeed: %s", result)
+        raise typer.Exit(code=1)
+
+
+@app.command("keeta-copy-tasks")
+def keeta_copy_tasks() -> None:
+    """List the Keeta menu-copy sync tasks (the portal's "Task progress" tab).
+
+    Poll after `copy-keeta-menu` to see each task's status (running / success /
+    partial failure). Read-only — never part of a sweep.
+    """
+    from .warm import list_keeta_menu_copy_tasks_in_page
+
+    try:
+        result = asyncio.run(list_keeta_menu_copy_tasks_in_page())
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta copy-tasks needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    logger.info(
+        "keeta menu-copy tasks: %s",
+        result.get("data") if isinstance(result, dict) else result,
+    )
+
+
 @app.command("fetch-keeta-hours")
 def fetch_keeta_hours() -> None:
     """Audit each Keeta shop's business status + today's opening hours.

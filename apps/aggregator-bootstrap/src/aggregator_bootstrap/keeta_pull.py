@@ -684,6 +684,101 @@ async def delete_keeta_spu(context: Any, *, shop_id: Any, spu_id: Any) -> dict:
         await page.close()
 
 
+# ── Menu copy between stores (catalog-sync for non-Foodics Keeta branches) ────
+# The portal's "Copy to other stores → Copy menu" (Menu toolbar) copies one store's
+# WHOLE menu into others as a background sync task — far easier than item-by-item.
+# The intended use: copy a Foodics-synced branch (Sharjah/Barsha, whose Keeta menu
+# comes from Foodics/GrubTech) into the non-Foodics branches (Al Karama, DSO).
+# Endpoint + payload captured live from the console 2026-09-05:
+#   POST /api/sailorProduct/menuCopy/w/synchronizeMenu
+#     {shopId, targetShopIdList, type:1210, isAllSpu:false, copySpuList:[],
+#      isAllSpuCopyInfoType:false, spuCopyInfoTypeList:[]}
+#   POST /api/sailorProduct/menuCopy/r/listMenuCopyTaskWithPage   (task progress)
+# `type:1210` = "Copy menu" (fully replaces each target's menu). Both are
+# mtgsig-signed, so they run in-page via `_post_in_page` (main-world fetch), never
+# server-side. Foodics-integrated stores cannot be targets (the portal locks them).
+KEETA_MENU_COPY_ENDPOINT = "/api/sailorProduct/menuCopy/w/synchronizeMenu"
+KEETA_MENU_COPY_TASK_LIST_ENDPOINT = (
+    "/api/sailorProduct/menuCopy/r/listMenuCopyTaskWithPage"
+)
+#: `type` code for a full-menu copy. The form's other modes — "Add new item"
+#: (match-or-add) and "Update item properties" (update matched only) — use other
+#: codes and populate copySpuList / spuCopyInfoTypeList.
+KEETA_COPY_TYPE_FULL_MENU = 1210
+
+
+def build_keeta_menu_copy_payload(
+    source_shop_id: Any, target_shop_ids: list[Any]
+) -> dict:
+    """The `synchronizeMenu` body for a full-menu copy (captured live 2026-09-05)."""
+    return {
+        "shopId": int(source_shop_id),
+        "targetShopIdList": [int(t) for t in target_shop_ids],
+        "type": KEETA_COPY_TYPE_FULL_MENU,
+        "isAllSpu": False,
+        "copySpuList": [],
+        "isAllSpuCopyInfoType": False,
+        "spuCopyInfoTypeList": [],
+    }
+
+
+async def _prime_keeta_session(page: Any, who: str) -> None:
+    """Load the order-LIST route and wait for the SPA to set LOGIN_ACCOUNTID — the
+    session context the signed writes need (the product route alone leaves it
+    unset). Raises NeedsHumanLogin if the session is signed out."""
+    await page.goto(
+        KEETA_ORDER_LIST_ROUTE, wait_until="domcontentloaded", timeout=60_000
+    )
+    for _ in range(12):  # poll up to ~24s for the SPA to prime the session
+        await page.wait_for_timeout(2_000)
+        await _reseed_keeta_storage(page)
+        if await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS):
+            return
+    from .browser import NeedsHumanLogin
+
+    raise NeedsHumanLogin(f"{who}: in-page keeta session signed out")
+
+
+async def copy_keeta_menu(
+    context: Any, *, source_shop_id: Any, target_shop_ids: list[Any]
+) -> dict:
+    """Copy one Keeta store's FULL menu into other stores via the portal's
+    "Copy to other stores → Copy menu" sync task (mtgsig-signed, in-page).
+
+    The easy path to sync the non-Foodics Keeta branches: copy from a Foodics-synced
+    source (Sharjah/Barsha) into the non-Foodics targets (Al Karama, DSO). It fully
+    replaces each target's menu. Returns the raw `synchronizeMenu` response (`code`
+    0 = the task was created; it then runs server-side over a few minutes — poll
+    `list_keeta_menu_copy_tasks` for status). Foodics-integrated stores are not
+    valid targets (the portal locks them). Only invoked behind CATALOG_SYNC_ENABLED.
+    """
+    payload = build_keeta_menu_copy_payload(source_shop_id, target_shop_ids)
+    page = await context.new_page()
+    try:
+        await _prime_keeta_session(page, "keeta copy-menu")
+        return await _post_in_page(page, KEETA_MENU_COPY_ENDPOINT, payload)
+    finally:
+        await page.close()
+
+
+async def list_keeta_menu_copy_tasks(
+    context: Any, *, page_num: int = 1, page_size: int = 20
+) -> Any:
+    """The menu-copy sync tasks (the portal's "Task progress" tab) — each task's
+    type, status (running / success / partial failure) and id. Poll after
+    `copy_keeta_menu`; a task settles over a few minutes. mtgsig-signed in-page."""
+    page = await context.new_page()
+    try:
+        await _prime_keeta_session(page, "keeta copy-menu tasks")
+        return await _post_in_page(
+            page,
+            KEETA_MENU_COPY_TASK_LIST_ENDPOINT,
+            {"pageNum": page_num, "pageSize": page_size},
+        )
+    finally:
+        await page.close()
+
+
 # ── Business hours (catalog-sync hours read) ─────────────────────────────────
 # Verified live 2026-09-01: the merchant portal exposes shop hours through the SCM
 # summary endpoint the order page calls — `POST shop/base/summary/list {shopIdList}`
