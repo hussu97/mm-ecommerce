@@ -46,14 +46,14 @@ __all__ = [
 _HTTPX_CHANNELS = frozenset({"talabat", "deliveroo", "noon", "careem"})
 
 #: Channels whose httpx write is not yet correct, so a push is skipped rather
-#: than recorded as a (false) success. Deliveroo's `/api/restaurants/{id}/
-#: opening_hours` PUT returns 204 but is VESTIGIAL — verified live 2026-09-05 the
-#: hours read back empty; the Partner Hub keeps hours ZONE-scoped
-#: (`/api/zones/{zoneId}/opening_hours` + the `/api-gw/site-status/schedules`
-#: gateway, a rider-availability-band model). A real writer needs each outlet's
-#: Deliveroo zone id and that band model — a tracked follow-up. Until then this
-#: skips (like keeta) so the run log tells the truth.
-_PENDING_HTTPX_CHANNELS = frozenset({"deliveroo"})
+#: than recorded as a (false) success. Deliveroo used to be here: its PUT was
+#: addressing the outlet's NUMERIC id with a `{hours:[...]}` wrapper, which the
+#: Partner Hub answers 204 but silently drops (the "vestigial" symptom). The real
+#: write — reverse-engineered from the Partner Hub editor 2026-09-05 — is a PUT to
+#: `/api/restaurants/{drn_id}/opening_hours` (the restaurant UUID, resolved by
+#: `deliveroo_provider.restaurant_drn`) with a BARE ARRAY body; it persists, so
+#: Deliveroo is now a supported writer. Nothing is pending.
+_PENDING_HTTPX_CHANNELS: frozenset[str] = frozenset()
 
 
 class HoursWriteUnsupported(NotImplementedError):
@@ -615,23 +615,33 @@ async def _deliveroo_push_weekly(
     row = await _branch_map(db, "deliveroo", branch.id)
     outlet = row.external_outlet_id
     # Deliveroo's payload is only the hours list (no envelope to preserve); the
-    # read confirms the outlet/session before a live PUT would replace it.
+    # read confirms the outlet/session before a live PUT would replace it. The live
+    # write goes to the outlet's drn_id (UUID), not this numeric id — resolved
+    # inside put_opening_hours; the numeric id is what get/orders use.
     await dp.provider.get_opening_hours(session, outlet)
-    hours = [
+    return {
+        "session": session,
+        "outlet_id": outlet,
+        "endpoint": f"PUT /api/restaurants/<drn:{outlet}>/opening_hours",
+        "payload": {"hours": _deliveroo_hours_weekly(weekly)},
+    }
+
+
+def _deliveroo_hours_weekly(
+    weekly: dict[int, tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """MM's weekly schedule as Deliveroo's bare opening-hours array — one row per
+    open weekday, closed days omitted (full-replace). Deliveroo's `day_of_week`
+    equals MM's weekday numbering directly (0=Sun), verified live 2026-09-05."""
+    return [
         {
-            "day_of_week": wd,  # Deliveroo day_of_week == MM weekday
+            "day_of_week": wd,
             "local_start_time": _hhmmss(win[0]),
             "local_end_time": _hhmmss(win[1]),
         }
         for wd in range(7)
         if (win := weekly.get(wd)) is not None
     ]
-    return {
-        "session": session,
-        "outlet_id": outlet,
-        "endpoint": f"PUT /api/restaurants/{outlet}/opening_hours",
-        "payload": {"hours": hours},
-    }
 
 
 def _talabat_normal_calendar_with_week(
