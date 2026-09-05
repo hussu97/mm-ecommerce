@@ -92,6 +92,7 @@ __all__ = [
     "sweep_promote_once",
     "sweep_reconcile_once",
     "link_statements_to_payouts",
+    "link_orders_to_statements",
     "run_daily_once",
     "PROVIDERS",
     "ingest_keeta_payloads",
@@ -172,14 +173,34 @@ async def _branch_for(
     )
 
 
+def _order_matches_line_ids(ids: set[str]):
+    """Match statement-line marketplace ids onto `aggregator_order`.
+
+    Most channels spell the same id on both sides (`external_order_id`). Deliveroo
+    does not. Partner Hub sales (`GET /api/orders`) expose:
+
+    * `order_id` — v3 UUID, stored as `external_order_id`
+    * `order_number` — short ticket (e.g. ``9170``), stored as `display_ref`
+    * detail `drn_id` — v4 UUID, already on `raw->detail` but previously unused
+
+    The invoice CSV spells two *other* columns: `Order Number` (e.g.
+    ``51135384652``, not on the sales payload) and `Order ID` (the `drn_id`).
+    Joining only `external_order_id` / `display_ref` therefore matches nothing.
+    """
+    return or_(
+        AggregatorOrder.external_order_id.in_(ids),
+        AggregatorOrder.display_ref.in_(ids),
+        AggregatorOrder.raw["detail"]["drn_id"].as_string().in_(ids),
+    )
+
+
 async def _mm_order_for_external(
     db: AsyncSession, channel: str, external_order_id: str | None
 ) -> uuid.UUID | None:
     """The promoted MM order for this marketplace id, if promotion already linked it.
 
-    Matches `external_order_id` or `display_ref` — Deliveroo statement lines key
-    on the short invoice Order ID (`display_ref`), while sales store the UUID as
-    `external_order_id`.
+    Matches `external_order_id`, `display_ref`, or Deliveroo's detail `drn_id`
+    (invoice CSV `Order ID`).
     """
     if not external_order_id:
         return None
@@ -187,10 +208,7 @@ async def _mm_order_for_external(
         select(AggregatorOrder.mm_order_id).where(
             AggregatorOrder.channel == channel,
             AggregatorOrder.mm_order_id.is_not(None),
-            or_(
-                AggregatorOrder.external_order_id == external_order_id,
-                AggregatorOrder.display_ref == external_order_id,
-            ),
+            _order_matches_line_ids({external_order_id}),
         )
     )
 
@@ -637,25 +655,63 @@ async def _upsert_statement(
     settled_order_ids = {
         line.external_order_id for line in statement.lines if line.external_order_id
     }
-    if settled_order_ids:
-        # Deliveroo's invoice CSV "Order ID" is the short human number stored on
-        # `display_ref`; `external_order_id` is the UUID the sales feed uses.
-        # Matching only the UUID left 619 lines unlinked. Noon/Talabat/Keeta
-        # spell both sides the same, so the extra `display_ref` predicate is a
-        # no-op there.
-        await db.execute(
-            sql_update(AggregatorOrder)
-            .where(
-                AggregatorOrder.channel == channel,
-                AggregatorOrder.statement_id.is_(None),
-                or_(
-                    AggregatorOrder.external_order_id.in_(settled_order_ids),
-                    AggregatorOrder.display_ref.in_(settled_order_ids),
-                ),
-            )
-            .values(statement_id=statement.statement_id)
-            .execution_options(synchronize_session=False)
+    await _stamp_orders_from_settled_ids(
+        db, channel, statement.statement_id, settled_order_ids
+    )
+
+
+async def _stamp_orders_from_settled_ids(
+    db: AsyncSession,
+    channel: str,
+    statement_id: str,
+    settled_order_ids: set[str],
+) -> int:
+    """Fill null `aggregator_order.statement_id` for ids this statement settled.
+
+    Idempotent: only a still-null `statement_id` is written. Returns rows touched.
+    """
+    if not settled_order_ids:
+        return 0
+    result = await db.execute(
+        sql_update(AggregatorOrder)
+        .where(
+            AggregatorOrder.channel == channel,
+            AggregatorOrder.statement_id.is_(None),
+            _order_matches_line_ids(settled_order_ids),
         )
+        .values(statement_id=statement_id)
+        .execution_options(synchronize_session=False)
+    )
+    return int(result.rowcount or 0)
+
+
+async def link_orders_to_statements(db: AsyncSession, channel: str) -> int:
+    """Stamp `aggregator_order.statement_id` from already-stored statement lines.
+
+    Re-runs the same join `_upsert_statement` uses, over every line already in
+    the table, so a Deliveroo finance push that landed lines before this join
+    existed still couples orders on the next promote/settlement pass — without
+    re-downloading CSVs. Fills nulls only. Returns orders linked.
+    """
+    rows = (
+        await db.execute(
+            select(
+                AggregatorStatementLine.statement_id,
+                AggregatorStatementLine.external_order_id,
+            ).where(
+                AggregatorStatementLine.channel == channel,
+                AggregatorStatementLine.statement_id.is_not(None),
+                AggregatorStatementLine.external_order_id.is_not(None),
+            )
+        )
+    ).all()
+    by_statement: dict[str, set[str]] = {}
+    for statement_id, external_order_id in rows:
+        by_statement.setdefault(str(statement_id), set()).add(str(external_order_id))
+    linked = 0
+    for statement_id, ids in by_statement.items():
+        linked += await _stamp_orders_from_settled_ids(db, channel, statement_id, ids)
+    return linked
 
 
 async def link_statements_to_payouts(db: AsyncSession, channel: str) -> int:
@@ -1497,6 +1553,7 @@ async def _run_range_channel(
             async with advisory_lock.held(
                 _RECONCILE_LOCK_KEY, name="aggregator reconcile (range)", wait=True
             ):
+                await link_orders_to_statements(db, channel)
                 await link_statements_to_payouts(db, channel)
                 await reconcile_mod.reconcile_channel(db, channel)
         except Exception as exc:  # noqa: BLE001
@@ -1610,10 +1667,13 @@ async def sweep_reconcile_once() -> int:
         async with AsyncSessionFactory() as db:
             for channel in AGGREGATOR_CHANNELS:
                 try:
-                    # Close the payments leg first (statement→payout rollup), so
+                    # Close the order→statement and statement→payout legs first so
                     # a finance query joining payout↔statement↔line↔order sees the
                     # freshest links. Channel-agnostic, so it covers the push
-                    # channels (Keeta/Deliveroo) the httpx sweep never touches.
+                    # channels (Keeta/Deliveroo) the httpx sweep never touches —
+                    # and re-links Deliveroo orders whose invoice `Order ID` is
+                    # `drn_id`, not the sales UUID / short display_ref.
+                    await link_orders_to_statements(db, channel)
                     await link_statements_to_payouts(db, channel)
                     touched += await reconcile.reconcile_channel(db, channel)
                     await db.commit()

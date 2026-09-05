@@ -156,6 +156,23 @@ def test_deliveroo_status_words_map():
     assert promote._target_status("deliveroo", "en route") is None
 
 
+def test_deliveroo_marketplace_line_ids_include_drn_id_not_csv_order_number():
+    """Promotion must backfill statement lines on CSV Order ID (= detail drn_id)."""
+    sales_uuid = "bd627d5f-d304-3a4f-92e4-34f92fbd4304"
+    drn_uuid = "b9fa898d-83f7-44a6-a10a-71fe9f2cdbc5"
+    agg = _agg(
+        channel="deliveroo",
+        external_order_id=sales_uuid,
+        display_ref="9170",
+        raw={"order_id": sales_uuid, "detail": {"drn_id": drn_uuid}},
+    )
+    ids = promote._marketplace_line_ids(agg)
+    assert sales_uuid in ids
+    assert "9170" in ids
+    assert drn_uuid in ids
+    assert "51135384652" not in ids
+
+
 def test_talabat_status_words_map():
     assert promote._target_status("talabat", "Delivered") == OrderStatusEnum.DELIVERED
     assert promote._target_status("talabat", "cancelled") == OrderStatusEnum.CANCELLED
