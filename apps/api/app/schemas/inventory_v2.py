@@ -77,6 +77,7 @@ class RecipeExpansionRequest(BaseModel):
 class ExpandedInventoryLine(BaseModel):
     item_id: UUID
     quantity: Decimal
+    planned_waste: Decimal
     recipe_version_ids: list[UUID]
     paths: list[list[dict[str, str]]]
 

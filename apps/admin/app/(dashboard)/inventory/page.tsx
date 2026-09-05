@@ -1,16 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   branchesApi,
   inventoryApi,
   type BranchInventorySettings,
   type ReportTemplate,
+  type RecipeExpansion,
   type RecipeVersion,
   type ShiftInventoryReport,
   type StockAuditPreview,
   type VersionedRecipe,
 } from '@/lib/pos-api';
+import { modifiersApi, productsApi } from '@/lib/api';
+import type { Modifier, Product } from '@/lib/types';
 import type {
   Branch,
   InventoryCategory,
@@ -183,7 +186,6 @@ function LevelsTab() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     inventoryApi
       .levels({ branch_id: branchId || undefined, below_minimum_only: belowOnly })
       .then((rows) => {
@@ -364,21 +366,49 @@ function CategoriesTab() {
 
 function RecipesTab() {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [modifiers, setModifiers] = useState<Modifier[]>([]);
   const [ownerKind, setOwnerKind] = useState('product');
   const [ownerId, setOwnerId] = useState('');
   const [recipe, setRecipe] = useState<VersionedRecipe | null>(null);
   const [draft, setDraft] = useState<RecipeVersion | null>(null);
+  const [preview, setPreview] = useState<RecipeExpansion | null>(null);
   const [ingredientId, setIngredientId] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [message, setMessage] = useState('');
 
-  useEffect(() => { void inventoryApi.items().then(setItems); }, []);
+  useEffect(() => {
+    void Promise.all([
+      inventoryApi.items(),
+      productsApi.list({ channel: 'all', per_page: 2000 }),
+      modifiersApi.list(true),
+    ])
+      .then(([inventoryItems, productPage, modifierRows]) => {
+        setItems(inventoryItems);
+        setProducts(productPage.items);
+        setModifiers(modifierRows);
+      })
+      .catch(() => setMessage('Could not load the recipe catalogue.'));
+  }, []);
+
+  const ownerOptions = ownerKind === 'product'
+    ? products.map((product) => ({
+        value: product.id,
+        label: `${product.name} · ${product.sku ?? 'no SKU'}`,
+      }))
+    : ownerKind === 'modifier_option'
+      ? modifiers.flatMap((modifier) => modifier.options.map((option) => ({
+          value: option.id,
+          label: `${modifier.name} — ${option.name} · ${option.sku || 'no SKU'}`,
+        })))
+      : items.map((item) => ({ value: item.id, label: `${item.name} · ${item.sku}` }));
   const load = useCallback(async () => {
     if (!ownerId) return;
     try {
       const value = await inventoryApi.versionedRecipe(ownerKind, ownerId);
       setRecipe(value);
       setDraft(value.versions.find((v) => v.status === 'draft') ?? value.versions.find((v) => v.status === 'active') ?? null);
+      setPreview(null);
       setMessage('');
     } catch (err) {
       setRecipe(null);
@@ -403,6 +433,7 @@ function RecipesTab() {
     ];
     const saved = await inventoryApi.saveRecipeDraft(ownerKind, ownerId, { ingredients: lines, source: 'mm', source_metadata: {} });
     setDraft(saved);
+    setPreview(null);
     setMessage(`Draft v${saved.version_number} saved. It will not affect sales until activated.`);
     setIngredientId('');
   };
@@ -414,12 +445,17 @@ function RecipesTab() {
         <p className="text-sm text-gray-500">Recipes contain only inventory items. Phantom items expand recursively; stocked items stop expansion.</p>
       </div>
       <div className="grid gap-3 md:grid-cols-[190px_1fr_auto] items-end">
-        <Select label="Owner type" value={ownerKind} onChange={(e) => setOwnerKind(e.target.value)} options={[
+        <Select label="Owner type" value={ownerKind} onChange={(e) => {
+          setOwnerKind(e.target.value);
+          setOwnerId('');
+          setRecipe(null);
+          setDraft(null);
+          setPreview(null);
+          setMessage('');
+        }} options={[
           { value: 'product', label: 'Product' }, { value: 'modifier_option', label: 'Modifier option' }, { value: 'inventory_item', label: 'Inventory item' },
         ]} />
-        {ownerKind === 'inventory_item' ? (
-          <Select label="Recipe owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} placeholder="Choose item" options={items.map((i) => ({ value: i.id, label: `${i.name} · ${i.sku}` }))} />
-        ) : <Input label="Owner ID" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} placeholder="Product or modifier-option UUID" />}
+        <Select label="Recipe owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} placeholder={`Choose ${ownerKind.replaceAll('_', ' ')}`} options={ownerOptions} />
         <Button variant="outline" onClick={() => void load()} disabled={!ownerId}>Load</Button>
       </div>
       {message && <p className="rounded-sm bg-amber-50 px-3 py-2 text-sm text-amber-800">{message}</p>}
@@ -436,9 +472,16 @@ function RecipesTab() {
         </div>
       </div>
       <div className="border border-gray-200 p-4">
-        <div className="flex items-center justify-between"><h3 className="font-medium">Version history</h3>{draft?.status === 'draft' && <Button onClick={async () => { await inventoryApi.activateRecipe(draft.id); await load(); }} variant="outline">Activate v{draft.version_number}</Button>}</div>
+        <div className="flex items-center justify-between"><h3 className="font-medium">Version history</h3>{draft?.status === 'draft' && <div className="flex gap-2"><Button onClick={async () => { try { setPreview(await inventoryApi.previewRecipeVersion(draft.id)); setMessage('Draft is valid. Review its recursive stocked-item expansion below.'); } catch (err) { setPreview(null); setMessage(err instanceof ApiError ? err.message : 'Draft validation failed.'); } }} variant="outline">Validate & preview</Button><Button onClick={async () => { try { await inventoryApi.activateRecipe(draft.id); await load(); } catch (err) { setMessage(err instanceof ApiError ? err.message : 'Could not activate recipe.'); } }} variant="outline">Activate v{draft.version_number}</Button></div>}</div>
         <div className="mt-3 space-y-2">{(recipe?.versions ?? []).map((version) => <div key={version.id} className="flex items-center gap-3 text-sm"><Badge variant={version.status === 'active' ? 'success' : version.status === 'draft' ? 'warning' : 'neutral'}>{version.status}</Badge><span>Version {version.version_number}</span><span className="text-gray-400">{version.lines.length} lines · {version.source}</span></div>)}</div>
       </div>
+      {preview && <div className="border border-gray-200 p-4 space-y-3"><h3 className="font-medium">Recursive stocked-item expansion</h3><p className="text-xs text-gray-500">Phantom sub-recipes are expanded. Stocked sub-recipes stop here, so their raw ingredients will not be consumed twice.</p><DataTable rows={preview.lines} rowKey={(line) => line.item_id} columns={[
+        { header: 'Stocked item', priority: 'primary', render: (line) => items.find((item) => item.id === line.item_id)?.name ?? line.item_id },
+        { header: 'Quantity', className: 'text-right', render: (line) => line.quantity },
+        { header: 'Planned yield waste', className: 'text-right', render: (line) => line.planned_waste },
+        { header: 'Catalogue value', className: 'text-right', render: (line) => { const item = items.find((value) => value.id === line.item_id); return item ? formatCurrency(Number(line.quantity) * Number(item.cost) / Number(item.storage_to_ingredient_factor)) : '—'; } },
+        { header: 'Recipe path(s)', className: 'text-right', render: (line) => line.paths.length },
+      ]} /></div>}
     </div>
   );
 }
@@ -452,8 +495,16 @@ function BranchFilter({ value, onChange }: { value: string; onChange: (id: strin
 function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
   const [branchId, setBranchId] = useState('');
   const [rows, setRows] = useState<InventoryTransaction[]>([]);
-  useEffect(() => { if (branchId) void inventoryApi.transactions({ branch_id: branchId, type: countOnly ? 'inventory_count' : undefined }).then(setRows); else setRows([]); }, [branchId, countOnly]);
-  return <div className="p-6 max-w-[1500px] space-y-4"><BranchFilter value={branchId} onChange={setBranchId} /><p className="text-sm text-gray-500">{countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : 'Every signed stock movement in immutable posting order, with source and running balance.'}</p><DataTable rows={rows} rowKey={(row) => row.id} columns={[
+  useEffect(() => {
+    if (!branchId) return;
+    void inventoryApi
+      .transactions({
+        branch_id: branchId,
+        type: countOnly ? 'inventory_count' : undefined,
+      })
+      .then(setRows);
+  }, [branchId, countOnly]);
+  return <div className="p-6 max-w-[1500px] space-y-4"><BranchFilter value={branchId} onChange={setBranchId} /><p className="text-sm text-gray-500">{countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : 'Every signed stock movement in immutable posting order, with source and running balance.'}</p><DataTable rows={branchId ? rows : []} rowKey={(row) => row.id} columns={[
     { header: 'Seq', render: (row) => row.posting_sequence ?? 'Draft' },
     { header: 'Reference', priority: 'primary', render: (row) => row.reference },
     { header: 'Type', render: (row) => row.type.replaceAll('_', ' ') },
@@ -469,9 +520,11 @@ function CountsTab() {
   const [levels, setLevels] = useState<InventoryLevel[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const auditAttemptKey = useRef<string | null>(null);
 
   useEffect(() => {
     setPreview(null);
+    auditAttemptKey.current = null;
     setMessage('');
     if (!branchId) {
       setLevels([]);
@@ -507,6 +560,7 @@ function CountsTab() {
     setBusy(true);
     try {
       setPreview(await inventoryApi.previewStockAuditFile(branchId, file));
+      auditAttemptKey.current = null;
       setMessage('Review every delta below. Nothing has posted yet.');
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : 'Could not read count sheet.');
@@ -520,9 +574,10 @@ function CountsTab() {
     if (!preview?.valid || !branchId) return;
     setBusy(true);
     try {
+      auditAttemptKey.current ??= `admin-stock-audit:${crypto.randomUUID()}`;
       const result = await inventoryApi.applyStockAudit({
         branch_id: branchId,
-        idempotency_key: `admin-stock-audit:${crypto.randomUUID()}`,
+        idempotency_key: auditAttemptKey.current,
         rows: preview.rows.map((row) => ({
           sku: row.sku,
           counted_quantity: row.counted_quantity,
@@ -614,9 +669,20 @@ function ShiftReportsTab() {
   }, [branchId]);
 
   useEffect(() => {
-    void reload();
+    let cancelled = false;
+    void Promise.all([
+      inventoryApi.shiftReports({ branch_id: branchId || undefined }),
+      inventoryApi.reportTemplates(branchId || undefined),
+    ]).then(([reports, reportTemplates]) => {
+      if (cancelled) return;
+      setRows(reports);
+      setTemplates(reportTemplates);
+    });
     void inventoryApi.items().then(setItems);
-  }, [reload]);
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId]);
 
   const createTemplate = async () => {
     if (!branchId || selectedItems.length === 0 || !name.trim()) return;
@@ -687,10 +753,11 @@ function IntegrityTab() {
   const [rows, setRows] = useState<Array<{ item_id: string; cached_quantity: string; ledger_quantity: string; cached_average_cost: string; ledger_average_cost: string }>>([]);
   const [settings, setSettings] = useState<BranchInventorySettings | null>(null);
   const [loading, setLoading] = useState(false);
-  const check = async (apply = false) => { if (!branchId) return; setLoading(true); try { setRows(await (apply ? inventoryApi.rebuildProjection(branchId) : inventoryApi.projectionDrift(branchId))); } finally { setLoading(false); } };
-  useEffect(() => { if (branchId) void inventoryApi.branchSettings(branchId).then(setSettings); else setSettings(null); }, [branchId]);
+  const [checked, setChecked] = useState(false);
+  const check = async (apply = false) => { if (!branchId) return; setLoading(true); try { setRows(await (apply ? inventoryApi.rebuildProjection(branchId) : inventoryApi.projectionDrift(branchId))); setChecked(true); } finally { setLoading(false); } };
+  useEffect(() => { setChecked(false); setRows([]); if (branchId) void inventoryApi.branchSettings(branchId).then(setSettings); else setSettings(null); }, [branchId]);
   const saveSettings = async () => { if (!settings) return; setLoading(true); try { setSettings(await inventoryApi.updateBranchSettings(settings.branch_id, settings)); } finally { setLoading(false); } };
-  return <div className="p-6 max-w-5xl space-y-4"><BranchFilter value={branchId} onChange={setBranchId} />{settings && <div className="border border-gray-200 p-4 space-y-3"><div><h3 className="font-medium text-gray-800">Branch inventory rollout</h3><p className="text-xs text-gray-500">Inventory and sales consumption cannot be enabled until a manager-approved opening count records the go-live watermark.</p></div><div className="flex flex-wrap gap-5 text-sm"><label className="flex gap-2"><input type="checkbox" checked={settings.inventory_enabled} disabled={!settings.go_live_at} onChange={(event) => setSettings({ ...settings, inventory_enabled: event.target.checked })} />Inventory enabled</label><label className="flex gap-2"><input type="checkbox" checked={settings.sales_consumption_enabled} disabled={!settings.go_live_at} onChange={(event) => setSettings({ ...settings, sales_consumption_enabled: event.target.checked })} />Sales consumption</label><label className="flex gap-2"><input type="checkbox" checked={settings.production_enabled} onChange={(event) => setSettings({ ...settings, production_enabled: event.target.checked })} />Production</label><label className="flex gap-2"><input type="checkbox" checked={settings.validation_mode} onChange={(event) => setSettings({ ...settings, validation_mode: event.target.checked })} />Validation mode</label><label className="flex gap-2"><input type="checkbox" checked={settings.allow_negative_stock} onChange={(event) => setSettings({ ...settings, allow_negative_stock: event.target.checked })} />Allow negative</label></div><div className="flex items-center justify-between text-xs text-gray-500"><span>{settings.go_live_at ? `Opening count posted ${new Date(settings.go_live_at).toLocaleString()} · sequence ${settings.go_live_sequence}` : 'Awaiting opening count'}</span><Button size="sm" onClick={() => void saveSettings()} loading={loading}>Save settings</Button></div></div>}<div className="flex gap-2"><Button onClick={() => void check()} loading={loading} disabled={!branchId}>Preview ledger drift</Button><Button variant="outline" onClick={() => void check(true)} disabled={!branchId || loading}>Rebuild cache</Button></div><p className="text-sm text-gray-500">Rebuild replays closed ledger rows in posting-sequence order under the branch inventory lock.</p>{rows.length === 0 ? <div className="border border-green-200 bg-green-50 p-4 text-sm text-green-800">No projection drift found.</div> : <DataTable rows={rows} rowKey={(row) => row.item_id} columns={[
+  return <div className="p-6 max-w-5xl space-y-4"><BranchFilter value={branchId} onChange={setBranchId} />{settings && <div className="border border-gray-200 p-4 space-y-3"><div><h3 className="font-medium text-gray-800">Branch inventory rollout</h3><p className="text-xs text-gray-500">Inventory and sales consumption cannot be enabled until a manager-approved opening count records the go-live watermark.</p></div><div className="flex flex-wrap gap-5 text-sm"><label className="flex gap-2"><input type="checkbox" checked={settings.inventory_enabled} disabled={!settings.go_live_at} onChange={(event) => setSettings({ ...settings, inventory_enabled: event.target.checked })} />Inventory enabled</label><label className="flex gap-2"><input type="checkbox" checked={settings.sales_consumption_enabled} disabled={!settings.go_live_at} onChange={(event) => setSettings({ ...settings, sales_consumption_enabled: event.target.checked })} />Sales consumption</label><label className="flex gap-2"><input type="checkbox" checked={settings.production_enabled} onChange={(event) => setSettings({ ...settings, production_enabled: event.target.checked })} />Production</label><label className="flex gap-2"><input type="checkbox" checked={settings.validation_mode} onChange={(event) => setSettings({ ...settings, validation_mode: event.target.checked })} />Validation mode</label><label className="flex gap-2"><input type="checkbox" checked={settings.allow_negative_stock} onChange={(event) => setSettings({ ...settings, allow_negative_stock: event.target.checked })} />Allow negative</label></div><div className="flex items-center justify-between text-xs text-gray-500"><span>{settings.go_live_at ? `Opening count posted ${new Date(settings.go_live_at).toLocaleString()} · sequence ${settings.go_live_sequence}` : 'Awaiting opening count'}</span><Button size="sm" onClick={() => void saveSettings()} loading={loading}>Save settings</Button></div></div>}<div className="flex gap-2"><Button onClick={() => void check()} loading={loading} disabled={!branchId}>Preview ledger drift</Button><Button variant="outline" onClick={() => void check(true)} disabled={!branchId || loading}>Rebuild cache</Button></div><p className="text-sm text-gray-500">Rebuild replays closed ledger rows in posting-sequence order under the branch inventory lock.</p>{checked && rows.length === 0 ? <div className="border border-green-200 bg-green-50 p-4 text-sm text-green-800">No projection drift found.</div> : rows.length > 0 ? <DataTable rows={rows} rowKey={(row) => row.item_id} columns={[
     { header: 'Item', render: (row) => row.item_id }, { header: 'Cached qty', render: (row) => row.cached_quantity }, { header: 'Ledger qty', render: (row) => row.ledger_quantity }, { header: 'Cached cost', render: (row) => row.cached_average_cost }, { header: 'Ledger cost', render: (row) => row.ledger_average_cost },
-  ]} />}</div>;
+  ]} /> : null}</div>;
 }

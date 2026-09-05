@@ -57,6 +57,12 @@ def _quantity(row: dict[str, Any]) -> Decimal:
     return Decimal(str(row.get("quantity") or row.get("amount") or 0))
 
 
+def _unit_name(value: Any) -> str | None:
+    if isinstance(value, dict):
+        return value.get("name")
+    return str(value).strip() if value else None
+
+
 async def _one_by_sku(db, model, sku: str | None):
     if not sku:
         return None, False
@@ -92,9 +98,15 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
     outcome: list[dict[str, Any]] = []
     maps: dict[tuple[str, str], uuid.UUID] = {}
     units = {str(row.get("id")): row for row in data.get("units", [])}
+    source_skus = Counter(
+        str(row.get("sku") or "").strip().casefold()
+        for row in data.get("inventory_items", [])
+        if str(row.get("sku") or "").strip()
+    )
 
     for source in data.get("inventory_items", []):
         external_id = str(source["id"])
+        sku = str(source.get("sku") or "").strip()
         mapped = await _existing_map(db, external_id)
         item = (
             await db.get(InventoryItem, mapped.inventory_item_id)
@@ -103,20 +115,8 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
         )
         ambiguous = False
         if item is None:
-            item, ambiguous = await _one_by_sku(db, InventoryItem, source.get("sku"))
-        action = "ambiguous" if ambiguous else "update" if item else "create"
-        if mapped and item:
-            action = "unchanged"
-        row_result = {
-            "entity": "inventory_item",
-            "external_id": external_id,
-            "sku": source.get("sku"),
-            "name": source.get("name"),
-            "action": action,
-        }
-        outcome.append(row_result)
-        if ambiguous or item is None:
-            continue
+            item, ambiguous = await _one_by_sku(db, InventoryItem, sku)
+        ambiguous = ambiguous or bool(sku and source_skus[sku.casefold()] > 1)
 
         storage_unit_row = (
             units.get(str(source.get("storage_unit_id")))
@@ -129,28 +129,90 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
             or {}
         )
         storage_unit = (
-            storage_unit_row.get("name")
+            _unit_name(storage_unit_row)
             or source.get("storage_unit_name")
-            or item.storage_unit
+            or (item.storage_unit if item else None)
+            or "unit"
         )
         ingredient_unit = (
-            ingredient_unit_row.get("name")
+            _unit_name(ingredient_unit_row)
             or source.get("ingredient_unit_name")
-            or item.ingredient_unit
+            or (item.ingredient_unit if item else None)
+            or "unit"
         )
+        raw_factor = source.get("storage_to_ingredient_factor")
+        if raw_factor is None:
+            raw_factor = source.get("factor")
         factor = Decimal(
             str(
-                source.get("storage_to_ingredient_factor")
-                or source.get("factor")
-                or item.storage_to_ingredient_factor
+                raw_factor
+                if raw_factor is not None
+                else item.storage_to_ingredient_factor
+                if item
+                else 1
             )
         )
+        raw_cost = source.get("cost")
+        cost = Decimal(
+            str(raw_cost if raw_cost is not None else item.cost if item else 0)
+        )
+        name = str(source.get("name") or sku)
+        errors = []
+        if not sku:
+            errors.append("missing SKU")
+        if factor <= 0:
+            errors.append("invalid conversion factor")
+        if mapped is not None and item is None:
+            errors.append("existing mapping target is missing")
+        action = (
+            "ambiguous"
+            if ambiguous
+            else "orphan"
+            if mapped is not None and item is None
+            else "conflict"
+            if errors
+            else "create"
+            if item is None
+            else "update"
+            if (
+                item.name != name
+                or item.storage_unit != storage_unit
+                or item.ingredient_unit != ingredient_unit
+                or Decimal(str(item.storage_to_ingredient_factor)) != factor
+                or Decimal(str(item.cost)) != cost
+            )
+            else "unchanged"
+        )
+        outcome.append(
+            {
+                "entity": "inventory_item",
+                "external_id": external_id,
+                "sku": sku,
+                "name": name,
+                "action": action,
+                "errors": errors,
+            }
+        )
+        if ambiguous or errors:
+            continue
+
         if stage:
+            if item is None:
+                item = InventoryItem(
+                    sku=sku,
+                    name=name,
+                    storage_unit=storage_unit,
+                    ingredient_unit=ingredient_unit,
+                    storage_to_ingredient_factor=factor,
+                    cost=cost,
+                )
+                db.add(item)
+                await db.flush()
+            item.name = name
             item.storage_unit = storage_unit
             item.ingredient_unit = ingredient_unit
             item.storage_to_ingredient_factor = factor
-            if source.get("cost") is not None:
-                item.cost = Decimal(str(source["cost"]))
+            item.cost = cost
             if mapped is None:
                 mapped = ExternalItemMap(
                     system="foodics",
@@ -164,7 +226,11 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
                     notes=f"Staged from Foodics snapshot {actual_hash}",
                 )
                 db.add(mapped)
-        maps[(KIND_INVENTORY_ITEM, external_id)] = item.id
+        maps[(KIND_INVENTORY_ITEM, external_id)] = (
+            item.id
+            if item
+            else uuid.uuid5(uuid.NAMESPACE_URL, f"foodics:{external_id}")
+        )
 
     async def map_catalogue(kind: str, model, rows: list[dict[str, Any]]) -> None:
         for source in rows:
@@ -220,6 +286,8 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
             owner_id = maps.get((map_kind, owner_ref))
             lines: list[recipe_service.RecipeLineInput] = []
             missing = []
+            invalid = []
+            seen_items: set[uuid.UUID] = set()
             for ingredient in ingredients:
                 ingredient_ref = _id(
                     ingredient, "ingredient_id", "child_item_id", "item_id"
@@ -228,13 +296,20 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
                 if item_id is None:
                     missing.append(ingredient_ref)
                     continue
+                recipe_quantity = _quantity(ingredient)
+                recipe_yield = Decimal(str(ingredient.get("yield_percentage") or 1))
+                if recipe_quantity <= 0 or recipe_yield <= 0 or recipe_yield > 1:
+                    invalid.append(ingredient.get("id"))
+                    continue
+                if item_id in seen_items:
+                    invalid.append(ingredient.get("id"))
+                    continue
+                seen_items.add(item_id)
                 lines.append(
                     recipe_service.RecipeLineInput(
                         item_id=item_id,
-                        quantity=_quantity(ingredient),
-                        yield_percentage=Decimal(
-                            str(ingredient.get("yield_percentage") or 1)
-                        ),
+                        quantity=recipe_quantity,
+                        yield_percentage=recipe_yield,
                         inactive_in_order_types=ingredient.get(
                             "inactive_in_order_types"
                         )
@@ -242,16 +317,47 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
                         source_metadata={"foodics_line_id": ingredient.get("id")},
                     )
                 )
-            action = "conflict" if not owner_id or missing or not lines else "create"
+            existing_recipe = (
+                await recipe_service.get_recipe(db, owner_kind, owner_id)
+                if owner_id
+                else None
+            )
+            same_snapshot = bool(
+                existing_recipe
+                and any(
+                    version.source == "foodics"
+                    and version.source_payload_hash == actual_hash
+                    for version in existing_recipe.versions
+                )
+            )
+            conflicting_draft = bool(
+                existing_recipe
+                and any(
+                    version.status == "draft"
+                    and (
+                        version.source != "foodics"
+                        or version.source_payload_hash not in {None, actual_hash}
+                    )
+                    for version in existing_recipe.versions
+                )
+            )
+            action = (
+                "conflict"
+                if not owner_id or missing or invalid or not lines or conflicting_draft
+                else "unchanged"
+                if same_snapshot
+                else "create"
+            )
             outcome.append(
                 {
                     "entity": f"{owner_kind}_recipe",
                     "external_id": owner_ref,
                     "action": action,
                     "missing_inventory_item_ids": missing,
+                    "invalid_line_ids": invalid,
                 }
             )
-            if stage and owner_id and lines and not missing:
+            if stage and action == "create" and owner_id:
                 await recipe_service.create_draft(
                     db,
                     kind=owner_kind,

@@ -505,6 +505,15 @@ async def _consequences(
         # A cancelled order releases the stock it claimed at creation.
         await _move_stock(db, order, +1)
 
+        # Recipe inventory has a separate immutable ledger. If consumption is
+        # already posted, cancellation cannot guess whether physical goods came
+        # back; it records a visible exception until a person chooses restock,
+        # waste, or no stock effect. If posting is still pending, the event is
+        # cancelled before it can move anything.
+        from app.services.inventory import source_event_service
+
+        await source_event_service.record_order_cancellation(db, order)
+
     # A cancellation taken back by a person. The only route here is the admin
     # console's `extra_from` (see `ADMIN_RECOVERABLE`) — nothing automatic can
     # reach it — and the one thing it owes is the reverse of the line above:

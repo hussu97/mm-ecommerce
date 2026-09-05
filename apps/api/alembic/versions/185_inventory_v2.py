@@ -82,6 +82,19 @@ def upgrade() -> None:
         "inventory_items",
         "tracking_mode IN ('stocked', 'phantom')",
     )
+    op.create_check_constraint(
+        "ck_inventory_item_positive_conversion",
+        "inventory_items",
+        "storage_to_ingredient_factor > 0",
+    )
+    op.create_check_constraint(
+        "ck_inventory_item_nonnegative_cost", "inventory_items", "cost >= 0"
+    )
+    op.create_check_constraint(
+        "ck_inventory_item_valid_yield",
+        "inventory_items",
+        "yield_percentage > 0 AND yield_percentage <= 1",
+    )
     op.create_index("ix_inventory_items_kind", "inventory_items", ["kind"])
     op.create_index(
         "ix_inventory_items_tracking_mode", "inventory_items", ["tracking_mode"]
@@ -149,7 +162,7 @@ def upgrade() -> None:
         """
         WITH ranked AS (
           SELECT id, row_number() OVER (PARTITION BY branch_id ORDER BY is_default DESC, created_at, id) AS rn
-          FROM warehouses WHERE deleted_at IS NULL
+          FROM warehouses WHERE deleted_at IS NULL AND is_active
         )
         UPDATE warehouses w SET is_default = (ranked.rn = 1)
         FROM ranked WHERE ranked.id = w.id
@@ -164,7 +177,7 @@ def upgrade() -> None:
         WHERE b.deleted_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM warehouses w
-            WHERE w.branch_id = b.id AND w.deleted_at IS NULL
+            WHERE w.branch_id = b.id AND w.deleted_at IS NULL AND w.is_active
           )
         """
     )
@@ -173,7 +186,74 @@ def upgrade() -> None:
         "warehouses",
         ["branch_id"],
         unique=True,
-        postgresql_where=sa.text("is_default AND deleted_at IS NULL"),
+        postgresql_where=sa.text("is_default AND is_active AND deleted_at IS NULL"),
+    )
+    # The unique index proves "at most one". Deferred constraint triggers add
+    # the other half — every active branch has exactly one at commit — while
+    # still allowing an old default to be cleared before its replacement is
+    # selected inside one transaction.
+    op.execute(
+        """
+        CREATE FUNCTION assert_branch_default_stock_container(target_branch uuid)
+        RETURNS void LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM branches
+            WHERE id = target_branch AND deleted_at IS NULL
+          ) AND (
+            SELECT count(*) FROM warehouses
+            WHERE branch_id = target_branch
+              AND is_default AND is_active AND deleted_at IS NULL
+          ) <> 1 THEN
+            RAISE EXCEPTION 'active branch % must have exactly one default stock container',
+              target_branch;
+          END IF;
+        END $$
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION enforce_warehouse_default_per_branch()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF TG_OP <> 'INSERT' THEN
+            PERFORM assert_branch_default_stock_container(OLD.branch_id);
+          END IF;
+          IF TG_OP <> 'DELETE'
+             AND (TG_OP = 'INSERT' OR NEW.branch_id IS DISTINCT FROM OLD.branch_id) THEN
+            PERFORM assert_branch_default_stock_container(NEW.branch_id);
+          ELSIF TG_OP = 'UPDATE' THEN
+            PERFORM assert_branch_default_stock_container(NEW.branch_id);
+          END IF;
+          RETURN NULL;
+        END $$
+        """
+    )
+    op.execute(
+        """
+        CREATE CONSTRAINT TRIGGER warehouse_default_required
+          AFTER INSERT OR UPDATE OR DELETE ON warehouses
+          DEFERRABLE INITIALLY DEFERRED
+          FOR EACH ROW EXECUTE FUNCTION enforce_warehouse_default_per_branch()
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION enforce_new_branch_default()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          PERFORM assert_branch_default_stock_container(NEW.id);
+          RETURN NULL;
+        END $$
+        """
+    )
+    op.execute(
+        """
+        CREATE CONSTRAINT TRIGGER branch_default_required
+          AFTER INSERT OR UPDATE ON branches
+          DEFERRABLE INITIALLY DEFERRED
+          FOR EACH ROW EXECUTE FUNCTION enforce_new_branch_default()
+        """
     )
     op.execute(
         """
@@ -273,6 +353,13 @@ def upgrade() -> None:
         ["recipe_id"],
         unique=True,
         postgresql_where=sa.text("status = 'active'"),
+    )
+    op.create_index(
+        "uq_recipe_one_draft_version",
+        "recipe_versions",
+        ["recipe_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'draft'"),
     )
 
     op.create_table(
@@ -397,6 +484,26 @@ def upgrade() -> None:
     )
 
     op.execute("CREATE SEQUENCE inventory_posting_sequence")
+    op.execute("CREATE SEQUENCE inventory_reference_sequence")
+    op.execute(
+        """
+        SELECT setval(
+          'inventory_reference_sequence',
+          GREATEST(
+            COALESCE((
+              SELECT MAX(substring(reference FROM '([0-9]+)$')::bigint)
+              FROM (
+                SELECT reference FROM inventory_transactions
+                UNION ALL SELECT reference FROM purchase_orders
+                UNION ALL SELECT reference FROM transfer_orders
+              ) reference_rows
+            ), 0) + 1,
+            1
+          ),
+          false
+        )
+        """
+    )
     op.add_column(
         "inventory_transactions",
         sa.Column("posting_sequence", sa.BigInteger(), nullable=True),
@@ -437,8 +544,12 @@ def upgrade() -> None:
     op.execute(
         """
         UPDATE inventory_transactions
-        SET posting_sequence = nextval('inventory_posting_sequence')
-        WHERE status = 'closed' AND posting_sequence IS NULL
+        SET posting_sequence = COALESCE(
+              posting_sequence, nextval('inventory_posting_sequence')
+            ),
+            posted_at = COALESCE(posted_at, updated_at, created_at, now()),
+            occurred_at = COALESCE(occurred_at, created_at)
+        WHERE status = 'closed'
         """
     )
     op.create_index(
@@ -464,6 +575,21 @@ def upgrade() -> None:
         "inventory_transactions",
         ["idempotency_key"],
     )
+    op.create_check_constraint(
+        "ck_inventory_closed_posting_metadata",
+        "inventory_transactions",
+        "status <> 'closed' OR (posting_sequence IS NOT NULL AND posted_at IS NOT NULL)",
+    )
+    op.create_check_constraint(
+        "ck_inventory_transactions_type_allowed",
+        "inventory_transactions",
+        "type IN ('purchasing', 'transfer_send', 'transfer_receive', "
+        "'quantity_adjustment', 'return_to_supplier', 'production', "
+        "'consumption_from_production', 'consumption_from_orders', "
+        "'return_from_orders', 'return_from_transfers', 'waste_from_orders', "
+        "'waste_from_production', 'cost_adjustment', 'inventory_count', "
+        "'opening_balance', 'internal_use')",
+    )
 
     op.add_column(
         "inventory_transaction_items",
@@ -481,6 +607,10 @@ def upgrade() -> None:
     )
     op.add_column(
         "inventory_transaction_items",
+        sa.Column("previous_unit_cost", sa.Numeric(16, 6), nullable=True),
+    )
+    op.add_column(
+        "inventory_transaction_items",
         sa.Column("recipe_version_id", UUID, nullable=True),
     )
     op.add_column(
@@ -491,6 +621,11 @@ def upgrade() -> None:
     )
     op.add_column(
         "inventory_transaction_items", sa.Column("lot_id", UUID, nullable=True)
+    )
+    op.create_check_constraint(
+        "ck_inventory_transaction_item_unit",
+        "inventory_transaction_items",
+        "unit IN ('storage', 'ingredient')",
     )
     op.create_foreign_key(
         "fk_inventory_line_recipe_version",
@@ -652,6 +787,11 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "template_id", "item_id", name="uq_inventory_report_template_item"
         ),
+        sa.CheckConstraint(
+            "required_input IN ('physical_count', 'production', 'internal_use', "
+            "'waste', 'receipt')",
+            name="ck_inventory_report_template_item_input",
+        ),
     )
     op.create_index(
         "ix_inventory_report_template_items_template_id",
@@ -669,6 +809,8 @@ def upgrade() -> None:
             "status", sa.String(30), nullable=False, server_default="outstanding"
         ),
         sa.Column("idempotency_key", sa.String(200), nullable=False),
+        sa.Column("last_save_idempotency_key", sa.String(200), nullable=True),
+        sa.Column("last_save_payload_hash", sa.String(64), nullable=True),
         sa.Column(
             "template_snapshot", postgresql.JSONB(), nullable=False, server_default="{}"
         ),
@@ -834,6 +976,10 @@ def upgrade() -> None:
           IF OLD.status = 'closed' THEN
             RAISE EXCEPTION 'closed inventory transactions are immutable';
           END IF;
+          IF TG_OP = 'UPDATE' AND NEW.status = 'closed'
+             AND COALESCE(current_setting('mm.inventory_posting', true), '') <> 'on' THEN
+            RAISE EXCEPTION 'inventory transactions must be closed through the ledger poster';
+          END IF;
           RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
         END $$
         """
@@ -850,13 +996,18 @@ def upgrade() -> None:
         CREATE FUNCTION prevent_closed_inventory_line_mutation()
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE parent_status text;
-        DECLARE parent_id uuid;
         BEGIN
-          parent_id := CASE WHEN TG_OP = 'INSERT' THEN NEW.transaction_id ELSE OLD.transaction_id END;
           SELECT status INTO parent_status FROM inventory_transactions
-          WHERE id = parent_id;
+          WHERE id = CASE WHEN TG_OP = 'INSERT' THEN NEW.transaction_id ELSE OLD.transaction_id END;
           IF parent_status = 'closed' THEN
             RAISE EXCEPTION 'closed inventory transaction lines are immutable';
+          END IF;
+          IF TG_OP = 'UPDATE' AND NEW.transaction_id <> OLD.transaction_id THEN
+            SELECT status INTO parent_status FROM inventory_transactions
+            WHERE id = NEW.transaction_id;
+            IF parent_status = 'closed' THEN
+              RAISE EXCEPTION 'closed inventory transaction lines are immutable';
+            END IF;
           END IF;
           RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
         END $$
@@ -871,14 +1022,73 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        CREATE FUNCTION prevent_inventory_source_snapshot_mutation()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'inventory source events are append-only';
+          END IF;
+          IF NEW.id <> OLD.id
+             OR NEW.created_at <> OLD.created_at
+             OR NEW.accepted_sequence <> OLD.accepted_sequence
+             OR NEW.branch_id <> OLD.branch_id
+             OR NEW.source_type <> OLD.source_type
+             OR NEW.source_id <> OLD.source_id
+             OR NEW.source_revision <> OLD.source_revision
+             OR NEW.idempotency_key <> OLD.idempotency_key
+             OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
+             OR NEW.accepted_at <> OLD.accepted_at
+             OR NEW.frozen_plan <> OLD.frozen_plan
+             OR NEW.recipe_version_ids <> OLD.recipe_version_ids THEN
+            RAISE EXCEPTION 'accepted inventory source snapshots are immutable';
+          END IF;
+          RETURN NEW;
+        END $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER inventory_source_snapshot_immutable
+          BEFORE UPDATE OR DELETE ON inventory_source_events
+          FOR EACH ROW EXECUTE FUNCTION prevent_inventory_source_snapshot_mutation()
+        """
+    )
+    op.execute(
+        """
+        CREATE FUNCTION prevent_recipe_owner_mutation()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM recipe_versions WHERE recipe_id = OLD.id) THEN
+            RAISE EXCEPTION 'recipe ownership with version history is immutable';
+          END IF;
+          RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+        END $$
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER recipe_owner_immutable
+          BEFORE UPDATE OR DELETE ON recipes
+          FOR EACH ROW EXECUTE FUNCTION prevent_recipe_owner_mutation()
+        """
+    )
+    op.execute(
+        """
         CREATE FUNCTION prevent_published_recipe_mutation()
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
-          IF OLD.status = 'retired' OR TG_OP = 'DELETE' THEN
+          IF TG_OP = 'DELETE' THEN
+            IF OLD.status IN ('active', 'retired') THEN
+              RAISE EXCEPTION 'published recipe versions are immutable';
+            END IF;
+            RETURN OLD;
+          END IF;
+          IF OLD.status = 'retired' THEN
             RAISE EXCEPTION 'published recipe versions are immutable';
           END IF;
           IF OLD.status = 'active' AND NOT (
             NEW.status = 'retired'
+            AND NEW.id = OLD.id
             AND NEW.recipe_id = OLD.recipe_id
             AND NEW.version_number = OLD.version_number
             AND NEW.source = OLD.source
@@ -886,6 +1096,8 @@ def upgrade() -> None:
             AND NEW.source_metadata = OLD.source_metadata
             AND NEW.activated_at IS NOT DISTINCT FROM OLD.activated_at
             AND NEW.activated_by IS NOT DISTINCT FROM OLD.activated_by
+            AND NEW.created_at = OLD.created_at
+            AND NEW.retired_at IS NOT NULL
           ) THEN
             RAISE EXCEPTION 'active recipe contents are immutable';
           END IF;
@@ -912,6 +1124,13 @@ def upgrade() -> None:
           WHERE id = version_id;
           IF version_status IN ('active', 'retired') THEN
             RAISE EXCEPTION 'published recipe lines are immutable';
+          END IF;
+          IF TG_OP = 'UPDATE' AND NEW.recipe_version_id <> OLD.recipe_version_id THEN
+            SELECT status INTO version_status FROM recipe_versions
+            WHERE id = NEW.recipe_version_id;
+            IF version_status IN ('active', 'retired') THEN
+              RAISE EXCEPTION 'published recipe lines are immutable';
+            END IF;
           END IF;
           RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
         END $$
@@ -946,6 +1165,12 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS prevent_published_recipe_line_mutation")
     op.execute("DROP TRIGGER IF EXISTS recipe_version_immutable ON recipe_versions")
     op.execute("DROP FUNCTION IF EXISTS prevent_published_recipe_mutation")
+    op.execute("DROP TRIGGER IF EXISTS recipe_owner_immutable ON recipes")
+    op.execute("DROP FUNCTION IF EXISTS prevent_recipe_owner_mutation")
+    op.execute(
+        "DROP TRIGGER IF EXISTS inventory_source_snapshot_immutable ON inventory_source_events"
+    )
+    op.execute("DROP FUNCTION IF EXISTS prevent_inventory_source_snapshot_mutation")
     op.execute(
         "DROP TRIGGER IF EXISTS inventory_transaction_line_immutable ON inventory_transaction_items"
     )
@@ -954,6 +1179,11 @@ def downgrade() -> None:
         "DROP TRIGGER IF EXISTS inventory_transaction_immutable ON inventory_transactions"
     )
     op.execute("DROP FUNCTION IF EXISTS prevent_closed_inventory_transaction_mutation")
+    op.execute("DROP TRIGGER IF EXISTS branch_default_required ON branches")
+    op.execute("DROP FUNCTION IF EXISTS enforce_new_branch_default")
+    op.execute("DROP TRIGGER IF EXISTS warehouse_default_required ON warehouses")
+    op.execute("DROP FUNCTION IF EXISTS enforce_warehouse_default_per_branch")
+    op.execute("DROP FUNCTION IF EXISTS assert_branch_default_stock_container")
 
     op.drop_constraint(
         "ck_external_item_map_one_entity", "external_item_map", type_="check"
@@ -987,6 +1217,11 @@ def downgrade() -> None:
         "fk_inventory_line_lot", "inventory_transaction_items", type_="foreignkey"
     )
     op.drop_constraint(
+        "ck_inventory_transaction_item_unit",
+        "inventory_transaction_items",
+        type_="check",
+    )
+    op.drop_constraint(
         "fk_inventory_line_recipe_version",
         "inventory_transaction_items",
         type_="foreignkey",
@@ -995,6 +1230,7 @@ def downgrade() -> None:
         "lot_id",
         "recipe_path",
         "recipe_version_id",
+        "previous_unit_cost",
         "balance_after_value",
         "balance_after_quantity",
         "signed_quantity",
@@ -1010,6 +1246,16 @@ def downgrade() -> None:
         "uq_inventory_transaction_idempotency",
         "inventory_transactions",
         type_="unique",
+    )
+    op.drop_constraint(
+        "ck_inventory_closed_posting_metadata",
+        "inventory_transactions",
+        type_="check",
+    )
+    op.drop_constraint(
+        "ck_inventory_transactions_type_allowed",
+        "inventory_transactions",
+        type_="check",
     )
     for name in (
         "ix_inventory_transactions_correction_group_id",
@@ -1029,6 +1275,7 @@ def downgrade() -> None:
     ):
         op.drop_column("inventory_transactions", column)
     op.execute("DROP SEQUENCE inventory_posting_sequence")
+    op.execute("DROP SEQUENCE inventory_reference_sequence")
 
     op.drop_table("recipe_lines")
     op.drop_table("recipe_versions")
@@ -1042,6 +1289,15 @@ def downgrade() -> None:
     op.drop_index("ix_inventory_items_kind", table_name="inventory_items")
     op.drop_constraint(
         "ck_inventory_item_tracking_mode", "inventory_items", type_="check"
+    )
+    op.drop_constraint(
+        "ck_inventory_item_positive_conversion", "inventory_items", type_="check"
+    )
+    op.drop_constraint(
+        "ck_inventory_item_nonnegative_cost", "inventory_items", type_="check"
+    )
+    op.drop_constraint(
+        "ck_inventory_item_valid_yield", "inventory_items", type_="check"
     )
     op.drop_constraint("ck_inventory_item_kind", "inventory_items", type_="check")
     op.drop_column("inventory_items", "count_order")

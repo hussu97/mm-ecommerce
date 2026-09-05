@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import event, func, select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -43,6 +43,7 @@ from app.core.exceptions import (
 # Aliased to the existing private names: the implementation is shared,
 # the call sites stay put, and `quantity` is already a local variable in
 # both of these files.
+from app.core.money import money as _money
 from app.core.money import quantity as _q
 from app.core.money import unit_cost as _c
 from app.models.base import utcnow
@@ -79,7 +80,11 @@ __all__ = [
     "default_warehouse",
     "deplete_for_order",
     "level_for",
+    "inventory_item_cost_for_unit",
+    "assert_warehouse_for_branch",
+    "line_cost_in_ingredient_unit",
     "next_reference",
+    "next_inventory_reference",
     "post_transaction",
     "receive_purchase_order",
     "transition_purchase_order",
@@ -108,19 +113,78 @@ REFERENCE_PREFIX = {
 }
 
 
+async def assert_warehouse_for_branch(
+    db: AsyncSession, warehouse_id: uuid.UUID, branch_id: uuid.UUID
+) -> Warehouse:
+    warehouse = await db.get(Warehouse, warehouse_id)
+    if warehouse is None or warehouse.deleted_at is not None or not warehouse.is_active:
+        raise NotFoundError("Stock container not found")
+    if warehouse.branch_id != branch_id:
+        raise ConflictError("Stock container does not belong to this branch")
+    return warehouse
+
+
+def inventory_item_cost_for_unit(item: InventoryItem, unit: str) -> Decimal:
+    """Return the catalogue cost in the requested unit.
+
+    ``InventoryItem.cost`` is explicitly the cost of one storage unit while
+    ledger levels are valued per ingredient unit. Keeping the conversion here
+    prevents every fallback path (sales, counts, waste and production) from
+    inventing its own, often wrong, interpretation.
+    """
+    if unit not in {"storage", "ingredient"}:
+        raise BadRequestError(f"Unknown inventory entry unit '{unit}'")
+    storage_cost = Decimal(str(item.cost or 0))
+    if unit == "storage":
+        return _c(storage_cost)
+    factor = Decimal(str(item.storage_to_ingredient_factor or 1))
+    if factor <= 0:
+        raise BadRequestError(f"{item.name} has an invalid unit conversion factor")
+    return _c(storage_cost / factor)
+
+
+def ingredient_cost_for_unit(
+    item: InventoryItem, ingredient_cost: Decimal, unit: str
+) -> Decimal:
+    """Convert a per-ingredient-unit moving average to an entered-unit cost."""
+    if unit not in {"storage", "ingredient"}:
+        raise BadRequestError(f"Unknown inventory entry unit '{unit}'")
+    cost = Decimal(str(ingredient_cost))
+    if unit == "ingredient":
+        return _c(cost)
+    factor = Decimal(str(item.storage_to_ingredient_factor or 1))
+    if factor <= 0:
+        raise BadRequestError(f"{item.name} has an invalid unit conversion factor")
+    return _c(cost * factor)
+
+
+def line_cost_in_ingredient_unit(line: InventoryTransactionItem) -> Decimal:
+    """Read an immutable ledger line's cost as cost per ingredient unit."""
+    if line.unit not in {"storage", "ingredient"}:
+        raise BadRequestError(f"Unknown inventory entry unit '{line.unit}'")
+    entered_cost = Decimal(str(line.unit_cost or 0))
+    if line.unit == "ingredient":
+        return _c(entered_cost)
+    factor = Decimal(str(line.conversion_factor or 1))
+    if factor <= 0:
+        raise BadRequestError("A ledger line has an invalid conversion factor")
+    return _c(entered_cost / factor)
+
+
 async def next_reference(db: AsyncSession, transaction_type: str) -> str:
     """Human-readable sequential reference, e.g. PUR-000123."""
     prefix = REFERENCE_PREFIX.get(transaction_type, "INV")
-    count = int(
+    return await next_inventory_reference(db, prefix)
+
+
+async def next_inventory_reference(db: AsyncSession, prefix: str) -> str:
+    """Allocate a collision-free reference across concurrent branches."""
+    value = int(
         (
-            await db.execute(
-                select(func.count())
-                .select_from(InventoryTransaction)
-                .where(InventoryTransaction.type == transaction_type)
-            )
+            await db.execute(text("SELECT nextval('inventory_reference_sequence')"))
         ).scalar_one()
     )
-    return f"{prefix}-{count + 1:06d}"
+    return f"{prefix}-{value:06d}"
 
 
 async def default_warehouse(db: AsyncSession, branch_id: uuid.UUID) -> Warehouse:
@@ -128,18 +192,28 @@ async def default_warehouse(db: AsyncSession, branch_id: uuid.UUID) -> Warehouse
     The warehouse stock lands in for a branch, creating one on first use so a
     new branch never blocks a delivery.
     """
+    branch = (
+        await db.execute(select(Branch).where(Branch.id == branch_id).with_for_update())
+    ).scalar_one_or_none()
+    if branch is None:
+        raise NotFoundError("Branch not found")
+
     stmt = (
         select(Warehouse)
-        .where(Warehouse.branch_id == branch_id, Warehouse.deleted_at.is_(None))
-        .order_by(Warehouse.is_default.desc(), Warehouse.created_at)
+        .where(
+            Warehouse.branch_id == branch_id,
+            Warehouse.deleted_at.is_(None),
+            Warehouse.is_active.is_(True),
+        )
+        .order_by(Warehouse.is_default.desc(), Warehouse.created_at, Warehouse.id)
     )
     existing = (await db.execute(stmt)).scalars().first()
     if existing is not None:
+        if not existing.is_default:
+            existing.is_default = True
+            await db.flush()
         return existing
 
-    branch = await db.get(Branch, branch_id)
-    if branch is None:
-        raise NotFoundError("Branch not found")
     warehouse = Warehouse(
         branch_id=branch_id, name=f"{branch.name} Store", is_default=True
     )
@@ -203,6 +277,34 @@ def apply_movement(
     level.average_cost = average
 
 
+def apply_reversal_movement(
+    level: InventoryLevel, quantity_delta: Decimal, original_unit_cost: Decimal
+) -> None:
+    """Reverse a historical movement without leaving its value in stock.
+
+    Positive reversals (undoing an issue) blend the original issued value back
+    in. Negative reversals (undoing a receipt) remove that receipt's value from
+    the current pool. If the correction drives stock non-positive there is no
+    defensible denominator, so the last valid cost is retained and the negative
+    validation balance remains visible.
+    """
+    on_hand = _q(level.quantity)
+    average = _c(level.average_cost)
+    delta = _q(quantity_delta)
+    historical_cost = _c(original_unit_cost)
+    if delta >= 0:
+        apply_movement(level, delta, historical_cost)
+        return
+
+    new_quantity = _q(on_hand + delta)
+    if on_hand > 0 and new_quantity > 0:
+        remaining_value = on_hand * average + delta * historical_cost
+        if remaining_value >= 0:
+            average = _c(remaining_value / new_quantity)
+    level.quantity = new_quantity
+    level.average_cost = average
+
+
 async def post_transaction(
     db: AsyncSession, *, transaction: InventoryTransaction, user: User | None
 ) -> InventoryTransaction:
@@ -239,15 +341,13 @@ async def post_transaction(
         .scalars()
         .one_or_none()
     )
+    bootstrap_types = {
+        InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+        InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+    }
     if (
-        branch_settings is not None
-        and not branch_settings.inventory_enabled
-        and transaction.type
-        not in {
-            InventoryTransactionTypeEnum.OPENING_BALANCE.value,
-            InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
-        }
-    ):
+        branch_settings is None or not branch_settings.inventory_enabled
+    ) and transaction.type not in bootstrap_types:
         raise ConflictError("Inventory movements are not enabled for this branch")
     prevent_negative = bool(settings and settings.prevent_negative_stock)
     if branch_settings and (
@@ -263,10 +363,22 @@ async def post_transaction(
         )
     posting_sequence = transaction.posting_sequence
 
-    warehouse_id = (
-        transaction.warehouse_id
-        or (await default_warehouse(db, transaction.branch_id)).id
-    )
+    if transaction.warehouse_id is not None:
+        warehouse_id = (
+            await assert_warehouse_for_branch(
+                db, transaction.warehouse_id, transaction.branch_id
+            )
+        ).id
+    else:
+        warehouse_id = (await default_warehouse(db, transaction.branch_id)).id
+    if transaction.other_warehouse_id is not None:
+        if transaction.other_branch_id is None:
+            raise BadRequestError(
+                "A destination branch is required for its stock container"
+            )
+        await assert_warehouse_for_branch(
+            db, transaction.other_warehouse_id, transaction.other_branch_id
+        )
 
     total = Decimal("0")
     for line in transaction.items:
@@ -277,6 +389,8 @@ async def post_transaction(
             raise BadRequestError(
                 f"{item.name} is a phantom recipe item and cannot hold stock"
             )
+        if line.unit not in {"storage", "ingredient"}:
+            raise BadRequestError(f"Unknown inventory entry unit '{line.unit}'")
 
         # Normalise into the ingredient unit using the factor snapshotted on the
         # line, falling back to the item's current factor for new lines.
@@ -286,11 +400,6 @@ async def post_transaction(
         line.conversion_factor = factor
         normalised = _q(Decimal(str(line.quantity)) * factor)
         line.quantity_in_ingredient_unit = normalised
-
-        line.total_cost = _q(
-            Decimal(str(line.unit_cost or 0)) * Decimal(str(line.quantity))
-        )
-        total += line.total_cost
 
         # Adjustments and counts carry their own sign in the quantity.
         delta = normalised if sign >= 0 else -normalised
@@ -309,21 +418,63 @@ async def post_transaction(
             line.expected_quantity = _q(level.quantity)
             delta = _q(normalised - _q(level.quantity))
 
+        unit_cost_in_ingredient_unit = line_cost_in_ingredient_unit(line)
+        line.previous_unit_cost = _c(level.average_cost)
+        if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
+            previous_average = _c(level.average_cost)
+            line.quantity = _q(level.quantity)
+            line.quantity_in_ingredient_unit = _q(level.quantity)
+            line.signed_quantity = Decimal("0")
+            level.average_cost = unit_cost_in_ingredient_unit
+            line.total_cost = _money(
+                (unit_cost_in_ingredient_unit - previous_average)
+                * Decimal(str(level.quantity))
+            )
+            line.balance_after_quantity = _q(level.quantity)
+            line.balance_after_value = _money(
+                Decimal(str(level.quantity)) * unit_cost_in_ingredient_unit
+            )
+            level.projected_through_sequence = posting_sequence
+            total += Decimal(str(line.total_cost))
+            continue
+
         if prevent_negative and delta < 0 and _q(level.quantity) + delta < 0:
             raise ConflictError(
                 f"{item.name}: only {_q(level.quantity)} {item.ingredient_unit} "
                 f"available, cannot issue {abs(delta)}"
             )
 
-        unit_cost_in_ingredient_unit = (
-            _c(Decimal(str(line.unit_cost)) / factor) if factor else _c(line.unit_cost)
-        )
-        apply_movement(
-            level, delta, unit_cost_in_ingredient_unit if delta > 0 else None
-        )
+        if transaction.reverses_transaction_id is not None:
+            apply_reversal_movement(level, delta, unit_cost_in_ingredient_unit)
+        else:
+            apply_movement(
+                level, delta, unit_cost_in_ingredient_unit if delta > 0 else None
+            )
         line.signed_quantity = _q(delta)
+        cost_quantity = (
+            delta
+            if transaction.type
+            in {
+                InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+                InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+                InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+            }
+            else Decimal(str(line.quantity))
+        )
+        cost_per_unit = (
+            unit_cost_in_ingredient_unit
+            if transaction.type
+            in {
+                InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+                InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+                InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+            }
+            else Decimal(str(line.unit_cost or 0))
+        )
+        line.total_cost = _money(cost_quantity * cost_per_unit)
+        total += Decimal(str(line.total_cost))
         line.balance_after_quantity = _q(level.quantity)
-        line.balance_after_value = _q(
+        line.balance_after_value = _money(
             Decimal(str(level.quantity)) * Decimal(str(level.average_cost))
         )
         level.projected_through_sequence = posting_sequence
@@ -331,15 +482,22 @@ async def post_transaction(
         if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
             level.last_counted_at = utcnow()
 
-    transaction.total_cost = _q(total + Decimal(str(transaction.additional_cost or 0)))
+    transaction.total_cost = _money(
+        total + Decimal(str(transaction.additional_cost or 0))
+    )
     transaction.warehouse_id = warehouse_id
     transaction.status = TransactionStatusEnum.CLOSED.value
     transaction.poster_id = user.id if user else None
     transaction.posted_at = utcnow()
     transaction.occurred_at = transaction.occurred_at or transaction.created_at
 
+    # The database trigger rejects ad-hoc draft→closed updates. This
+    # transaction-local marker says the projection and immutable snapshots were
+    # prepared by this one posting path before the lifecycle changed.
+    await db.execute(text("SET LOCAL mm.inventory_posting = 'on'"))
     await db.flush()
     await db.refresh(transaction)
+    await db.execute(text("SET LOCAL mm.inventory_posting = 'off'"))
     return transaction
 
 
@@ -381,7 +539,7 @@ async def adjust_level(
             quantity=_q(quantity_delta),
             unit="ingredient",
             conversion_factor=Decimal("1"),
-            unit_cost=_c(item.cost),
+            unit_cost=inventory_item_cost_for_unit(item, "ingredient"),
         )
     )
     await db.flush()
@@ -583,6 +741,9 @@ async def transition_purchase_order(
     """
     global _PO_GATED
 
+    if purchase_order.id is not None:
+        purchase_order = await _lock_purchase_order(db, purchase_order.id)
+
     if _po_status(purchase_order.status) == new_status:
         return False
 
@@ -596,6 +757,28 @@ async def transition_purchase_order(
 
     _purchase_order_consequences(purchase_order, new_status, user)
     return True
+
+
+async def _lock_purchase_order(
+    db: AsyncSession, purchase_order_id: uuid.UUID
+) -> PurchaseOrder:
+    purchase_order = (
+        (
+            await db.execute(
+                select(PurchaseOrder)
+                .where(PurchaseOrder.id == purchase_order_id)
+                .options(selectinload(PurchaseOrder.items))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .unique()
+        .one_or_none()
+    )
+    if purchase_order is None:
+        raise NotFoundError("Purchase order not found")
+    return purchase_order
 
 
 def _purchase_order_consequences(
@@ -643,6 +826,8 @@ async def receive_purchase_order(
     first. The guard is therefore asked up front, against the same map, so a
     declined order cannot get as far as moving stock and then be refused.
     """
+    if purchase_order.id is not None:
+        purchase_order = await _lock_purchase_order(db, purchase_order.id)
     assert_can_transition_purchase_order(
         purchase_order, PurchaseOrderStatusEnum.PARTIALLY_RECEIVED
     )
@@ -838,10 +1023,10 @@ async def record_waste(
         else InventoryTransactionTypeEnum.WASTE_FROM_ORDERS
     )
     business_date = await business_day_service.current_business_date(db, branch)
-    if await db.get(InventoryItem, item_id) is None:
+    item = await db.get(InventoryItem, item_id)
+    if item is None:
         raise NotFoundError("Inventory item not found")
 
-    item = await db.get(InventoryItem, item_id)
     transaction = InventoryTransaction(
         reference=await next_reference(db, kind.value),
         type=kind.value,
@@ -864,7 +1049,7 @@ async def record_waste(
             quantity=_q(abs(quantity)),
             unit="ingredient",
             conversion_factor=Decimal("1"),
-            unit_cost=_c(item.cost),
+            unit_cost=inventory_item_cost_for_unit(item, "ingredient"),
         )
     )
     await db.flush()
@@ -896,6 +1081,10 @@ async def adjust_cost(
 
     stmt = select(InventoryLevel).where(InventoryLevel.item_id == item_id)
     if warehouse_id is not None:
+        await assert_warehouse_for_branch(db, warehouse_id, branch_id)
+        stmt = stmt.where(InventoryLevel.warehouse_id == warehouse_id)
+    else:
+        warehouse_id = (await default_warehouse(db, branch_id)).id
         stmt = stmt.where(InventoryLevel.warehouse_id == warehouse_id)
     level = (await db.execute(stmt)).scalars().first()
     if level is None:
@@ -903,29 +1092,26 @@ async def adjust_cost(
 
     previous = Decimal(str(level.average_cost or 0))
     quantity = Decimal(str(level.quantity or 0))
-    level.average_cost = new_average_cost
-
     # Booked as a transaction, not just a field write. Its type carries sign 0
     # so posting it cannot move stock, but it leaves the trail the cost
     # adjustment report reads — a revaluation that only edits a column is
     # invisible the moment anyone asks why the valuation changed.
-    item = await db.get(InventoryItem, item_id)
     transaction = InventoryTransaction(
         reference=await next_reference(
             db, InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
         ),
         type=InventoryTransactionTypeEnum.COST_ADJUSTMENT.value,
-        status=TransactionStatusEnum.CLOSED.value,
+        status=TransactionStatusEnum.DRAFT.value,
         branch_id=branch_id,
+        warehouse_id=level.warehouse_id,
         business_date=business_date,
         notes=notes,
         creator_id=user.id,
     )
     db.add(transaction)
     await db.flush()
-    db.add(
+    transaction.items.append(
         InventoryTransactionItem(
-            transaction_id=transaction.id,
             item_id=item_id,
             quantity=_q(quantity),
             unit="ingredient",
@@ -934,7 +1120,7 @@ async def adjust_cost(
         )
     )
     await db.flush()
-    del item
+    await post_transaction(db, transaction=transaction, user=user)
 
     return {
         "item_id": str(item_id),
@@ -966,7 +1152,11 @@ async def open_count(
     a figure that moved while counting would manufacture a variance nobody
     can explain.
     """
-    warehouse = warehouse_id or (await default_warehouse(db, branch.id)).id
+    warehouse = (
+        (await assert_warehouse_for_branch(db, warehouse_id, branch.id)).id
+        if warehouse_id
+        else (await default_warehouse(db, branch.id)).id
+    )
     transaction = InventoryTransaction(
         reference=await next_reference(
             db, InventoryTransactionTypeEnum.INVENTORY_COUNT.value
@@ -996,6 +1186,7 @@ async def open_count(
                 unit="ingredient",
                 conversion_factor=Decimal("1"),
                 unit_cost=_c(level.average_cost),
+                expected_quantity=_q(level.quantity),
             )
         )
     await db.flush()
@@ -1025,9 +1216,14 @@ async def close_count(
     # treats a count line as "what is actually on the shelf" and works out the
     # movement itself — computing the difference here too subtracted it twice
     # and left the stock sitting at the variance.
+    from app.services.inventory import source_event_service
+
+    await source_event_service.lock_branch_inventory(db, transaction.branch_id)
     systems, costs = {}, {}
     for line in transaction.items:
-        level = await level_for(db, line.item_id, transaction.warehouse_id)
+        level = await level_for(
+            db, line.item_id, transaction.warehouse_id, for_update=True
+        )
         systems[line.item_id] = Decimal(str(level.quantity or 0))
         costs[line.item_id] = Decimal(str(level.average_cost or 0))
         line.quantity = _q(
@@ -1051,12 +1247,12 @@ async def close_count(
                 "system_quantity": _q(system),
                 "counted_quantity": _q(actual),
                 "variance": _q(variance),
-                "value_change": _q(value),
+                "value_change": _money(value),
             }
         )
     return {
         "reference": posted.reference,
         "status": posted.status,
         "lines": lines,
-        "total_value_change": _q(total_value),
+        "total_value_change": _money(total_value),
     }

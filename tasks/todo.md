@@ -57,3 +57,45 @@ Three parallel audits. Real gaps found + FIXED:
 ## Notes
 - New versioning: attributes (fee/threshold/default courier) editable in place on active version; new version only for geometry changes.
 - Cutover backfill: re-resolve cart delivery_quote_* against new active version; users/addresses derive zone live.
+
+---
+
+# Inventory v2 Production Audit (2026-09-05)
+
+## Invariants and business-logic review
+
+- [x] Compare the implementation with the approved inventory plan and both repositories' `CLAUDE.md` rules.
+- [x] Audit recipe publication, recursive expansion, snapshot history, and Foodics import idempotency.
+- [x] Audit ledger sequencing, valuation, reversals/returns, immutable SQL guards, and projection rebuild parity.
+- [x] Audit count/report concurrency, business-day aggregation, approval thresholds, and opening-count rollout safety.
+- [x] Audit branch scoping, permissions, generated contracts, admin maintainability, and shared iPad/iPhone behavior.
+
+## Fixes and regression proof
+
+- [x] Fix every correctness or scalability defect found, keeping compatibility adapters intact.
+- [x] Add focused regression tests for the costing, recursive yield, report reconciliation, Foodics import, source-event atomicity, and POS validation failures found.
+- [x] Re-run migration upgrade/downgrade/re-upgrade on a fresh PostgreSQL database (`185_inventory_v2` head).
+- [x] Run backend lint/tests, regenerate and verify OpenAPI contracts, and run admin type/lint checks.
+- [x] Run `swift test` and build both the iPad and iPhone schemes.
+- [x] Record the final findings and verification evidence here, then commit coherent audit fixes with the required author.
+
+## Audit findings closed
+
+- [x] Ledger quantity and valuation now use the correct storage/ingredient conversion snapshots; transfer receipts preserve the source branch's moving-average value and production locks the whole value flow.
+- [x] Projection rebuild mirrors live posting, including exact receipt reversals and value-only cost adjustments, and streams long histories with bounded memory.
+- [x] Order consumption is acceptance-sequenced and savepoint-atomic; expected domain failures become durable no-movement exceptions instead of partially committed stock.
+- [x] Published recipes/source snapshots/closed ledger rows are SQL-immutable; draft preview validates recursive expansion, phantom dependencies, yield and cycles before activation.
+- [x] Counts and shift reports lock state transitions, detect any item movement since prefill, reprice variances at current average cost, require reasons, and post/approve atomically with retry-safe saves.
+- [x] Every active branch is database-enforced to have exactly one active default stock container; future branch creation provisions its container and rollout settings in the same transaction.
+- [x] Foodics staging is sanitized, UUID/SKU-based, unit-aware and rerunnable; zero values, duplicate-looking SKUs, conflicts and ambiguous mappings remain visible for review.
+- [x] Branch permissions are enforced across legacy and v2 APIs; ledger list labels are bulk-loaded and rebuild history is streamed rather than growing memory without bound.
+- [x] Admin recipe selection/validation, stock-audit feedback and integrity empty states are usable without raw UUIDs or false “no drift” claims.
+- [x] Shared POS flow requires variance/waste/internal-use reasons, uses stable per-payload retry keys, refreshes stale expected stock, supports explained skips, survives termination in Keychain, and adapts on both phone and tablet.
+
+## Verification
+
+- Backend: `2810 passed, 189 skipped`; Ruff clean.
+- Inventory-focused backend: `52 passed` after the final service changes.
+- Contracts/admin: generated OpenAPI fresh; types `3 passed`; admin `62 passed`; TypeScript clean; ESLint has two pre-existing warnings outside inventory and no errors.
+- Database: fresh PostgreSQL upgrade to head, downgrade to 184, and re-upgrade to `185_inventory_v2` passed.
+- POS: `332 passed`; `MMPos` iPad simulator build passed; `MMPosPhone` iPhone simulator build passed.

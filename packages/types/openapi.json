@@ -10213,6 +10213,11 @@
             "title": "Paths",
             "type": "array"
           },
+          "planned_waste": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Planned Waste",
+            "type": "string"
+          },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity",
@@ -10230,6 +10235,7 @@
         "required": [
           "item_id",
           "quantity",
+          "planned_waste",
           "recipe_version_ids",
           "paths"
         ],
@@ -30587,6 +30593,18 @@
             ],
             "title": "Notes"
           },
+          "previous_unit_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Unit Cost"
+          },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity",
@@ -45734,6 +45752,64 @@
           }
         ],
         "summary": "Activate Recipe Version",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/recipes-v2/versions/{version_id}/preview": {
+      "post": {
+        "operationId": "preview_recipe_version_api_v1_inventory_recipes_v2_versions__version_id__preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeExpansionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeExpansionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Preview Recipe Version",
         "tags": [
           "Inventory Control"
         ]

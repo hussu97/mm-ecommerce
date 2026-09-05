@@ -1367,3 +1367,19 @@ writing the test that names the third state before the code.
 loud — known / zero / unknown — and check that the *unknown* has a rendering of
 its own before writing the happy path. "Not set" in amber and a dash in the
 column are features, not unfinished UI.
+
+### A passing implementation suite is not a domain-invariant audit (2026-09-05)
+
+The first inventory implementation proved that its endpoints, migrations, and
+device builds worked, but that is a different question from whether every
+allowed sequence of business events preserves stock and valuation history. A
+published recipe can pass creation tests yet fail when the next version retires
+it; a return can restore the right quantity while changing moving-average cost;
+and a daily report can look correct for one till while omitting later tills.
+
+**Rule:** after implementing an accounting or inventory plan, perform a second,
+state-transition-focused review. Write down the invariants (quantity, value,
+ordering, historical snapshot, branch boundary, and retry identity), exercise
+their multi-event transitions, and compare the projection rebuilt from history
+with the live cache. Endpoint happy paths and a green build are necessary but
+do not substitute for this audit.

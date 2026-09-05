@@ -111,6 +111,15 @@ async def create_branch(
     if await crud_service.reference_taken(db, Branch, "reference", data.reference):
         raise ConflictError(f"Branch reference '{data.reference}' is already in use")
     branch = await crud_service.create(db, Branch, data)
+    # A branch is never allowed to exist without its hidden stock container and
+    # explicit rollout settings. Keep the imports local: the inventory service
+    # already depends on branch models and a module-level import would cycle.
+    from app.models.inventory_v2 import BranchInventorySettings
+    from app.services.inventory import inventory_service
+
+    await inventory_service.default_warehouse(db, branch.id)
+    db.add(BranchInventorySettings(branch_id=branch.id))
+    await db.flush()
     await audit_service.log_action(
         db,
         action="CREATE",

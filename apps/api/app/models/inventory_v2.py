@@ -213,6 +213,12 @@ class RecipeVersion(Base, UUIDMixin, TimestampMixin):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
+        Index(
+            "uq_recipe_one_draft_version",
+            "recipe_id",
+            unique=True,
+            postgresql_where=text("status = 'draft'"),
+        ),
         CheckConstraint(
             "status IN ('draft', 'active', 'retired')",
             name="ck_recipe_version_status",
@@ -402,6 +408,11 @@ class InventoryReportTemplateItem(Base, UUIDMixin):
         UniqueConstraint(
             "template_id", "item_id", name="uq_inventory_report_template_item"
         ),
+        CheckConstraint(
+            "required_input IN ('physical_count', 'production', 'internal_use', "
+            "'waste', 'receipt')",
+            name="ck_inventory_report_template_item_input",
+        ),
     )
 
     template_id: Mapped[uuid.UUID] = mapped_column(
@@ -462,6 +473,12 @@ class ShiftInventoryReport(Base, UUIDMixin, TimestampMixin):
         String(30), nullable=False, server_default="outstanding"
     )
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    last_save_idempotency_key: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    last_save_payload_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     template_snapshot: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default="{}"
     )

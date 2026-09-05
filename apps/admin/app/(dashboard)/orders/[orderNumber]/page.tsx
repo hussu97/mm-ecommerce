@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ordersApi, ApiError } from '@/lib/api';
@@ -72,6 +72,7 @@ export default function OrderDetailPage() {
   const [details, setDetails] = useState<OrderAdminDetails | null>(null);
   const [inventoryConsumption, setInventoryConsumption] = useState<OrderInventoryConsumption | null>(null);
   const [returnProportion, setReturnProportion] = useState('1');
+  const inventoryReturnAttempt = useRef<{ signature: string; key: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
@@ -169,7 +170,20 @@ export default function OrderDetailPage() {
     }))) return;
     setActionLoading(true);
     try {
-      await ordersApi.inventoryReturn(order.id, disposition, String(proportion));
+      const signature = `${order.id}:${disposition}:${proportion}`;
+      if (inventoryReturnAttempt.current?.signature !== signature) {
+        inventoryReturnAttempt.current = {
+          signature,
+          key: `admin-order-return:${crypto.randomUUID()}`,
+        };
+      }
+      await ordersApi.inventoryReturn(
+        order.id,
+        disposition,
+        String(proportion),
+        inventoryReturnAttempt.current.key,
+      );
+      inventoryReturnAttempt.current = null;
       setInventoryConsumption(await ordersApi.inventoryConsumption(order.id));
       toast.success('Inventory disposition recorded.');
     } catch (err) {

@@ -312,6 +312,7 @@ class TransactionLineResponse(ORMModel):
     conversion_factor: Decimal
     quantity_in_ingredient_unit: Decimal
     unit_cost: Decimal
+    previous_unit_cost: Decimal | None = None
     total_cost: Decimal
     signed_quantity: Decimal | None = None
     balance_after_quantity: Decimal | None = None

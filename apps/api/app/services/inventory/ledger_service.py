@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
@@ -77,23 +77,34 @@ async def reconcile_levels(
     quantities: dict[uuid.UUID, Decimal] = {}
     averages: dict[uuid.UUID, Decimal] = {}
     sequences: dict[uuid.UUID, int | None] = {}
-    for transaction, line in (await db.execute(stmt)).all():
-        delta = Decimal(str(line.signed_quantity or 0))
-        previous_quantity = quantities.get(line.item_id, Decimal("0"))
-        previous_average = averages.get(line.item_id, Decimal("0"))
-        if delta > 0:
-            factor = Decimal(str(line.conversion_factor or 1))
-            incoming = Decimal(str(line.unit_cost or 0))
-            if line.unit != "ingredient" and factor:
-                incoming /= factor
-            if previous_quantity <= 0:
-                previous_average = incoming
-            else:
-                previous_average = (
+    # Rebuilds are allowed to cover years of history. A server-side cursor
+    # keeps memory bounded while preserving the one canonical sequence order.
+    result = await db.stream(stmt.execution_options(yield_per=1000))
+    async for transaction, line in result:
+        delta = quantity(line.signed_quantity or 0)
+        previous_quantity = quantity(quantities.get(line.item_id, Decimal("0")))
+        previous_average = unit_cost(averages.get(line.item_id, Decimal("0")))
+        incoming = inventory_service.line_cost_in_ingredient_unit(line)
+        if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
+            previous_average = incoming
+        elif transaction.reverses_transaction_id is not None and delta < 0:
+            new_quantity = previous_quantity + delta
+            if previous_quantity > 0 and new_quantity > 0:
+                remaining_value = (
                     previous_quantity * previous_average + delta * incoming
-                ) / (previous_quantity + delta)
-        quantities[line.item_id] = previous_quantity + delta
-        averages[line.item_id] = previous_average
+                )
+                if remaining_value >= 0:
+                    previous_average = unit_cost(remaining_value / new_quantity)
+        elif delta > 0:
+            if previous_quantity <= 0:
+                previous_average = unit_cost(incoming)
+            else:
+                previous_average = unit_cost(
+                    (previous_quantity * previous_average + delta * incoming)
+                    / (previous_quantity + delta)
+                )
+        quantities[line.item_id] = quantity(previous_quantity + delta)
+        averages[line.item_id] = unit_cost(previous_average)
         sequences[line.item_id] = transaction.posting_sequence
 
     levels = {
@@ -157,6 +168,13 @@ async def reverse_transaction(
     original = await inventory_service.load_transaction(db, transaction_id)
     if not original.is_posted:
         raise ConflictError("Only a closed transaction can be reversed")
+    branch = await db.get(Branch, original.branch_id)
+    if branch is None:
+        raise NotFoundError("Branch not found")
+    # Serialize before the idempotency lookup. Otherwise two requests can both
+    # observe no reversal and the loser fails on the unique key after the first
+    # has already changed stock.
+    await source_event_service.lock_branch_inventory(db, original.branch_id)
     existing = (
         (
             await db.execute(
@@ -170,17 +188,15 @@ async def reverse_transaction(
     )
     if existing is not None:
         return existing
-
-    branch = await db.get(Branch, original.branch_id)
-    if branch is None:
-        raise NotFoundError("Branch not found")
-    await source_event_service.lock_branch_inventory(db, original.branch_id)
     correction_group = original.correction_group_id or uuid.uuid4()
+    reversal_type = (
+        InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
+        if original.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
+        else InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value
+    )
     reversal = InventoryTransaction(
-        reference=await inventory_service.next_reference(
-            db, InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value
-        ),
-        type=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+        reference=await inventory_service.next_reference(db, reversal_type),
+        type=reversal_type,
         status=TransactionStatusEnum.DRAFT.value,
         branch_id=original.branch_id,
         warehouse_id=original.warehouse_id,
@@ -203,7 +219,13 @@ async def reverse_transaction(
                 quantity=quantity(-Decimal(str(line.signed_quantity))),
                 unit="ingredient",
                 conversion_factor=Decimal("1"),
-                unit_cost=unit_cost(line.unit_cost or 0),
+                unit_cost=(
+                    unit_cost(line.previous_unit_cost)
+                    if original.type
+                    == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
+                    and line.previous_unit_cost is not None
+                    else inventory_service.line_cost_in_ingredient_unit(line)
+                ),
                 recipe_version_id=line.recipe_version_id,
                 recipe_path=line.recipe_path or [],
                 notes=f"Reversal of {original.reference}",
@@ -218,6 +240,39 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
     if branch is None:
         raise NotFoundError("Branch not found")
     warehouse = await inventory_service.default_warehouse(db, branch_id)
+    sku_keys = {row.sku.strip().casefold() for row in rows if row.sku.strip()}
+    matching_items = list(
+        (
+            await db.execute(
+                select(InventoryItem).where(
+                    func.lower(InventoryItem.sku).in_(sku_keys),
+                    InventoryItem.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items_by_sku: dict[str, list[InventoryItem]] = {}
+    for inventory_item in matching_items:
+        items_by_sku.setdefault(inventory_item.sku.casefold(), []).append(
+            inventory_item
+        )
+    levels_by_item = {
+        level.item_id: level
+        for level in (
+            await db.execute(
+                select(InventoryLevel).where(
+                    InventoryLevel.warehouse_id == warehouse.id,
+                    InventoryLevel.item_id.in_(
+                        [inventory_item.id for inventory_item in matching_items]
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    }
     seen: set[str] = set()
     payload = []
     for row in rows:
@@ -226,18 +281,7 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
         if sku_key in seen:
             errors.append("Duplicate SKU")
         seen.add(sku_key)
-        items = list(
-            (
-                await db.execute(
-                    select(InventoryItem).where(
-                        InventoryItem.sku.ilike(row.sku.strip()),
-                        InventoryItem.deleted_at.is_(None),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
+        items = items_by_sku.get(sku_key, [])
         item = items[0] if len(items) == 1 else None
         if not items:
             errors.append("Unknown SKU")
@@ -246,17 +290,22 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
         expected = None
         counted = quantity(row.counted_quantity)
         delta = None
+        normalised_delta = None
         if Decimal(str(row.counted_quantity)) != counted:
             errors.append("Quantity has more than four decimal places")
         if item:
-            level = await inventory_service.level_for(db, item.id, warehouse.id)
-            expected = quantity(level.quantity)
-            normalised = (
-                quantity(counted * Decimal(str(item.storage_to_ingredient_factor)))
-                if row.unit == "storage"
-                else counted
+            ingredient_expected = quantity(
+                levels_by_item[item.id].quantity if item.id in levels_by_item else 0
             )
-            delta = quantity(normalised - expected)
+            factor = Decimal(str(item.storage_to_ingredient_factor))
+            if row.unit == "storage":
+                expected = quantity(ingredient_expected / factor)
+                normalised = quantity(counted * factor)
+            else:
+                expected = ingredient_expected
+                normalised = counted
+            delta = quantity(counted - expected)
+            normalised_delta = quantity(normalised - ingredient_expected)
             if abs(delta) > max(abs(expected) * Decimal("10"), Decimal("100000")):
                 errors.append("Extreme variance requires manual review")
         payload.append(
@@ -268,6 +317,7 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
                 "expected_quantity": expected,
                 "counted_quantity": counted,
                 "delta_quantity": delta,
+                "normalised_delta_quantity": normalised_delta,
                 "remark": row.remark,
                 "errors": errors,
             }
@@ -309,7 +359,11 @@ async def apply_stock_audit(
             )
         )
     ).scalar_one_or_none()
-    is_opening_count = settings is not None and settings.go_live_at is None
+    if settings is None:
+        settings = BranchInventorySettings(branch_id=data.branch_id)
+        db.add(settings)
+        await db.flush()
+    is_opening_count = settings.go_live_at is None
     movement_type = (
         InventoryTransactionTypeEnum.OPENING_BALANCE.value
         if is_opening_count
@@ -334,21 +388,30 @@ async def apply_stock_audit(
     for result in preview["rows"]:
         input_row = by_sku[result["sku"].casefold()]
         item = await db.get(InventoryItem, result["item_id"])
+        level = await inventory_service.level_for(db, item.id, warehouse.id)
+        ingredient_cost = unit_cost(level.average_cost)
+        if is_opening_count or ingredient_cost == 0:
+            ingredient_cost = inventory_service.inventory_item_cost_for_unit(
+                item, "ingredient"
+            )
+        entry_unit = "ingredient" if is_opening_count else input_row.unit
         transaction.items.append(
             InventoryTransactionItem(
                 item_id=item.id,
                 quantity=(
-                    result["delta_quantity"]
+                    result["normalised_delta_quantity"]
                     if is_opening_count
                     else input_row.counted_quantity
                 ),
-                unit="ingredient" if is_opening_count else input_row.unit,
+                unit=entry_unit,
                 conversion_factor=(
                     item.storage_to_ingredient_factor
                     if input_row.unit == "storage" and not is_opening_count
                     else Decimal("1")
                 ),
-                unit_cost=item.cost,
+                unit_cost=inventory_service.ingredient_cost_for_unit(
+                    item, ingredient_cost, entry_unit
+                ),
                 notes=input_row.remark,
             )
         )
@@ -356,7 +419,7 @@ async def apply_stock_audit(
     posted = await inventory_service.post_transaction(
         db, transaction=transaction, user=user
     )
-    if is_opening_count and settings is not None:
+    if is_opening_count:
         settings.go_live_sequence = posted.posting_sequence
         settings.go_live_at = utcnow()
     preview["transaction_id"] = posted.id

@@ -190,6 +190,15 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
             "tracking_mode IN ('stocked', 'phantom')",
             name="ck_inventory_item_tracking_mode",
         ),
+        CheckConstraint(
+            "storage_to_ingredient_factor > 0",
+            name="ck_inventory_item_positive_conversion",
+        ),
+        CheckConstraint("cost >= 0", name="ck_inventory_item_nonnegative_cost"),
+        CheckConstraint(
+            "yield_percentage > 0 AND yield_percentage <= 1",
+            name="ck_inventory_item_valid_yield",
+        ),
     )
 
     sku: Mapped[str] = mapped_column(
@@ -412,10 +421,17 @@ class InventoryTransaction(Base, UUIDMixin, TimestampMixin):
         # Migration 099: `is_posted` — and with it whether stock has actually
         # moved — hangs off this string.
         status_vocabulary("inventory_transactions", "status", TransactionStatusEnum),
+        status_vocabulary(
+            "inventory_transactions", "type", InventoryTransactionTypeEnum
+        ),
         # Migration 100.
         business_date_format("inventory_transactions"),
         UniqueConstraint(
             "idempotency_key", name="uq_inventory_transaction_idempotency"
+        ),
+        CheckConstraint(
+            "status <> 'closed' OR (posting_sequence IS NOT NULL AND posted_at IS NOT NULL)",
+            name="ck_inventory_closed_posting_metadata",
         ),
     )
 
@@ -534,6 +550,12 @@ class InventoryTransactionItem(Base, UUIDMixin):
     """One line of a stock movement, recorded in the unit it was entered in."""
 
     __tablename__ = "inventory_transaction_items"
+    __table_args__ = (
+        CheckConstraint(
+            "unit IN ('storage', 'ingredient')",
+            name="ck_inventory_transaction_item_unit",
+        ),
+    )
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -567,6 +589,10 @@ class InventoryTransactionItem(Base, UUIDMixin):
     )
     unit_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
+    )
+    #: Moving-average cost immediately before this immutable movement.
+    previous_unit_cost: Mapped[Any | None] = mapped_column(
+        Numeric(16, 6), nullable=True
     )
     total_cost: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"

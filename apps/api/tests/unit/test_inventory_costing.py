@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models.inventory import (
     TRANSACTION_SIGN,
+    InventoryItem,
     InventoryLevel,
     InventoryTransactionTypeEnum,
 )
-from app.services.inventory.inventory_service import apply_movement
-from app.services.inventory.recipe_service import _assert_acyclic
+from app.models.inventory_v2 import RecipeLine, RecipeVersion
+from app.services.inventory.inventory_service import (
+    apply_movement,
+    apply_reversal_movement,
+    ingredient_cost_for_unit,
+    inventory_item_cost_for_unit,
+)
+from app.services.inventory.recipe_service import (
+    ActiveRecipeCatalog,
+    _assert_acyclic,
+    expand_owner,
+)
 
 D = Decimal
 
@@ -45,6 +56,42 @@ def test_receipts_and_issues_point_the_right_way():
     assert TRANSACTION_SIGN["internal_use"] == -1
     # Value-only movement.
     assert TRANSACTION_SIGN["cost_adjustment"] == 0
+
+
+def test_catalogue_storage_cost_converts_once_for_ingredient_movements():
+    item = InventoryItem(
+        sku="FLOUR-25KG",
+        name="Flour",
+        cost=D("100"),
+        storage_unit="sack",
+        ingredient_unit="gram",
+        storage_to_ingredient_factor=D("25000"),
+    )
+    assert inventory_item_cost_for_unit(item, "storage") == D("100.000000")
+    assert inventory_item_cost_for_unit(item, "ingredient") == D("0.004000")
+
+
+def test_moving_average_cost_converts_back_to_transfer_entry_unit():
+    item = InventoryItem(
+        sku="FLOUR-25KG",
+        name="Flour",
+        storage_unit="sack",
+        ingredient_unit="gram",
+        storage_to_ingredient_factor=D("25000"),
+    )
+    assert ingredient_cost_for_unit(item, D("0.004"), "ingredient") == D("0.004000")
+    assert ingredient_cost_for_unit(item, D("0.004"), "storage") == D("100.000000")
+
+
+def test_unknown_ledger_unit_is_rejected_instead_of_assumed_to_be_storage():
+    item = InventoryItem(
+        sku="FLOUR",
+        name="Flour",
+        cost=D("1"),
+        storage_to_ingredient_factor=D("1"),
+    )
+    with pytest.raises(BadRequestError, match="Unknown inventory entry unit"):
+        inventory_item_cost_for_unit(item, "grams")
 
 
 # ─── Weighted average ─────────────────────────────────────────────────────────
@@ -108,6 +155,20 @@ def test_value_is_conserved_across_a_receipt():
     )
 
 
+def test_reversing_an_old_receipt_removes_its_original_value():
+    row = level("200", "3.00")  # 100 @ 2.00 followed by 100 @ 4.00
+    apply_reversal_movement(row, D("-100"), D("2.00"))
+    assert row.quantity == D("100.0000")
+    assert row.average_cost == D("4.000000")
+
+
+def test_reversing_an_issue_blends_its_historical_value_back_in():
+    row = level("100", "4.00")
+    apply_reversal_movement(row, D("50"), D("2.00"))
+    assert row.quantity == D("150.0000")
+    assert row.average_cost == D("3.333333")
+
+
 def test_a_realistic_flour_lifecycle():
     """
     Buy two sacks at different prices, bake with some, then count.
@@ -143,3 +204,58 @@ def test_recursive_recipe_graph_accepts_shared_subrecipes_but_rejects_cycles():
 
     with pytest.raises(ConflictError, match="Recipe cycle detected"):
         _assert_acyclic({brownie: {brookie}, brookie: {brownie}})
+
+
+@pytest.mark.asyncio
+async def test_recursive_yield_loss_reaches_the_stocked_raw_material():
+    product_id, prep_id, flour_id = uuid4(), uuid4(), uuid4()
+    product_version = RecipeVersion(id=uuid4(), recipe_id=uuid4(), version_number=1)
+    product_version.lines = [
+        RecipeLine(
+            item_id=prep_id,
+            quantity=D("1"),
+            ingredient_unit="unit",
+            yield_percentage=D("0.5"),
+        )
+    ]
+    prep_version = RecipeVersion(id=uuid4(), recipe_id=uuid4(), version_number=1)
+    prep_version.lines = [
+        RecipeLine(
+            item_id=flour_id,
+            quantity=D("10"),
+            ingredient_unit="gram",
+            yield_percentage=D("0.8"),
+        )
+    ]
+    prep = InventoryItem(
+        id=prep_id,
+        sku="PREP",
+        name="Prep",
+        tracking_mode="phantom",
+        storage_unit="unit",
+        ingredient_unit="unit",
+        storage_to_ingredient_factor=D("1"),
+    )
+    flour = InventoryItem(
+        id=flour_id,
+        sku="FLOUR",
+        name="Flour",
+        tracking_mode="stocked",
+        storage_unit="gram",
+        ingredient_unit="gram",
+        storage_to_ingredient_factor=D("1"),
+    )
+    catalog = ActiveRecipeCatalog(
+        versions={
+            ("product", product_id): product_version,
+            ("inventory_item", prep_id): prep_version,
+        },
+        items={prep_id: prep, flour_id: flour},
+    )
+
+    expanded, _ = await expand_owner(
+        None, kind="product", owner_id=product_id, catalog=catalog
+    )
+
+    assert expanded[flour_id].quantity == D("25.0000")
+    assert expanded[flour_id].planned_waste == D("15.0000")

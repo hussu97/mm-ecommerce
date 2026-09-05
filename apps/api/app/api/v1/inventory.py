@@ -67,7 +67,7 @@ from app.schemas.inventory import (
     WasteRequest,
 )
 from app.services import audit_service, crud_service
-from app.services.inventory import inventory_service, recipe_service
+from app.services.inventory import access_service, inventory_service, recipe_service
 from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
@@ -103,9 +103,15 @@ warehouses_router = APIRouter()
 async def list_warehouses(
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.read")),
+    user: User = Depends(require("inventory.read")),
 ):
+    if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
     filters = [Warehouse.branch_id == branch_id] if branch_id else []
+    if not branch_id and not (
+        user.is_admin or (user.role and user.role.is_super_admin)
+    ):
+        filters.append(Warehouse.branch_id.in_(access_service.branch_ids_for(user)))
     return await crud_service.list_all(db, Warehouse, filters=filters)
 
 
@@ -115,12 +121,15 @@ async def list_warehouses(
 async def create_warehouse(
     data: WarehouseCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
+    if data.is_default and not data.is_active:
+        raise BadRequestError("The default stock container must be active")
+    if data.is_default:
+        await _clear_other_default_warehouses(db, data.branch_id)
     warehouse = await crud_service.create(db, Warehouse, data)
-    if warehouse.is_default:
-        await _clear_other_default_warehouses(db, warehouse)
     return warehouse
 
 
@@ -129,12 +138,20 @@ async def update_warehouse(
     warehouse_id: uuid.UUID,
     data: WarehouseUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     warehouse = await crud_service.get_or_404(db, Warehouse, warehouse_id)
+    await access_service.assert_branch_access(db, user, warehouse.branch_id)
+    if warehouse.is_default and (data.is_default is False or data.is_active is False):
+        raise ConflictError("Choose another default stock container first")
+    resulting_active = warehouse.is_active if data.is_active is None else data.is_active
+    if data.is_default and not resulting_active:
+        raise BadRequestError("The default stock container must be active")
+    if data.is_default and not warehouse.is_default:
+        await _clear_other_default_warehouses(
+            db, warehouse.branch_id, except_warehouse_id=warehouse.id
+        )
     warehouse = await crud_service.update(db, warehouse, data)
-    if warehouse.is_default:
-        await _clear_other_default_warehouses(db, warehouse)
     return warehouse
 
 
@@ -142,9 +159,12 @@ async def update_warehouse(
 async def delete_warehouse(
     warehouse_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.manage")),
+    user: User = Depends(require("inventory.manage")),
 ):
     warehouse = await crud_service.get_or_404(db, Warehouse, warehouse_id)
+    await access_service.assert_branch_access(db, user, warehouse.branch_id)
+    if warehouse.is_default:
+        raise ConflictError("Choose another default stock container first")
     stock = (
         (
             await db.execute(
@@ -165,13 +185,17 @@ async def delete_warehouse(
 
 
 async def _clear_other_default_warehouses(
-    db: AsyncSession, warehouse: Warehouse
+    db: AsyncSession,
+    branch_id: uuid.UUID,
+    *,
+    except_warehouse_id: uuid.UUID | None = None,
 ) -> None:
     stmt = select(Warehouse).where(
-        Warehouse.branch_id == warehouse.branch_id,
+        Warehouse.branch_id == branch_id,
         Warehouse.is_default.is_(True),
-        Warehouse.id != warehouse.id,
     )
+    if except_warehouse_id is not None:
+        stmt = stmt.where(Warehouse.id != except_warehouse_id)
     for other in (await db.execute(stmt)).scalars().all():
         other.is_default = False
     await db.flush()
@@ -288,7 +312,7 @@ async def list_levels(
     below_minimum_only: bool = False,
     limit: int = Query(500, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory")),
+    user: User = Depends(require("reports.inventory")),
 ):
     """The inventory levels report: what is on hand and what needs reordering."""
 
@@ -298,10 +322,17 @@ async def list_levels(
         .where(InventoryItem.deleted_at.is_(None))
     )
     if warehouse_id:
+        warehouse = await crud_service.get_or_404(db, Warehouse, warehouse_id)
+        await access_service.assert_branch_access(db, user, warehouse.branch_id)
         stmt = stmt.where(InventoryLevel.warehouse_id == warehouse_id)
     elif branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(
             Warehouse.branch_id == branch_id
+        )
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(
+            Warehouse.branch_id.in_(access_service.branch_ids_for(user))
         )
     stmt = stmt.order_by(InventoryItem.name).limit(limit)
 
@@ -353,6 +384,21 @@ async def _item_lookup(
     return {row.id: row for row in rows}
 
 
+async def _item_lookup_for_transactions(
+    db: AsyncSession, transactions: list[InventoryTransaction]
+) -> dict[uuid.UUID, InventoryItem]:
+    """Resolve line labels for a page in one query, not one query per row."""
+    ids = {line.item_id for transaction in transactions for line in transaction.items}
+    if not ids:
+        return {}
+    rows = (
+        (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
+        .scalars()
+        .all()
+    )
+    return {row.id: row for row in rows}
+
+
 @transactions_router.get("", response_model=list[InventoryTransactionResponse])
 async def list_transactions(
     branch_id: uuid.UUID | None = None,
@@ -361,13 +407,18 @@ async def list_transactions(
     business_date: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory")),
+    user: User = Depends(require("reports.inventory")),
 ):
     stmt = select(InventoryTransaction).options(
         selectinload(InventoryTransaction.items)
     )
     if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.where(InventoryTransaction.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            InventoryTransaction.branch_id.in_(access_service.branch_ids_for(user))
+        )
     if type:
         stmt = stmt.where(InventoryTransaction.type == type)
     if status_filter:
@@ -377,12 +428,8 @@ async def list_transactions(
     stmt = stmt.order_by(InventoryTransaction.created_at.desc()).limit(limit)
 
     transactions = list((await db.execute(stmt)).scalars().unique().all())
-    payload = []
-    for transaction in transactions:
-        payload.append(
-            _serialise_transaction(transaction, await _item_lookup(db, transaction))
-        )
-    return payload
+    names = await _item_lookup_for_transactions(db, transactions)
+    return [_serialise_transaction(transaction, names) for transaction in transactions]
 
 
 @transactions_router.post(
@@ -397,6 +444,19 @@ async def create_transaction(
     user: User = Depends(require("inventory.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
+    if data.warehouse_id:
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.warehouse_id, data.branch_id
+        )
+    if data.other_warehouse_id:
+        if data.other_branch_id is None:
+            raise BadRequestError(
+                "A destination branch is required for its stock container"
+            )
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.other_warehouse_id, data.other_branch_id
+        )
     business_date = await business_day_service.current_business_date(db, branch)
 
     transaction = InventoryTransaction(
@@ -457,9 +517,10 @@ async def create_transaction(
 async def get_transaction(
     transaction_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory")),
+    user: User = Depends(require("reports.inventory")),
 ):
     transaction = await inventory_service.load_transaction(db, transaction_id)
+    await access_service.assert_branch_access(db, user, transaction.branch_id)
     return _serialise_transaction(transaction, await _item_lookup(db, transaction))
 
 
@@ -473,6 +534,7 @@ async def post_transaction(
 ):
     """Move the stock for a draft transaction."""
     transaction = await inventory_service.load_transaction(db, transaction_id)
+    await access_service.assert_branch_access(db, user, transaction.branch_id)
     transaction = await inventory_service.post_transaction(
         db, transaction=transaction, user=user
     )
@@ -488,6 +550,7 @@ async def adjust_quantity(
 ):
     """Single-line signed adjustment — waste, breakage, or a correction."""
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
     transaction = await inventory_service.adjust_level(
         db,
         branch=branch,
@@ -543,11 +606,16 @@ async def list_purchase_orders(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.purchase_orders.manage")),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
     if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
+        )
     if supplier_id:
         stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
     if status_filter:
@@ -566,12 +634,16 @@ async def create_purchase_order(
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
+    if data.warehouse_id:
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.warehouse_id, data.branch_id
+        )
     await crud_service.get_or_404(db, Supplier, data.supplier_id)
     business_date = await business_day_service.current_business_date(db, branch)
 
-    count = len((await db.execute(select(PurchaseOrder.id))).scalars().all())
     purchase_order = PurchaseOrder(
-        reference=f"PO-{count + 1:06d}",
+        reference=await inventory_service.next_inventory_reference(db, "PO"),
         status=PurchaseOrderStatusEnum.DRAFT.value,
         supplier_id=data.supplier_id,
         branch_id=data.branch_id,
@@ -628,9 +700,11 @@ async def _replace_po_lines(
 async def get_purchase_order(
     po_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.purchase_orders.manage")),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    return await _serialise_po(db, await _load_po(db, po_id))
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    return await _serialise_po(db, purchase_order)
 
 
 @purchase_orders_router.put("/{po_id}", response_model=PurchaseOrderResponse)
@@ -638,14 +712,19 @@ async def update_purchase_order(
     po_id: uuid.UUID,
     data: PurchaseOrderUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.purchase_orders.manage")),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     if purchase_order.status in (
         PurchaseOrderStatusEnum.CLOSED.value,
         PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
     ):
         raise ConflictError("A received purchase order can no longer be edited")
+    if data.warehouse_id:
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.warehouse_id, purchase_order.branch_id
+        )
 
     await crud_service.update(
         db, purchase_order, data.model_dump(exclude={"items"}, exclude_unset=True)
@@ -670,9 +749,11 @@ async def submit_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await inventory_service.transition_purchase_order(
         db,
-        await _load_po(db, po_id),
+        purchase_order,
         PurchaseOrderStatusEnum.PENDING,
         user=user,
     )
@@ -686,9 +767,11 @@ async def approve_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.approve")),
 ):
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await inventory_service.transition_purchase_order(
         db,
-        await _load_po(db, po_id),
+        purchase_order,
         PurchaseOrderStatusEnum.APPROVED,
         user=user,
     )
@@ -702,9 +785,11 @@ async def decline_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.approve")),
 ):
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     await inventory_service.transition_purchase_order(
         db,
-        await _load_po(db, po_id),
+        purchase_order,
         PurchaseOrderStatusEnum.DECLINED,
         user=user,
     )
@@ -723,6 +808,7 @@ async def receive_purchase_order(
 ):
     """Receive a delivery, in full or in part, moving stock in."""
     purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = {line.purchase_order_item_id: line.quantity for line in data.lines}
     transaction = await inventory_service.receive_purchase_order(
         db, purchase_order=purchase_order, user=user, received=received
@@ -779,7 +865,12 @@ async def _recipe_response(db: AsyncSession, product_id: uuid.UUID) -> RecipeRes
     total = Decimal("0")
     for row in rows:
         item = await db.get(InventoryItem, row.item_id)
-        line_cost = Decimal(str(row.quantity)) * Decimal(str(item.cost if item else 0))
+        ingredient_cost = (
+            inventory_service.inventory_item_cost_for_unit(item, "ingredient")
+            if item
+            else Decimal("0")
+        )
+        line_cost = Decimal(str(row.quantity)) * ingredient_cost
         total += line_cost
         payload.ingredients.append(
             RecipeLineResponse(
@@ -790,7 +881,7 @@ async def _recipe_response(db: AsyncSession, product_id: uuid.UUID) -> RecipeRes
                 item_name=item.name if item else None,
                 item_sku=item.sku if item else None,
                 ingredient_unit=item.ingredient_unit if item else None,
-                unit_cost=item.cost if item else None,
+                unit_cost=ingredient_cost if item else None,
                 line_cost=line_cost,
             )
         )
@@ -919,6 +1010,7 @@ async def record_waste(
     belongs in the number a kitchen is managed on.
     """
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
     transaction = await inventory_service.record_waste(
         db,
         branch=branch,
@@ -941,6 +1033,7 @@ async def adjust_cost(
 ):
     """Restate what stock on hand is worth, without moving any of it."""
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
     return await inventory_service.adjust_cost(
         db,
         branch=branch,
@@ -970,6 +1063,7 @@ async def open_count(
     to be against the figure at the moment the sheet was printed.
     """
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
     transaction = await inventory_service.open_count(
         db,
         branch=branch,
@@ -988,14 +1082,19 @@ async def list_counts(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.adjustments.manage")),
+    user: User = Depends(require("inventory.adjustments.manage")),
 ):
     """Open and completed counts — this is also the count-sheet list."""
     stmt = select(InventoryTransaction).where(
         InventoryTransaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value
     )
     if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.where(InventoryTransaction.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            InventoryTransaction.branch_id.in_(access_service.branch_ids_for(user))
+        )
     if status_filter:
         stmt = stmt.where(InventoryTransaction.status == status_filter)
     stmt = (
@@ -1004,7 +1103,8 @@ async def list_counts(
         .limit(limit)
     )
     rows = list((await db.execute(stmt)).scalars().unique().all())
-    return [_serialise_transaction(t, await _item_lookup(db, t)) for t in rows]
+    names = await _item_lookup_for_transactions(db, rows)
+    return [_serialise_transaction(transaction, names) for transaction in rows]
 
 
 @counts_router.post("/{count_id}/close")
@@ -1021,6 +1121,7 @@ async def close_count(
     itself would add a second copy of everything on the shelf.
     """
     transaction = await inventory_service.load_transaction(db, count_id)
+    await access_service.assert_branch_access(db, user, transaction.branch_id)
     return await inventory_service.close_count(
         db,
         transaction=transaction,

@@ -15,7 +15,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -42,7 +42,7 @@ from app.models import (
 from app.models.base import utcnow
 from app.models.user import User
 from app.services import crud_service
-from app.services.inventory import transfer_service
+from app.services.inventory import access_service, inventory_service, transfer_service
 from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
@@ -140,13 +140,27 @@ async def list_transfer_orders(
     status_filter: str | None = Query(None, alias="status"),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.transfers.manage")),
+    user: User = Depends(require("inventory.transfers.manage")),
 ):
     stmt = select(TransferOrder)
     if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.where(TransferOrder.branch_id == branch_id)
     if source_branch_id:
+        await access_service.assert_branch_access(db, user, source_branch_id)
         stmt = stmt.where(TransferOrder.source_branch_id == source_branch_id)
+    if (
+        not branch_id
+        and not source_branch_id
+        and not (user.is_admin or (user.role and user.role.is_super_admin))
+    ):
+        allowed = access_service.branch_ids_for(user)
+        stmt = stmt.where(
+            or_(
+                TransferOrder.branch_id.in_(allowed),
+                TransferOrder.source_branch_id.in_(allowed),
+            )
+        )
     if status_filter:
         stmt = stmt.where(TransferOrder.status == status_filter)
     stmt = stmt.order_by(TransferOrder.created_at.desc()).limit(limit)
@@ -166,7 +180,16 @@ async def create_transfer_order(
         raise BadRequestError("A branch cannot transfer to itself")
 
     destination = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
     await crud_service.get_or_404(db, Branch, data.source_branch_id)
+    if data.warehouse_id:
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.warehouse_id, data.branch_id
+        )
+    if data.source_warehouse_id:
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.source_warehouse_id, data.source_branch_id
+        )
 
     order = TransferOrder(
         reference=await transfer_service.next_transfer_reference(db),
@@ -213,6 +236,7 @@ async def submit_transfer(
     user: User = Depends(require("inventory.transfers.manage")),
 ):
     order = await transfer_service.load_transfer_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.branch_id)
     await transfer_service.submit_transfer_order(db, order=order, user=user)
     return await _serialise_transfer(db, order)
 
@@ -226,6 +250,7 @@ async def accept_transfer(
 ):
     """Accept a request, optionally granting less than was asked for."""
     order = await transfer_service.load_transfer_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.source_branch_id)
     approved = {line.transfer_order_item_id: line.quantity for line in data.lines}
     await transfer_service.accept_transfer_order(
         db, order=order, user=user, approved=approved or None
@@ -242,6 +267,7 @@ async def decline_transfer(
     user: User = Depends(require("inventory.transfers.manage")),
 ):
     order = await transfer_service.load_transfer_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.source_branch_id)
     await transfer_service.decline_transfer_order(db, order=order, user=user)
     return await _serialise_transfer(db, order)
 
@@ -254,6 +280,7 @@ async def send_transfer(
 ):
     """Ship the goods — decrements the source location."""
     order = await transfer_service.load_transfer_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.source_branch_id)
     await transfer_service.send_transfer(db, order=order, user=user)
     return await _serialise_transfer(db, order)
 
@@ -269,6 +296,7 @@ async def receive_transfer(
 ):
     """Book the goods in. A shortfall against what was sent stays visible."""
     order = await transfer_service.load_transfer_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.branch_id)
     received = {line.transfer_order_item_id: line.quantity for line in data.lines}
     await transfer_service.receive_transfer(
         db, order=order, user=user, received=received or None
@@ -309,6 +337,7 @@ async def produce(
     rather than the loss disappearing.
     """
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
     production, consumption = await transfer_service.produce(
         db,
         branch=branch,

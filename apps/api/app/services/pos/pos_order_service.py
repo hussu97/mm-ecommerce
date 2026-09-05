@@ -1422,13 +1422,11 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
 
     await order_fees.stamp(db, order)
 
-    # Consume recipe ingredients. Deliberately after the order is marked closed
-    # and deliberately swallowing failures: a stock problem must never strand a
-    # paid check in an open state. Depletion is idempotent, so it can be retried.
-    try:
-        await inventory_service.deplete_for_order(db, order=order, user=user)
-    except Exception:  # noqa: BLE001 — closing the sale outranks stock accuracy
-        logger.exception("Inventory depletion failed for order %s", order.order_number)
+    # Consume recipe ingredients after the order is marked closed. Expected
+    # inventory-domain failures are savepoint-atomic and recorded as sequenced
+    # no-movement exceptions; an actual database failure must roll this request
+    # back rather than commit a closed order with no durable source event.
+    await inventory_service.deplete_for_order(db, order=order, user=user)
 
     return await get_order(db, order.id)
 

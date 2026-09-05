@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, ConflictError
+from app.core.exceptions import AppError, BadRequestError, ConflictError
 from app.core.money import unit_cost
 from app.models.base import utcnow
 from app.models.branch import Branch
@@ -131,8 +131,41 @@ async def accept_order(
     db.add(event)
     await db.flush()
     if not warnings:
-        await post_event(db, event=event, order=order, user=user, already_locked=True)
+        await _post_or_record_exception(
+            db, event=event, order=order, user=user, already_locked=True
+        )
     return event
+
+
+async def _post_or_record_exception(
+    db: AsyncSession,
+    *,
+    event: InventorySourceEvent,
+    order: Order,
+    user: User | None,
+    already_locked: bool,
+) -> InventoryTransaction | None:
+    """Post atomically, preserving a sequenced no-movement domain failure."""
+    try:
+        async with db.begin_nested():
+            return await post_event(
+                db,
+                event=event,
+                order=order,
+                user=user,
+                already_locked=already_locked,
+            )
+    except AppError as exc:
+        # The savepoint undoes every level/transaction mutation. Refresh the
+        # pre-existing outbox row before turning it into the immutable gap at
+        # this acceptance sequence; later orders must never jump in front of it.
+        await db.refresh(event)
+        event.status = InventorySourceEventStatusEnum.EXCEPTION.value
+        event.error_code = "inventory_posting_failed"
+        event.error_detail = exc.detail
+        event.processed_at = utcnow()
+        await db.flush()
+        return None
 
 
 async def post_event(
@@ -212,7 +245,12 @@ async def post_event(
                 quantity=Decimal(frozen["quantity"]),
                 unit="ingredient",
                 conversion_factor=Decimal("1"),
-                unit_cost=unit_cost(level.average_cost or item.cost or 0),
+                unit_cost=unit_cost(
+                    level.average_cost
+                    or inventory_service.inventory_item_cost_for_unit(
+                        item, "ingredient"
+                    )
+                ),
                 recipe_version_id=(
                     uuid.UUID(version_ids[0]) if len(version_ids) == 1 else None
                 ),
@@ -230,6 +268,100 @@ async def post_event(
     event.processed_at = utcnow()
     await db.flush()
     return posted
+
+
+async def record_order_cancellation(db: AsyncSession, order: Order) -> None:
+    """Cancel an unposted source event or require a posted-return disposition."""
+    # Legacy/provider test doubles and orders not yet routed to a branch have no
+    # inventory scope. There cannot be an accepted inventory event to cancel.
+    if getattr(order, "branch_id", None) is None:
+        return
+    await lock_branch_inventory(db, order.branch_id)
+    accepted = (
+        (
+            await db.execute(
+                select(InventorySourceEvent)
+                .where(
+                    InventorySourceEvent.source_type == "order",
+                    InventorySourceEvent.source_id == str(order.id),
+                )
+                .order_by(InventorySourceEvent.accepted_sequence)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if accepted is None:
+        return
+    if accepted.status in {
+        InventorySourceEventStatusEnum.PENDING.value,
+        InventorySourceEventStatusEnum.PROCESSING.value,
+    }:
+        accepted.status = InventorySourceEventStatusEnum.CANCELLED.value
+        accepted.processed_at = utcnow()
+        await db.flush()
+        return
+    if (
+        accepted.status != InventorySourceEventStatusEnum.POSTED.value
+        or accepted.transaction_id is None
+    ):
+        return
+    key = f"order-cancel:{order.id}:1"
+    exists = await db.scalar(
+        select(InventorySourceEvent.id).where(
+            InventorySourceEvent.idempotency_key == key
+        )
+    )
+    if exists is not None:
+        return
+    db.add(
+        InventorySourceEvent(
+            branch_id=order.branch_id,
+            source_type="order_return",
+            source_id=str(order.id),
+            source_revision=1,
+            idempotency_key=key,
+            status=InventorySourceEventStatusEnum.EXCEPTION.value,
+            occurred_at=utcnow(),
+            accepted_at=utcnow(),
+            frozen_plan={
+                "reason": "order_cancelled_after_inventory_posting",
+                "original_transaction_id": str(accepted.transaction_id),
+            },
+            recipe_version_ids=accepted.recipe_version_ids,
+            error_code="return_disposition_required",
+            error_detail="Choose restock, waste, or no inventory effect for this cancellation",
+            processed_at=utcnow(),
+        )
+    )
+    await db.flush()
+
+
+async def _resolve_cancellation_exception(
+    db: AsyncSession,
+    *,
+    order_id: uuid.UUID,
+    transaction_id: uuid.UUID | None,
+) -> None:
+    event = (
+        (
+            await db.execute(
+                select(InventorySourceEvent).where(
+                    InventorySourceEvent.idempotency_key == f"order-cancel:{order_id}:1"
+                )
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    if event is None:
+        return
+    event.status = InventorySourceEventStatusEnum.POSTED.value
+    event.transaction_id = transaction_id
+    event.error_code = None
+    event.error_detail = None
+    event.processed_at = utcnow()
+    await db.flush()
 
 
 async def record_return(
@@ -265,6 +397,9 @@ async def record_return(
         .one_or_none()
     )
     if existing_event is not None and disposition == "no_inventory_effect":
+        await _resolve_cancellation_exception(
+            db, order_id=order.id, transaction_id=None
+        )
         return []
     prior = list(
         (
@@ -280,6 +415,9 @@ async def record_return(
         .all()
     )
     if prior:
+        await _resolve_cancellation_exception(
+            db, order_id=order.id, transaction_id=prior[-1].id
+        )
         return prior
     original = (
         (
@@ -319,6 +457,9 @@ async def record_return(
             )
         )
         await db.flush()
+        await _resolve_cancellation_exception(
+            db, order_id=order.id, transaction_id=None
+        )
         return []
     previous_returns = list(
         (
@@ -360,6 +501,15 @@ async def record_return(
         or await business_day_service.current_business_date(db, branch)
     )
     group = uuid.uuid4()
+    waste_reclassification_costs: dict[uuid.UUID, Decimal] = {}
+    if disposition == "waste":
+        warehouse = await inventory_service.default_warehouse(db, order.branch_id)
+        for line in original.items:
+            level = await inventory_service.level_for(db, line.item_id, warehouse.id)
+            waste_reclassification_costs[line.item_id] = unit_cost(
+                level.average_cost
+                or inventory_service.line_cost_in_ingredient_unit(line)
+            )
 
     async def movement(kind: str, suffix: str) -> InventoryTransaction:
         transaction = InventoryTransaction(
@@ -387,7 +537,14 @@ async def record_return(
                     quantity=abs(Decimal(str(line.signed_quantity))) * proportion,
                     unit="ingredient",
                     conversion_factor=Decimal("1"),
-                    unit_cost=line.unit_cost,
+                    # Waste disposition is a reclassification: the return and
+                    # immediate waste must leave both quantity *and valuation*
+                    # unchanged. A genuine restock retains the original sale
+                    # cost snapshot as required for historical returns.
+                    unit_cost=waste_reclassification_costs.get(
+                        line.item_id,
+                        inventory_service.line_cost_in_ingredient_unit(line),
+                    ),
                     recipe_version_id=line.recipe_version_id,
                     recipe_path=line.recipe_path or [],
                 )
@@ -401,9 +558,15 @@ async def record_return(
         InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value, "return"
     )
     if disposition == "restock":
+        await _resolve_cancellation_exception(
+            db, order_id=order.id, transaction_id=returned.id
+        )
         return [returned]
     wasted = await movement(
         InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value, "waste"
+    )
+    await _resolve_cancellation_exception(
+        db, order_id=order.id, transaction_id=wasted.id
     )
     return [returned, wasted]
 
@@ -456,10 +619,16 @@ async def sweep_pending_once() -> int:
                     event.error_detail = "Order no longer exists"
                     event.processed_at = utcnow()
                     continue
-                await post_event(
-                    db, event=event, order=order, user=None, already_locked=True
+                await _post_or_record_exception(
+                    db,
+                    event=event,
+                    order=order,
+                    user=None,
+                    already_locked=True,
                 )
                 processed += 1
+        # This worker owns the session and has no request dependency to commit
+        # it after the service returns; one commit makes the swept batch durable.
         await db.commit()
     return processed
 

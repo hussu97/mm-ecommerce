@@ -406,10 +406,11 @@ export const ordersApi = {
     orderId: string,
     disposition: 'restock' | 'waste' | 'no_inventory_effect',
     proportion = '1',
+    idempotencyKey = `admin-order-return:${crypto.randomUUID()}`,
   ) => api.post<InventoryTransactionResponse[]>(`/orders/${orderId}/inventory-return`, {
     disposition,
     proportion,
-    idempotency_key: `admin-order-return:${crypto.randomUUID()}`,
+    idempotency_key: idempotencyKey,
   }),
   /** Book the courier again after a failed or abandoned dispatch. */
   dispatchDelivery: (orderNumber: string) =>

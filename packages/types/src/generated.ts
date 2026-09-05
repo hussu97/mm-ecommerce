@@ -3861,6 +3861,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/recipes-v2/versions/{version_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Recipe Version */
+        post: operations["preview_recipe_version_api_v1_inventory_recipes_v2_versions__version_id__preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/recipes-v2/{owner_kind}/{owner_id}": {
         parameters: {
             query?: never;
@@ -11676,6 +11693,8 @@ export interface components {
             paths: {
                 [key: string]: string;
             }[][];
+            /** Planned Waste */
+            planned_waste: string;
             /** Quantity */
             quantity: string;
             /** Recipe Version Ids */
@@ -18440,6 +18459,8 @@ export interface components {
             lot_id?: string | null;
             /** Notes */
             notes: string | null;
+            /** Previous Unit Cost */
+            previous_unit_cost?: string | null;
             /** Quantity */
             quantity: string;
             /** Quantity In Ingredient Unit */
@@ -26601,6 +26622,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecipeVersionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_recipe_version_api_v1_inventory_recipes_v2_versions__version_id__preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecipeExpansionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeExpansionResponse"];
                 };
             };
             /** @description Validation Error */

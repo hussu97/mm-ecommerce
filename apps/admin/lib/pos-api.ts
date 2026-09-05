@@ -236,6 +236,8 @@ export const inventoryApi = {
     api.post<RecipeVersion>(`/inventory/recipes-v2/versions/${versionId}/activate`),
   expandRecipe: (ownerKind: string, ownerId: string, multiplier = '1') =>
     api.post<RecipeExpansion>(`/inventory/recipes-v2/${ownerKind}/${ownerId}/expand`, { multiplier }),
+  previewRecipeVersion: (versionId: string, multiplier = '1') =>
+    api.post<RecipeExpansion>(`/inventory/recipes-v2/versions/${versionId}/preview`, { multiplier }),
   projectionDrift: (branchId: string) =>
     api.get<ProjectionDrift[]>(`/inventory/projection-drift${buildQs({ branch_id: branchId })}`),
   rebuildProjection: (branchId: string) =>

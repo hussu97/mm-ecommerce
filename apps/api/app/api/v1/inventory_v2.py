@@ -16,11 +16,9 @@ from app.core.deps import get_db
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
-    ForbiddenError,
     NotFoundError,
 )
 from app.core.permissions import require
-from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import InventoryItem, InventoryTransaction
 from app.models.inventory_v2 import (
@@ -28,10 +26,8 @@ from app.models.inventory_v2 import (
     InventoryReportTemplate,
     InventorySourceEvent,
     ShiftInventoryReport,
-    ShiftInventoryReportStatusEnum,
 )
 from app.models.order import Order
-from app.models.role import UserBranch
 from app.models.till import Till
 from app.models.user import User
 from app.schemas.inventory import InventoryTransactionResponse
@@ -57,6 +53,7 @@ from app.schemas.inventory_v2 import (
     VersionedRecipeResponse,
 )
 from app.services.inventory import (
+    access_service,
     ledger_service,
     recipe_service,
     report_service,
@@ -68,24 +65,8 @@ pos_inventory_router = APIRouter()
 order_inventory_router = APIRouter()
 
 
-async def _assert_branch_access(
-    db: AsyncSession, user: User, branch_id: uuid.UUID
-) -> None:
-    """Apply the same explicit staff/branch boundary to admin and POS routes."""
-    if user.is_admin or (user.role and user.role.is_super_admin):
-        return
-    allowed = await db.scalar(
-        select(UserBranch.id).where(
-            UserBranch.user_id == user.id,
-            UserBranch.branch_id == branch_id,
-        )
-    )
-    if allowed is None:
-        raise ForbiddenError("You are not assigned to this branch")
-
-
-def _branch_ids_for(user: User):
-    return select(UserBranch.branch_id).where(UserBranch.user_id == user.id)
+_assert_branch_access = access_service.assert_branch_access
+_branch_ids_for = access_service.branch_ids_for
 
 
 @control_router.get(
@@ -139,6 +120,28 @@ async def activate_recipe_version(
     user: User = Depends(require("catalogue.recipes.manage")),
 ):
     return await recipe_service.activate(db, version_id=version_id, user_id=user.id)
+
+
+@control_router.post(
+    "/recipes-v2/versions/{version_id}/preview",
+    response_model=RecipeExpansionResponse,
+)
+async def preview_recipe_version(
+    version_id: uuid.UUID,
+    data: RecipeExpansionRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.recipes.read")),
+):
+    expanded, version_ids = await recipe_service.preview_version(
+        db,
+        version_id=version_id,
+        multiplier=data.multiplier,
+        order_type=data.order_type,
+    )
+    return {
+        "lines": [expanded[key].as_snapshot() for key in sorted(expanded, key=str)],
+        "recipe_version_ids": sorted(version_ids, key=str),
+    }
 
 
 @control_router.post(
@@ -508,12 +511,7 @@ async def reject_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    if report.status != ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value:
-        raise ConflictError("Only a pending report can be rejected")
-    report.status = ShiftInventoryReportStatusEnum.REJECTED.value
-    report.deferred_reason = data.reason
-    await db.flush()
-    return report
+    return await report_service.reject_report(db, report=report, reason=data.reason)
 
 
 @pos_inventory_router.post(
@@ -527,12 +525,7 @@ async def defer_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    if report.status in {"posted", "pending_approval", "approved"}:
-        raise ConflictError("This report can no longer be deferred")
-    report.status = ShiftInventoryReportStatusEnum.DEFERRED.value
-    report.deferred_reason = data.reason
-    await db.flush()
-    return report
+    return await report_service.defer_report(db, report=report, reason=data.reason)
 
 
 @pos_inventory_router.post(
@@ -546,12 +539,7 @@ async def skip_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    if report.template_snapshot.get("is_required"):
-        raise ConflictError("Required reports must be waived by a manager")
-    report.status = ShiftInventoryReportStatusEnum.SKIPPED.value
-    report.deferred_reason = data.reason
-    await db.flush()
-    return report
+    return await report_service.skip_report(db, report=report, reason=data.reason)
 
 
 @pos_inventory_router.post(
@@ -565,16 +553,9 @@ async def waive_shift_report(
 ):
     report = await report_service.load_report(db, report_id)
     await _assert_branch_access(db, user, report.branch_id)
-    if report.status in {"posted", "approved"}:
-        raise ConflictError("This report can no longer be waived")
-    if not data.reason:
-        raise BadRequestError("A waiver reason is required")
-    report.status = ShiftInventoryReportStatusEnum.SKIPPED.value
-    report.deferred_reason = data.reason
-    report.approved_by = user.id
-    report.approved_at = utcnow()
-    await db.flush()
-    return report
+    return await report_service.skip_report(
+        db, report=report, reason=data.reason, manager=user
+    )
 
 
 @order_inventory_router.get(

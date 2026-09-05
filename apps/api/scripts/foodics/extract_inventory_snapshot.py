@@ -36,6 +36,31 @@ RESOURCES: dict[str, str] = {
     "modifier_option_ingredients": "/modifier_option_ingredients",
 }
 
+SENSITIVE_KEYS = {
+    "access_token",
+    "api_key",
+    "authorization",
+    "cookie",
+    "password",
+    "refresh_token",
+    "secret",
+    "session",
+    "token",
+}
+
+
+def sanitize(value: Any) -> Any:
+    """Remove credential-shaped fields before a provider payload reaches disk."""
+    if isinstance(value, dict):
+        return {
+            key: sanitize(child)
+            for key, child in value.items()
+            if key.casefold() not in SENSITIVE_KEYS
+        }
+    if isinstance(value, list):
+        return [sanitize(child) for child in value]
+    return value
+
 
 def canonical_hash(payload: dict[str, Any]) -> str:
     body = json.dumps(
@@ -49,7 +74,7 @@ async def extract() -> dict[str, Any]:
     errors: dict[str, str] = {}
     for key, resource in RESOURCES.items():
         try:
-            data[key] = await fp.provider._list_all(resource, cap_pages=100)
+            data[key] = sanitize(await fp.provider._list_all(resource, cap_pages=100))
         except fp.FoodicsError as exc:
             # Keep the successfully captured resources useful, but make a partial
             # capture impossible to mistake for a complete import source.
