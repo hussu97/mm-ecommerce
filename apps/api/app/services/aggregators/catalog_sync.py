@@ -102,6 +102,14 @@ def _syncs_to(row: Product | Category, target: str) -> bool:
     return target in channels
 
 
+def _ar(row: Any, field: str) -> str | None:
+    """The Arabic value of a translated field from a row's `translations` JSONB
+    (`{"ar": {"name": ..., "description": ...}}`), or None. MM is the source of
+    truth for localisation, so this feeds the desired side of the diff."""
+    tr = getattr(row, "translations", None) or {}
+    return (tr.get("ar") or {}).get(field)
+
+
 def _product_to_item(product: Product) -> NormalizedItem:
     groups: list[NormalizedModifierGroup] = []
     for pm in sorted(product.product_modifiers, key=lambda p: p.display_order):
@@ -109,12 +117,14 @@ def _product_to_item(product: Product) -> NormalizedItem:
         groups.append(
             NormalizedModifierGroup(
                 name=mod.name,
+                name_ar=_ar(mod, "name"),
                 external_ref=mod.reference,
                 min_options=pm.minimum_options,
                 max_options=pm.maximum_options,
                 options=[
                     NormalizedOption(
                         name=o.name,
+                        name_ar=_ar(o, "name"),
                         external_ref=o.sku,
                         price=Decimal(o.price) if o.price is not None else None,
                         is_available=o.is_active,
@@ -123,11 +133,15 @@ def _product_to_item(product: Product) -> NormalizedItem:
                 ],
             )
         )
+    images = getattr(product, "image_urls", None) or []
     return NormalizedItem(
         name=product.name,
+        name_ar=_ar(product, "name"),
         external_id=str(product.id),
         external_ref=product.sku,
         description=product.description,
+        description_ar=_ar(product, "description"),
+        image_url=images[0] if images else None,
         price=Decimal(product.base_price) if product.base_price is not None else None,
         is_available=product.is_active,
         category_ref=str(product.category_id) if product.category_id else None,
@@ -160,7 +174,9 @@ async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
         cat_key = str(cat.id) if cat else "uncategorised"
         if cat_key not in cats:
             cats[cat_key] = NormalizedCategory(
-                name=cat_name, external_id=str(cat.id) if cat else None
+                name=cat_name,
+                name_ar=_ar(cat, "name") if cat else None,
+                external_id=str(cat.id) if cat else None,
             )
             order.append(cat_key)
         cats[cat_key].items.append(_product_to_item(product))
