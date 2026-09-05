@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import event, func, select
+from sqlalchemy import event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -61,6 +61,10 @@ from app.models.inventory import (
     PurchaseOrderStatusEnum,
     TransactionStatusEnum,
     Warehouse,
+)
+from app.models.inventory_v2 import (
+    BranchInventorySettings,
+    InventoryTrackingModeEnum,
 )
 from app.models.order import Order, OrderItem
 from app.models.user import User
@@ -99,6 +103,8 @@ REFERENCE_PREFIX = {
     InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value: "WFP",
     InventoryTransactionTypeEnum.COST_ADJUSTMENT.value: "CAD",
     InventoryTransactionTypeEnum.INVENTORY_COUNT.value: "CNT",
+    InventoryTransactionTypeEnum.OPENING_BALANCE.value: "OPN",
+    InventoryTransactionTypeEnum.INTERNAL_USE.value: "INT",
 }
 
 
@@ -198,7 +204,7 @@ def apply_movement(
 
 
 async def post_transaction(
-    db: AsyncSession, *, transaction: InventoryTransaction, user: User
+    db: AsyncSession, *, transaction: InventoryTransaction, user: User | None
 ) -> InventoryTransaction:
     """
     Apply a draft/pending transaction to stock. Idempotent by refusal: an
@@ -209,12 +215,53 @@ async def post_transaction(
     if not transaction.items:
         raise BadRequestError("A transaction must have at least one line")
 
+    # Every writer—not only order consumption—serializes on the branch before
+    # it receives a posting sequence or locks level rows. PostgreSQL advisory
+    # transaction locks are re-entrant, so callers that already hold this lock
+    # (the source-event worker and count approval) safely pass through.
+    from app.services.inventory import source_event_service
+
+    await source_event_service.lock_branch_inventory(db, transaction.branch_id)
+
     sign = TRANSACTION_SIGN.get(transaction.type)
     if sign is None:
         raise BadRequestError(f"Unknown transaction type '{transaction.type}'")
 
     settings = (await db.execute(select(BusinessSettings).limit(1))).scalars().first()
+    branch_settings = (
+        (
+            await db.execute(
+                select(BranchInventorySettings).where(
+                    BranchInventorySettings.branch_id == transaction.branch_id
+                )
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+    if (
+        branch_settings is not None
+        and not branch_settings.inventory_enabled
+        and transaction.type
+        not in {
+            InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+            InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+        }
+    ):
+        raise ConflictError("Inventory movements are not enabled for this branch")
     prevent_negative = bool(settings and settings.prevent_negative_stock)
+    if branch_settings and (
+        branch_settings.validation_mode or branch_settings.allow_negative_stock
+    ):
+        prevent_negative = False
+
+    if transaction.posting_sequence is None:
+        transaction.posting_sequence = int(
+            (
+                await db.execute(text("SELECT nextval('inventory_posting_sequence')"))
+            ).scalar_one()
+        )
+    posting_sequence = transaction.posting_sequence
 
     warehouse_id = (
         transaction.warehouse_id
@@ -226,6 +273,10 @@ async def post_transaction(
         item = await db.get(InventoryItem, line.item_id)
         if item is None:
             raise BadRequestError(f"Inventory item {line.item_id} not found")
+        if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value:
+            raise BadRequestError(
+                f"{item.name} is a phantom recipe item and cannot hold stock"
+            )
 
         # Normalise into the ingredient unit using the factor snapshotted on the
         # line, falling back to the item's current factor for new lines.
@@ -246,6 +297,7 @@ async def post_transaction(
         if transaction.type in (
             InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
             InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+            InventoryTransactionTypeEnum.OPENING_BALANCE.value,
         ):
             delta = normalised
 
@@ -269,6 +321,12 @@ async def post_transaction(
         apply_movement(
             level, delta, unit_cost_in_ingredient_unit if delta > 0 else None
         )
+        line.signed_quantity = _q(delta)
+        line.balance_after_quantity = _q(level.quantity)
+        line.balance_after_value = _q(
+            Decimal(str(level.quantity)) * Decimal(str(level.average_cost))
+        )
+        level.projected_through_sequence = posting_sequence
 
         if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
             level.last_counted_at = utcnow()
@@ -276,8 +334,9 @@ async def post_transaction(
     transaction.total_cost = _q(total + Decimal(str(transaction.additional_cost or 0)))
     transaction.warehouse_id = warehouse_id
     transaction.status = TransactionStatusEnum.CLOSED.value
-    transaction.poster_id = user.id
+    transaction.poster_id = user.id if user else None
     transaction.posted_at = utcnow()
+    transaction.occurred_at = transaction.occurred_at or transaction.created_at
 
     await db.flush()
     await db.refresh(transaction)
@@ -659,81 +718,17 @@ async def deplete_for_order(
     db: AsyncSession, *, order: Order, user: User
 ) -> InventoryTransaction | None:
     """
-    Consume ingredients for a closed order.
+    Freeze and consume inventory for a finalized order in MM acceptance order.
 
-    Called once, when the check closes. Returns None when nothing on the order
-    has a recipe, so a cafe that has not set up recipes yet is unaffected.
+    The durable source event owns idempotency and recipe history. A missing
+    recipe is recorded as an exception without blocking the sale.
     """
-    if order.branch_id is None:
+    from app.services.inventory import source_event_service
+
+    event_row = await source_event_service.accept_order(db, order=order, user=user)
+    if event_row is None or event_row.transaction_id is None:
         return None
-
-    existing = (
-        (
-            await db.execute(
-                select(InventoryTransaction).where(
-                    InventoryTransaction.order_id == order.id,
-                    InventoryTransaction.type
-                    == InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if existing is not None:
-        # Closing is idempotent; never double-deplete.
-        return existing
-
-    consumption = await _consumption_for_order(db, order)
-    if not consumption:
-        return None
-
-    branch = await db.get(Branch, order.branch_id)
-    if branch is None:
-        return None
-
-    transaction = InventoryTransaction(
-        reference=await next_reference(
-            db, InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value
-        ),
-        type=InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
-        status=TransactionStatusEnum.DRAFT.value,
-        branch_id=order.branch_id,
-        business_date=order.business_date
-        or await business_day_service.current_business_date(db, branch),
-        order_id=order.id,
-        creator_id=user.id,
-        notes=f"Auto-depletion for {order.order_number}",
-    )
-    db.add(transaction)
-    await db.flush()
-
-    for item_id, quantity in consumption.items():
-        item = await db.get(InventoryItem, item_id)
-        db.add(
-            InventoryTransactionItem(
-                transaction_id=transaction.id,
-                item_id=item_id,
-                quantity=_q(quantity),
-                unit="ingredient",
-                conversion_factor=Decimal("1"),
-                unit_cost=_c(item.cost if item else 0),
-            )
-        )
-
-    await db.flush()
-    await db.refresh(transaction)
-    # Depletion must never block closing a sale, so negative stock is tolerated
-    # here even when the setting forbids it for manual transactions.
-    try:
-        return await post_transaction(db, transaction=transaction, user=user)
-    except ConflictError:
-        transaction.status = TransactionStatusEnum.PENDING.value
-        transaction.notes = (
-            f"{transaction.notes or ''} — held: would take stock negative"
-        ).strip()
-        await db.flush()
-        return transaction
+    return await db.get(InventoryTransaction, event_row.transaction_id)
 
 
 async def _consumption_for_order(

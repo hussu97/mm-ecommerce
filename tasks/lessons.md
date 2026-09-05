@@ -10,12 +10,13 @@
 
 ## Index
 
-71 entries. Each title is written to be the whole lesson, so
+72 entries. Each title is written to be the whole lesson, so
 skimming this list is usually enough to know whether the body applies to
 what you are about to do.
 
 | When | Lesson |
 |---|---|
+| 2026-09-05 | [When the user asks for a worktree, create it before the first implementation edit](#2026-09-05-when-the-user-asks-for-a-worktree-create-it-before-the-first-implementation-edit) |
 | 2026-08-18 | [A fix that needs somebody to run it is not a fix](#2026-08-18-a-fix-that-needs-somebody-to-run-it-is-not-a-fix) |
 | 2026-08-18 | [Counting occurrences in rendered HTML counts the framework, not the content](#2026-08-18-counting-occurrences-in-rendered-html-counts-the-framework-not-the-content) |
 | 2026-08-08 | [A sentinel that is an `Enum` will pass an `isinstance(x, Enum)` check](#2026-08-08-a-sentinel-that-is-an-enum-will-pass-an-isinstancex-enum-check) |
@@ -89,6 +90,17 @@ what you are about to do.
 | 2026-08-23 | [Ask what a null means before you let it reach money](#ask-what-a-null-means-before-you-let-it-reach-money-2026-08-23) |
 
 ## Lessons
+
+### [2026-09-05] When the user asks for a worktree, create it before the first implementation edit
+- **What went wrong**: I started the inventory implementation by creating a
+  feature branch in the shared checkout and adding one uncommitted model file.
+  Hussain then had to correct the execution environment: the work belonged in a
+  dedicated worktree from main.
+- **Rule**: before the first edit on a multi-repository implementation, resolve
+  the requested checkout shape as part of setup. If the user names a worktree,
+  fetch main, create a dedicated worktree for every repository in scope, verify
+  its base revision, and only then write files. A clean feature branch is not a
+  substitute for isolation when worktree isolation was requested.
 
 ### [2026-08-18] A fix that needs somebody to run it is not a fix
 - **What went wrong**: three separate changes the shop had asked for — noon Send

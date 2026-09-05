@@ -21,7 +21,9 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -68,6 +70,8 @@ class InventoryTransactionTypeEnum(str, enum.Enum):
     WASTE_FROM_PRODUCTION = "waste_from_production"
     COST_ADJUSTMENT = "cost_adjustment"
     INVENTORY_COUNT = "inventory_count"
+    OPENING_BALANCE = "opening_balance"
+    INTERNAL_USE = "internal_use"
 
 
 #: Direction each transaction type moves stock in the branch it is posted to.
@@ -87,6 +91,8 @@ TRANSACTION_SIGN: dict[str, int] = {
     # Adjustments and counts carry a signed quantity of their own.
     InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value: 1,
     InventoryTransactionTypeEnum.INVENTORY_COUNT.value: 1,
+    InventoryTransactionTypeEnum.OPENING_BALANCE.value: 1,
+    InventoryTransactionTypeEnum.INTERNAL_USE.value: -1,
     InventoryTransactionTypeEnum.COST_ADJUSTMENT.value: 0,
 }
 
@@ -174,6 +180,17 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
     """A raw material, semi-finished good, or tracked retail item."""
 
     __tablename__ = "inventory_items"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('raw_material', 'packaging', 'semi_finished', "
+            "'produced_good', 'resale_good')",
+            name="ck_inventory_item_kind",
+        ),
+        CheckConstraint(
+            "tracking_mode IN ('stocked', 'phantom')",
+            name="ck_inventory_item_tracking_mode",
+        ),
+    )
 
     sku: Mapped[str] = mapped_column(
         String(100), unique=True, nullable=False, index=True
@@ -189,6 +206,16 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
         ForeignKey("inventory_categories.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="raw_material", index=True
+    )
+    tracking_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="stocked", index=True
+    )
+    storage_zone: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    count_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
     )
 
     # Units. Purchased in `storage_unit`, consumed in `ingredient_unit`.
@@ -292,6 +319,12 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
     last_counted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    projected_through_sequence: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
+    reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     item: Mapped[InventoryItem] = relationship("InventoryItem", back_populates="levels")
 
@@ -381,6 +414,9 @@ class InventoryTransaction(Base, UUIDMixin, TimestampMixin):
         status_vocabulary("inventory_transactions", "status", TransactionStatusEnum),
         # Migration 100.
         business_date_format("inventory_transactions"),
+        UniqueConstraint(
+            "idempotency_key", name="uq_inventory_transaction_idempotency"
+        ),
     )
 
     reference: Mapped[str] = mapped_column(
@@ -457,6 +493,27 @@ class InventoryTransaction(Base, UUIDMixin, TimestampMixin):
     posted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: Ledger truth follows this sequence, never a provider-supplied order time.
+    posting_sequence: Mapped[int | None] = mapped_column(
+        BigInteger, unique=True, nullable=True, index=True
+    )
+    source_accepted_sequence: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True, index=True
+    )
+    occurred_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reverses_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transactions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    correction_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
 
     items: Mapped[list[InventoryTransactionItem]] = relationship(
         "InventoryTransactionItem",
@@ -504,6 +561,10 @@ class InventoryTransactionItem(Base, UUIDMixin):
     quantity_in_ingredient_unit: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
+    #: Immutable signed movement used by projection rebuilds.
+    signed_quantity: Mapped[Any] = mapped_column(
+        Numeric(20, 6), nullable=False, server_default="0"
+    )
     unit_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
     )
@@ -512,6 +573,23 @@ class InventoryTransactionItem(Base, UUIDMixin):
     )
     #: Counts record what was expected so the variance is preserved.
     expected_quantity: Mapped[Any | None] = mapped_column(Numeric(16, 4), nullable=True)
+    balance_after_quantity: Mapped[Any | None] = mapped_column(
+        Numeric(20, 6), nullable=True
+    )
+    balance_after_value: Mapped[Any | None] = mapped_column(
+        Numeric(20, 4), nullable=True
+    )
+    recipe_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("recipe_versions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    recipe_path: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="[]")
+    lot_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_lots.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     transaction: Mapped[InventoryTransaction] = relationship(

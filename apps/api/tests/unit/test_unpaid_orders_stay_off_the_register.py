@@ -255,12 +255,15 @@ async def test_a_settled_payment_schedules_the_order_onto_the_kitchen(monkeypatc
     of `GatewayEvent` is that there is nothing below it to say twice.
     """
     from app.services.delivery import arrival_service
+    from app.services.inventory import source_event_service
     from app.services.payments import payment_service
 
     order = _order()
     scheduled = AsyncMock(return_value=None)
 
     monkeypatch.setattr(arrival_service, "schedule", scheduled)
+    inventory_acceptance = AsyncMock(return_value=None)
+    monkeypatch.setattr(source_event_service, "accept_order", inventory_acceptance)
     monkeypatch.setattr(
         payment_service.order_service, "to_response", AsyncMock(return_value=None)
     )
@@ -277,6 +280,7 @@ async def test_a_settled_payment_schedules_the_order_onto_the_kitchen(monkeypatc
 
     assert order.status == OrderStatusEnum.CONFIRMED
     scheduled.assert_awaited_once()
+    inventory_acceptance.assert_awaited_once()
 
 
 async def test_a_declined_card_publishes_nothing(monkeypatch):

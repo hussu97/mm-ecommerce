@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 Translations = dict[str, dict[str, str]]
 
 TransactionTypeLiteral = Literal[
+    "opening_balance",
+    "internal_use",
     "purchasing",
     "transfer_send",
     "transfer_receive",
@@ -123,6 +125,12 @@ class InventoryItemCreate(BaseModel):
     costing_method: Literal["fixed", "from_ingredients"] = "fixed"
     yield_percentage: Decimal = Field(Decimal("1"), gt=0, le=1)
     is_product: bool = False
+    kind: Literal[
+        "raw_material", "packaging", "semi_finished", "produced_good", "resale_good"
+    ] = "raw_material"
+    tracking_mode: Literal["stocked", "phantom"] = "stocked"
+    storage_zone: str | None = Field(None, max_length=100)
+    count_order: int = 0
     is_active: bool = True
 
 
@@ -143,6 +151,15 @@ class InventoryItemUpdate(BaseModel):
     costing_method: Literal["fixed", "from_ingredients"] | None = None
     yield_percentage: Decimal | None = Field(None, gt=0, le=1)
     is_product: bool | None = None
+    kind: (
+        Literal[
+            "raw_material", "packaging", "semi_finished", "produced_good", "resale_good"
+        ]
+        | None
+    ) = None
+    tracking_mode: Literal["stocked", "phantom"] | None = None
+    storage_zone: str | None = Field(None, max_length=100)
+    count_order: int | None = None
     is_active: bool | None = None
 
 
@@ -164,6 +181,10 @@ class InventoryItemResponse(ORMModel):
     costing_method: str
     yield_percentage: Decimal
     is_product: bool
+    kind: str
+    tracking_mode: str
+    storage_zone: str | None
+    count_order: int
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -179,6 +200,8 @@ class InventoryLevelResponse(ORMModel):
     quantity: Decimal
     average_cost: Decimal
     last_counted_at: datetime | None
+    projected_through_sequence: int | None = None
+    reconciled_at: datetime | None = None
     item_name: str | None = None
     item_sku: str | None = None
     ingredient_unit: str | None = None
@@ -290,6 +313,12 @@ class TransactionLineResponse(ORMModel):
     quantity_in_ingredient_unit: Decimal
     unit_cost: Decimal
     total_cost: Decimal
+    signed_quantity: Decimal | None = None
+    balance_after_quantity: Decimal | None = None
+    balance_after_value: Decimal | None = None
+    recipe_version_id: UUID | None = None
+    recipe_path: list[dict] = []
+    lot_id: UUID | None = None
     expected_quantity: Decimal | None
     notes: str | None
     item_name: str | None = None
@@ -318,6 +347,14 @@ class InventoryTransactionResponse(ORMModel):
     creator_id: UUID | None
     poster_id: UUID | None
     posted_at: datetime | None
+    posting_sequence: int | None = None
+    source_accepted_sequence: int | None = None
+    occurred_at: datetime | None = None
+    idempotency_key: str | None = None
+    source_type: str | None = None
+    source_id: str | None = None
+    reverses_transaction_id: UUID | None = None
+    correction_group_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
     items: list[TransactionLineResponse] = []

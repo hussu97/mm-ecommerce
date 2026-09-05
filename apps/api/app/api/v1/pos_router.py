@@ -20,6 +20,7 @@ from .business_settings import router as business_settings_router
 from .categories import router as categories_router
 from .devices import printers_router
 from .devices import router as devices_router
+from .inventory_v2 import pos_inventory_router
 from .marketing import (
     discounts_router,
     promotions_router,
@@ -101,6 +102,9 @@ pos_api_router.include_router(
 # ─── What a shift lead looks at ───────────────────────────────────────────────
 pos_api_router.include_router(
     pos_reports_router, prefix="/pos/reports", tags=["POS Reports"]
+)
+pos_api_router.include_router(
+    pos_inventory_router, prefix="/pos/inventory", tags=["POS Inventory"]
 )
 pos_api_router.include_router(
     dashboard_router, prefix="/pos/dashboard", tags=["POS Dashboard"]

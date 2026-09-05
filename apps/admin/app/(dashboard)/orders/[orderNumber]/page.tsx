@@ -20,6 +20,7 @@ import type { Schemas } from '@mm/types';
 // types, since it is new.
 type OrderAdminDetails = Schemas['OrderAdminDetails'];
 type TimelineEntry = Schemas['OrderTimelineEntry'];
+type OrderInventoryConsumption = Schemas['OrderInventoryConsumptionResponse'];
 import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useConfirm, useToast } from '@/components/ui/feedback';
@@ -69,6 +70,8 @@ export default function OrderDetailPage() {
   // and the unified status timeline (MM lifecycle + the marketplace's own trace).
   // Its own request, like economics — context, not the page.
   const [details, setDetails] = useState<OrderAdminDetails | null>(null);
+  const [inventoryConsumption, setInventoryConsumption] = useState<OrderInventoryConsumption | null>(null);
+  const [returnProportion, setReturnProportion] = useState('1');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
@@ -140,6 +143,41 @@ export default function OrderDetailPage() {
   useEffect(() => {
     ordersApi.getEconomics(orderNumber).then(setEconomics).catch(() => setEconomics(null));
   }, [orderNumber, order?.status, order?.refunded_amount, delivery?.cost_total]);
+
+  useEffect(() => {
+    if (!order?.id) return;
+    ordersApi.inventoryConsumption(order.id)
+      .then(setInventoryConsumption)
+      .catch(() => setInventoryConsumption(null));
+  }, [order?.id, order?.status]);
+
+  async function recordInventoryReturn(
+    disposition: 'restock' | 'waste' | 'no_inventory_effect',
+  ) {
+    if (!order?.id) return;
+    const proportion = Number(returnProportion);
+    if (!(proportion > 0 && proportion <= 1)) {
+      toast.error('Return proportion must be greater than 0 and at most 1.');
+      return;
+    }
+    const label = disposition === 'restock' ? 'restock returned items' : disposition === 'waste' ? 'record returned items as waste' : 'record no stock effect';
+    if (!(await confirmDialog({
+      title: 'Record inventory disposition',
+      message: `This will ${label} for ${Math.round(proportion * 100)}% of the original immutable consumption. Historical recipe and cost snapshots will be used.`,
+      confirmLabel: 'Record disposition',
+      danger: disposition === 'waste',
+    }))) return;
+    setActionLoading(true);
+    try {
+      await ordersApi.inventoryReturn(order.id, disposition, String(proportion));
+      setInventoryConsumption(await ordersApi.inventoryConsumption(order.id));
+      toast.success('Inventory disposition recorded.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not record inventory disposition.');
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   async function updateStatus(newStatus: OrderStatus) {
     if (!order) return;
@@ -998,6 +1036,109 @@ export default function OrderDetailPage() {
         </div>
         {economics && <NetPayment economics={economics} order={order} />}
       </div>
+
+      {/* Posted movements are accounting truth. The recursive plan below is
+          deliberately separate: it explains raw-material attribution for a
+          stocked produced item without pretending those materials were posted
+          a second time at sale. */}
+      {inventoryConsumption && (
+        <div className="bg-white border border-gray-200 mb-4">
+          <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+            <p className="text-[11px] font-body uppercase tracking-widest text-gray-400">
+              Inventory Consumption
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              Immutable movements posted for this order, in acceptance order.
+            </p>
+          </div>
+
+          {inventoryConsumption.warnings.length > 0 && (
+            <div className="mx-4 mt-3 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              {inventoryConsumption.warnings.map((warning, index) => (
+                <p key={`${warning}-${index}`}>{warning}</p>
+              ))}
+            </div>
+          )}
+
+          {inventoryConsumption.transactions.length === 0 ? (
+            <p className="px-4 py-4 text-sm text-gray-400">
+              No inventory movement has been posted for this order.
+            </p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {inventoryConsumption.transactions.map(transaction => (
+                <div key={transaction.id} className="px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <span className="text-sm font-medium text-gray-800 capitalize">
+                        {transaction.type.replace(/_/g, ' ')}
+                      </span>
+                      <span className="ml-2 text-xs font-mono text-gray-400">
+                        {transaction.reference}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono text-gray-500">
+                      Sequence {transaction.posting_sequence ?? 'pending'}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {transaction.lines.map((line, index) => (
+                      <div key={`${line.item_id}-${index}`} className="grid grid-cols-[1fr_auto] gap-x-4 text-xs">
+                        <div>
+                          <p className="text-gray-800">{line.item_name}</p>
+                          <p className="font-mono text-[10px] text-gray-400">{line.item_sku}</p>
+                          {line.recipe_version_id && (
+                            <p className="mt-0.5 text-[10px] text-gray-400">
+                              Recipe {line.recipe_version_id}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right tabular-nums">
+                          <p className={Number(line.signed_quantity) < 0 ? 'text-red-700' : 'text-green-700'}>
+                            {Number(line.signed_quantity) > 0 ? '+' : ''}{line.signed_quantity} {line.unit}
+                          </p>
+                          <p className="text-[10px] text-gray-400">
+                            Balance {line.balance_after_quantity ?? '—'}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {inventoryConsumption.theoretical_plan && (
+            <details className="border-t border-gray-100 px-4 py-3">
+              <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                Theoretical recursive recipe attribution
+              </summary>
+              <p className="mt-2 text-[11px] text-gray-500">
+                Analytical only. Stocked sub-recipes stop at their finished-good item; phantom sub-recipes expand.
+              </p>
+              <pre className="mt-2 max-h-72 overflow-auto bg-gray-50 p-3 text-[10px] text-gray-600">
+                {JSON.stringify(inventoryConsumption.theoretical_plan, null, 2)}
+              </pre>
+            </details>
+          )}
+          {inventoryConsumption.transactions.length > 0 && (
+            <div className="border-t border-gray-100 px-4 py-3">
+              <p className="text-xs font-medium text-gray-700">Return / cancellation disposition</p>
+              <p className="mt-1 text-[11px] text-gray-500">Uses the original recipe and cost snapshots. Enter 0.5 for a half return.</p>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="text-[11px] text-gray-500">
+                  Proportion
+                  <input className="mt-1 block w-24 border border-gray-300 px-2 py-1.5 text-xs" type="number" min="0.0001" max="1" step="0.0001" value={returnProportion} onChange={(event) => setReturnProportion(event.target.value)} />
+                </label>
+                <Button size="sm" variant="outline" loading={actionLoading} onClick={() => void recordInventoryReturn('restock')}>Restock</Button>
+                <Button size="sm" variant="danger" loading={actionLoading} onClick={() => void recordInventoryReturn('waste')}>Waste</Button>
+                <Button size="sm" variant="ghost" loading={actionLoading} onClick={() => void recordInventoryReturn('no_inventory_effect')}>No stock effect</Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Admin Notes */}
       <div className="bg-white border border-gray-200 p-4">

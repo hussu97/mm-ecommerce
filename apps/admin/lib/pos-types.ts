@@ -388,6 +388,10 @@ export interface InventoryItem {
   costing_method: 'fixed' | 'from_ingredients';
   yield_percentage: number;
   is_product: boolean;
+  kind: 'raw_material' | 'packaging' | 'semi_finished' | 'produced_good' | 'resale_good';
+  tracking_mode: 'stocked' | 'phantom';
+  storage_zone: string | null;
+  count_order: number;
   is_active: boolean;
   deleted_at: string | null;
 }
@@ -399,6 +403,8 @@ export interface InventoryLevel {
   quantity: number;
   average_cost: number;
   last_counted_at: string | null;
+  projected_through_sequence: number | null;
+  reconciled_at: string | null;
   item_name: string | null;
   item_sku: string | null;
   ingredient_unit: string | null;
@@ -460,6 +466,11 @@ export interface InventoryTransaction {
   total_cost: number;
   notes: string | null;
   posted_at: string | null;
+  posting_sequence: number | null;
+  source_type: string | null;
+  source_id: string | null;
+  reverses_transaction_id: string | null;
+  correction_group_id: string | null;
   created_at: string;
   items: Array<{
     id: string;
@@ -468,6 +479,9 @@ export interface InventoryTransaction {
     unit: string;
     unit_cost: number;
     total_cost: number;
+    signed_quantity: number | null;
+    balance_after_quantity: number | null;
+    recipe_version_id: string | null;
     item_name: string | null;
     item_sku: string | null;
   }>;

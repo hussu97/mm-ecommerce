@@ -44,6 +44,7 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
     ],
     "Inventory": [
         ("inventory.read", "View inventory items, suppliers and stock levels"),
+        ("inventory.ledger.read", "View immutable inventory movement history"),
         ("inventory.manage", "Edit inventory items and suppliers"),
         (
             "inventory.adjustments.manage",
@@ -57,6 +58,9 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         # Kept apart from `.manage` on purpose: whoever raises the order must
         # not be the one who approves it.
         ("inventory.purchase_orders.approve", "Approve purchase orders"),
+        ("inventory.reports.submit", "Submit and defer branch inventory reports"),
+        ("inventory.counts.approve", "Approve stock counts and variances"),
+        ("inventory.projection.rebuild", "Rebuild cached balances from the ledger"),
     ],
     "Customers": [
         # Likewise no `customers.manage`: the console lists customers and their

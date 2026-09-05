@@ -3046,6 +3046,20 @@
         "title": "Body_import_products_api_v1_import_products_post",
         "type": "object"
       },
+      "Body_preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post",
+        "type": "object"
+      },
       "Body_upload_image_api_v1_uploads_image_post": {
         "properties": {
           "file": {
@@ -3633,6 +3647,181 @@
           "created_at"
         ],
         "title": "BranchHoursSyncRunOut",
+        "type": "object"
+      },
+      "BranchInventorySettingsResponse": {
+        "properties": {
+          "allow_negative_stock": {
+            "title": "Allow Negative Stock",
+            "type": "boolean"
+          },
+          "approval_cost_threshold": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Approval Cost Threshold",
+            "type": "string"
+          },
+          "approval_variance_percent": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Approval Variance Percent",
+            "type": "string"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "go_live_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Go Live At"
+          },
+          "go_live_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Go Live Sequence"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inventory_enabled": {
+            "title": "Inventory Enabled",
+            "type": "boolean"
+          },
+          "production_enabled": {
+            "title": "Production Enabled",
+            "type": "boolean"
+          },
+          "sales_consumption_enabled": {
+            "title": "Sales Consumption Enabled",
+            "type": "boolean"
+          },
+          "validation_mode": {
+            "title": "Validation Mode",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "inventory_enabled",
+          "production_enabled",
+          "sales_consumption_enabled",
+          "validation_mode",
+          "allow_negative_stock",
+          "approval_cost_threshold",
+          "approval_variance_percent",
+          "go_live_sequence",
+          "go_live_at"
+        ],
+        "title": "BranchInventorySettingsResponse",
+        "type": "object"
+      },
+      "BranchInventorySettingsUpdate": {
+        "properties": {
+          "allow_negative_stock": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Negative Stock"
+          },
+          "approval_cost_threshold": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Cost Threshold"
+          },
+          "approval_variance_percent": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Variance Percent"
+          },
+          "inventory_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventory Enabled"
+          },
+          "production_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Enabled"
+          },
+          "sales_consumption_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sales Consumption Enabled"
+          },
+          "validation_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation Mode"
+          }
+        },
+        "title": "BranchInventorySettingsUpdate",
         "type": "object"
       },
       "BranchLive": {
@@ -10004,6 +10193,49 @@
         "title": "EventCount",
         "type": "object"
       },
+      "ExpandedInventoryLine": {
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "paths": {
+            "items": {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "recipe_version_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Recipe Version Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "item_id",
+          "quantity",
+          "recipe_version_ids",
+          "paths"
+        ],
+        "title": "ExpandedInventoryLine",
+        "type": "object"
+      },
       "FulfilmentOptionsResponse": {
         "description": "Where this order may go, and what stands in the way. **Admin only.**",
         "properties": {
@@ -11002,6 +11234,11 @@
             "title": "Costing Method",
             "type": "string"
           },
+          "count_order": {
+            "default": 0,
+            "title": "Count Order",
+            "type": "integer"
+          },
           "ingredient_unit": {
             "default": "unit",
             "maxLength": 30,
@@ -11017,6 +11254,18 @@
             "default": false,
             "title": "Is Product",
             "type": "boolean"
+          },
+          "kind": {
+            "default": "raw_material",
+            "enum": [
+              "raw_material",
+              "packaging",
+              "semi_finished",
+              "produced_good",
+              "resale_good"
+            ],
+            "title": "Kind",
+            "type": "string"
           },
           "maximum_level": {
             "anyOf": [
@@ -11104,6 +11353,27 @@
             "title": "Storage Unit",
             "type": "string"
           },
+          "storage_zone": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Zone"
+          },
+          "tracking_mode": {
+            "default": "stocked",
+            "enum": [
+              "stocked",
+              "phantom"
+            ],
+            "title": "Tracking Mode",
+            "type": "string"
+          },
           "translations": {
             "additionalProperties": {
               "additionalProperties": {
@@ -11171,6 +11441,10 @@
             "title": "Costing Method",
             "type": "string"
           },
+          "count_order": {
+            "title": "Count Order",
+            "type": "integer"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -11192,6 +11466,10 @@
           "is_product": {
             "title": "Is Product",
             "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
           },
           "maximum_level": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -11260,6 +11538,21 @@
             "title": "Storage Unit",
             "type": "string"
           },
+          "storage_zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Zone"
+          },
+          "tracking_mode": {
+            "title": "Tracking Mode",
+            "type": "string"
+          },
           "translations": {
             "additionalProperties": {
               "additionalProperties": {
@@ -11299,6 +11592,10 @@
           "costing_method",
           "yield_percentage",
           "is_product",
+          "kind",
+          "tracking_mode",
+          "storage_zone",
+          "count_order",
           "is_active",
           "created_at",
           "updated_at"
@@ -11363,6 +11660,17 @@
             ],
             "title": "Costing Method"
           },
+          "count_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count Order"
+          },
           "ingredient_unit": {
             "anyOf": [
               {
@@ -11396,6 +11704,24 @@
               }
             ],
             "title": "Is Product"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "raw_material",
+                  "packaging",
+                  "semi_finished",
+                  "produced_good",
+                  "resale_good"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
           },
           "maximum_level": {
             "anyOf": [
@@ -11510,6 +11836,33 @@
               }
             ],
             "title": "Storage Unit"
+          },
+          "storage_zone": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Zone"
+          },
+          "tracking_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "stocked",
+                  "phantom"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracking Mode"
           },
           "translations": {
             "anyOf": [
@@ -11640,10 +11993,33 @@
             ],
             "title": "Par Level"
           },
+          "projected_through_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projected Through Sequence"
+          },
           "quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity",
             "type": "string"
+          },
+          "reconciled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconciled At"
           },
           "total_value": {
             "anyOf": [
@@ -11802,6 +12178,8 @@
           },
           "type": {
             "enum": [
+              "opening_balance",
+              "internal_use",
               "purchasing",
               "transfer_send",
               "transfer_receive",
@@ -11857,6 +12235,18 @@
             "title": "Business Date",
             "type": "string"
           },
+          "correction_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Group Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -11878,6 +12268,17 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
           },
           "invoice_date": {
             "anyOf": [
@@ -11920,6 +12321,18 @@
               }
             ],
             "title": "Notes"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
           },
           "order_id": {
             "anyOf": [
@@ -11974,6 +12387,17 @@
             ],
             "title": "Poster Id"
           },
+          "posting_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posting Sequence"
+          },
           "purchase_order_id": {
             "anyOf": [
               {
@@ -12001,6 +12425,51 @@
           "reference": {
             "title": "Reference",
             "type": "string"
+          },
+          "reverses_transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverses Transaction Id"
+          },
+          "source_accepted_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Accepted Sequence"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
           },
           "status": {
             "title": "Status",
@@ -15930,6 +16399,284 @@
           "direct_cost_threshold"
         ],
         "title": "OrderEconomicsResponse",
+        "type": "object"
+      },
+      "OrderInventoryConsumptionResponse": {
+        "properties": {
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "source_events": {
+            "items": {
+              "$ref": "#/components/schemas/OrderInventorySourceEvent"
+            },
+            "title": "Source Events",
+            "type": "array"
+          },
+          "theoretical_plan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theoretical Plan"
+          },
+          "transactions": {
+            "items": {
+              "$ref": "#/components/schemas/OrderInventoryMovement"
+            },
+            "title": "Transactions",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "order_id",
+          "transactions",
+          "source_events",
+          "theoretical_plan",
+          "warnings"
+        ],
+        "title": "OrderInventoryConsumptionResponse",
+        "type": "object"
+      },
+      "OrderInventoryMovement": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/OrderInventoryMovementLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "posting_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posting Sequence"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "type",
+          "posting_sequence",
+          "posted_at",
+          "lines"
+        ],
+        "title": "OrderInventoryMovement",
+        "type": "object"
+      },
+      "OrderInventoryMovementLine": {
+        "properties": {
+          "balance_after_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance After Quantity"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "title": "Item Name",
+            "type": "string"
+          },
+          "item_sku": {
+            "title": "Item Sku",
+            "type": "string"
+          },
+          "recipe_path": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recipe Path",
+            "type": "array"
+          },
+          "recipe_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe Version Id"
+          },
+          "signed_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Signed Quantity",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "item_name",
+          "item_sku",
+          "unit",
+          "signed_quantity",
+          "balance_after_quantity",
+          "recipe_version_id",
+          "recipe_path"
+        ],
+        "title": "OrderInventoryMovementLine",
+        "type": "object"
+      },
+      "OrderInventoryReturnRequest": {
+        "properties": {
+          "disposition": {
+            "enum": [
+              "restock",
+              "waste",
+              "no_inventory_effect"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "proportion": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "1",
+            "title": "Proportion"
+          }
+        },
+        "required": [
+          "disposition",
+          "idempotency_key"
+        ],
+        "title": "OrderInventoryReturnRequest",
+        "type": "object"
+      },
+      "OrderInventorySourceEvent": {
+        "properties": {
+          "accepted_sequence": {
+            "title": "Accepted Sequence",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "accepted_sequence",
+          "status",
+          "error_code",
+          "error_detail"
+        ],
+        "title": "OrderInventorySourceEvent",
         "type": "object"
       },
       "OrderListResponse": {
@@ -20873,6 +21620,62 @@
         "title": "ProductUpdate",
         "type": "object"
       },
+      "ProjectionDriftResponse": {
+        "properties": {
+          "cached_average_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cached Average Cost",
+            "type": "string"
+          },
+          "cached_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cached Quantity",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "ledger_average_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Ledger Average Cost",
+            "type": "string"
+          },
+          "ledger_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Ledger Quantity",
+            "type": "string"
+          },
+          "through_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Through Sequence"
+          },
+          "warehouse_id": {
+            "format": "uuid",
+            "title": "Warehouse Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "warehouse_id",
+          "cached_quantity",
+          "ledger_quantity",
+          "cached_average_cost",
+          "ledger_average_cost",
+          "through_sequence"
+        ],
+        "title": "ProjectionDriftResponse",
+        "type": "object"
+      },
       "PromoCodeAdvertResponse": {
         "description": "The one coupon the storefront is allowed to put on a page.\n\nDeliberately a different shape from `PromoCodeResponse` rather than a reuse\nof it. That one is an admin's view of a campaign and carries how it is\ndoing; this one is public, and answers only what a shopper needs in order to\ndecide: what to type, what it takes off, the ceiling on that, and how many\norders it covers.\n\n`current_uses` and `max_uses` are the fields most obviously missing, and\ntheir absence is the point. A public counter tells anyone watching how close\na code is to exhaustion, which is an invitation to burn the rest of it \u2014 and\nit is a number the customer can do nothing with either way.",
         "properties": {
@@ -23426,6 +24229,102 @@
         "title": "ReceivePurchaseOrderRequest",
         "type": "object"
       },
+      "RecipeDraftRequest": {
+        "properties": {
+          "ingredients": {
+            "items": {
+              "$ref": "#/components/schemas/VersionedRecipeLineInput"
+            },
+            "minItems": 1,
+            "title": "Ingredients",
+            "type": "array"
+          },
+          "source": {
+            "default": "mm",
+            "maxLength": 30,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_metadata": {
+            "additionalProperties": true,
+            "title": "Source Metadata",
+            "type": "object"
+          },
+          "source_payload_hash": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Payload Hash"
+          }
+        },
+        "required": [
+          "ingredients"
+        ],
+        "title": "RecipeDraftRequest",
+        "type": "object"
+      },
+      "RecipeExpansionRequest": {
+        "properties": {
+          "multiplier": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "1",
+            "title": "Multiplier"
+          },
+          "order_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Type"
+          }
+        },
+        "title": "RecipeExpansionRequest",
+        "type": "object"
+      },
+      "RecipeExpansionResponse": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ExpandedInventoryLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "recipe_version_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Recipe Version Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines",
+          "recipe_version_ids"
+        ],
+        "title": "RecipeExpansionResponse",
+        "type": "object"
+      },
       "RecipeLine": {
         "properties": {
           "inactive_in_order_types": {
@@ -23591,6 +24490,118 @@
           }
         },
         "title": "RecipeUpsert",
+        "type": "object"
+      },
+      "RecipeVersionResponse": {
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "activated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated By"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/VersionedRecipeLineResponse"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "recipe_id": {
+            "format": "uuid",
+            "title": "Recipe Id",
+            "type": "string"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retired At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_metadata": {
+            "additionalProperties": true,
+            "title": "Source Metadata",
+            "type": "object"
+          },
+          "source_payload_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Payload Hash"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version_number": {
+            "title": "Version Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "recipe_id",
+          "version_number",
+          "status",
+          "source",
+          "source_payload_hash",
+          "source_metadata",
+          "activated_at",
+          "activated_by",
+          "retired_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RecipeVersionResponse",
         "type": "object"
       },
       "ReconSummaryOut": {
@@ -23983,6 +24994,365 @@
         "title": "RefreshRequest",
         "type": "object"
       },
+      "ReportActionRequest": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ReportActionRequest",
+        "type": "object"
+      },
+      "ReportLineSave": {
+        "properties": {
+          "confirmed": {
+            "default": false,
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "entered_quantity": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entered Quantity"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "override_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Reason"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "ReportLineSave",
+        "type": "object"
+      },
+      "ReportSaveRequest": {
+        "properties": {
+          "base_posting_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Posting Sequence"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/ReportLineSave"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "lines"
+        ],
+        "title": "ReportSaveRequest",
+        "type": "object"
+      },
+      "ReportTemplateItemInput": {
+        "properties": {
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "required_input": {
+            "default": "physical_count",
+            "enum": [
+              "physical_count",
+              "production",
+              "internal_use",
+              "waste",
+              "receipt"
+            ],
+            "title": "Required Input",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "ReportTemplateItemInput",
+        "type": "object"
+      },
+      "ReportTemplateItemResponse": {
+        "properties": {
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "required_input": {
+            "title": "Required Input",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "display_order",
+          "required_input"
+        ],
+        "title": "ReportTemplateItemResponse",
+        "type": "object"
+      },
+      "ReportTemplateResponse": {
+        "properties": {
+          "approval_cost_threshold": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Cost Threshold"
+          },
+          "approval_variance_percent": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Variance Percent"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "cadence": {
+            "title": "Cadence",
+            "type": "string"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "title": "Configuration",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_required": {
+            "title": "Is Required",
+            "type": "boolean"
+          },
+          "items": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ReportTemplateItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "report_type": {
+            "title": "Report Type",
+            "type": "string"
+          },
+          "version_number": {
+            "title": "Version Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "name",
+          "report_type",
+          "cadence",
+          "is_required",
+          "is_active",
+          "version_number",
+          "configuration",
+          "approval_cost_threshold",
+          "approval_variance_percent"
+        ],
+        "title": "ReportTemplateResponse",
+        "type": "object"
+      },
+      "ReportTemplateUpsert": {
+        "properties": {
+          "approval_cost_threshold": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Cost Threshold"
+          },
+          "approval_variance_percent": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Variance Percent"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "cadence": {
+            "default": "per_till",
+            "enum": [
+              "per_till",
+              "per_business_day",
+              "ad_hoc"
+            ],
+            "title": "Cadence",
+            "type": "string"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "title": "Configuration",
+            "type": "object"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_required": {
+            "default": false,
+            "title": "Is Required",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportTemplateItemInput"
+            },
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "report_type": {
+            "enum": [
+              "production",
+              "finished_goods",
+              "raw_materials",
+              "packaging",
+              "spot_check"
+            ],
+            "title": "Report Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "branch_id",
+          "name",
+          "report_type",
+          "items"
+        ],
+        "title": "ReportTemplateUpsert",
+        "type": "object"
+      },
       "ReturnItemRequest": {
         "properties": {
           "quantity": {
@@ -24066,6 +25436,21 @@
           "revenue"
         ],
         "title": "RevenuePoint",
+        "type": "object"
+      },
+      "ReverseTransactionRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ReverseTransactionRequest",
         "type": "object"
       },
       "RoleCreate": {
@@ -24985,6 +26370,322 @@
         "title": "SettlementStatementRecon",
         "type": "object"
       },
+      "ShiftReportLineResponse": {
+        "properties": {
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "entered_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entered Quantity"
+          },
+          "expected_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Expected Quantity",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "internal_use_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Internal Use Quantity",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "opening_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Opening Quantity",
+            "type": "string"
+          },
+          "override_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Reason"
+          },
+          "production_consumption_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Production Consumption Quantity",
+            "type": "string"
+          },
+          "production_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Production Quantity",
+            "type": "string"
+          },
+          "purchasing_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Purchasing Quantity",
+            "type": "string"
+          },
+          "sales_consumption_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Sales Consumption Quantity",
+            "type": "string"
+          },
+          "source_summary": {
+            "additionalProperties": true,
+            "title": "Source Summary",
+            "type": "object"
+          },
+          "transfer_in_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Transfer In Quantity",
+            "type": "string"
+          },
+          "transfer_out_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Transfer Out Quantity",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "variance_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance Cost"
+          },
+          "variance_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance Quantity"
+          },
+          "waste_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Waste Quantity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "unit",
+          "opening_quantity",
+          "purchasing_quantity",
+          "transfer_in_quantity",
+          "production_quantity",
+          "sales_consumption_quantity",
+          "production_consumption_quantity",
+          "transfer_out_quantity",
+          "waste_quantity",
+          "internal_use_quantity",
+          "expected_quantity",
+          "entered_quantity",
+          "confirmed",
+          "variance_quantity",
+          "variance_cost",
+          "override_reason",
+          "source_summary"
+        ],
+        "title": "ShiftReportLineResponse",
+        "type": "object"
+      },
+      "ShiftReportResponse": {
+        "properties": {
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "base_posting_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Posting Sequence"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "deferred_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deferred Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ShiftReportLineResponse"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "submitted_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted By"
+          },
+          "template_id": {
+            "format": "uuid",
+            "title": "Template Id",
+            "type": "string"
+          },
+          "template_snapshot": {
+            "additionalProperties": true,
+            "title": "Template Snapshot",
+            "type": "object"
+          },
+          "till_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Till Id"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          }
+        },
+        "required": [
+          "id",
+          "template_id",
+          "branch_id",
+          "till_id",
+          "business_date",
+          "status",
+          "idempotency_key",
+          "template_snapshot",
+          "base_posting_sequence",
+          "notes",
+          "deferred_reason",
+          "submitted_by",
+          "approved_by",
+          "submitted_at",
+          "approved_at",
+          "transaction_id"
+        ],
+        "title": "ShiftReportResponse",
+        "type": "object"
+      },
       "SplitOrderRequest": {
         "properties": {
           "item_ids": {
@@ -25448,6 +27149,220 @@
           }
         },
         "title": "StaffUpdate",
+        "type": "object"
+      },
+      "StockAuditPreviewResponse": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/StockAuditPreviewRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "branch_id",
+          "rows",
+          "valid"
+        ],
+        "title": "StockAuditPreviewResponse",
+        "type": "object"
+      },
+      "StockAuditPreviewRow": {
+        "properties": {
+          "counted_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Counted Quantity",
+            "type": "string"
+          },
+          "delta_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Quantity"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "expected_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Quantity"
+          },
+          "item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Id"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          },
+          "sku": {
+            "title": "Sku",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku",
+          "item_id",
+          "item_name",
+          "unit",
+          "expected_quantity",
+          "counted_quantity",
+          "delta_quantity",
+          "remark",
+          "errors"
+        ],
+        "title": "StockAuditPreviewRow",
+        "type": "object"
+      },
+      "StockAuditRequest": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/StockAuditRowInput"
+            },
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "branch_id",
+          "idempotency_key",
+          "rows"
+        ],
+        "title": "StockAuditRequest",
+        "type": "object"
+      },
+      "StockAuditRowInput": {
+        "properties": {
+          "counted_quantity": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Counted Quantity"
+          },
+          "remark": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remark"
+          },
+          "sku": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Sku",
+            "type": "string"
+          },
+          "unit": {
+            "default": "ingredient",
+            "enum": [
+              "storage",
+              "ingredient"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sku",
+          "counted_quantity"
+        ],
+        "title": "StockAuditRowInput",
         "type": "object"
       },
       "SupplierCreate": {
@@ -28576,6 +30491,30 @@
       },
       "TransactionLineResponse": {
         "properties": {
+          "balance_after_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance After Quantity"
+          },
+          "balance_after_value": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance After Value"
+          },
           "conversion_factor": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Conversion Factor",
@@ -28625,6 +30564,18 @@
             ],
             "title": "Item Sku"
           },
+          "lot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lot Id"
+          },
           "notes": {
             "anyOf": [
               {
@@ -28645,6 +30596,39 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Quantity In Ingredient Unit",
             "type": "string"
+          },
+          "recipe_path": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Recipe Path",
+            "type": "array"
+          },
+          "recipe_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipe Version Id"
+          },
+          "signed_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signed Quantity"
           },
           "total_cost": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -29372,6 +31356,188 @@
           "polygons"
         ],
         "title": "VersionResponse",
+        "type": "object"
+      },
+      "VersionedRecipeLineInput": {
+        "properties": {
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "inactive_in_order_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Inactive In Order Types",
+            "type": "array"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "source_metadata": {
+            "additionalProperties": true,
+            "title": "Source Metadata",
+            "type": "object"
+          },
+          "yield_percentage": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "1",
+            "title": "Yield Percentage"
+          }
+        },
+        "required": [
+          "item_id",
+          "quantity"
+        ],
+        "title": "VersionedRecipeLineInput",
+        "type": "object"
+      },
+      "VersionedRecipeLineResponse": {
+        "properties": {
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inactive_in_order_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Inactive In Order Types",
+            "type": "array"
+          },
+          "ingredient_unit": {
+            "title": "Ingredient Unit",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "source_metadata": {
+            "additionalProperties": true,
+            "title": "Source Metadata",
+            "type": "object"
+          },
+          "yield_percentage": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Yield Percentage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "quantity",
+          "ingredient_unit",
+          "yield_percentage",
+          "inactive_in_order_types",
+          "display_order",
+          "source_metadata"
+        ],
+        "title": "VersionedRecipeLineResponse",
+        "type": "object"
+      },
+      "VersionedRecipeResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "inventory_item_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inventory Item Id"
+          },
+          "modifier_option_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modifier Option Id"
+          },
+          "owner_kind": {
+            "title": "Owner Kind",
+            "type": "string"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Product Id"
+          },
+          "versions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RecipeVersionResponse"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "owner_kind",
+          "product_id",
+          "modifier_option_id",
+          "inventory_item_id"
+        ],
+        "title": "VersionedRecipeResponse",
         "type": "object"
       },
       "VoidItemRequest": {
@@ -41892,6 +44058,110 @@
         ]
       }
     },
+    "/api/v1/inventory/branch-settings/{branch_id}": {
+      "get": {
+        "operationId": "get_branch_inventory_settings_api_v1_inventory_branch_settings__branch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchInventorySettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Branch Inventory Settings",
+        "tags": [
+          "Inventory Control"
+        ]
+      },
+      "patch": {
+        "operationId": "update_branch_inventory_settings_api_v1_inventory_branch_settings__branch_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchInventorySettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchInventorySettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Branch Inventory Settings",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/categories": {
       "get": {
         "operationId": "list_items_api_v1_inventory_categories_get",
@@ -42862,6 +45132,110 @@
         ]
       }
     },
+    "/api/v1/inventory/projection-drift": {
+      "get": {
+        "operationId": "preview_projection_drift_api_v1_inventory_projection_drift_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectionDriftResponse"
+                  },
+                  "title": "Response Preview Projection Drift Api V1 Inventory Projection Drift Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Preview Projection Drift",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/projection-rebuild": {
+      "post": {
+        "operationId": "rebuild_projection_api_v1_inventory_projection_rebuild_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectionDriftResponse"
+                  },
+                  "title": "Response Rebuild Projection Api V1 Inventory Projection Rebuild Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Rebuild Projection",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/purchase-orders": {
       "get": {
         "operationId": "list_purchase_orders_api_v1_inventory_purchase_orders_get",
@@ -43317,6 +45691,245 @@
         ]
       }
     },
+    "/api/v1/inventory/recipes-v2/versions/{version_id}/activate": {
+      "post": {
+        "operationId": "activate_recipe_version_api_v1_inventory_recipes_v2_versions__version_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Activate Recipe Version",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/recipes-v2/{owner_kind}/{owner_id}": {
+      "get": {
+        "operationId": "get_versioned_recipe_api_v1_inventory_recipes_v2__owner_kind___owner_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_kind",
+            "required": true,
+            "schema": {
+              "title": "Owner Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionedRecipeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Versioned Recipe",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/recipes-v2/{owner_kind}/{owner_id}/draft": {
+      "put": {
+        "operationId": "put_recipe_draft_api_v1_inventory_recipes_v2__owner_kind___owner_id__draft_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_kind",
+            "required": true,
+            "schema": {
+              "title": "Owner Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeDraftRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeVersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Put Recipe Draft",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/recipes-v2/{owner_kind}/{owner_id}/expand": {
+      "post": {
+        "operationId": "expand_recipe_api_v1_inventory_recipes_v2__owner_kind___owner_id__expand_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_kind",
+            "required": true,
+            "schema": {
+              "title": "Owner Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "owner_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Owner Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeExpansionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeExpansionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Expand Recipe",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/recipes/modifier-options/{option_id}": {
       "put": {
         "operationId": "set_modifier_option_recipe_api_v1_inventory_recipes_modifier_options__option_id__put",
@@ -43421,7 +46034,7 @@
         ]
       },
       "put": {
-        "description": "Replace a product's recipe. Selling the product depletes these.",
+        "description": "Publish a new version and keep the legacy read model in sync.",
         "operationId": "set_product_recipe_api_v1_inventory_recipes_products__product_id__put",
         "parameters": [
           {
@@ -43475,6 +46088,393 @@
         "summary": "Set Product Recipe",
         "tags": [
           "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/report-templates": {
+      "get": {
+        "operationId": "list_report_templates_api_v1_inventory_report_templates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReportTemplateResponse"
+                  },
+                  "title": "Response List Report Templates Api V1 Inventory Report Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Report Templates",
+        "tags": [
+          "Inventory Control"
+        ]
+      },
+      "post": {
+        "operationId": "create_report_template_api_v1_inventory_report_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportTemplateUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Report Template",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/report-templates/{template_id}": {
+      "put": {
+        "operationId": "update_report_template_api_v1_inventory_report_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportTemplateUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Report Template",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/shift-reports": {
+      "get": {
+        "operationId": "list_shift_reports_api_v1_inventory_shift_reports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShiftReportResponse"
+                  },
+                  "title": "Response List Shift Reports Api V1 Inventory Shift Reports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Shift Reports",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/stock-audits/apply": {
+      "post": {
+        "operationId": "apply_stock_audit_api_v1_inventory_stock_audits_apply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StockAuditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockAuditPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Apply Stock Audit",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/stock-audits/file-preview": {
+      "post": {
+        "description": "Normalize a CSV/XLSX count sheet before it can create ledger deltas.",
+        "operationId": "preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockAuditPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Preview Stock Audit File",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/stock-audits/preview": {
+      "post": {
+        "operationId": "preview_stock_audit_api_v1_inventory_stock_audits_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StockAuditRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockAuditPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Preview Stock Audit",
+        "tags": [
+          "Inventory Control"
         ]
       }
     },
@@ -44274,6 +47274,64 @@
         "summary": "Post Transaction",
         "tags": [
           "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/transactions/{transaction_id}/reverse": {
+      "post": {
+        "operationId": "reverse_inventory_transaction_api_v1_inventory_transactions__transaction_id__reverse_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transaction_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Transaction Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseTransactionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryTransactionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reverse Inventory Transaction",
+        "tags": [
+          "Inventory Control"
         ]
       }
     },
@@ -46815,6 +49873,116 @@
         ]
       }
     },
+    "/api/v1/orders/{order_id}/inventory-consumption": {
+      "get": {
+        "operationId": "get_order_inventory_consumption_api_v1_orders__order_id__inventory_consumption_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderInventoryConsumptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Order Inventory Consumption",
+        "tags": [
+          "Order Inventory"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_id}/inventory-return": {
+      "post": {
+        "operationId": "post_order_inventory_return_api_v1_orders__order_id__inventory_return_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderInventoryReturnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InventoryTransactionResponse"
+                  },
+                  "title": "Response Post Order Inventory Return Api V1 Orders  Order Id  Inventory Return Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Post Order Inventory Return",
+        "tags": [
+          "Order Inventory"
+        ]
+      }
+    },
     "/api/v1/orders/{order_number}": {
       "get": {
         "description": "Get an order by order number. Authenticated users can only view their own\norders; unauthenticated callers must supply the order's email as proof\n(same scheme as /orders/track).",
@@ -48370,6 +51538,492 @@
         "summary": "Inventory Dashboard",
         "tags": [
           "POS Dashboard"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}": {
+      "put": {
+        "operationId": "save_shift_report_api_v1_pos_inventory_reports__report_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Save Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/approve": {
+      "post": {
+        "operationId": "approve_shift_report_api_v1_pos_inventory_reports__report_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Approve Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/defer": {
+      "post": {
+        "operationId": "defer_shift_report_api_v1_pos_inventory_reports__report_id__defer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Defer Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/refresh": {
+      "post": {
+        "operationId": "refresh_shift_report_api_v1_pos_inventory_reports__report_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Refresh Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/reject": {
+      "post": {
+        "operationId": "reject_shift_report_api_v1_pos_inventory_reports__report_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reject Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/skip": {
+      "post": {
+        "operationId": "skip_shift_report_api_v1_pos_inventory_reports__report_id__skip_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Skip Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/submit": {
+      "post": {
+        "operationId": "submit_shift_report_api_v1_pos_inventory_reports__report_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Submit Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/reports/{report_id}/waive": {
+      "post": {
+        "operationId": "waive_shift_report_api_v1_pos_inventory_reports__report_id__waive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Waive Shift Report",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/tasks": {
+      "get": {
+        "operationId": "inventory_tasks_for_till_api_v1_pos_inventory_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "till_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Till Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShiftReportResponse"
+                  },
+                  "title": "Response Inventory Tasks For Till Api V1 Pos Inventory Tasks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Inventory Tasks For Till",
+        "tags": [
+          "POS Inventory"
         ]
       }
     },

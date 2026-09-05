@@ -42,12 +42,13 @@ from app.models.inventory import (
     InventoryTransactionTypeEnum,
     TransactionStatusEnum,
 )
+from app.models.inventory_v2 import BranchInventorySettings
 from app.models.operations import (
     TransferOrder,
     TransferOrderStatusEnum,
 )
 from app.models.user import User
-from app.services.inventory import inventory_service
+from app.services.inventory import inventory_service, recipe_service
 from app.services.pos import business_day_service
 
 __all__ = [
@@ -359,6 +360,20 @@ async def produce(
     if output_quantity <= 0:
         raise BadRequestError("Production quantity must be positive")
 
+    branch_settings = (
+        await db.execute(
+            select(BranchInventorySettings).where(
+                BranchInventorySettings.branch_id == branch.id
+            )
+        )
+    ).scalar_one_or_none()
+    if (
+        branch_settings is None
+        or not branch_settings.inventory_enabled
+        or not branch_settings.production_enabled
+    ):
+        raise ConflictError("Inventory production is not enabled for this branch")
+
     item = await db.get(InventoryItem, item_id)
     if item is None:
         raise NotFoundError("Inventory item not found")
@@ -368,7 +383,7 @@ async def produce(
         warehouse_id or (await inventory_service.default_warehouse(db, branch.id)).id
     )
 
-    recipe = list(
+    legacy_recipe = list(
         (
             await db.execute(
                 select(InventoryItemIngredient).where(
@@ -383,7 +398,42 @@ async def produce(
     consumption: InventoryTransaction | None = None
     input_cost = Decimal("0")
 
-    if recipe:
+    expanded = None
+    used_versions: set[uuid.UUID] = set()
+    try:
+        expanded, used_versions = await recipe_service.expand_owner(
+            db,
+            kind="inventory_item",
+            owner_id=item_id,
+            multiplier=output_quantity,
+        )
+    except NotFoundError:
+        # One compatibility release: a legacy mutable recipe remains usable,
+        # while every newly edited recipe goes through versioning.
+        expanded = None
+
+    recipe_lines: list[tuple[uuid.UUID, Decimal, list, uuid.UUID | None]] = []
+    if expanded is not None:
+        for ingredient_id, line in expanded.items():
+            version_id = (
+                next(iter(line.recipe_version_ids))
+                if len(line.recipe_version_ids) == 1
+                else None
+            )
+            recipe_lines.append((ingredient_id, line.quantity, line.paths, version_id))
+    else:
+        recipe_lines = [
+            (
+                line.item_id,
+                _q(Decimal(str(line.quantity)) * output_quantity),
+                [],
+                None,
+            )
+            for line in legacy_recipe
+        ]
+
+    correction_group = uuid.uuid4()
+    if recipe_lines:
         consumption = InventoryTransaction(
             reference=await inventory_service.next_reference(
                 db, InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value
@@ -394,24 +444,29 @@ async def produce(
             warehouse_id=warehouse,
             business_date=business_date,
             creator_id=user.id,
+            correction_group_id=correction_group,
+            source_type="production",
+            source_id=str(item_id),
             notes=f"Ingredients for {output_quantity} x {item.name}",
+            items=[],
         )
         db.add(consumption)
         await db.flush()
 
-        for line in recipe:
-            ingredient = await db.get(InventoryItem, line.item_id)
-            used = _q(Decimal(str(line.quantity)) * output_quantity)
-            unit_cost = Decimal(str(ingredient.cost)) if ingredient else Decimal("0")
-            input_cost += used * unit_cost
-            db.add(
+        for ingredient_id, used, paths, version_id in recipe_lines:
+            ingredient = await db.get(InventoryItem, ingredient_id)
+            level = await inventory_service.level_for(db, ingredient_id, warehouse)
+            cost = _c(level.average_cost or (ingredient.cost if ingredient else 0))
+            input_cost += used * cost
+            consumption.items.append(
                 InventoryTransactionItem(
-                    transaction_id=consumption.id,
-                    item_id=line.item_id,
+                    item_id=ingredient_id,
                     quantity=used,
                     unit="ingredient",
                     conversion_factor=Decimal("1"),
-                    unit_cost=unit_cost,
+                    unit_cost=cost,
+                    recipe_version_id=version_id,
+                    recipe_path=paths,
                 )
             )
 
@@ -422,10 +477,14 @@ async def produce(
         )
 
     # Yield loss raises the unit cost of what actually came out of the oven.
-    net_output = production_output(output_quantity, item.yield_percentage)
+    net_output = (
+        output_quantity
+        if expanded is not None
+        else production_output(output_quantity, item.yield_percentage)
+    )
     unit_cost = (
         production_unit_cost(input_cost, net_output)
-        if recipe
+        if recipe_lines
         else Decimal(str(item.cost))
     )
 
@@ -439,18 +498,31 @@ async def produce(
         warehouse_id=warehouse,
         business_date=business_date,
         creator_id=user.id,
+        correction_group_id=correction_group,
+        source_type="production",
+        source_id=str(item_id),
         notes=notes,
+        items=[],
     )
     db.add(production)
     await db.flush()
-    db.add(
+    active_output_version = await recipe_service.active_version(
+        db, "inventory_item", item_id
+    )
+    production.items.append(
         InventoryTransactionItem(
-            transaction_id=production.id,
             item_id=item_id,
             quantity=net_output,
             unit="ingredient",
             conversion_factor=Decimal("1"),
             unit_cost=unit_cost,
+            recipe_version_id=active_output_version.id
+            if active_output_version
+            else None,
+            recipe_path=[
+                {"recipe_version_id": str(value), "owner_id": str(item_id)}
+                for value in sorted(used_versions, key=str)
+            ],
         )
     )
     await db.flush()

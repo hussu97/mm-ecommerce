@@ -102,6 +102,26 @@ from .inventory import (  # noqa: F401
     TransactionStatusEnum,
     Warehouse,
 )
+from .inventory_v2 import (  # noqa: F401
+    BranchInventorySettings,
+    InventoryItemKindEnum,
+    InventoryLot,
+    InventoryReportCadenceEnum,
+    InventoryReportTemplate,
+    InventoryReportTemplateItem,
+    InventoryReportTypeEnum,
+    InventorySourceEvent,
+    InventorySourceEventStatusEnum,
+    InventoryTrackingModeEnum,
+    Recipe,
+    RecipeLine,
+    RecipeOwnerKindEnum,
+    RecipeVersion,
+    RecipeVersionStatusEnum,
+    ShiftInventoryReport,
+    ShiftInventoryReportLine,
+    ShiftInventoryReportStatusEnum,
+)
 from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
 from .marketing import (  # noqa: F401

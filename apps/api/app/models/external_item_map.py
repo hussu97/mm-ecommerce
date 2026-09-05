@@ -58,7 +58,8 @@ KIND_OPTION = "option"
 #: needed product/option). One map for the whole catalogue — categories,
 #: products and options — rather than a second table that could drift.
 KIND_CATEGORY = "category"
-MM_KINDS = (KIND_PRODUCT, KIND_OPTION, KIND_CATEGORY)
+KIND_INVENTORY_ITEM = "inventory_item"
+MM_KINDS = (KIND_PRODUCT, KIND_OPTION, KIND_CATEGORY, KIND_INVENTORY_ITEM)
 
 METHOD_EXACT = "exact"
 METHOD_FUZZY = "fuzzy"
@@ -122,6 +123,11 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
         ForeignKey("categories.id", ondelete="CASCADE"),
         nullable=True,
     )
+    inventory_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="CASCADE"),
+        nullable=True,
+    )
 
     #: The gate. A row does nothing until a human approves it — the resolver reads
     #: only approved rows; an unapproved one is a proposal awaiting review.
@@ -154,7 +160,7 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
             f"system IN ({_SYSTEMS_SQL})", name="ck_external_item_map_system"
         ),
         CheckConstraint(
-            "mm_kind IN ('product', 'option', 'category')",
+            "mm_kind IN ('product', 'option', 'category', 'inventory_item')",
             name="ck_external_item_map_kind",
         ),
         CheckConstraint(
@@ -170,10 +176,11 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
         # with none set is a proposal for a name we have seen but not yet mapped.
         CheckConstraint(
             "( (product_id IS NOT NULL)::int + (modifier_option_id IS NOT NULL)::int "
-            "+ (category_id IS NOT NULL)::int ) <= 1 "
+            "+ (category_id IS NOT NULL)::int + (inventory_item_id IS NOT NULL)::int ) <= 1 "
             "AND (product_id IS NULL OR mm_kind = 'product') "
             "AND (modifier_option_id IS NULL OR mm_kind = 'option') "
-            "AND (category_id IS NULL OR mm_kind = 'category')",
+            "AND (category_id IS NULL OR mm_kind = 'category') "
+            "AND (inventory_item_id IS NULL OR mm_kind = 'inventory_item')",
             name="ck_external_item_map_one_entity",
         ),
         Index("ix_external_item_map_system_approved", "system", "approved"),

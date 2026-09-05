@@ -67,7 +67,7 @@ from app.schemas.inventory import (
     WasteRequest,
 )
 from app.services import audit_service, crud_service
-from app.services.inventory import inventory_service
+from app.services.inventory import inventory_service, recipe_service
 from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
@@ -813,9 +813,9 @@ async def set_product_recipe(
     product_id: uuid.UUID,
     data: RecipeUpsert,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("catalogue.recipes.manage")),
+    user: User = Depends(require("catalogue.recipes.manage")),
 ):
-    """Replace a product's recipe. Selling the product depletes these."""
+    """Publish a new version and keep the legacy read model in sync."""
     await crud_service.get_or_404(db, Product, product_id)
     await db.execute(
         delete(ProductIngredient).where(ProductIngredient.product_id == product_id)
@@ -832,6 +832,20 @@ async def set_product_recipe(
                 inactive_in_order_types=line.inactive_in_order_types,
             )
         )
+    await recipe_service.draft_and_activate(
+        db,
+        kind="product",
+        owner_id=product_id,
+        lines=[
+            recipe_service.RecipeLineInput(
+                item_id=line.item_id,
+                quantity=line.quantity,
+                inactive_in_order_types=line.inactive_in_order_types,
+            )
+            for line in data.ingredients
+        ],
+        user_id=user.id,
+    )
     await db.flush()
     return await _recipe_response(db, product_id)
 
@@ -841,7 +855,7 @@ async def set_modifier_option_recipe(
     option_id: uuid.UUID,
     data: RecipeUpsert,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("catalogue.recipes.manage")),
+    user: User = Depends(require("catalogue.recipes.manage")),
 ):
     await crud_service.get_or_404(db, ModifierOption, option_id)
     await db.execute(
@@ -850,6 +864,9 @@ async def set_modifier_option_recipe(
         )
     )
     for line in data.ingredients:
+        item = await db.get(InventoryItem, line.item_id)
+        if item is None:
+            raise BadRequestError(f"Inventory item {line.item_id} not found")
         db.add(
             ModifierOptionIngredient(
                 modifier_option_id=option_id,
@@ -857,6 +874,20 @@ async def set_modifier_option_recipe(
                 quantity=line.quantity,
             )
         )
+    await recipe_service.draft_and_activate(
+        db,
+        kind="modifier_option",
+        owner_id=option_id,
+        lines=[
+            recipe_service.RecipeLineInput(
+                item_id=line.item_id,
+                quantity=line.quantity,
+                inactive_in_order_types=line.inactive_in_order_types,
+            )
+            for line in data.ingredients
+        ],
+        user_id=user.id,
+    )
     await db.flush()
     return {"modifier_option_id": str(option_id), "ingredients": len(data.ingredients)}
 

@@ -52,6 +52,13 @@ from .inventory import (
 from .inventory import (
     transactions_router as inventory_transactions_router,
 )
+from .inventory_v2 import (
+    control_router as inventory_control_router,
+)
+from .inventory_v2 import (
+    order_inventory_router,
+    pos_inventory_router,
+)
 from .item_mappings import router as item_mappings_router
 from .marketing import (
     discounts_router,
@@ -121,6 +128,9 @@ api_router.include_router(
     promo_codes_router, prefix="/promo-codes", tags=["Promo Codes"]
 )
 api_router.include_router(orders_router, prefix="/orders", tags=["Orders"])
+api_router.include_router(
+    order_inventory_router, prefix="/orders", tags=["Order Inventory"]
+)
 api_router.include_router(addresses_router, prefix="/addresses", tags=["Addresses"])
 api_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
 api_router.include_router(
@@ -213,6 +223,12 @@ api_router.include_router(
 )
 api_router.include_router(
     recipes_router, prefix="/inventory/recipes", tags=["Inventory"]
+)
+api_router.include_router(
+    inventory_control_router, prefix="/inventory", tags=["Inventory Control"]
+)
+api_router.include_router(
+    pos_inventory_router, prefix="/pos/inventory", tags=["POS Inventory"]
 )
 
 # ─── Marketing ────────────────────────────────────────────────────────────────

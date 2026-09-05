@@ -6,6 +6,7 @@
 // "[object Object]" and whose second refresh could race the first.
 
 import { api, buildQs } from './api';
+import type { Schemas } from '@mm/types';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, CostOfGoods, Device, DrawerOperation,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
@@ -15,6 +16,19 @@ import type {
   SupplierAnalysisRow, Supplier, Tag, Tax,
   TaxGroup, TaxReportRow, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
+
+export type VersionedRecipe = Schemas['VersionedRecipeResponse'];
+export type RecipeVersion = Schemas['RecipeVersionResponse'];
+export type RecipeDraft = Schemas['RecipeDraftRequest'];
+export type RecipeExpansion = Schemas['RecipeExpansionResponse'];
+export type ReportTemplate = Schemas['ReportTemplateResponse'];
+export type ReportTemplateWrite = Schemas['ReportTemplateUpsert'];
+export type ShiftInventoryReport = Schemas['ShiftReportResponse'];
+export type ReportSave = Schemas['ReportSaveRequest'];
+export type ProjectionDrift = Schemas['ProjectionDriftResponse'];
+export type BranchInventorySettings = Schemas['BranchInventorySettingsResponse'];
+export type StockAudit = Schemas['StockAuditRequest'];
+export type StockAuditPreview = Schemas['StockAuditPreviewResponse'];
 
 // ─── Branches & floor plan ────────────────────────────────────────────────────
 
@@ -213,6 +227,43 @@ export const inventoryApi = {
   productRecipe: (productId: string) => api.get<Record<string, unknown>>(`/inventory/recipes/products/${productId}`),
   setProductRecipe: (productId: string, ingredients: unknown[]) =>
     api.put<Record<string, unknown>>(`/inventory/recipes/products/${productId}`, { ingredients }),
+
+  versionedRecipe: (ownerKind: string, ownerId: string) =>
+    api.get<VersionedRecipe>(`/inventory/recipes-v2/${ownerKind}/${ownerId}`),
+  saveRecipeDraft: (ownerKind: string, ownerId: string, data: RecipeDraft) =>
+    api.put<RecipeVersion>(`/inventory/recipes-v2/${ownerKind}/${ownerId}/draft`, data),
+  activateRecipe: (versionId: string) =>
+    api.post<RecipeVersion>(`/inventory/recipes-v2/versions/${versionId}/activate`),
+  expandRecipe: (ownerKind: string, ownerId: string, multiplier = '1') =>
+    api.post<RecipeExpansion>(`/inventory/recipes-v2/${ownerKind}/${ownerId}/expand`, { multiplier }),
+  projectionDrift: (branchId: string) =>
+    api.get<ProjectionDrift[]>(`/inventory/projection-drift${buildQs({ branch_id: branchId })}`),
+  rebuildProjection: (branchId: string) =>
+    api.post<ProjectionDrift[]>(`/inventory/projection-rebuild${buildQs({ branch_id: branchId })}`),
+  previewStockAudit: (data: StockAudit) =>
+    api.post<StockAuditPreview>('/inventory/stock-audits/preview', data),
+  previewStockAuditFile: (branchId: string, file: File) => {
+    const body = new FormData();
+    body.append('file', file);
+    return api.upload<StockAuditPreview>(
+      `/inventory/stock-audits/file-preview${buildQs({ branch_id: branchId })}`,
+      body,
+    );
+  },
+  applyStockAudit: (data: StockAudit) =>
+    api.post<StockAuditPreview>('/inventory/stock-audits/apply', data),
+  reportTemplates: (branchId?: string) =>
+    api.get<ReportTemplate[]>(`/inventory/report-templates${buildQs({ branch_id: branchId })}`),
+  createReportTemplate: (data: ReportTemplateWrite) =>
+    api.post<ReportTemplate>('/inventory/report-templates', data),
+  updateReportTemplate: (id: string, data: ReportTemplateWrite) =>
+    api.put<ReportTemplate>(`/inventory/report-templates/${id}`, data),
+  shiftReports: (params?: { branch_id?: string; status?: string }) =>
+    api.get<ShiftInventoryReport[]>(`/inventory/shift-reports${buildQs(params)}`),
+  branchSettings: (branchId: string) =>
+    api.get<BranchInventorySettings>(`/inventory/branch-settings/${branchId}`),
+  updateBranchSettings: (branchId: string, data: Partial<BranchInventorySettings>) =>
+    api.patch<BranchInventorySettings>(`/inventory/branch-settings/${branchId}`, data),
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

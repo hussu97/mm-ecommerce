@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import UUID
 
+import pytest
+
+from app.core.exceptions import ConflictError
 from app.models.inventory import (
     TRANSACTION_SIGN,
     InventoryLevel,
     InventoryTransactionTypeEnum,
 )
 from app.services.inventory.inventory_service import apply_movement
+from app.services.inventory.recipe_service import _assert_acyclic
 
 D = Decimal
 
@@ -36,6 +41,8 @@ def test_receipts_and_issues_point_the_right_way():
     assert TRANSACTION_SIGN["return_to_supplier"] == -1
     assert TRANSACTION_SIGN["consumption_from_orders"] == -1
     assert TRANSACTION_SIGN["waste_from_production"] == -1
+    assert TRANSACTION_SIGN["opening_balance"] == 1
+    assert TRANSACTION_SIGN["internal_use"] == -1
     # Value-only movement.
     assert TRANSACTION_SIGN["cost_adjustment"] == 0
 
@@ -119,3 +126,20 @@ def test_a_realistic_flour_lifecycle():
 
     # Stock value after the bake.
     assert (flour.quantity * flour.average_cost).quantize(D("0.01")) == D("190.00")
+
+
+def test_recursive_recipe_graph_accepts_shared_subrecipes_but_rejects_cycles():
+    brownie = UUID("00000000-0000-0000-0000-000000000001")
+    brookie = UUID("00000000-0000-0000-0000-000000000002")
+    chocolate = UUID("00000000-0000-0000-0000-000000000003")
+    flour = UUID("00000000-0000-0000-0000-000000000004")
+
+    _assert_acyclic(
+        {
+            brownie: {chocolate, flour},
+            brookie: {brownie, chocolate},
+        }
+    )
+
+    with pytest.raises(ConflictError, match="Recipe cycle detected"):
+        _assert_acyclic({brownie: {brookie}, brookie: {brownie}})

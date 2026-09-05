@@ -445,6 +445,18 @@ async def _consequences(
     # reconciled in the morning, or a declined card the customer paid another
     # way — so this is keyed off the transition and not off the endpoint.
     if new_status == OrderStatusEnum.CONFIRMED:
+        # Inventory freezes the recipe when MM accepts the finalized order, not
+        # at the provider's claimed creation time and not when somebody later
+        # opens the order details. It is observational in validation mode and
+        # records missing recipes without blocking the order lifecycle.
+        from app.services.inventory import source_event_service
+
+        # This is intentionally part of the same request transaction as the
+        # status transition. Missing mappings/recipes become a closed exception
+        # event inside the service; an actual database failure must roll the
+        # transition back so a retry cannot confirm an order with no durable
+        # acceptance sequence.
+        await source_event_service.accept_order(db, order=order, user=None)
         if _mm_owns_fulfilment(order):
             from app.services.delivery import arrival_service
 

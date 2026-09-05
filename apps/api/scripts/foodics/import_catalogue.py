@@ -113,6 +113,8 @@ CASHIER_STAFF_PERMISSIONS = [
     "catalogue.read",
     "orders.read",
     "customers.read",
+    "inventory.read",
+    "inventory.reports.submit",
 ]
 
 #: A shift lead. Runs the register end to end, including the drawer and the
@@ -127,6 +129,8 @@ CASHIER_EXTRA_PERMISSIONS = [
     "customers.read",
     "customers.manage",
     "reports.other",
+    "inventory.read",
+    "inventory.reports.submit",
 ]
 
 #: Foodics stores each branch's TRN inside the free-text receipt header.

@@ -86,13 +86,17 @@ def wired(monkeypatch, order):
     # these tests are about — they are about which gateway event reaches which
     # handler — and both would query a session that is a bare mock.
     from app.services.delivery import arrival_service
+    from app.services.inventory import source_event_service
 
     monkeypatch.setattr(arrival_service, "schedule", AsyncMock(return_value=None))
+    inventory_acceptance = AsyncMock(return_value=None)
+    monkeypatch.setattr(source_event_service, "accept_order", inventory_acceptance)
     sent = SimpleNamespace(
         confirmation=AsyncMock(),
         owner=AsyncMock(),
         failed=AsyncMock(),
         refund=AsyncMock(),
+        inventory_acceptance=inventory_acceptance,
     )
     monkeypatch.setattr(
         payment_service.email_service, "send_order_confirmation", sent.confirmation
@@ -145,6 +149,7 @@ async def test_a_success_confirms_the_order_whoever_sent_it(
 
     assert result["received"] is True
     assert order.status == OrderStatusEnum.CONFIRMED
+    wired.inventory_acceptance.assert_awaited_once_with(db, order=order, user=None)
     assert order.payment_id == "pi_1"
     wired.confirmation.assert_awaited_once()
     wired.owner.assert_awaited_once()

@@ -199,6 +199,15 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
                 spawn_tracked(log_retention.run_forever(), name="log_retention")
             )
 
+            from app.services.inventory import source_event_service
+
+            background.append(
+                spawn_tracked(
+                    source_event_service.run_sweeper_forever(),
+                    name="inventory_source_event_sweeper",
+                )
+            )
+
             # The daily sales email. Rides here for the same reasons its
             # neighbours do — no cron in this stack, an advisory lock so a second
             # copy is harmless — and belongs to whichever app owns the shared

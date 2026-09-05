@@ -37,6 +37,8 @@ type StatementList = Schemas['AggregatorStatementList'];
 type InvoiceUrl = Schemas['AggregatorInvoiceUrl'];
 type FeesSummary = Schemas['AggregatorFeesSummaryOut'];
 type OrderAdminDetails = Schemas['OrderAdminDetails'];
+type OrderInventoryConsumption = Schemas['OrderInventoryConsumptionResponse'];
+type InventoryTransactionResponse = Schemas['InventoryTransactionResponse'];
 
 // The unified external-system item map (GrubOps + every aggregator) — one table,
 // one generic API. Names straight from the generated contract (rule 8).
@@ -397,6 +399,18 @@ export const ordersApi = {
    *  renders every order type and shows only what exists. */
   details: (orderNumber: string) =>
     api.get<OrderAdminDetails>(`/orders/${orderNumber}/details`),
+  /** Immutable stock movements plus the separately labelled analytical recipe tree. */
+  inventoryConsumption: (orderId: string) =>
+    api.get<OrderInventoryConsumption>(`/orders/${orderId}/inventory-consumption`),
+  inventoryReturn: (
+    orderId: string,
+    disposition: 'restock' | 'waste' | 'no_inventory_effect',
+    proportion = '1',
+  ) => api.post<InventoryTransactionResponse[]>(`/orders/${orderId}/inventory-return`, {
+    disposition,
+    proportion,
+    idempotency_key: `admin-order-return:${crypto.randomUUID()}`,
+  }),
   /** Book the courier again after a failed or abandoned dispatch. */
   dispatchDelivery: (orderNumber: string) =>
     api.post<OrderDelivery>(`/orders/${orderNumber}/delivery/dispatch`),
