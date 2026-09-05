@@ -510,6 +510,59 @@ def fetch_keeta_hours() -> None:
         )
 
 
+@app.command("sync-keeta-hours")
+def sync_keeta_hours() -> None:
+    """Apply MM's weekly schedule to each Keeta shop in-page — the on-demand twin
+    of the nightly `KEETA_HOURS` job.
+
+    Keeta cannot be written over httpx (its `mtgsig` request signing lives in the
+    page and bypasses fetch/XHR), so this is how Keeta joins the other five: pull
+    MM's schedule from the API (`GET /worker/keeta/hours`), mirror it on the
+    persistent `keeta.chrome` profile, and report each shop's outcome back
+    (`POST /keeta/hours-result`, so it lands in `branch_hours_sync_run`). `dry_run`
+    follows the API's `BRANCH_HOURS_SYNC_LIVE`. One Chrome — stop the daemon first
+    if it holds `keeta.chrome`.
+    """
+    from . import daemon, push, warm
+
+    async def _run() -> None:
+        sched = await push.pull_keeta_hours()
+        shops = sched.get("shops") or []
+        dry = bool(sched.get("dry_run", True))
+        if not shops:
+            print(  # noqa: T201 — operator output
+                "keeta hours: nothing to sync (gate off, or no mapped shop has an "
+                "MM schedule)"
+            )
+            return
+        windows = [
+            {"shop_id": s.get("shop_id"), "weekly": s.get("weekly")}
+            for s in shops
+            if s.get("shop_id")
+        ]
+        result = await warm.write_keeta_hours_in_page(
+            windows=windows, persist=True, dry_run=dry
+        )
+        outcomes = daemon._keeta_hours_outcomes(result, dry_run=dry)
+        if outcomes:
+            await push.push_keeta_hours_result(outcomes)
+        print(  # noqa: T201 — operator output
+            f"keeta hours sync: dry_run={dry} shops={len(windows)} "
+            f"saved={result.get('saved')} outcomes={len(outcomes)}"
+        )
+        for o in outcomes:
+            print(  # noqa: T201 — operator output
+                f"  shop {o['shop_id']}: ok={o['ok']} dry={o.get('dry_run')} "
+                f"err={o.get('error')}"
+            )
+
+    try:
+        asyncio.run(_run())
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta hours sync needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+
+
 @app.command("probe-keeta-hours-save")
 def probe_keeta_hours_save(
     wait_seconds: int = typer.Option(

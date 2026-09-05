@@ -9,11 +9,12 @@ import pytest
 from app.services.aggregators import hours_writers as hw
 
 
-def test_supported_channels_is_httpx_only():
-    assert hw.supported_channels() == frozenset(
-        {"talabat", "deliveroo", "noon", "careem"}
-    )
+def test_supported_channels_is_working_httpx_only():
+    # deliveroo's httpx write is vestigial (zone-scoped writer pending), so it is
+    # excluded; keeta is worker-only.
+    assert hw.supported_channels() == frozenset({"talabat", "noon", "careem"})
     assert "keeta" not in hw.supported_channels()
+    assert "deliveroo" not in hw.supported_channels()
 
 
 @pytest.mark.asyncio
@@ -35,7 +36,7 @@ async def test_flag_off_raises(monkeypatch):
     with pytest.raises(hw.HoursWriteUnsupported, match="CATALOG_SYNC_ENABLED"):
         await hw.push_hours(
             None,
-            channel="deliveroo",
+            channel="noon",
             branch=object(),
             opens="08:00",
             closes="17:00",
@@ -60,13 +61,13 @@ async def test_dry_run_does_not_execute(monkeypatch):
     async def fake_execute(channel, plan):
         executed.append((channel, plan.get("op")))
 
-    monkeypatch.setattr(hw, "_PUSHERS", {**hw._PUSHERS, "deliveroo": fake_mapper})
+    monkeypatch.setattr(hw, "_PUSHERS", {**hw._PUSHERS, "noon": fake_mapper})
     monkeypatch.setattr(hw, "_execute", fake_execute)
 
     branch = SimpleNamespace(id="b1")
     plan = await hw.push_hours(
         object(),
-        channel="deliveroo",
+        channel="noon",
         branch=branch,
         opens="08:00",
         closes="17:00",
@@ -77,14 +78,14 @@ async def test_dry_run_does_not_execute(monkeypatch):
 
     live = await hw.push_hours(
         object(),
-        channel="deliveroo",
+        channel="noon",
         branch=branch,
         opens="08:00",
         closes="17:00",
         dry_run=False,
     )
     assert live["dry_run"] is False
-    assert executed == [("deliveroo", "push_hours")]
+    assert executed == [("noon", "push_hours")]
 
 
 @pytest.mark.asyncio
