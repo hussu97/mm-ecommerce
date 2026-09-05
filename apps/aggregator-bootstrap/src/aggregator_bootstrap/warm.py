@@ -295,6 +295,49 @@ async def delete_keeta_item_in_page(*, shop_id: str, spu_id: str) -> dict[str, A
     return result if isinstance(result, dict) else {"raw": result}
 
 
+async def copy_keeta_menu_in_page(
+    *, source_shop_id: str, target_shop_ids: list[str]
+) -> dict[str, Any]:
+    """Copy a Keeta store's FULL menu into other stores in-page (mtgsig
+    `synchronizeMenu`) and return the raw response. The easy way to sync the
+    non-Foodics Keeta branches: copy from a Foodics-synced source (Sharjah/Barsha)
+    into the non-Foodics targets (Al Karama, DSO); it fully replaces each target's
+    menu and runs as a server-side task over a few minutes (poll with
+    `list_keeta_menu_copy_tasks_in_page`). A live storefront write — a deliberate
+    command, never a sweep."""
+    from .engine import async_playwright
+    from .keeta_pull import copy_keeta_menu
+
+    async with async_playwright() as pw:
+        opened = await _open_persistent(pw, "keeta")
+        try:
+            result = await copy_keeta_menu(
+                opened.context,
+                source_shop_id=source_shop_id,
+                target_shop_ids=target_shop_ids,
+            )
+        finally:
+            await opened.close()
+    logger.info("keeta synchronizeMenu result: %s", result)
+    return result if isinstance(result, dict) else {"raw": result}
+
+
+async def list_keeta_menu_copy_tasks_in_page() -> dict[str, Any]:
+    """List the Keeta menu-copy sync tasks in-page (the portal's "Task progress"
+    tab) and return the raw response — poll this after a copy to see each task's
+    status (running / success / partial failure)."""
+    from .engine import async_playwright
+    from .keeta_pull import list_keeta_menu_copy_tasks
+
+    async with async_playwright() as pw:
+        opened = await _open_persistent(pw, "keeta")
+        try:
+            result = await list_keeta_menu_copy_tasks(opened.context)
+        finally:
+            await opened.close()
+    return result if isinstance(result, dict) else {"raw": result}
+
+
 async def pull_keeta_finance_in_page(
     *, months_back: int | None = None
 ) -> dict[str, Any]:
