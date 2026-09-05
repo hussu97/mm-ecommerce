@@ -728,7 +728,18 @@ class TalabatClient(BaseAggregatorClient):
         """One product's full record, including its sizes. The category-products
         list carries only `productOptionIds`; the sizes (name + price) live in this
         detail call's `nestedProducts` (each `type:"SIZE"`). Endpoint captured live
-        from the portal 2026-09-05 (`/catalogs/products/{id}?mode=READ_ONLY`)."""
+        from the portal 2026-09-05 (`/catalogs/products/{id}?mode=READ_ONLY`).
+
+        Localisation note (verified live 2026-09-05): Talabat's Karama menu is
+        already fully bilingual — Arabic name/description AND Arabic size names are
+        present and match MM. They are NOT in the READ_ONLY `names`/`descriptions`
+        arrays (those come back empty); they live in the `?mode=EDITING` payload /
+        the console's "Edit translations" panel. Updates are **PATCH**
+        `/catalogs/products/{id}` (PUT 405s); a PATCH that sends `names`/
+        `descriptions` arrays is rejected 409 "no difference" — the localisation
+        field shape differs and must be captured from the EDITING payload before a
+        writer is added. Mix-box flavour choices are a `productOptionIds` group
+        (Options (Max N)), not a SIZE."""
         return await self.request_json(
             session,
             "GET",

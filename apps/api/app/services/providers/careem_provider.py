@@ -451,6 +451,113 @@ class CareemClient(BaseAggregatorClient):
             f"{self._outlet_base(company, brand, outlet)}/catalog-products/{product_id}",
         )
 
+    async def update_product(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        product_id: Any,
+        *,
+        name: str | None = None,
+        name_ar: str | None = None,
+        description: str | None = None,
+        description_ar: str | None = None,
+        price: Any | None = None,
+        image_url: str | None = None,
+        status: str | None = None,
+    ) -> Any:
+        """Patch one product on a Careem outlet — verified live 2026-09-05.
+
+        The route is **PUT** `catalog-products/{id}` (PATCH 404s; the response is a
+        non-JSON body, so this uses `request_raw`). Only the passed fields are sent;
+        each localised field carries `{en, ar}`. Used for renames (name/name_ar),
+        description (description/description_ar), price (`defaultPrice`), and
+        `status` ("ACTIVE"/"INACTIVE") — the last is how an item is
+        activated/deactivated on Careem.
+
+        IMAGES are the exception: `image_url` writes `images:[{url}]`, but Careem
+        does NOT fetch/host a remote URL — a remote link 404s on its CDN and
+        `images:[]`/`null` will not clear it. A real image needs the console's
+        native upload (signed-URL + bytes), which is not reachable server-side yet.
+        Pass `image_url` only with a URL already on Careem's own media host.
+        """
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+            payload["nameLocalized"] = {"en": name, "ar": name_ar or name}
+        if description is not None:
+            payload["description"] = description
+            payload["descriptionLocalized"] = {
+                "en": description,
+                "ar": description_ar or description,
+            }
+        if price is not None:
+            payload["defaultPrice"] = price
+        if status is not None:
+            payload["status"] = status
+        if image_url is not None:
+            payload["images"] = [{"url": image_url}]
+        return await self.request_raw(
+            session,
+            "PUT",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-products/{product_id}",
+            json_body=payload,
+        )
+
+    async def create_category(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        *,
+        name: str,
+        catalog_id: Any,
+        name_ar: str | None = None,
+    ) -> Any:
+        """Create a subcategory on the outlet's catalog (verified live 2026-09-05):
+        POST `catalog-categories` `{name, nameLocalized:{en,ar}, catalogId}` -> the
+        new category (with `id`). Starts **INACTIVE** ("offline"); call
+        `set_category_status(..., active=True)` to bring it online."""
+        return await self.request_json(
+            session,
+            "POST",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-categories",
+            json_body={
+                "name": name,
+                "nameLocalized": {"en": name, "ar": name_ar or name},
+                "catalogId": catalog_id,
+            },
+        )
+
+    async def set_category_status(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        category_id: Any,
+        *,
+        active: bool,
+        name: str | None = None,
+        name_ar: str | None = None,
+    ) -> Any:
+        """Bring a category online/offline, or rename it — PUT `catalog-categories/
+        {id}`. A category's online state IS its `status` ("ACTIVE"/"INACTIVE",
+        verified live 2026-09-05: an "(Offline)" category is `INACTIVE`). Optionally
+        rename via `name`/`name_ar` in the same call. Non-JSON response -> raw."""
+        payload: dict[str, Any] = {"status": "ACTIVE" if active else "INACTIVE"}
+        if name is not None:
+            payload["name"] = name
+            payload["nameLocalized"] = {"en": name, "ar": name_ar or name}
+        return await self.request_raw(
+            session,
+            "PUT",
+            f"{self._outlet_base(company, brand, outlet)}/catalog-categories/{category_id}",
+            json_body=payload,
+        )
+
     def _billing_accounts(self, outlets: list[dict[str, Any]]) -> list[dict[str, str]]:
         """The `billableId`/`billableType` list the billing endpoints expect —
         the company, the brand, and every merchant, deduped."""
