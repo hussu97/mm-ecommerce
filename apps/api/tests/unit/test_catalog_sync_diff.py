@@ -996,3 +996,128 @@ def test_talabat_hours_parser_day_origin_minutes_and_closed_day():
     assert by_weekday[0] == ("08:15", "23:30")  # DH day 6 (Sun) -> weekday 0
     assert by_weekday[1] == ("13:00", "22:45")  # DH day 0 (Mon) -> weekday 1
     assert 5 not in by_weekday  # DH day 4 (Fri) empty -> no shift
+
+
+# ── Foodics apply executor (price parity + reversible removal) ─────────────────
+
+
+def _fake_plan(operations):
+    async def _plan(db, *, target, branch_id, kind):
+        return {"operations": operations}
+
+    return _plan
+
+
+@pytest.mark.asyncio
+async def test_apply_menu_push_gated_off_by_default(mock_db, monkeypatch):
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", False)
+    with pytest.raises(Exception):
+        await catalog_sync.apply_menu_push(mock_db, target="foodics")
+
+
+@pytest.mark.asyncio
+async def test_apply_menu_push_is_foodics_only(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.core.exceptions import BadRequestError
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    with pytest.raises(BadRequestError):
+        await catalog_sync.apply_menu_push(mock_db, target="careem")
+
+
+@pytest.mark.asyncio
+async def test_apply_dry_run_reports_but_writes_nothing(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.services.aggregators import catalog_diff as cd
+    from app.services.providers import foodics_provider as fp
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    ops = [
+        {
+            "kind": cd.K_ITEM_PRICE,
+            "action": cd.ACTION_UPDATE,
+            "entity": "Fudge Brownies",
+            "channel_external_id": "FP1",
+            "mm_value": "30",
+            "channel_value": "35",
+        },
+        {
+            "kind": cd.K_ITEM_EXTRA,
+            "action": cd.ACTION_DELETE,
+            "entity": "Discontinued Slice",
+            "channel_external_id": "FP2",
+            "mm_value": None,
+            "channel_value": None,
+        },
+    ]
+    monkeypatch.setattr(catalog_sync, "plan_push", _fake_plan(ops))
+    calls = []
+    monkeypatch.setattr(
+        fp.provider,
+        "set_price_tag_product_price",
+        lambda *a, **k: calls.append(("price", a)),
+    )
+    monkeypatch.setattr(
+        fp.provider,
+        "remove_price_tag_product",
+        lambda *a, **k: calls.append(("del", a)),
+    )
+
+    out = await catalog_sync.apply_menu_push(mock_db, target="foodics", dry_run=True)
+    assert out["dry_run"] is True
+    assert calls == []  # a dry run touches no portal
+    assert out["price_updates"][0]["to"] == "30"
+    assert out["removals"][0]["reported_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_live_sets_price_but_only_removes_with_flag(mock_db, monkeypatch):
+    import app.core.config as cfg
+    from app.services.aggregators import catalog_diff as cd
+    from app.services.providers import foodics_provider as fp
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    ops = [
+        {
+            "kind": cd.K_ITEM_PRICE,
+            "action": cd.ACTION_UPDATE,
+            "entity": "Fudge Brownies",
+            "channel_external_id": "FP1",
+            "mm_value": "30",
+            "channel_value": "35",
+        },
+        {
+            "kind": cd.K_ITEM_EXTRA,
+            "action": cd.ACTION_DELETE,
+            "entity": "Discontinued Slice",
+            "channel_external_id": "FP2",
+            "mm_value": None,
+            "channel_value": None,
+        },
+    ]
+    monkeypatch.setattr(catalog_sync, "plan_push", _fake_plan(ops))
+    price_calls, del_calls = [], []
+
+    async def fake_price(tag, pid, price):
+        price_calls.append((tag, pid, price))
+
+    async def fake_del(tag, pid):
+        del_calls.append((tag, pid))
+
+    monkeypatch.setattr(fp.provider, "set_price_tag_product_price", fake_price)
+    monkeypatch.setattr(fp.provider, "remove_price_tag_product", fake_del)
+
+    # Live, but apply_deletes not set: price is written, removal is only reported.
+    out = await catalog_sync.apply_menu_push(mock_db, target="foodics", dry_run=False)
+    assert price_calls == [(fp.FOODICS_GRUBTECH_PRICE_TAG_ID, "FP1", "30")]
+    assert del_calls == []
+    assert out["removals"][0]["reported_only"] is True
+
+    # Live + apply_deletes: the removal is executed too.
+    out = await catalog_sync.apply_menu_push(
+        mock_db, target="foodics", dry_run=False, apply_deletes=True
+    )
+    assert del_calls == [(fp.FOODICS_GRUBTECH_PRICE_TAG_ID, "FP2")]
+    assert out["removals"][0]["applied"] is True
