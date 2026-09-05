@@ -403,7 +403,11 @@ def _diff_one_item(
         )
     # Image: MM has one, the channel does not. URLs are host-specific so equality
     # is meaningless — only a MISSING image on the channel is an actionable delta.
-    if (ditem.image_url or "").strip() and not (aitem.image_url or "").strip():
+    # Coerce to str first — a reader may hand back a non-string (a portal's image
+    # object) and a bare `.strip()` on it would crash the whole diff.
+    d_img = ditem.image_url if isinstance(ditem.image_url, str) else ""
+    a_img = aitem.image_url if isinstance(aitem.image_url, str) else ""
+    if d_img.strip() and not a_img.strip():
         out.deltas.append(
             Delta(
                 kind=K_ITEM_IMAGE,
