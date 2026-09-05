@@ -657,19 +657,30 @@ class CareemClient(BaseAggregatorClient):
         brand: str,
         outlet: str,
         product_id: Any,
+        *,
+        with_options: bool = False,
     ) -> Any:
         """A product's customization (modifier) groups — GET
         `catalog-customization-groups?productId={id}` (the `productId` param is
         required, verified live 2026-09-05). Returns a list of groups, each
         `{id, name, nameLocalized, status, priority, attributes:{selection:{min,max,
         multiSelect}}, products:[{productId}], options:[{id, ...}]}`. The group's
-        min/max lives in `attributes.selection`, and each option's real name/price
-        lives in its own option-product (the inline option fields read back empty)."""
+        min/max lives in `attributes.selection`.
+
+        By default each option reads back with an EMPTY name (the real data lives
+        in its option-product, which is not fetchable). Pass `with_options=True`
+        to add `&options=true` — the param the console uses to expand every option
+        to its full `{id, name, nameLocalized:{en,ar}, price, status}` (verified
+        live 2026-09-05 by capturing the Customizations tab's own request). This is
+        the only way to read Careem option names/prices."""
+        params: dict[str, Any] = {"productId": product_id}
+        if with_options:
+            params["options"] = "true"
         return await self.request_json(
             session,
             "GET",
             f"{self._outlet_base(company, brand, outlet)}/catalog-customization-groups",
-            params={"productId": product_id},
+            params=params,
         )
 
     async def create_customization_group(
