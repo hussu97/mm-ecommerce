@@ -467,6 +467,20 @@ def test_noon_parser_uses_real_shapes():
                     "isActive": True,
                     "isOos": True,
                 },
+                # A variant-priced brownie (₿0 base) whose real prices live in a
+                # "Your Choice of Quantity" customization group (real shape, 2026-09-05).
+                {
+                    "itemCode": "I900000001A",
+                    "nameEn": "Pistachio Kunafa Brownies",
+                    "price": 0,
+                    "isActive": True,
+                    "isOos": False,
+                    "modifiers": ["MD793413946A"],
+                },
+                # The group's options are non-`main` items referenced by itemCode.
+                {"itemCode": "OPT3", "nameEn": "3 Pieces", "itemType": "modifier"},
+                {"itemCode": "OPT6", "nameEn": "6 Pieces", "itemType": "modifier"},
+                {"itemCode": "OPT9", "nameEn": "9 Pieces", "itemType": "modifier"},
             ],
             "categories": [
                 {
@@ -481,15 +495,48 @@ def test_noon_parser_uses_real_shapes():
                     "position": 1,
                     "items": ["I513758352A"],
                 },
+                {
+                    "categoryCode": "C3",
+                    "nameEn": "Brownies",
+                    "position": 2,
+                    "items": ["I900000001A"],
+                },
+            ],
+            "modifiers": [
+                {
+                    "modifierCode": "MD793413946A",
+                    "nameEn": "Your Choice of Quantity",
+                    "minTotalOptions": 1,
+                    "maxTotalOptions": 1,
+                    "options": [
+                        {"itemCode": "OPT3", "price": 55},
+                        {"itemCode": "OPT6", "price": 100},
+                        {"itemCode": "OPT9", "price": 145},
+                    ],
+                }
             ],
         }
     }
     menu = parse_noon_menu(details)
-    assert [c.name for c in menu.categories] == ["Cakes", "New In"]
+    assert [c.name for c in menu.categories] == ["Cakes", "New In", "Brownies"]
     assert menu.categories[0].items[0].price == Decimal("35.0")
     assert menu.categories[0].items[0].is_available is True
     # isOos=True -> unavailable even though isActive
     assert menu.categories[1].items[0].is_available is False
+    # The variant-priced brownie carries its quantity group with resolved option
+    # names + prices (the price lived in the modifier, not the item).
+    brownie = menu.categories[2].items[0]
+    assert brownie.price == Decimal("0")
+    assert len(brownie.modifier_groups) == 1
+    grp = brownie.modifier_groups[0]
+    assert grp.name == "Your Choice of Quantity"
+    assert grp.external_ref == "MD793413946A"
+    assert (grp.min_options, grp.max_options) == (1, 1)
+    assert {(o.name, o.price) for o in grp.options} == {
+        ("3 Pieces", Decimal("55")),
+        ("6 Pieces", Decimal("100")),
+        ("9 Pieces", Decimal("145")),
+    }
 
 
 def test_menu_ops_resolve_channel_id_from_last_read():
