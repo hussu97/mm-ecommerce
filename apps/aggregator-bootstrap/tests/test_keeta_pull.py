@@ -118,7 +118,12 @@ async def test_fetch_keeta_orders_reseeds_login_accountid_after_spa_boot(
     monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
     persist_extra_state(
         "keeta",
-        {"https://merchant.mykeeta.com": {"LOGIN_ACCOUNTID": "acc-1", "SHOP_IDS": "[1]"}},
+        {
+            "https://merchant.mykeeta.com": {
+                "LOGIN_ACCOUNTID": "acc-1",
+                "SHOP_IDS": "[1]",
+            }
+        },
     )
     page = _FakePage(SAMPLE_GET_ORDERS, ["123"])
     await fetch_keeta_orders(_FakeContext(page), months_back=0)
@@ -375,6 +380,46 @@ def test_build_keeta_hours_write_body_matches_captured_weekly_shape():
         {"startTime": 28800, "endTime": 86400, "option": 1}
     ]
     assert all(filled["businessHourOfTheWeek"][k] for k in _KEETA_DAY_KEYS)
+
+
+def test_build_keeta_hours_write_body_mirrors_mm_weekly():
+    """MM full-week mirror: every day comes from `mm_weekly` (the API's
+    seconds-from-midnight, Sunday-first map), a closed day is `[{0,0,1}]`, and a
+    day MM omits falls back to closed rather than absent."""
+    from aggregator_bootstrap.keeta_pull import (
+        _KEETA_DAY_KEYS,
+        build_keeta_hours_write_body,
+    )
+
+    mm_weekly = {
+        "sun": [{"startTime": 32400, "endTime": 82800, "option": 1}],  # 09:00-23:00
+        "mon": [{"startTime": 28800, "endTime": 79200, "option": 1}],  # 08:00-22:00
+        # tue..sat closed:
+        "tue": [{"startTime": 0, "endTime": 0, "option": 1}],
+        "wed": [{"startTime": 0, "endTime": 0, "option": 1}],
+        "thu": [{"startTime": 0, "endTime": 0, "option": 1}],
+        "fri": [{"startTime": 0, "endTime": 0, "option": 1}],
+        "sat": [{"startTime": 0, "endTime": 0, "option": 1}],
+    }
+    # A stale portal read must NOT override MM.
+    portal = {"sun": [{"startTime": 1, "endTime": 2, "option": 1}]}
+    body = build_keeta_hours_write_body(
+        "1644170195", closed=False, weekly=portal, mm_weekly=mm_weekly
+    )
+    week = body["businessHourOfTheWeek"]
+    assert set(week) == set(_KEETA_DAY_KEYS)
+    assert week["sun"] == [{"startTime": 32400, "endTime": 82800, "option": 1}]
+    assert week["mon"] == [{"startTime": 28800, "endTime": 79200, "option": 1}]
+    assert week["tue"] == [{"startTime": 0, "endTime": 0, "option": 1}]
+
+    # A day MM omits entirely becomes closed, never absent.
+    body2 = build_keeta_hours_write_body(
+        "1", closed=False, mm_weekly={"sun": mm_weekly["sun"]}
+    )
+    assert set(body2["businessHourOfTheWeek"]) == set(_KEETA_DAY_KEYS)
+    assert body2["businessHourOfTheWeek"]["mon"] == [
+        {"startTime": 0, "endTime": 0, "option": 1}
+    ]
 
 
 def test_looks_like_keeta_hours_save_excludes_the_list_read():

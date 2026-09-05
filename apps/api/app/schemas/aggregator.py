@@ -405,6 +405,79 @@ class AggregatorSyncRunList(BaseModel):
     total: int
 
 
+class BranchHoursSyncRunOut(BaseModel):
+    """One recorded working-hours push for one (branch, channel).
+
+    `planned` is the payload the writer would send (endpoint + a compact
+    day→window summary), captured even on a dry run so the enumeration is
+    auditable without touching a portal. `dry_run` says which mode wrote it;
+    `error` is the failure reason, null on a clean push."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    branch_id: UUID
+    branch_name: str | None = None
+    channel: str
+    status: str
+    dry_run: bool
+    planned: dict | None = None
+    error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class BranchHoursSyncRunList(BaseModel):
+    """A page of hours-sync rows, newest first, plus the unpaginated total."""
+
+    items: list[BranchHoursSyncRunOut]
+    total: int
+
+
+class KeetaHoursShop(BaseModel):
+    """One Keeta shop's whole weekly schedule, MM's source of truth, for the
+    worker's in-page write. `weekly` keys are `sun`..`sat` (MM Sunday-first),
+    each a list of `{startTime,endTime,option}` slots in seconds-from-midnight;
+    a closed day is `[{startTime:0,endTime:0,option:1}]`."""
+
+    shop_id: str
+    branch_id: UUID
+    weekly: dict[str, list[dict]]
+
+
+class KeetaHoursScheduleOut(BaseModel):
+    """The MM hours the Keeta worker job applies in-page. `dry_run` echoes the
+    API's live flag so the worker builds the body but does not POST when false-
+    for-live, keeping the live decision on the API side."""
+
+    dry_run: bool
+    shops: list[KeetaHoursShop] = Field(default_factory=list)
+
+
+class KeetaHoursOutcome(BaseModel):
+    """One shop's result from the worker's in-page hours write."""
+
+    shop_id: str
+    ok: bool
+    error: str | None = None
+    dry_run: bool = True
+    planned: dict | None = None
+
+
+class KeetaHoursResultPush(BaseModel):
+    """The worker's per-shop outcomes from the Keeta hours job, to record as
+    `branch_hours_sync_run` rows (shop_id → branch via the keeta map)."""
+
+    outcomes: list[KeetaHoursOutcome] = Field(default_factory=list)
+
+
+class KeetaHoursResult(BaseModel):
+    """How many `branch_hours_sync_run` rows the pushed outcomes recorded."""
+
+    recorded: int
+
+
 class AggregatorRunTriggerIn(BaseModel):
     """What "Run now" asks for. Omit the dates for the standard recent pass; give
     both to backfill an explicit Dubai business-date range (inclusive) — e.g. to

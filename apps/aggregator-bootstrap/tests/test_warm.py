@@ -74,7 +74,9 @@ async def test_pull_keeta_orders_opens_persistent_profile(monkeypatch, tmp_path)
     monkeypatch.setattr(warm, "fetch_keeta_orders", fake_fetch)
 
     result = await warm.pull_keeta_orders_in_page()
-    assert opened == [{"channel": "keeta", "headed": not settings.HEADLESS, "persistent": True}]
+    assert opened == [
+        {"channel": "keeta", "headed": not settings.HEADLESS, "persistent": True}
+    ]
     assert result["payloads"] == 0
 
 
@@ -84,9 +86,7 @@ async def test_pull_keeta_menu_opens_persistent_profile(monkeypatch, tmp_path):
     async def fake_menu(context):
         return []
 
-    monkeypatch.setattr(
-        "aggregator_bootstrap.keeta_pull.fetch_keeta_menu", fake_menu
-    )
+    monkeypatch.setattr("aggregator_bootstrap.keeta_pull.fetch_keeta_menu", fake_menu)
 
     result = await warm.pull_keeta_menu_in_page()
     assert opened[0]["channel"] == "keeta"
@@ -97,7 +97,9 @@ async def test_pull_keeta_menu_opens_persistent_profile(monkeypatch, tmp_path):
 async def test_write_keeta_hours_opens_persistent_profile(monkeypatch, tmp_path):
     opened = _stub_persistent(monkeypatch, tmp_path, "keeta")
 
-    async def fake_write(context, *, windows=None, wait_seconds=8, persist=False):
+    async def fake_write(
+        context, *, windows=None, wait_seconds=8, persist=False, dry_run=False
+    ):
         return {
             "saved": 0,
             "probed": True,
@@ -106,6 +108,7 @@ async def test_write_keeta_hours_opens_persistent_profile(monkeypatch, tmp_path)
             "save_path": None,
             "wait_seconds": wait_seconds,
             "persist": persist,
+            "dry_run": dry_run,
         }
 
     monkeypatch.setattr(
@@ -113,7 +116,9 @@ async def test_write_keeta_hours_opens_persistent_profile(monkeypatch, tmp_path)
     )
 
     result = await warm.write_keeta_hours_in_page()
-    assert opened == [{"channel": "keeta", "headed": not settings.HEADLESS, "persistent": True}]
+    assert opened == [
+        {"channel": "keeta", "headed": not settings.HEADLESS, "persistent": True}
+    ]
     assert result["probed"] is True
 
 

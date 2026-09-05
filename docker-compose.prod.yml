@@ -149,6 +149,7 @@ x-api-environment: &api-environment
   # reads and this file does not name is still model↔prod drift.
   CATALOG_SYNC_READ_ENABLED: ${CATALOG_SYNC_READ_ENABLED:-false}
   CATALOG_SYNC_ENABLED: ${CATALOG_SYNC_ENABLED:-false}
+  BRANCH_HOURS_SYNC_LIVE: ${BRANCH_HOURS_SYNC_LIVE:-false}
   CATALOG_SYNC_ENFORCE_PRICE_PARITY: ${CATALOG_SYNC_ENFORCE_PRICE_PARITY:-true}
   CATALOG_SYNC_SWEEP_MINUTES: ${CATALOG_SYNC_SWEEP_MINUTES:-0}
   # ── Slider ──────────────────────────────────────────────────────────

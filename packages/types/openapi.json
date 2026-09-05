@@ -2742,381 +2742,6 @@
         "title": "AvailabilityResponse",
         "type": "object"
       },
-      "BatchGroupResponse": {
-        "description": "A set of zones whose orders ride together, and the schedule they share.\n\nEverything the batching screen needs in one row, because the question it\nanswers \u2014 \"which zones leave together, on whose van, and how long after\"\n\u2014 used to require reading five zones' schedules side by side and noticing\nthat their end times matched.",
-        "properties": {
-          "courier_code": {
-            "title": "Courier Code",
-            "type": "string"
-          },
-          "delivery_minutes_after_dispatch": {
-            "title": "Delivery Minutes After Dispatch",
-            "type": "integer"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "is_active": {
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "windows": {
-            "items": {
-              "$ref": "#/components/schemas/BatchWindowResponse"
-            },
-            "title": "Windows",
-            "type": "array"
-          },
-          "zone_names": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Zone Names",
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "courier_code",
-          "delivery_minutes_after_dispatch",
-          "is_active",
-          "zone_names",
-          "windows"
-        ],
-        "title": "BatchGroupResponse",
-        "type": "object"
-      },
-      "BatchGroupUpdate": {
-        "description": "The parts of a schedule that are a commercial decision rather than a\nstructural one.\n\n`name` and `courier_code` are deliberately absent. Which carrier a group\nbooks is the thing `supports_batching` guards and the thing its zones were\nassigned against; moving it is a re-partitioning of the map, not a number\nsomebody adjusts on a Tuesday.",
-        "properties": {
-          "delivery_minutes_after_dispatch": {
-            "anyOf": [
-              {
-                "maximum": 1440.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Delivery Minutes After Dispatch"
-          },
-          "is_active": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Active"
-          }
-        },
-        "title": "BatchGroupUpdate",
-        "type": "object"
-      },
-      "BatchResponse": {
-        "properties": {
-          "attempt_count": {
-            "title": "Attempt Count",
-            "type": "integer"
-          },
-          "cost_per_delivery": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Per Delivery"
-          },
-          "cost_total": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost Total"
-          },
-          "courier_order_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Courier Order Id"
-          },
-          "courier_status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Courier Status"
-          },
-          "dispatch_at": {
-            "format": "date-time",
-            "title": "Dispatch At",
-            "type": "string"
-          },
-          "dispatched_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Dispatched At"
-          },
-          "distance_m": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Distance M"
-          },
-          "driver_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Driver Name"
-          },
-          "group_id": {
-            "title": "Group Id",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "last_error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Error"
-          },
-          "next_attempt_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Attempt At"
-          },
-          "order_numbers": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Order Numbers",
-            "type": "array"
-          },
-          "share_link": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Share Link"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "stop_count": {
-            "title": "Stop Count",
-            "type": "integer"
-          },
-          "window_label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Window Label"
-          },
-          "zone_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Zone Name"
-          }
-        },
-        "required": [
-          "id",
-          "group_id",
-          "zone_name",
-          "window_label",
-          "dispatch_at",
-          "status",
-          "stop_count",
-          "courier_order_id",
-          "courier_status",
-          "share_link",
-          "driver_name",
-          "distance_m",
-          "cost_total",
-          "cost_per_delivery",
-          "dispatched_at",
-          "last_error",
-          "attempt_count",
-          "next_attempt_at",
-          "order_numbers"
-        ],
-        "title": "BatchResponse",
-        "type": "object"
-      },
-      "BatchWindowResponse": {
-        "properties": {
-          "end_hour": {
-            "title": "End Hour",
-            "type": "integer"
-          },
-          "end_minute": {
-            "title": "End Minute",
-            "type": "integer"
-          },
-          "group_id": {
-            "title": "Group Id",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "is_active": {
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          },
-          "start_hour": {
-            "title": "Start Hour",
-            "type": "integer"
-          },
-          "start_minute": {
-            "title": "Start Minute",
-            "type": "integer"
-          },
-          "wraps_midnight": {
-            "title": "Wraps Midnight",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "group_id",
-          "label",
-          "start_hour",
-          "start_minute",
-          "end_hour",
-          "end_minute",
-          "is_active",
-          "wraps_midnight"
-        ],
-        "title": "BatchWindowResponse",
-        "type": "object"
-      },
-      "BatchWindowWrite": {
-        "properties": {
-          "end_hour": {
-            "maximum": 24.0,
-            "minimum": 0.0,
-            "title": "End Hour",
-            "type": "integer"
-          },
-          "end_minute": {
-            "default": 0,
-            "maximum": 59.0,
-            "minimum": 0.0,
-            "title": "End Minute",
-            "type": "integer"
-          },
-          "is_active": {
-            "default": true,
-            "title": "Is Active",
-            "type": "boolean"
-          },
-          "label": {
-            "maxLength": 60,
-            "minLength": 1,
-            "title": "Label",
-            "type": "string"
-          },
-          "start_hour": {
-            "maximum": 23.0,
-            "minimum": 0.0,
-            "title": "Start Hour",
-            "type": "integer"
-          },
-          "start_minute": {
-            "default": 0,
-            "maximum": 59.0,
-            "minimum": 0.0,
-            "title": "Start Minute",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "label",
-          "start_hour",
-          "end_hour"
-        ],
-        "title": "BatchWindowWrite",
-        "type": "object"
-      },
       "BlackoutCreate": {
         "properties": {
           "blackout_date": {
@@ -3898,6 +3523,128 @@
           }
         },
         "title": "BranchHolidayUpdate",
+        "type": "object"
+      },
+      "BranchHoursSyncRunList": {
+        "description": "A page of hours-sync rows, newest first, plus the unpaginated total.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BranchHoursSyncRunOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "BranchHoursSyncRunList",
+        "type": "object"
+      },
+      "BranchHoursSyncRunOut": {
+        "description": "One recorded working-hours push for one (branch, channel).\n\n`planned` is the payload the writer would send (endpoint + a compact\nday\u2192window summary), captured even on a dry run so the enumeration is\nauditable without touching a portal. `dry_run` says which mode wrote it;\n`error` is the failure reason, null on a clean push.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "channel",
+          "status",
+          "dry_run",
+          "created_at"
+        ],
+        "title": "BranchHoursSyncRunOut",
         "type": "object"
       },
       "BranchLive": {
@@ -7146,7 +6893,7 @@
         "type": "object"
       },
       "CourierResponse": {
-        "description": "A carrier and what it promises, for the admin's Estimates screen.\n\n`supports_batching` is read-only here and shown anyway: it is the reason a\ncourier does or does not appear on the batching screen, and an admin\nwondering why noon Send has no schedule deserves the answer on the same\npage as the numbers.",
+        "description": "A carrier and what it promises, for the admin's Estimates screen.",
         "properties": {
           "code": {
             "title": "Code",
@@ -7213,10 +6960,6 @@
             ],
             "title": "Payment Fee Percent"
           },
-          "supports_batching": {
-            "title": "Supports Batching",
-            "type": "boolean"
-          },
           "unbatched_promise_days": {
             "title": "Unbatched Promise Days",
             "type": "integer"
@@ -7244,7 +6987,6 @@
         "required": [
           "code",
           "name",
-          "supports_batching",
           "unbatched_promise_kind",
           "unbatched_promise_minutes",
           "unbatched_promise_days",
@@ -7255,7 +6997,7 @@
         "type": "object"
       },
       "CourierUpdate": {
-        "description": "What a courier promises when there is no batch to wait for.\n\n`code` and `supports_batching` are not here. The code is the join key every\npolygon and every group already holds, and whether a carrier can carry\nseveral of our orders in one booking is a fact about their product, not a\nsetting \u2014 turning it on for a courier that cannot would let a schedule be\nattached to a promise nothing can keep.",
+        "description": "What a courier promises.\n\n`code` is not here: it is the join key every polygon already holds, so it is\nthe address of the row, not one of its editable fields.",
         "properties": {
           "commission_fixed": {
             "anyOf": [
@@ -12835,6 +12577,134 @@
           "payouts"
         ],
         "title": "KeetaFinanceResult",
+        "type": "object"
+      },
+      "KeetaHoursOutcome": {
+        "description": "One shop's result from the worker's in-page hours write.",
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "planned": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned"
+          },
+          "shop_id": {
+            "title": "Shop Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shop_id",
+          "ok"
+        ],
+        "title": "KeetaHoursOutcome",
+        "type": "object"
+      },
+      "KeetaHoursResult": {
+        "description": "How many `branch_hours_sync_run` rows the pushed outcomes recorded.",
+        "properties": {
+          "recorded": {
+            "title": "Recorded",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recorded"
+        ],
+        "title": "KeetaHoursResult",
+        "type": "object"
+      },
+      "KeetaHoursResultPush": {
+        "description": "The worker's per-shop outcomes from the Keeta hours job, to record as\n`branch_hours_sync_run` rows (shop_id \u2192 branch via the keeta map).",
+        "properties": {
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/KeetaHoursOutcome"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          }
+        },
+        "title": "KeetaHoursResultPush",
+        "type": "object"
+      },
+      "KeetaHoursScheduleOut": {
+        "description": "The MM hours the Keeta worker job applies in-page. `dry_run` echoes the\nAPI's live flag so the worker builds the body but does not POST when false-\nfor-live, keeping the live decision on the API side.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "shops": {
+            "items": {
+              "$ref": "#/components/schemas/KeetaHoursShop"
+            },
+            "title": "Shops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "dry_run"
+        ],
+        "title": "KeetaHoursScheduleOut",
+        "type": "object"
+      },
+      "KeetaHoursShop": {
+        "description": "One Keeta shop's whole weekly schedule, MM's source of truth, for the\nworker's in-page write. `weekly` keys are `sun`..`sat` (MM Sunday-first),\neach a list of `{startTime,endTime,option}` slots in seconds-from-midnight;\na closed day is `[{startTime:0,endTime:0,option:1}]`.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "shop_id": {
+            "title": "Shop Id",
+            "type": "string"
+          },
+          "weekly": {
+            "additionalProperties": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "title": "Weekly",
+            "type": "object"
+          }
+        },
+        "required": [
+          "shop_id",
+          "branch_id",
+          "weekly"
+        ],
+        "title": "KeetaHoursShop",
         "type": "object"
       },
       "KeetaMenuPush": {
@@ -18774,17 +18644,6 @@
             "title": "Alternate Providers",
             "type": "array"
           },
-          "batch_group_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Batch Group Id"
-          },
           "branch_id": {
             "anyOf": [
               {
@@ -18843,7 +18702,6 @@
           "fulfilment_provider",
           "alternate_providers",
           "branch_id",
-          "batch_group_id",
           "display_order",
           "point_count"
         ],
@@ -31824,6 +31682,117 @@
         ]
       }
     },
+    "/api/v1/aggregators/hours-runs": {
+      "get": {
+        "description": "The working-hours fan-out trail for the admin panel \u2014 one row per\n(branch, channel) push, newest first, with the total for the filter. Each\nrow carries the dry-run plan or the live result and, on a failure, why.",
+        "operationId": "list_hours_runs_api_v1_aggregators_hours_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchHoursSyncRunList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Hours Runs",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
     "/api/v1/aggregators/keeta/finance": {
       "post": {
         "description": "Ingest a batch of in-page-fetched Keeta finance payloads.\n\nKeeta's finance data is fetched in-page by the bootstrap worker (where the\nportal's JS signs the request) and pushed here. Each payload is parsed by\n`keeta_provider.parse_finance` into statements and payouts and upserted.\nWhen the payload is only download-task metadata (figures live in PDF invoices),\nthe parse returns empty lists with a truncation note \u2014 the response still\nreturns 200 with zero counts and includes the note so the worker can log it.",
@@ -31879,6 +31848,66 @@
           }
         },
         "summary": "Push Keeta Finance",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/keeta/hours-result": {
+      "post": {
+        "description": "Record the worker's per-shop Keeta hours outcomes as\n`branch_hours_sync_run` rows, alerting Sentry on a failed save with the same\nstable per-channel fingerprint the httpx fan-out uses.",
+        "operationId": "worker_keeta_hours_result_api_v1_aggregators_keeta_hours_result_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeetaHoursResultPush"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaHoursResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Keeta Hours Result",
         "tags": [
           "Aggregators"
         ]
@@ -32774,6 +32803,56 @@
           }
         },
         "summary": "Hydrate Accounts",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/worker/keeta/hours": {
+      "get": {
+        "description": "MM's weekly schedule per Keeta shop, for the worker's in-page write.\n\nKeeta's hours save is mtgsig-signed in the page, so the DB-less worker pulls\nthe schedule here (seconds-from-midnight, Sunday-first) and posts each shop's\noutcome back to `/keeta/hours-result`. An empty list until\n`CATALOG_SYNC_ENABLED`; `dry_run` echoes `BRANCH_HOURS_SYNC_LIVE` so the live\ndecision stays on the API side. A shop with no MM schedule is omitted, so the\nworker keeps the portal's own map for it (never blanks a shop).",
+        "operationId": "worker_keeta_hours_api_v1_aggregators_worker_keeta_hours_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeetaHoursScheduleOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Worker Keeta Hours",
         "tags": [
           "Aggregators"
         ]
@@ -38940,423 +39019,6 @@
         ]
       }
     },
-    "/api/v1/delivery-zones/batch-groups": {
-      "get": {
-        "description": "Every schedule, with the zones on it.\n\nDeclared beside `/{polygon_id}` routes, so the literal path has to be\nmatched before anything that would read \"batch-groups\" as an id.",
-        "operationId": "list_batch_groups_api_v1_delivery_zones_batch_groups_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BatchGroupResponse"
-                  },
-                  "title": "Response List Batch Groups Api V1 Delivery Zones Batch Groups Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "List Batch Groups",
-        "tags": [
-          "Delivery Zones"
-        ]
-      }
-    },
-    "/api/v1/delivery-zones/batch-groups/{group_id}": {
-      "put": {
-        "description": "Change how long after a run leaves that its last box is through a door.\n\nThe other half of what the checkout quotes a batched zone, and until now the\nhalf that needed a deploy: the window said when the van goes, and this says\nhow long it then takes. Unlike a fee it takes effect immediately and is not\nversioned \u2014 a wrong number here delays nothing and overcharges nobody, it\njust says the wrong time, and the fix is to say the right one.\n\nOrders already quoted are untouched. What the shop said out loud is a\nrecord, not a derivation (`order_deliveries` keeps it), so moving this\nnumber moves the next promise rather than rewriting the last one.",
-        "operationId": "update_batch_group_api_v1_delivery_zones_batch_groups__group_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "group_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Group Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchGroupUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchGroupResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Update Batch Group",
-        "tags": [
-          "Delivery Zones"
-        ]
-      }
-    },
-    "/api/v1/delivery-zones/batch-groups/{group_id}/batch-windows": {
-      "get": {
-        "description": "When orders in this group travel together. All times are Dubai time.",
-        "operationId": "list_batch_windows_api_v1_delivery_zones_batch_groups__group_id__batch_windows_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "group_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Group Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BatchWindowResponse"
-                  },
-                  "title": "Response List Batch Windows Api V1 Delivery Zones Batch Groups  Group Id  Batch Windows Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "List Batch Windows",
-        "tags": [
-          "Delivery Zones"
-        ]
-      },
-      "post": {
-        "description": "Add a slot to a group's schedule.\n\nOnly a courier that can carry several of our orders in one booking may have\none \u2014 `supports_batching` on the courier row. A schedule on anything else is\na setting that does nothing, which is worse than an absent one because\nsomebody will come to rely on it.",
-        "operationId": "create_batch_window_api_v1_delivery_zones_batch_groups__group_id__batch_windows_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "group_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Group Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchWindowWrite"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchWindowResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Create Batch Window",
-        "tags": [
-          "Delivery Zones"
-        ]
-      }
-    },
-    "/api/v1/delivery-zones/batch-windows/{window_id}": {
-      "delete": {
-        "description": "Remove a slot. Orders waiting on it are re-derived, and any that no longer\nfall in a window go out on their own rather than being stranded.",
-        "operationId": "delete_batch_window_api_v1_delivery_zones_batch_windows__window_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "window_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Window Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Delete Batch Window",
-        "tags": [
-          "Delivery Zones"
-        ]
-      },
-      "put": {
-        "description": "Move a slot, and move everything still waiting on it.\n\nAn order whose new window has already closed goes out on its own rather\nthan waiting until tomorrow for a slot that has been and gone.",
-        "operationId": "update_batch_window_api_v1_delivery_zones_batch_windows__window_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "window_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Window Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BatchWindowWrite"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchWindowResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Update Batch Window",
-        "tags": [
-          "Delivery Zones"
-        ]
-      }
-    },
-    "/api/v1/delivery-zones/batches": {
-      "get": {
-        "description": "Runs waiting to leave and runs already gone, most imminent first.",
-        "operationId": "list_batches_api_v1_delivery_zones_batches_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "status_filter",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status Filter"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 50,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/BatchResponse"
-                  },
-                  "title": "Response List Batches Api V1 Delivery Zones Batches Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "List Batches",
-        "tags": [
-          "Delivery Zones"
-        ]
-      }
-    },
-    "/api/v1/delivery-zones/batches/{batch_id}/dispatch": {
-      "post": {
-        "description": "Send a run early, or retry one the courier refused.\n\nThe sweeper fires these on schedule and retries a refusal a few times on its\nown; this is for the shop deciding it is not worth waiting, and for the run\nthat has already exhausted those attempts.\n\nPressing it resets the ladder. Somebody doing this by hand has almost always\njust changed something the automatic attempts could not \u2014 topped up the\nwallet, fixed an address \u2014 so the run deserves the full set of tries again\nrather than the one that was left.",
-        "operationId": "dispatch_batch_now_api_v1_delivery_zones_batches__batch_id__dispatch_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "batch_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Batch Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BatchResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Dispatch Batch Now",
-        "tags": [
-          "Delivery Zones"
-        ]
-      }
-    },
     "/api/v1/delivery-zones/couriers": {
       "get": {
         "description": "Every carrier and what it promises.",
@@ -39516,7 +39178,7 @@
     },
     "/api/v1/delivery-zones/polygons": {
       "get": {
-        "description": "One page of a version's zones, filtered, searched and sorted in SQL.\n\nThe all-at-once `/map` is for drawing the country; this is for the table. The\nper-area map has ~97 zones, too many to render in one block and awkward to\nscan, so this pages them and lets the admin search by name and filter by\ncourier, kitchen or batch group. Defaults to the live version, because that\nis the one an admin almost always means.",
+        "description": "One page of a version's zones, filtered, searched and sorted in SQL.\n\nThe all-at-once `/map` is for drawing the country; this is for the table. The\nper-area map has ~97 zones, too many to render in one block and awkward to\nscan, so this pages them and lets the admin search by name and filter by\ncourier or kitchen. Defaults to the live version, because that\nis the one an admin almost always means.",
         "operationId": "list_polygons_api_v1_delivery_zones_polygons_get",
         "parameters": [
           {
@@ -39606,23 +39268,6 @@
                 }
               ],
               "title": "Branch Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "batch_group_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Batch Group Id"
             }
           },
           {

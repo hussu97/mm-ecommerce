@@ -777,6 +777,25 @@ export const aggregatorRunsApi = {
     api.post<RunTriggerResult>('/aggregators/runs/trigger', body),
 };
 
+/** The working-hours fan-out trail (MM → each integrator), newest first — one
+ *  row per (branch, channel) push, its dry-run plan or live result, and, on a
+ *  failure, why. Read-only; the sync itself runs on the VM (hourly for the
+ *  aggregators + Foodics, nightly for Keeta). */
+export const hoursRunsApi = {
+  list: (
+    params: {
+      branch_id?: string;
+      channel?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) =>
+    api.get<Schemas['BranchHoursSyncRunList']>(
+      `/aggregators/hours-runs${buildQs(params)}`,
+    ),
+};
+
 // ─── Aggregator outlet↔branch mappings ────────────────────────────────────────
 
 /**

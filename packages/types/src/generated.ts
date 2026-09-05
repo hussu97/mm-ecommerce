@@ -371,6 +371,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/hours-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Hours Runs
+         * @description The working-hours fan-out trail for the admin panel — one row per
+         *     (branch, channel) push, newest first, with the total for the filter. Each
+         *     row carries the dry-run plan or the live result and, on a failure, why.
+         */
+        get: operations["list_hours_runs_api_v1_aggregators_hours_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/keeta/finance": {
         parameters: {
             query?: never;
@@ -392,6 +414,28 @@ export interface paths {
          *     returns 200 with zero counts and includes the note so the worker can log it.
          */
         post: operations["push_keeta_finance_api_v1_aggregators_keeta_finance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/keeta/hours-result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Worker Keeta Hours Result
+         * @description Record the worker's per-shop Keeta hours outcomes as
+         *     `branch_hours_sync_run` rows, alerting Sentry on a failed save with the same
+         *     stable per-channel fingerprint the httpx fan-out uses.
+         */
+        post: operations["worker_keeta_hours_result_api_v1_aggregators_keeta_hours_result_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -672,6 +716,33 @@ export interface paths {
          *     `/accounts` never returns passwords.
          */
         get: operations["hydrate_accounts_api_v1_aggregators_worker_accounts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/aggregators/worker/keeta/hours": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Worker Keeta Hours
+         * @description MM's weekly schedule per Keeta shop, for the worker's in-page write.
+         *
+         *     Keeta's hours save is mtgsig-signed in the page, so the DB-less worker pulls
+         *     the schedule here (seconds-from-midnight, Sunday-first) and posts each shop's
+         *     outcome back to `/keeta/hours-result`. An empty list until
+         *     `CATALOG_SYNC_ENABLED`; `dry_run` echoes `BRANCH_HOURS_SYNC_LIVE` so the live
+         *     decision stays on the API side. A shop with no MM schedule is omitted, so the
+         *     worker keeps the portal's own map for it (never blanks a shop).
+         */
+        get: operations["worker_keeta_hours_api_v1_aggregators_worker_keeta_hours_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2471,165 +2542,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/delivery-zones/batch-groups": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Batch Groups
-         * @description Every schedule, with the zones on it.
-         *
-         *     Declared beside `/{polygon_id}` routes, so the literal path has to be
-         *     matched before anything that would read "batch-groups" as an id.
-         */
-        get: operations["list_batch_groups_api_v1_delivery_zones_batch_groups_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/delivery-zones/batch-groups/{group_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Update Batch Group
-         * @description Change how long after a run leaves that its last box is through a door.
-         *
-         *     The other half of what the checkout quotes a batched zone, and until now the
-         *     half that needed a deploy: the window said when the van goes, and this says
-         *     how long it then takes. Unlike a fee it takes effect immediately and is not
-         *     versioned — a wrong number here delays nothing and overcharges nobody, it
-         *     just says the wrong time, and the fix is to say the right one.
-         *
-         *     Orders already quoted are untouched. What the shop said out loud is a
-         *     record, not a derivation (`order_deliveries` keeps it), so moving this
-         *     number moves the next promise rather than rewriting the last one.
-         */
-        put: operations["update_batch_group_api_v1_delivery_zones_batch_groups__group_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/delivery-zones/batch-groups/{group_id}/batch-windows": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Batch Windows
-         * @description When orders in this group travel together. All times are Dubai time.
-         */
-        get: operations["list_batch_windows_api_v1_delivery_zones_batch_groups__group_id__batch_windows_get"];
-        put?: never;
-        /**
-         * Create Batch Window
-         * @description Add a slot to a group's schedule.
-         *
-         *     Only a courier that can carry several of our orders in one booking may have
-         *     one — `supports_batching` on the courier row. A schedule on anything else is
-         *     a setting that does nothing, which is worse than an absent one because
-         *     somebody will come to rely on it.
-         */
-        post: operations["create_batch_window_api_v1_delivery_zones_batch_groups__group_id__batch_windows_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/delivery-zones/batch-windows/{window_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Update Batch Window
-         * @description Move a slot, and move everything still waiting on it.
-         *
-         *     An order whose new window has already closed goes out on its own rather
-         *     than waiting until tomorrow for a slot that has been and gone.
-         */
-        put: operations["update_batch_window_api_v1_delivery_zones_batch_windows__window_id__put"];
-        post?: never;
-        /**
-         * Delete Batch Window
-         * @description Remove a slot. Orders waiting on it are re-derived, and any that no longer
-         *     fall in a window go out on their own rather than being stranded.
-         */
-        delete: operations["delete_batch_window_api_v1_delivery_zones_batch_windows__window_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/delivery-zones/batches": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Batches
-         * @description Runs waiting to leave and runs already gone, most imminent first.
-         */
-        get: operations["list_batches_api_v1_delivery_zones_batches_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/delivery-zones/batches/{batch_id}/dispatch": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dispatch Batch Now
-         * @description Send a run early, or retry one the courier refused.
-         *
-         *     The sweeper fires these on schedule and retries a refusal a few times on its
-         *     own; this is for the shop deciding it is not worth waiting, and for the run
-         *     that has already exhausted those attempts.
-         *
-         *     Pressing it resets the ladder. Somebody doing this by hand has almost always
-         *     just changed something the automatic attempts could not — topped up the
-         *     wallet, fixed an address — so the run deserves the full set of tries again
-         *     rather than the one that was left.
-         */
-        post: operations["dispatch_batch_now_api_v1_delivery_zones_batches__batch_id__dispatch_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/delivery-zones/couriers": {
         parameters: {
             query?: never;
@@ -2714,7 +2626,7 @@ export interface paths {
          *     The all-at-once `/map` is for drawing the country; this is for the table. The
          *     per-area map has ~97 zones, too many to render in one block and awkward to
          *     scan, so this pages them and lets the admin search by name and filter by
-         *     courier, kitchen or batch group. Defaults to the live version, because that
+         *     courier or kitchen. Defaults to the live version, because that
          *     is the one an admin almost always means.
          */
         get: operations["list_polygons_api_v1_delivery_zones_polygons_get"];
@@ -8858,136 +8770,6 @@ export interface components {
              */
             latest_date: string;
         };
-        /**
-         * BatchGroupResponse
-         * @description A set of zones whose orders ride together, and the schedule they share.
-         *
-         *     Everything the batching screen needs in one row, because the question it
-         *     answers — "which zones leave together, on whose van, and how long after"
-         *     — used to require reading five zones' schedules side by side and noticing
-         *     that their end times matched.
-         */
-        BatchGroupResponse: {
-            /** Courier Code */
-            courier_code: string;
-            /** Delivery Minutes After Dispatch */
-            delivery_minutes_after_dispatch: number;
-            /** Id */
-            id: string;
-            /** Is Active */
-            is_active: boolean;
-            /** Name */
-            name: string;
-            /** Windows */
-            windows: components["schemas"]["BatchWindowResponse"][];
-            /** Zone Names */
-            zone_names: string[];
-        };
-        /**
-         * BatchGroupUpdate
-         * @description The parts of a schedule that are a commercial decision rather than a
-         *     structural one.
-         *
-         *     `name` and `courier_code` are deliberately absent. Which carrier a group
-         *     books is the thing `supports_batching` guards and the thing its zones were
-         *     assigned against; moving it is a re-partitioning of the map, not a number
-         *     somebody adjusts on a Tuesday.
-         */
-        BatchGroupUpdate: {
-            /** Delivery Minutes After Dispatch */
-            delivery_minutes_after_dispatch?: number | null;
-            /** Is Active */
-            is_active?: boolean | null;
-        };
-        /** BatchResponse */
-        BatchResponse: {
-            /** Attempt Count */
-            attempt_count: number;
-            /** Cost Per Delivery */
-            cost_per_delivery: number | null;
-            /** Cost Total */
-            cost_total: number | null;
-            /** Courier Order Id */
-            courier_order_id: string | null;
-            /** Courier Status */
-            courier_status: string | null;
-            /**
-             * Dispatch At
-             * Format: date-time
-             */
-            dispatch_at: string;
-            /** Dispatched At */
-            dispatched_at: string | null;
-            /** Distance M */
-            distance_m: number | null;
-            /** Driver Name */
-            driver_name: string | null;
-            /** Group Id */
-            group_id: string;
-            /** Id */
-            id: string;
-            /** Last Error */
-            last_error: string | null;
-            /** Next Attempt At */
-            next_attempt_at: string | null;
-            /** Order Numbers */
-            order_numbers: string[];
-            /** Share Link */
-            share_link: string | null;
-            /** Status */
-            status: string;
-            /** Stop Count */
-            stop_count: number;
-            /** Window Label */
-            window_label: string | null;
-            /** Zone Name */
-            zone_name: string | null;
-        };
-        /** BatchWindowResponse */
-        BatchWindowResponse: {
-            /** End Hour */
-            end_hour: number;
-            /** End Minute */
-            end_minute: number;
-            /** Group Id */
-            group_id: string;
-            /** Id */
-            id: string;
-            /** Is Active */
-            is_active: boolean;
-            /** Label */
-            label: string;
-            /** Start Hour */
-            start_hour: number;
-            /** Start Minute */
-            start_minute: number;
-            /** Wraps Midnight */
-            wraps_midnight: boolean;
-        };
-        /** BatchWindowWrite */
-        BatchWindowWrite: {
-            /** End Hour */
-            end_hour: number;
-            /**
-             * End Minute
-             * @default 0
-             */
-            end_minute: number;
-            /**
-             * Is Active
-             * @default true
-             */
-            is_active: boolean;
-            /** Label */
-            label: string;
-            /** Start Hour */
-            start_hour: number;
-            /**
-             * Start Minute
-             * @default 0
-             */
-            start_minute: number;
-        };
         /** BlackoutCreate */
         BlackoutCreate: {
             /**
@@ -9301,6 +9083,60 @@ export interface components {
             name?: string | null;
             /** Note */
             note?: string | null;
+        };
+        /**
+         * BranchHoursSyncRunList
+         * @description A page of hours-sync rows, newest first, plus the unpaginated total.
+         */
+        BranchHoursSyncRunList: {
+            /** Items */
+            items: components["schemas"]["BranchHoursSyncRunOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * BranchHoursSyncRunOut
+         * @description One recorded working-hours push for one (branch, channel).
+         *
+         *     `planned` is the payload the writer would send (endpoint + a compact
+         *     day→window summary), captured even on a dry run so the enumeration is
+         *     auditable without touching a portal. `dry_run` says which mode wrote it;
+         *     `error` is the failure reason, null on a clean push.
+         */
+        BranchHoursSyncRunOut: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Channel */
+            channel: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Error */
+            error?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Planned */
+            planned?: {
+                [key: string]: unknown;
+            } | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
         };
         /** BranchLive */
         BranchLive: {
@@ -10332,11 +10168,6 @@ export interface components {
         /**
          * CourierResponse
          * @description A carrier and what it promises, for the admin's Estimates screen.
-         *
-         *     `supports_batching` is read-only here and shown anyway: it is the reason a
-         *     courier does or does not appear on the batching screen, and an admin
-         *     wondering why noon Send has no schedule deserves the answer on the same
-         *     page as the numbers.
          */
         CourierResponse: {
             /** Code */
@@ -10358,8 +10189,6 @@ export interface components {
             payment_fee_fixed?: string | null;
             /** Payment Fee Percent */
             payment_fee_percent?: string | null;
-            /** Supports Batching */
-            supports_batching: boolean;
             /** Unbatched Promise Days */
             unbatched_promise_days: number;
             /** Unbatched Promise Kind */
@@ -10371,13 +10200,10 @@ export interface components {
         };
         /**
          * CourierUpdate
-         * @description What a courier promises when there is no batch to wait for.
+         * @description What a courier promises.
          *
-         *     `code` and `supports_batching` are not here. The code is the join key every
-         *     polygon and every group already holds, and whether a carrier can carry
-         *     several of our orders in one booking is a fact about their product, not a
-         *     setting — turning it on for a courier that cannot would let a schedule be
-         *     attached to a promise nothing can keep.
+         *     `code` is not here: it is the join key every polygon already holds, so it is
+         *     the address of the row, not one of its editable fields.
          */
         CourierUpdate: {
             /** Commission Fixed */
@@ -12174,6 +12000,78 @@ export interface components {
             statements: number;
             /** Truncation Note */
             truncation_note?: string | null;
+        };
+        /**
+         * KeetaHoursOutcome
+         * @description One shop's result from the worker's in-page hours write.
+         */
+        KeetaHoursOutcome: {
+            /**
+             * Dry Run
+             * @default true
+             */
+            dry_run: boolean;
+            /** Error */
+            error?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Planned */
+            planned?: {
+                [key: string]: unknown;
+            } | null;
+            /** Shop Id */
+            shop_id: string;
+        };
+        /**
+         * KeetaHoursResult
+         * @description How many `branch_hours_sync_run` rows the pushed outcomes recorded.
+         */
+        KeetaHoursResult: {
+            /** Recorded */
+            recorded: number;
+        };
+        /**
+         * KeetaHoursResultPush
+         * @description The worker's per-shop outcomes from the Keeta hours job, to record as
+         *     `branch_hours_sync_run` rows (shop_id → branch via the keeta map).
+         */
+        KeetaHoursResultPush: {
+            /** Outcomes */
+            outcomes?: components["schemas"]["KeetaHoursOutcome"][];
+        };
+        /**
+         * KeetaHoursScheduleOut
+         * @description The MM hours the Keeta worker job applies in-page. `dry_run` echoes the
+         *     API's live flag so the worker builds the body but does not POST when false-
+         *     for-live, keeping the live decision on the API side.
+         */
+        KeetaHoursScheduleOut: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Shops */
+            shops?: components["schemas"]["KeetaHoursShop"][];
+        };
+        /**
+         * KeetaHoursShop
+         * @description One Keeta shop's whole weekly schedule, MM's source of truth, for the
+         *     worker's in-page write. `weekly` keys are `sun`..`sat` (MM Sunday-first),
+         *     each a list of `{startTime,endTime,option}` slots in seconds-from-midnight;
+         *     a closed day is `[{startTime:0,endTime:0,option:1}]`.
+         */
+        KeetaHoursShop: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Shop Id */
+            shop_id: string;
+            /** Weekly */
+            weekly: {
+                [key: string]: {
+                    [key: string]: unknown;
+                }[];
+            };
         };
         /**
          * KeetaMenuPush
@@ -14223,8 +14121,6 @@ export interface components {
         PolygonResponse: {
             /** Alternate Providers */
             alternate_providers: string[];
-            /** Batch Group Id */
-            batch_group_id: string | null;
             /** Branch Id */
             branch_id: string | null;
             /** Delivery Fee */
@@ -18831,6 +18727,41 @@ export interface operations {
             };
         };
     };
+    list_hours_runs_api_v1_aggregators_hours_runs_get: {
+        parameters: {
+            query?: {
+                branch_id?: string | null;
+                channel?: string | null;
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchHoursSyncRunList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     push_keeta_finance_api_v1_aggregators_keeta_finance_post: {
         parameters: {
             query?: never;
@@ -18853,6 +18784,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KeetaFinanceResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_keeta_hours_result_api_v1_aggregators_keeta_hours_result_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KeetaHoursResultPush"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaHoursResult"];
                 };
             };
             /** @description Validation Error */
@@ -19250,6 +19216,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorWorkerAccount"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    worker_keeta_hours_api_v1_aggregators_worker_keeta_hours_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeetaHoursScheduleOut"];
                 };
             };
             /** @description Validation Error */
@@ -22815,254 +22812,6 @@ export interface operations {
             };
         };
     };
-    list_batch_groups_api_v1_delivery_zones_batch_groups_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchGroupResponse"][];
-                };
-            };
-        };
-    };
-    update_batch_group_api_v1_delivery_zones_batch_groups__group_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                group_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchGroupUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchGroupResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_batch_windows_api_v1_delivery_zones_batch_groups__group_id__batch_windows_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                group_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchWindowResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_batch_window_api_v1_delivery_zones_batch_groups__group_id__batch_windows_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                group_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchWindowWrite"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchWindowResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_batch_window_api_v1_delivery_zones_batch_windows__window_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                window_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchWindowWrite"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchWindowResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_batch_window_api_v1_delivery_zones_batch_windows__window_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                window_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_batches_api_v1_delivery_zones_batches_get: {
-        parameters: {
-            query?: {
-                status_filter?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dispatch_batch_now_api_v1_delivery_zones_batches__batch_id__dispatch_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                batch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_couriers_api_v1_delivery_zones_couriers_get: {
         parameters: {
             query?: never;
@@ -23161,7 +22910,6 @@ export interface operations {
                 search?: string | null;
                 provider?: string | null;
                 branch_id?: string | null;
-                batch_group_id?: string | null;
                 sort?: string;
                 direction?: string;
             };

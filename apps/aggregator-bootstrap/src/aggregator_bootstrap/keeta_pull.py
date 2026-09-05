@@ -59,6 +59,7 @@ async def _reseed_keeta_storage(page: Any) -> None:
 
     await restore_session_storage(page, "keeta")
 
+
 #: The shop's clock. Keeta's history filter takes epoch-millis bounds, and the
 #: business day they mean is Dubai wall-clock — the same zone the parser emits.
 _BUSINESS_TZ = ZoneInfo("Asia/Dubai")
@@ -790,24 +791,43 @@ def build_keeta_hours_write_body(
     start_time: int | None = None,
     end_time: int | None = None,
     weekly: dict[str, Any] | None = None,
+    mm_weekly: dict[str, Any] | None = None,
     day_key: str | None = None,
 ) -> dict:
     """POST body for `/api/scm/business-hour/update`.
 
     Captured shape: `{shopId, businessHourOfTheWeek:{mon:[{startTime,endTime,
-    option}],…}}`. Overlay `day_key` (default today DXB) onto `weekly` when the
-    GET succeeded so the other six days are not wiped; if `weekly` is missing,
-    fill all seven days with the same slot (the live shops' pattern).
+    option}],…}}`.
+
+    Two modes:
+      * **Full week from MM** (`mm_weekly` given): mirror MM's whole schedule —
+        all seven days come from `mm_weekly` (keys `sun`..`sat`, already
+        `[{startTime,endTime,option}]` slots, a closed day `[{0,0,1}]`). This is
+        the source-of-truth sync. The portal `weekly` read-back only fills a day
+        MM omitted, so a shop is never blanked.
+      * **Today overlay** (no `mm_weekly`, the legacy path): overlay `day_key`
+        (default today DXB) onto the portal `weekly` so the other six days are
+        not wiped; if `weekly` is missing, fill all seven with the same slot.
     """
     sid = str(shop_id)
-    slot = _keeta_hour_slot(start_time, end_time, closed=closed)
-    today = day_key or keeta_today_day_key()
     week: dict[str, Any] = {}
     if isinstance(weekly, dict):
         for key in _KEETA_DAY_KEYS:
             existing = weekly.get(key)
             if isinstance(existing, list) and existing:
                 week[key] = existing
+    if isinstance(mm_weekly, dict):
+        for key in _KEETA_DAY_KEYS:
+            slots = mm_weekly.get(key)
+            if isinstance(slots, list) and slots:
+                week[key] = slots
+        # A day neither MM nor the portal gave becomes closed rather than absent.
+        closed_slot = _keeta_hour_slot(None, None, closed=True)
+        for key in _KEETA_DAY_KEYS:
+            week.setdefault(key, [closed_slot])
+        return {"shopId": sid, "businessHourOfTheWeek": week}
+    slot = _keeta_hour_slot(start_time, end_time, closed=closed)
+    today = day_key or keeta_today_day_key()
     week[today] = [slot]
     for key in _KEETA_DAY_KEYS:
         week.setdefault(key, [slot])
@@ -819,7 +839,11 @@ def looks_like_keeta_hours_save(url: str, method: str = "POST") -> bool:
     if str(method).upper() not in ("POST", "PUT"):
         return False
     low = url.lower()
-    if "summary/list" in low or "effective-data/get" in low or "offline-data/get" in low:
+    if (
+        "summary/list" in low
+        or "effective-data/get" in low
+        or "offline-data/get" in low
+    ):
         return False
     if "business-hour/update" in low:
         return True
@@ -913,17 +937,21 @@ async def write_keeta_today_hours(
     windows: list[dict[str, Any]] | None = None,
     wait_seconds: int = 8,
     persist: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Prime the persistent session, then POST `/api/scm/business-hour/update`.
 
-    Returns `{saved, probed, captured_xhrs, all_shop_posts, save_path, todo?}`.
-    `windows` items are `{shop_id|shopId, closed, start_time|startTime,
-    end_time|endTime}` in seconds-from-midnight.
+    Returns `{saved, probed, captured_xhrs, all_shop_posts, save_path, results,
+    todo?}`; each `results` item is `{shopId, raw|planned|skipped}`.
+    `windows` items are `{shop_id|shopId, weekly}` (a full MM week — the
+    source-of-truth mirror), or the legacy `{shop_id, closed, start_time,
+    end_time}` today-overlay.
 
     `persist=False` (the CLI probe) never POSTs — it only listens for a save
-    XHR. The 05:00 daemon passes `persist=True`: GET each shop's weekly map,
-    overlay today's window when `windows` is supplied, and POST the captured
-    `{shopId, businessHourOfTheWeek}` body. An empty GET is not POSTed back
+    XHR. The daemon passes `persist=True`: GET each shop's weekly map, build the
+    body (full week from `weekly` when given, else today's overlay), and POST
+    `{shopId, businessHourOfTheWeek}`. `dry_run=True` builds and records the body
+    but POSTs nothing (the VM enumeration pass). An empty GET is not POSTed back
     (that would wipe the week).
     """
     from .browser import NeedsHumanLogin
@@ -1021,7 +1049,13 @@ async def write_keeta_today_hours(
                 ):
                     weekly = data
                 window = by_shop.get(shop_id)
-                if window is None:
+                mm_weekly = window.get("weekly") if isinstance(window, dict) else None
+                if mm_weekly:
+                    # Full-week mirror of MM's source of truth (all seven days).
+                    payload = build_keeta_hours_write_body(
+                        shop_id, closed=False, weekly=weekly, mm_weekly=mm_weekly
+                    )
+                elif window is None:
                     if not weekly:
                         logger.warning(
                             "keeta hours: shop %s GET returned no weekly map; skip",
@@ -1043,6 +1077,13 @@ async def write_keeta_today_hours(
                         end_time=window.get("end_time", window.get("endTime")),
                         weekly=weekly,
                     )
+                if dry_run:
+                    # Enumerate only: record the body we would POST, touch nothing.
+                    logger.info("keeta hours dry-run shop %s", shop_id)
+                    results.append(
+                        {"shopId": str(shop_id), "planned": payload, "dry_run": True}
+                    )
+                    continue
                 # page.evaluate (main world) — same as saveSpu; the isolated
                 # world 107000106s without the restaurant context.
                 raw = await _post_keeta_hours(

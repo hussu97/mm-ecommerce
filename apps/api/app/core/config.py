@@ -538,6 +538,16 @@ class Settings(BaseSettings):
     #: to **dry-run** (`plan_push` always; `create_menu_item` / `hours_writers`
     #: unless the caller passes `dry_run=False`).
     CATALOG_SYNC_ENABLED: bool = False
+    #: Take the **hours** fan-out live independently of the broader catalog write.
+    #: `CATALOG_SYNC_ENABLED` stays the master gate (the writers refuse when it is
+    #: off), but even with it on the hours push stays **dry-run** — it logs and
+    #: persists the payload it would send and mutates no portal — until this is
+    #: also true. That split lets the weekly hours mirror go live on its own,
+    #: without also enabling menu/price writes, and lets us dry-run first on the
+    #: VM (enumerate every branch/channel payload), audit it, then flip. It sets
+    #: `dry_run = not BRANCH_HOURS_SYNC_LIVE` for `branch_hours_sync`'s fan-out and
+    #: is echoed to the headed worker's Keeta hours job the same way.
+    BRANCH_HOURS_SYNC_LIVE: bool = False
     #: Aggregator price policy (audit finding): the Foodics `Grubtech` price-tag
     #: price MUST equal the product's own price — a reprice updates both in
     #: lockstep. When true the diff flags any price-tag ≠ product price as a

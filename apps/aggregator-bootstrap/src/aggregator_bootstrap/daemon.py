@@ -26,6 +26,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from . import browser, observability, push, reauth, warm
 from .browser import NeedsHumanLogin, NotLoggedInError
@@ -191,9 +192,68 @@ async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
     if job.kind is JobKind.KEETA_HOURS:
         # Persistent-profile in-page POST of `/api/scm/business-hour/update`.
         # One Chrome, torn down after — never a second browser beside finance/orders.
-        await warm.write_keeta_hours_in_page(persist=True)
+        # MM is the source of truth: pull each shop's whole weekly schedule from
+        # the API (the DB-less worker's only route to it), mirror it in-page, then
+        # report each shop's outcome back so it lands in `branch_hours_sync_run`.
+        sched = await push.pull_keeta_hours()
+        shops = sched.get("shops") or []
+        dry = bool(sched.get("dry_run", True))
+        if not shops:
+            # Sync gated off, or no mapped shop has an MM schedule: keep-alive
+            # only (re-POST the portal's own map), nothing to record.
+            await warm.write_keeta_hours_in_page(persist=True)
+            return
+        windows = [
+            {"shop_id": s.get("shop_id"), "weekly": s.get("weekly")}
+            for s in shops
+            if s.get("shop_id")
+        ]
+        result = await warm.write_keeta_hours_in_page(
+            windows=windows, persist=True, dry_run=dry
+        )
+        outcomes = _keeta_hours_outcomes(result, dry_run=dry)
+        if outcomes:
+            await push.push_keeta_hours_result(outcomes)
         return
     raise ValueError(f"unknown job kind {job.kind!r}")  # pragma: no cover
+
+
+def _keeta_hours_outcomes(
+    result: dict[str, Any], *, dry_run: bool
+) -> list[dict[str, Any]]:
+    """Map `write_keeta_today_hours` per-shop results to the API's outcome shape.
+
+    A `skipped` shop (no weekly map to mirror) records nothing; a dry-run shop
+    carries its `planned` body; a live shop is `ok` iff the save returned
+    `code == 0`, else the raw response is the error.
+    """
+    outcomes: list[dict[str, Any]] = []
+    for item in result.get("results") or []:
+        shop_id = item.get("shopId")
+        if not shop_id or item.get("skipped"):
+            continue
+        if "planned" in item:
+            outcomes.append(
+                {
+                    "shop_id": str(shop_id),
+                    "ok": True,
+                    "dry_run": True,
+                    "planned": item["planned"],
+                }
+            )
+            continue
+        raw = item.get("raw")
+        code = raw.get("code") if isinstance(raw, dict) else None
+        ok = code == 0
+        outcomes.append(
+            {
+                "shop_id": str(shop_id),
+                "ok": ok,
+                "dry_run": dry_run,
+                "error": None if ok else str(raw)[:500],
+            }
+        )
+    return outcomes
 
 
 async def run_job_guarded(queue: JobQueue, job: Job) -> None:

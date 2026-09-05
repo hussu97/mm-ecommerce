@@ -38,6 +38,7 @@ __all__ = [
     "HoursWriteUnsupported",
     "supported_channels",
     "push_hours",
+    "push_weekly_hours",
     "close_outlet",
 ]
 
@@ -155,6 +156,54 @@ async def push_hours(
     )
     if dry_run:
         logger.info("hours writer dry-run %s %s", channel, plan.get("endpoint"))
+        return plan
+    await _execute(channel, plan)
+    plan["dry_run"] = False
+    return plan
+
+
+def _weekly_summary(weekly: dict[int, tuple[str, str]]) -> dict[str, str]:
+    """A compact `{weekday: "opens-closes" | "closed"}` for the run-log/plan.
+
+    MM weekday 0=Sunday … 6=Saturday; a weekday absent from `weekly` is closed.
+    """
+    return {
+        str(wd): (f"{weekly[wd][0]}-{weekly[wd][1]}" if wd in weekly else "closed")
+        for wd in range(7)
+    }
+
+
+async def push_weekly_hours(
+    db: Any,
+    *,
+    channel: str,
+    branch: Any,
+    weekly: dict[int, tuple[str, str]],
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Mirror the branch's whole weekly schedule to `channel` in one write.
+
+    `weekly` is `branch_hours_service.schedule(...)` — `{mm_weekday: (opens,
+    closes)}`, a weekday absent = closed. Unlike `push_hours` (one weekday), this
+    rebuilds all seven days from MM so the portal ends up an exact mirror of the
+    source of truth. Read-modify-replace: the current portal payload is read so
+    its non-hours envelope survives, then every day is rebuilt. `dry_run` (the
+    default) returns the payload the live write would send and mutates nothing.
+    """
+    _ensure_writable(channel)
+    mapper = _WEEKLY_PUSHERS[channel]
+    plan = await mapper(db, branch, weekly=weekly)
+    plan.update(
+        {
+            "channel": channel,
+            "branch_id": str(getattr(branch, "id", "")),
+            "op": "push_weekly_hours",
+            "weekly": _weekly_summary(weekly),
+            "dry_run": dry_run,
+        }
+    )
+    if dry_run:
+        logger.info("hours writer dry-run weekly %s %s", channel, plan.get("endpoint"))
         return plan
     await _execute(channel, plan)
     plan["dry_run"] = False
@@ -534,11 +583,184 @@ async def _careem_close(
     }
 
 
+# ── full-weekly builders (rebuild all seven days from MM, keep the envelope) ──
+
+
+async def _deliveroo_push_weekly(
+    db: AsyncSession, branch: Any, *, weekly: dict[int, tuple[str, str]]
+) -> dict[str, Any]:
+    from app.services.providers import deliveroo_provider as dp
+
+    session = await _load_session(db, "deliveroo")
+    row = await _branch_map(db, "deliveroo", branch.id)
+    outlet = row.external_outlet_id
+    # Deliveroo's payload is only the hours list (no envelope to preserve); the
+    # read confirms the outlet/session before a live PUT would replace it.
+    await dp.provider.get_opening_hours(session, outlet)
+    hours = [
+        {
+            "day_of_week": wd,  # Deliveroo day_of_week == MM weekday
+            "local_start_time": _hhmmss(win[0]),
+            "local_end_time": _hhmmss(win[1]),
+        }
+        for wd in range(7)
+        if (win := weekly.get(wd)) is not None
+    ]
+    return {
+        "session": session,
+        "outlet_id": outlet,
+        "endpoint": f"PUT /api/restaurants/{outlet}/opening_hours",
+        "payload": {"hours": hours},
+    }
+
+
+def _talabat_set_weekly(raw: Any, *, weekly: dict[int, tuple[str, str]]) -> Any:
+    """Rebuild the VTS `Normal` calendar's whole week, keeping other calendars."""
+    if not isinstance(raw, dict):
+        return {"calendars": []}
+    calendars = [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
+    if not calendars:
+        calendars = [{"name": "Normal", "schedule": {"openingTimesByDay": []}}]
+    target = next((c for c in calendars if c.get("name") == "Normal"), calendars[0])
+    schedule = dict(target.get("schedule") or {})
+    by_day = [
+        {
+            "day": (wd - 1) % 7,  # MM 0=Sun → DH 6; MM 1=Mon → DH 0
+            "openingTimes": [{"from": _minutes(win[0]), "to": _minutes(win[1])}],
+        }
+        for wd in range(7)
+        if (win := weekly.get(wd)) is not None
+    ]
+    by_day.sort(key=lambda e: int(e.get("day") or 0))
+    schedule["openingTimesByDay"] = by_day
+    target["schedule"] = schedule
+    return {"calendars": calendars}
+
+
+async def _talabat_push_weekly(
+    db: AsyncSession, branch: Any, *, weekly: dict[int, tuple[str, str]]
+) -> dict[str, Any]:
+    from app.services.providers import talabat_provider as tp
+
+    session = await _load_session(db, "talabat")
+    row = await _branch_map(db, "talabat", branch.id)
+    vendor = row.external_outlet_id
+    current = await tp.provider.get_delivery_calendars(session, vendor)
+    calendars = _talabat_set_weekly(current, weekly=weekly)
+    # No `status`: the recurring calendar is the schedule; a transient
+    # OPEN/CLOSED_TODAY override belongs to the holiday path, not the weekly
+    # mirror, which must not undo a manager's same-day close.
+    return {
+        "session": session,
+        "vendor": vendor,
+        "endpoint": f"PUT vts .../vendor/TB_AE;{vendor}/calendars/DELIVERY",
+        "calendars": calendars,
+        "payload": {"calendars": calendars},
+    }
+
+
+def _noon_schedule_weekly(details: Any, *, weekly: dict[int, tuple[str, str]]) -> dict:
+    data = details.get("data") if isinstance(details, dict) else details
+    schedule = (
+        dict((data or {}).get("schedule") or {}) if isinstance(data, dict) else {}
+    )
+    periods: dict[str, list] = {}
+    for wd in range(7):
+        win = weekly.get(wd)
+        if win is None:  # closed day → day-index simply absent from periods
+            continue
+        noon_day = (wd - 1) % 7  # MM 0=Sun … 6=Sat → noon 0=Mon … 6=Sun
+        periods[str(noon_day)] = [[_hhmmss(win[0]), _hhmmss(win[1])]]
+    schedule["periods"] = periods
+    return schedule
+
+
+async def _noon_push_weekly(
+    db: AsyncSession, branch: Any, *, weekly: dict[int, tuple[str, str]]
+) -> dict[str, Any]:
+    from app.services.providers import noon_provider as np
+
+    session = await _load_session(db, "noon")
+    row = await _branch_map(db, "noon", branch.id)
+    outlet = row.external_outlet_id
+    details = await np.provider.get_outlet_details(session, outlet)
+    schedule = _noon_schedule_weekly(details, weekly=weekly)
+    return {
+        "session": session,
+        "outlet_code": outlet,
+        "endpoint": "POST /_food-restaurant/restaurant/outlet/save",
+        "schedule": schedule,
+        "payload": {"outletCode": outlet, "schedule": schedule},
+    }
+
+
+def _careem_rows_weekly(
+    rows: Any, *, weekly: dict[int, tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """All seven Careem rows: open → active:1 + shift, closed → active:0 + []."""
+    current: dict[int, dict[str, Any]] = {}
+    if isinstance(rows, list):
+        for r in rows:
+            if isinstance(r, dict) and r.get("day") is not None:
+                current[int(r["day"])] = dict(r)
+    out: list[dict[str, Any]] = []
+    for wd in range(7):
+        day = wd + 1  # Careem day = MM weekday + 1 (Sun=1 … Sat=7)
+        base = current.get(day, {"day": day})
+        win = weekly.get(wd)
+        if win is None:
+            out.append({**base, "day": day, "active": 0, "shifts": []})
+        else:
+            out.append(
+                {
+                    **base,
+                    "day": day,
+                    "active": 1,
+                    "shifts": [
+                        {"start_time": _hhmmss(win[0]), "end_time": _hhmmss(win[1])}
+                    ],
+                }
+            )
+    out.sort(key=lambda r: int(r.get("day") or 0))
+    return out
+
+
+async def _careem_push_weekly(
+    db: AsyncSession, branch: Any, *, weekly: dict[int, tuple[str, str]]
+) -> dict[str, Any]:
+    from app.services.aggregators.menu_readers import _careem_ids
+    from app.services.providers import careem_provider as cp
+
+    session = await _load_session(db, "careem")
+    try:
+        company, brand, outlet = await _careem_ids(db, branch.id)
+    except AggregatorUnavailableError as exc:
+        raise HoursWriteUnsupported(str(exc)) from exc
+    current = await cp.provider.get_operational_hours(session, company, brand, outlet)
+    rows = _careem_rows_weekly(current, weekly=weekly)
+    return {
+        "session": session,
+        "company": company,
+        "brand": brand,
+        "outlet": outlet,
+        "endpoint": "PUT .../food-outlet-operational-hours",
+        "rows": rows,
+        "payload": rows,
+    }
+
+
 _PUSHERS = {
     "deliveroo": _deliveroo_push,
     "talabat": _talabat_push,
     "noon": _noon_push,
     "careem": _careem_push,
+}
+
+_WEEKLY_PUSHERS = {
+    "deliveroo": _deliveroo_push_weekly,
+    "talabat": _talabat_push_weekly,
+    "noon": _noon_push_weekly,
+    "careem": _careem_push_weekly,
 }
 
 _CLOSERS = {
