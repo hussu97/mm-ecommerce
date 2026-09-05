@@ -49,6 +49,8 @@ from app.services.aggregators.menu_normalized import (
     NormalizedHours,
     NormalizedItem,
     NormalizedMenu,
+    NormalizedModifierGroup,
+    NormalizedOption,
     NormalizedShift,
 )
 from app.services.providers.aggregator_base import AggregatorUnavailableError
@@ -480,17 +482,75 @@ async def _read_talabat_hours(db: AsyncSession, branch_id: Any) -> NormalizedHou
 
 
 # ── Noon RMS menu reader ──────────────────────────────────────────────────────
-# Verified live from the VM session (2026-09-01). GET /menu/list -> the menus;
-# POST /menu/details {menuCode} -> {items:[{itemCode,nameEn,price,isActive,isOos,
-# categoryCode}], categories:[{categoryCode,nameEn,items:[itemCode]}]}. The
-# "Ext. grubtech" menus are Foodics-fed; the MM-managed one is read here. Availability
-# = isActive AND NOT isOos. Same RMS session/headers the finance ingest uses.
+# Verified live from the VM session (2026-09-01, modifiers 2026-09-05). GET
+# /menu/list -> the menus; POST /menu/details {menuCode} -> {items:[{itemCode,
+# nameEn,price,isActive,isOos,categoryCode,modifiers:[modifierCode]}], categories:
+# [{categoryCode,nameEn,items:[itemCode]}], modifiers:[{modifierCode,nameEn,
+# minTotalOptions,maxTotalOptions,options:[{itemCode,price}]}]}. An item's
+# customization groups are referenced by code in `item.modifiers`; an option's name
+# is the referenced item's nameEn (options are non-`main` items). The "Ext. grubtech"
+# menus are Foodics-fed; the MM-managed one is read here. Availability = isActive AND
+# NOT isOos. Same RMS session/headers the finance ingest uses.
+
+
+def _noon_item_available(it: dict) -> bool:
+    """Noon availability: `isActive AND NOT isOos` (used for items and options)."""
+    return bool(it.get("isActive", True)) and not bool(it.get("isOos", False))
+
+
+def _noon_modifier_groups(
+    item: dict,
+    groups_by_code: dict[str, dict],
+    by_code: dict[str, dict],
+) -> list[NormalizedModifierGroup]:
+    """The item's customization groups → NormalizedModifierGroups (verified live
+    2026-09-05): `item.modifiers` is a list of modifier codes; each resolves in
+    `data.modifiers` to a group `{modifierCode, nameEn, minTotalOptions,
+    maxTotalOptions, options:[{itemCode, price}]}`; an option's display name is the
+    referenced item's `nameEn` (options are non-`main` items in the same `items`
+    list), its price is the option's `price` override."""
+    groups: list[NormalizedModifierGroup] = []
+    for code in item.get("modifiers") or []:
+        grp = groups_by_code.get(code)
+        if not isinstance(grp, dict):
+            continue
+        options: list[NormalizedOption] = []
+        for opt in grp.get("options") or []:
+            if not isinstance(opt, dict):
+                continue
+            ref_item = by_code.get(opt.get("itemCode")) or {}
+            name = ref_item.get("nameEn") or opt.get("nameEn")
+            if not name:
+                continue
+            price = opt.get("price")
+            options.append(
+                NormalizedOption(
+                    name=name,
+                    external_ref=str(opt.get("itemCode"))
+                    if opt.get("itemCode")
+                    else None,
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=_noon_item_available(ref_item),
+                )
+            )
+        groups.append(
+            NormalizedModifierGroup(
+                name=grp.get("nameEn", ""),
+                external_ref=str(code) if code else None,
+                min_options=grp.get("minTotalOptions"),
+                max_options=grp.get("maxTotalOptions"),
+                options=options,
+            )
+        )
+    return groups
 
 
 def parse_noon_menu(details: Any) -> NormalizedMenu:
     """Noon `/menu/details` data → a channel-neutral menu (pure, unit-tested).
 
     Categories reference items by `itemCode`; the item objects live in `items`.
+    Variant-priced items (₿0 base) carry their real prices in a customization group
+    referenced from `item.modifiers`, parsed here via `_noon_modifier_groups`.
     """
     data = details.get("data") if isinstance(details, dict) else details
     data = data or {}
@@ -498,6 +558,11 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
         it.get("itemCode"): it
         for it in (data.get("items") or [])
         if isinstance(it, dict)
+    }
+    groups_by_code = {
+        g.get("modifierCode"): g
+        for g in (data.get("modifiers") or [])
+        if isinstance(g, dict) and g.get("modifierCode")
     }
     cats: list[NormalizedCategory] = []
     for cat in sorted(data.get("categories") or [], key=lambda c: c.get("position", 0)):
@@ -514,8 +579,8 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
                     external_ref=it.get("posSku"),
                     description=it.get("descEn"),
                     price=Decimal(str(price)) if price is not None else None,
-                    is_available=bool(it.get("isActive", True))
-                    and not bool(it.get("isOos", False)),
+                    is_available=_noon_item_available(it),
+                    modifier_groups=_noon_modifier_groups(it, groups_by_code, by_code),
                 )
             )
         cats.append(
