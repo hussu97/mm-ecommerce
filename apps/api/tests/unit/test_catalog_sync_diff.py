@@ -391,6 +391,42 @@ def test_careem_parser_uses_real_shapes():
     assert menu.categories[1].items[0].price == Decimal("55")
 
 
+def test_careem_customization_groups_from_list_product():
+    # Real customizationGroups shape (VM, 2026-09-05), embedded in the list product:
+    # group min/max in attributes.selection; options carry id + price. DSO option
+    # names are often empty (data-quality gap) — a named option still resolves.
+    from app.services.aggregators.menu_readers import careem_modifier_groups
+
+    product = {
+        "id": 3147240407,
+        "name": "Pistachio Kunafa Brownies",
+        "customizationGroups": [
+            {
+                "id": 1282104241,
+                "name": "Options (Max 3)",
+                "nameLocalized": {"en": "Options (Max 3)"},
+                "attributes": {"selection": {"min": 1, "max": 3, "multiSelect": True}},
+                "options": [
+                    {"id": 3147240408, "name": "", "price": 0},
+                    {"id": 3147240409, "name": "Fudge Brownie", "price": 0},
+                ],
+            }
+        ],
+    }
+    groups = careem_modifier_groups(product)
+    assert len(groups) == 1
+    g = groups[0]
+    assert g.name == "Options (Max 3)"
+    assert g.external_ref == "1282104241"
+    assert (g.min_options, g.max_options) == (1, 3)
+    assert [o.external_ref for o in g.options] == ["3147240408", "3147240409"]
+    # empty name preserved (unmappable), a named option carried through
+    assert g.options[0].name == ""
+    assert g.options[1].name == "Fudge Brownie"
+    # no groups → no crash
+    assert careem_modifier_groups({"id": 1, "name": "x"}) == []
+
+
 def test_talabat_parser_uses_real_shapes():
     # The exact shapes the live Talabat/DeliveryHero vendor-api returned via the VM
     # session (2026-09-01): catalogs carry categories inline; a product's price is

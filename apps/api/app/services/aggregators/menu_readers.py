@@ -175,10 +175,56 @@ async def _read_foodics_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu
 
 # ── Careem catalog reader (non-Foodics outlets) ───────────────────────────────
 # Verified against the live partner-portal API (captured 2026-08-31, fields
-# confirmed 2026-09-01). Read flow: catalog-catalogs -> catalog-categories/<id>
-# ({subCategories}) -> catalog-products?categoryId=<cat> ({products:[...]}). A
-# product's price is `defaultPrice`, availability is `status == "ACTIVE"`. Replayed
-# through the same bearer session the sales ingest uses.
+# confirmed 2026-09-01, modifiers + category endpoint 2026-09-05). Read flow:
+# catalog-catalogs -> catalog-categories?catalogId=<id> ({subCategories}) ->
+# catalog-products?categoryId=<cat> ({products:[...]}). A product's price is
+# `defaultPrice`, availability is `status == "ACTIVE"`, and its `customizationGroups`
+# are embedded in the list product (no detail call). Replayed through the same
+# bearer session the sales ingest uses.
+
+
+def _careem_localized(obj: Any, key: str = "name") -> str:
+    """A Careem entity's English name: `name`, else `nameLocalized.en`, else ""."""
+    if not isinstance(obj, dict):
+        return ""
+    return obj.get(key) or (obj.get(f"{key}Localized") or {}).get("en") or ""
+
+
+def careem_modifier_groups(product: dict) -> list[NormalizedModifierGroup]:
+    """A Careem product's `customizationGroups` → NormalizedModifierGroups (verified
+    live 2026-09-05, embedded in the catalog-products list itself — no detail call).
+    Group min/max come from `attributes.selection`; each option carries an `id` and
+    `price`. NOTE: on the portal-direct DSO menu the option *names* are often empty
+    (a GrubTech-import data-quality gap) — the group + option prices still drive the
+    diff; option-name mapping only works where Careem has named them."""
+    groups: list[NormalizedModifierGroup] = []
+    for g in product.get("customizationGroups") or []:
+        if not isinstance(g, dict):
+            continue
+        sel = (g.get("attributes") or {}).get("selection") or {}
+        options: list[NormalizedOption] = []
+        for o in g.get("options") or []:
+            if not isinstance(o, dict):
+                continue
+            price = o.get("price")
+            options.append(
+                NormalizedOption(
+                    name=_careem_localized(o),
+                    external_ref=str(o["id"]) if o.get("id") is not None else None,
+                    price=Decimal(str(price)) if price is not None else None,
+                    is_available=str(o.get("status", "ACTIVE")).upper() != "INACTIVE",
+                )
+            )
+        groups.append(
+            NormalizedModifierGroup(
+                name=_careem_localized(g),
+                external_ref=str(g["id"]) if g.get("id") is not None else None,
+                min_options=sel.get("min"),
+                max_options=sel.get("max"),
+                options=options,
+            )
+        )
+    return groups
 
 
 def _careem_items(products_payload: Any) -> list[NormalizedItem]:
@@ -200,6 +246,7 @@ def _careem_items(products_payload: Any) -> list[NormalizedItem]:
                 external_id=str(p["id"]) if p.get("id") is not None else None,
                 price=Decimal(str(price)) if price is not None else None,
                 is_available=str(p.get("status", "ACTIVE")).upper() == "ACTIVE",
+                modifier_groups=careem_modifier_groups(p),
             )
         )
     return items
