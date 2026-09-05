@@ -21,7 +21,7 @@ and stitches every channel back into one MM order ledger.
 | Party | Role | How we talk to it |
 |-------|------|-------------------|
 | **Careem** | Marketplace (aggregator) | httpx (TLS-impersonated) session replay |
-| **Deliveroo** | Marketplace (aggregator) | httpx replay for sales/finance; **headed Chrome** for menu/hours/invoice (Cloudflare) |
+| **Deliveroo** | Marketplace (aggregator) | httpx replay for sales/finance/hours; **headed Chrome** for menu/invoice (Cloudflare) |
 | **Talabat** | Marketplace (aggregator) | httpx replay (DeliveryHero vendor-api) |
 | **Noon** | Marketplace (aggregator) | httpx replay (dual-source OMS + RMS) |
 | **Keeta** | Marketplace (aggregator) | **Headed Chrome only** — every XHR is `mtgsig`-signed in-page; nothing is server-replayable |
@@ -30,12 +30,13 @@ and stitches every channel back into one MM order ledger.
 
 **Data path (one paragraph).** Marketplace portals are read either by the API
 directly over `httpx` (careem/noon/talabat/deliveroo) or by a headed real Chrome
-worker on the VM for the anti-bot channels (keeta always; deliveroo menu/hours;
-plus any warm re-capture). Raw payloads land in `aggregator_order` /
-`aggregator_statement*`, then **reconcile** matches each marketplace order to an
-existing GrubOps/POS order (or files a standalone), and **promote** materialises
-it into the MM `orders` ledger — mirroring riders onto `order_deliveries` and,
-for the two integrated branches, adopting the GrubTech-normalised order. Writes
+worker on the VM for the anti-bot channels (keeta always; deliveroo menu/invoice;
+plus any warm re-capture). Hours for careem/noon/talabat/deliveroo are httpx.
+Raw payloads land in `aggregator_order` / `aggregator_statement*`, then
+**reconcile** matches each marketplace order to an existing GrubOps/POS order
+(or files a standalone), and **promote** materialises it into the MM `orders`
+ledger — mirroring riders onto `order_deliveries` and, for the two integrated
+branches, adopting the GrubTech-normalised order. Writes
 flow the other way: dispatch/close/decline/void is pushed through the **Foodics**
 console, item availability through **GrubOps**, and (flag-gated, dry-run today)
 menu create/delete through each marketplace plus a Foodics group/price-tag
@@ -151,13 +152,13 @@ Columns: R=Read, W=Write(create), U=Update, D=Delete.
 | 1 | Sales / order ingest | R | Y | Y | Y | worker | Y | Keeta masks PII to `***` hours after the order → time-critical. `careem_provider.py:442`, `noon_provider.py:797`, `talabat_provider.py:820`, `deliveroo_provider.py:565`; keeta via `warm.pull_keeta_orders_in_page` (`warm.py:130`), httpx stub `keeta_provider.py:1484` |
 | 2 | Order detail / line items | R | Y | Y | Y | worker | Y | Carried inside sales. Noon merges dual-source OMS (items) + RMS (fees) by `external_order_id` — `noon_provider.py:1-31,27` |
 | 3 | Statements / fees / commission | R | Y | Y | Y | worker | Y | **Careem has NO per-order settlement** — commission rides the monthly Tax Invoice, not the order (`careem_provider.py:18-28,706`). `noon_provider.py:976`, `talabat_provider.py:1078`, `deliveroo_provider.py:820`; keeta `warm.pull_keeta_finance_in_page` (`warm.py:284`), stub `keeta_provider.py:1491` |
-| 4 | Payouts | R | Y | Y | Y | stub | Y | `careem_provider.py:767`, `noon_provider.py:1078`, `talabat_provider.py:1203`, `deliveroo_provider.py:988`; keeta stub `keeta_provider.py:1496` |
+| 4 | Payouts | R | **N** | Y | Y | stub | Y | **Careem has no payout-request feed** — `payoutRequests/list` is coded (`careem_provider.py:767`) and called with the same billing accounts as the Tax Invoice list, but the portal returns 0 rows. Settlement is the monthly Tax Invoice only. `noon_provider.py:1078`, `talabat_provider.py:1203`, `deliveroo_provider.py:988`; keeta stub `keeta_provider.py:1496` |
 | 5 | Settlement PDF / VAT doc | R | Y | Y | — | worker | Y | Deliveroo PDF (`deliveroo_provider.py` fetch_statements 820); noon CSV/bytes; keeta worker files. Orchestrated by `statement_docs.py` / `settlement_reconcile.py`. Careem VAT PDF = the monthly Tax Invoice archived by `fetch_statements` |
 | 6 | Driver / fulfilment capture | R | Y | Y | Y | worker | **N** | **Deliveroo exposes no rider data.** Others land via `aggregator_fulfilment.record_aggregator_fulfilment` (`aggregator_fulfilment.py:43`) → mirrored onto `order_deliveries`/`order_drivers` by promote |
 | 7 | Menu / catalog read | R | Y | Y | Y | worker | worker | httpx for careem/noon/talabat; keeta+deliveroo are anti-bot → worker. `_MENU_READERS` `menu_readers.py:885`; careem `list_catalog_products` `careem_provider.py:340`; talabat DeliveryHero vendor-api `talabat_provider.py:544,733`; noon `list_menus`/`get_menu_details` `noon_provider.py:402,410` |
-| 8 | Opening-hours read | R | Y | verify | verify | worker | verify | Only **careem** verified (day-origin confirmed vs portal). noon/talabat/deliveroo endpoints not yet trusted to open/close on the right day — `_HOURS_READERS` `menu_readers.py:896`. Keeta reads **today-only** in-page (`warm.py:188-196`) |
-| 9 | Opening-hours write / holiday close | W/U/D | **N** | **N** | **N** | **N** | **N** | Writers unbuilt — every entry raises `HoursWriteUnsupported`; `supported_channels()` is empty. `hours_writers.py:30,34,47,57` |
-| 10 | Menu item create | W | Y | Y | verify | worker | worker | careem `create_product` `careem_provider.py:378`; noon `create_menu_item` (verified 2026-09-01) `noon_provider.py:445`; talabat write path unverified. Master path = Foodics create → cascade, `catalog_sync.create_menu_item` `catalog_sync.py:645` (dry-run default). `_CREATE_NEEDS_WORKER=(keeta,deliveroo)` — "no server-callable menu API (H5guard / separate login)" `catalog_sync.py:642,675` |
+| 8 | Opening-hours read | R | Y | Y | Y | worker | Y | Careem/noon/talabat/deliveroo are httpx. Keeta is **today-only** from the headed worker push — registered in `_HOURS_READERS` `menu_readers.py`. |
+| 9 | Opening-hours write / holiday close | W/U/D | Y* | Y* | Y* | worker | Y* | httpx writers for careem/noon/talabat/deliveroo behind `CATALOG_SYNC_ENABLED`, **dry-run default**. Keeta omitted from `supported_channels()` (headed worker). `hours_writers.py` |
+| 10 | Menu item create | W | Y | Y | Y* | worker | worker | careem `create_product`; noon `create_menu_item`; talabat Add Product drawer `POST .../vendors/{v}/catalogs/products` (Karama/DSO, needs `branch_id`; nested per-category products POST is 405). Master path = Foodics create → cascade once `foodics_branch_map` is seeded. `_CREATE_NEEDS_WORKER=(keeta,deliveroo)` |
 | 11 | Menu item delete | D | Y | Y | verify | worker | worker | careem `delete_product` `careem_provider.py:409`; noon `delete_menu_item` `noon_provider.py:474`; keeta `warm.delete_keeta_item_in_page` `warm.py:262`. Same gating as create |
 | 12 | Item availability toggle (OOS) | U | Y* | Y* | Y* | Y* | Y* | **All via GrubOps middleware** (one-way MM → GrubOps), portals have no trusted per-item availability API. `grubops_provider.mark_unavailable`/`mark_available` `grubops_provider.py:405,413`; gated `GRUBOPS_SYNC_ENABLED` |
 | 13 | Menu price-parity reconcile | U | Y* | Y* | Y* | — | — | Foodics-driven for the integrated branches — `foodics_provider.set_price_tag_product_price` `foodics_provider.py:809`, `catalog_sync.py:718` (strict parity) |
@@ -215,13 +216,13 @@ Coverage in one line: **Keeta & Noon = all 4** · **Careem = Barsha + DSO only**
 | | Careem | Noon | Talabat | Keeta | Deliveroo |
 |---|--------|------|---------|-------|-----------|
 | **Login method** | `LOGIN_MANUAL` | `LOGIN_EMAIL_OTP` | `LOGIN_EMAIL_PASSWORD_OTP` | `LOGIN_EMAIL_PASSWORD` | `LOGIN_EMAIL_PASSWORD` |
-| **Flow** | email → OTP → password (`login.py:805`) | email → OTP → skip passkey (`login.py:437`) | email+password → 6-box OTP (`login.py:221`) | email → Continue → password, **no OTP** (`login.py:677`) | email → password, **no OTP** (`login.py:101`) |
+| **Flow** | email → OTP → password (`login.py:813`) | email → OTP → skip passkey (`login.py:437`) | email+password → 6-box OTP (`login.py:221`) | email → Continue → password, **no OTP** (`login.py:677`) | email → password, **no OTP** (`login.py:101`) |
 | **OTP source** | Graph — `go@careem.com` / "Careem One Time Password" | Graph — `verify@noon` / "Verify" | `no-reply@partner-app.talabat.com` / "Partner Portal" | — (none) | — (none) |
 | **Session shape** | bearer in `header_profile` (`probes.py:57-62`) | scope headers + Akamai cookies (`probes.py:77-95`) | `accessToken` JWT cookie + authorization + `x-global-entity-id` (`probes.py:70-76`) | cookies + sessionStorage only (`LOGIN_ACCOUNTID`, `SHOP_IDS`), **no replay** (`probes.py:96-101`; `login.py:553-564,649-666`) | token cookie + Authorization Bearer (`probes.py:64-69`) |
 | **Token / cookie TTL** | bearer ~72h, SESSION cookie ~35h, `_gat` 1-min excluded | token **null-exp** | `accessToken` honoured; `_px3` ~5 min nominal but **rotates on replay** → advisory | cookie TTL **>1 yr** (exp 2027) | identity token **lasts <1h** (`deliveroo_provider.py:90`) |
 | **Liveness gate** | token + cookie both honoured | **Akamai `bm_sv`/`_abck` cookie** is the gate | **token only** (cookie advisory) — `session_store.py:249,284` | status / staleness (7h) | token + cookie honoured |
 | **Who re-auths** | worker only | worker only | worker only | worker only (warm re-capture) | **API itself via httpx `_login`** — the only self-healing channel (`deliveroo_provider.py:371,442`) |
-| **Anti-bot wall** | reCAPTCHA-v3 (45s budget) | Akamai | PerimeterX "press and hold" | captcha / device wall + HK↔AE region trap; `mtgsig` in-page signing (`keeta_provider.py:4-19`) | Cloudflare interstitial on server calls → headed Xvfb for menu/invoice |
+| **Anti-bot wall** | reCAPTCHA-v3 (headed Chrome waits for a real token, 1 score retry, persistent `careem.chrome`; visible v2 is solved in-process: checkbox click + audio transcription or 2captcha, ≤90s — not a 45min wait) | Akamai | PerimeterX "press and hold" | captcha / device wall + HK↔AE region trap; `mtgsig` in-page signing (`keeta_provider.py:4-19`) | Cloudflare interstitial on server calls → headed Xvfb for menu/invoice |
 | **Refresh trick** | capture bearer off first authed `/saturn-ext/` XHR (`probes.py:57`) | warm loads console root to rotate Akamai cookie (`probes.py:77-88`) | `_px3` expiry treated advisory (`policy.ChannelPolicy.cookie_expiry_advisory`, `policy.py:40,54`; applied `session_store.py:273`) | worker warm re-recaptures cookies+sessionStorage in-page | httpx `_login` re-mints the short token in-band |
 
 ---
@@ -246,19 +247,36 @@ Coverage in one line: **Keeta & Noon = all 4** · **Careem = Barsha + DSO only**
 - **Keeta — no server-replayable session.** Every XHR is `mtgsig`-signed *in the
   page* (Meituan infra); the httpx provider raises on every method
   (`keeta_provider.py:4-19,1484-1499`). All keeta read/write is the headed worker.
-- **Deliveroo menu / hours / invoice — Cloudflare** on server calls → headed real
-  Chrome under Xvfb (sales/finance still go over httpx).
-- **Talabat / Keeta create not enabled.** Talabat's write path differs from plain
-  REST (unverified); keeta/deliveroo have no server-callable menu API
-  (`_CREATE_NEEDS_WORKER`, `catalog_sync.py:642,675`).
-- **Hours write nowhere.** Writers unbuilt (`hours_writers.py` raises), and several
-  channels are only writable through the anti-bot worker anyway.
+- **Deliveroo menu — Cloudflare + webrom `logon-pass`.** Sales/finance/hours GET
+  go over httpx; the menu still needs headed Chrome.
+- **Talabat create is flag-gated httpx.** Nested per-item POST
+  (`.../catalogs/{id}/categories/{id}/products`) is 405. The partner Add Product
+  drawer POSTs `.../vendors/{vendor}/catalogs/products` with
+  `{name, description, unitPrice, catalogIds, category, type:"Simple", active}`
+  and returns `{commandId}` (async). Wired in `talabat_provider.create_menu_item`
+  / `catalog_sync._create_on_talabat`, behind `CATALOG_SYNC_ENABLED`, dry-run
+  default. Keeta/deliveroo create still needs the headed worker
+  (`_CREATE_NEEDS_WORKER`).
+- **Keeta hours write is worker-only.** httpx writers exist for
+  careem/noon/talabat/deliveroo (`hours_writers.supported_channels()`), dry-run
+  default, gated `CATALOG_SYNC_ENABLED`. The 05:00 `KEETA_HOURS` job POSTs
+  `POST /api/scm/business-hour/update` (`{shopId, businessHourOfTheWeek}`) after
+  GET `/api/scm/business-hour/effective-data/get`, in-page on the persistent
+  profile. Operator confirmation (one Chrome; stop the daemon if it holds
+  `keeta.chrome`):
+  ```bash
+  docker compose -f docker-compose.prod.yml run --rm aggregator-worker \
+    probe-keeta-hours-save --wait-seconds 90
+  ```
+  Listen-only — does not POST.
 - **OOS goes via GrubOps.** Portals expose no trusted per-item availability API,
   and GrubTech has no partner API (console login) — so availability is one-way
   MM → GrubOps middleware.
 - **Deliveroo has no rider data** → no driver/fulfilment capture (row 6).
-- **Careem has no per-order settlement** → commission lives only on the monthly
-  Tax Invoice (row 3).
+- **Careem has no per-order settlement and no payout-request feed** → commission
+  and settlement live only on the monthly Tax Invoice (rows 3–4). Customer name
+  / phone are withheld (only a `user_id`); Talabat likewise withholds customer
+  PII; Deliveroo exposes no rider API. Do not invent scrapers for those.
 
 ---
 
@@ -270,18 +288,18 @@ Consolidated view of what each channel can do, by operation. `Y`=server-callable
 | Operation | Careem | Noon | Talabat | Keeta | Deliveroo |
 |-----------|:------:|:----:|:-------:|:-----:|:---------:|
 | **R** Sales / detail / fees | Y | Y | Y | W | Y |
-| **R** Payouts | Y | Y | Y | st | Y |
+| **R** Payouts | **N** | Y | Y | st | Y |
 | **R** Settlement doc | Y | Y | N | W | Y |
 | **R** Driver / fulfilment | Y | Y | Y | W | **N** |
 | **R** Menu read | Y | Y | Y | W | W |
-| **R** Hours read | Y | v | v | W | v |
+| **R** Hours read | Y | Y | Y | W | Y |
 | **R** Outlet discovery | Y | N | Y | N | Y |
 | **R** GrubOps order ingest | Y* | Y* | Y* | Y* | Y* |
-| **W** Menu item create | Y | Y | v | W | W |
+| **W** Menu item create | Y | Y | Y* | W | W |
 | **W** Branch create | N | N | N | N | N |
 | **U** OOS availability (GrubOps) | Y* | Y* | Y* | Y* | Y* |
 | **U** Price parity (Foodics) | Y* | Y* | Y* | N | N |
-| **U** Hours write | N | N | N | N | N |
+| **U** Hours write | Y* | Y* | Y* | W | Y* |
 | **U** Order write-back (Foodics) | Y* | Y* | Y* | Y* | Y* |
 | **U/W** Reconcile / promote | Y* | Y* | Y* | Y* | Y* |
 | **W** Coverage backfill | Y | Y | Y | Y | Y |

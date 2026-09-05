@@ -40,9 +40,12 @@ class JobKind(IntEnum):
     #: The catalog-sync menu read — not time-critical (the menu changes rarely), so
     #: it sits at the lowest priority, never blocking a heal or an orders pull.
     KEETA_MENU = 5
-    #: The Deliveroo catalog-sync read (menu + hours, one page capture), same low
-    #: priority as the Keeta menu — background, never ahead of a heal/orders pull.
+    #: The Deliveroo catalog-sync read (menu only — hours are httpx on the API),
+    #: same low priority as the Keeta menu — background, never ahead of a heal.
     DELIVEROO_MENU = 6
+    #: Keeta in-page hours write (today's window / close). Nightly, after finance,
+    #: lowest priority so it never blocks a heal or an orders pull on the one Chrome.
+    KEETA_HOURS = 7
 
 
 @dataclass(order=True)

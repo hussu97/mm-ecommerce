@@ -175,14 +175,22 @@ async def _branch_for(
 async def _mm_order_for_external(
     db: AsyncSession, channel: str, external_order_id: str | None
 ) -> uuid.UUID | None:
-    """The promoted MM order for this marketplace id, if promotion already linked it."""
+    """The promoted MM order for this marketplace id, if promotion already linked it.
+
+    Matches `external_order_id` or `display_ref` — Deliveroo statement lines key
+    on the short invoice Order ID (`display_ref`), while sales store the UUID as
+    `external_order_id`.
+    """
     if not external_order_id:
         return None
     return await db.scalar(
         select(AggregatorOrder.mm_order_id).where(
             AggregatorOrder.channel == channel,
-            AggregatorOrder.external_order_id == external_order_id,
             AggregatorOrder.mm_order_id.is_not(None),
+            or_(
+                AggregatorOrder.external_order_id == external_order_id,
+                AggregatorOrder.display_ref == external_order_id,
+            ),
         )
     )
 
@@ -630,12 +638,20 @@ async def _upsert_statement(
         line.external_order_id for line in statement.lines if line.external_order_id
     }
     if settled_order_ids:
+        # Deliveroo's invoice CSV "Order ID" is the short human number stored on
+        # `display_ref`; `external_order_id` is the UUID the sales feed uses.
+        # Matching only the UUID left 619 lines unlinked. Noon/Talabat/Keeta
+        # spell both sides the same, so the extra `display_ref` predicate is a
+        # no-op there.
         await db.execute(
             sql_update(AggregatorOrder)
             .where(
                 AggregatorOrder.channel == channel,
-                AggregatorOrder.external_order_id.in_(settled_order_ids),
                 AggregatorOrder.statement_id.is_(None),
+                or_(
+                    AggregatorOrder.external_order_id.in_(settled_order_ids),
+                    AggregatorOrder.display_ref.in_(settled_order_ids),
+                ),
             )
             .values(statement_id=statement.statement_id)
             .execution_options(synchronize_session=False)

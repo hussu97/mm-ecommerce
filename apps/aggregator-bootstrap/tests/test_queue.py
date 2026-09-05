@@ -14,6 +14,9 @@ def test_jobkind_priority_order():
         < JobKind.KEETA_ORDERS
         < JobKind.DELIVEROO_FINANCE
         < JobKind.KEETA_FINANCE
+        < JobKind.KEETA_MENU
+        < JobKind.DELIVEROO_MENU
+        < JobKind.KEETA_HOURS
     )
 
 

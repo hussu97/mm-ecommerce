@@ -534,9 +534,9 @@ class Settings(BaseSettings):
     #: group/price-tag edits, the per-portal menu edits, and the hours/holiday
     #: fan-out. Off means the push endpoints 503 and the sync service refuses to
     #: mutate anything; a wrong map or a bad diff would otherwise change a live
-    #: menu or close a branch on a marketplace. Even with it ON, Phase-1 push runs
-    #: as a **dry-run** (it records the plan it WOULD apply and writes nothing) —
-    #: the actual writers land in a later phase behind this same flag.
+    #: menu or close a branch on a marketplace. Even with it ON, writes default
+    #: to **dry-run** (`plan_push` always; `create_menu_item` / `hours_writers`
+    #: unless the caller passes `dry_run=False`).
     CATALOG_SYNC_ENABLED: bool = False
     #: Aggregator price policy (audit finding): the Foodics `Grubtech` price-tag
     #: price MUST equal the product's own price — a reprice updates both in

@@ -14,9 +14,10 @@ It runs as a background loop (once an hour, like its neighbours in
 `app_setup` — no cron in this stack, an advisory lock so a second copy is
 harmless, storefront app only) and on demand from the admin "Sync now" button.
 
-Pushing the day's window — and a close on a shut day — to each marketplace is the
-next phase: `hours_writers` is the seam, no channel has a writer yet, and it is
-gated behind `CATALOG_SYNC_ENABLED`, so today that step logs and skips.
+Pushing the day's window — and a close on a shut day — to each marketplace is
+gated behind `CATALOG_SYNC_ENABLED`. `hours_writers` has httpx writers for
+talabat/deliveroo/noon/careem (dry-run default); Keeta is the headed worker's
+job and is omitted from `supported_channels()`.
 """
 
 from __future__ import annotations
@@ -52,9 +53,9 @@ async def _push_to_channels(
 ) -> None:
     """Best-effort push of the day's state to each channel this branch trades on.
 
-    A no-op until a channel gains a writer — every call raises
-    `HoursWriteUnsupported`, which is logged at debug and swallowed. Gated on
-    `CATALOG_SYNC_ENABLED` like every other marketplace write.
+    A no-op until `CATALOG_SYNC_ENABLED` — and even then the writers default to
+    dry-run (they log the payload and do not POST). `HoursWriteUnsupported` is
+    logged at debug and swallowed (keeta, an unmapped outlet).
     """
     if not settings.CATALOG_SYNC_ENABLED:
         return

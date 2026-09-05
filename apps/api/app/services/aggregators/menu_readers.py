@@ -32,6 +32,7 @@ readers land newest-value-first:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -738,6 +739,77 @@ def parse_keeta_today_hours(shop: Any, weekday: int) -> NormalizedHours:
     return NormalizedHours(source="keeta", shifts=shifts)
 
 
+async def _keeta_outlet_id(db: AsyncSession, branch_id: Any) -> str:
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorBranchMap
+
+    row = (
+        await db.execute(
+            select(AggregatorBranchMap).where(
+                AggregatorBranchMap.channel == "keeta",
+                AggregatorBranchMap.branch_id == branch_id,
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or not row.external_outlet_id:
+        raise AggregatorUnavailableError(
+            f"no keeta outlet mapped for branch {branch_id}"
+        )
+    return row.external_outlet_id
+
+
+async def _read_keeta_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
+    """Parse the latest Keeta today-window the headed worker pushed.
+
+    Keeta does not expose a weekly schedule on this account — only today's
+    window — so this yields shifts for today's MM weekday. Raises until the
+    worker has pushed at least once.
+    """
+    from sqlalchemy import select
+
+    from app.core import trading_hours
+    from app.models.catalog_sync import SNAPSHOT_HOURS, AggregatorMenuSnapshot
+
+    snap = (
+        await db.execute(
+            select(AggregatorMenuSnapshot)
+            .where(
+                AggregatorMenuSnapshot.target == "keeta",
+                AggregatorMenuSnapshot.kind == SNAPSHOT_HOURS,
+            )
+            .order_by(AggregatorMenuSnapshot.fetched_at.desc().nullslast())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if snap is None or not snap.raw:
+        raise AggregatorUnavailableError(
+            "no keeta hours pushed yet — the headed worker's HOURS job must run first"
+        )
+    raw = snap.raw
+    shops = raw.get("shopList") if isinstance(raw, dict) else raw
+    if not isinstance(shops, list):
+        shops = [raw] if isinstance(raw, dict) else []
+    outlet = await _keeta_outlet_id(db, branch_id)
+    shop = next(
+        (
+            s
+            for s in shops
+            if isinstance(s, dict)
+            and str(s.get("shopId") or s.get("id") or "") == outlet
+        ),
+        None,
+    )
+    if shop is None:
+        raise AggregatorUnavailableError(
+            f"keeta hours snapshot has no shop {outlet} for branch {branch_id}"
+        )
+    python_weekday = trading_hours.local(datetime.now(trading_hours.TZ)).weekday()
+    mm_weekday = (python_weekday + 1) % 7
+    return parse_keeta_today_hours(shop, mm_weekday)
+
+
 # ── Deliveroo menu + hours parsers ────────────────────────────────────────────
 # Discovered live 2026-09-01 from the hub session (which auto-exchanges a webrom
 # token — no separate credentials): the menu is
@@ -891,11 +963,12 @@ _MENU_READERS: dict[str, Any] = {
     "deliveroo": _read_deliveroo_menu,
 }
 #: Hours readers. Careem verified live (day origin confirmed against the portal
-#: bundle's own day labels). The others need their hours endpoint captured the
-#: same way before they can be trusted to open/close a branch on the right day.
+#: bundle's own day labels). Noon/talabat/deliveroo endpoints are the same
+#: server-side reads. Keeta is today-only, parsed from the headed worker push.
 _HOURS_READERS: dict[str, Any] = {
     "careem": _read_careem_hours,
     "noon": _read_noon_hours,
     "deliveroo": _read_deliveroo_hours,
     "talabat": _read_talabat_hours,
+    "keeta": _read_keeta_hours,
 }

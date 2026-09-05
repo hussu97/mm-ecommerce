@@ -299,3 +299,277 @@ def test_build_keeta_spu_payload_off_shelf_and_priced():
         )["status"]
         == 1
     )
+
+
+def test_build_keeta_hours_write_body_matches_captured_weekly_shape():
+    """Captured 2026-09-04 from shop-normal-time-editor: `{shopId,
+    businessHourOfTheWeek:{mon:[{startTime,endTime,option:1}],…}}`."""
+    from aggregator_bootstrap.keeta_pull import (
+        _KEETA_DAY_KEYS,
+        build_keeta_hours_write_body,
+    )
+
+    weekly = {
+        "mon": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "tue": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "wed": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "thu": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "fri": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "sat": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "sun": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+    }
+    open_body = build_keeta_hours_write_body(
+        "1644170195",
+        closed=False,
+        start_time=28800,
+        end_time=84600,
+        weekly=weekly,
+        day_key="sun",
+    )
+    assert open_body["shopId"] == "1644170195"
+    assert "businessStatus" not in open_body
+    assert "todayBusinessHours" not in open_body
+    week = open_body["businessHourOfTheWeek"]
+    assert set(week) == set(_KEETA_DAY_KEYS)
+    assert week["sun"] == [{"startTime": 28800, "endTime": 84600, "option": 1}]
+    assert week["mon"] == weekly["mon"]
+
+    closed_body = build_keeta_hours_write_body(
+        "1644170195", closed=True, weekly=weekly, day_key="sun"
+    )
+    assert closed_body["businessHourOfTheWeek"]["sun"] == [
+        {"startTime": 0, "endTime": 0, "option": 1}
+    ]
+    assert closed_body["businessHourOfTheWeek"]["mon"] == weekly["mon"]
+
+    # UI 23:59 (86340) is stored as 86400; missing weekly fills all seven days.
+    filled = build_keeta_hours_write_body(
+        "1", closed=False, start_time=28800, end_time=86340, day_key="fri"
+    )
+    assert filled["businessHourOfTheWeek"]["fri"] == [
+        {"startTime": 28800, "endTime": 86400, "option": 1}
+    ]
+    assert all(filled["businessHourOfTheWeek"][k] for k in _KEETA_DAY_KEYS)
+
+
+def test_looks_like_keeta_hours_save_excludes_the_list_read():
+    from aggregator_bootstrap.keeta_pull import (
+        looks_like_keeta_hours_save,
+        looks_like_keeta_shop_write,
+    )
+
+    assert looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/scm/business-hour/update?yodaReady=h5",
+        "POST",
+    )
+    assert looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/scm/gw/shop/base/updateBusinessHours",
+        "POST",
+    )
+    assert not looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/scm/gw/shop/base/summary/list", "POST"
+    )
+    assert not looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/scm/business-hour/effective-data/get",
+        "POST",
+    )
+    assert not looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/scm/business-hour/offline-data/get",
+        "POST",
+    )
+    assert not looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/order/history/getOrders", "POST"
+    )
+    assert looks_like_keeta_shop_write(
+        "https://merchant.mykeeta.com/api/scm/gw/shop/base/somethingElse", "POST"
+    )
+    assert not looks_like_keeta_shop_write(
+        "https://merchant.mykeeta.com/api/scm/gw/shop/base/summary/list", "POST"
+    )
+    assert not looks_like_keeta_hours_save(
+        "https://merchant.mykeeta.com/api/scm/gw/shop/base/somethingElse", "POST"
+    )
+
+
+class _HoursPage:
+    """A page for `write_keeta_today_hours`: primes LOGIN_ACCOUNTID, records gotos."""
+
+    def __init__(
+        self,
+        *,
+        account_id: str = "acct-1",
+        emit_urls: list[tuple[str, str]] | None = None,
+        weekly: dict | None = None,
+        shop_ids: list[str] | None = None,
+    ) -> None:
+        self.account_id = account_id
+        self.gotos: list[str] = []
+        self.evaluate_calls: list[tuple[str, object]] = []
+        self.closed = False
+        self._request_handler = None
+        self._emit_urls = emit_urls or []
+        self.wait_ms: list[int] = []
+        self.weekly = weekly
+        self.shop_ids = shop_ids or []
+
+    async def goto(self, url, *args, **kwargs) -> None:
+        self.gotos.append(url)
+        if self._request_handler and "m/web/shop" in url:
+            for emit_url, method in self._emit_urls:
+                self._request_handler(
+                    type("Req", (), {"url": emit_url, "method": method})()
+                )
+
+    async def wait_for_timeout(self, ms, *args, **kwargs) -> None:
+        self.wait_ms.append(int(ms))
+
+    def on(self, event, handler) -> None:
+        self._request_handler = handler
+
+    def remove_listener(self, event, handler) -> None:
+        self._request_handler = None
+
+    async def evaluate(self, script: str, arg: object = None, **kwargs):
+        self.evaluate_calls.append((script, arg))
+        if "LOGIN_ACCOUNTID" in script and "fetch" not in script:
+            return self.account_id
+        if "SHOP_IDS" in script:
+            return self.shop_ids
+        if isinstance(arg, dict) and "payload" not in arg:
+            return {"code": 0, "data": self.weekly}
+        return {"code": 0}
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _HoursContext:
+    def __init__(self, page: _HoursPage) -> None:
+        self._page = page
+
+    async def new_page(self) -> _HoursPage:
+        return self._page
+
+
+async def test_write_keeta_today_hours_probe_does_not_post():
+    from aggregator_bootstrap.keeta_pull import (
+        KEETA_HOURS_SAVE_PATH,
+        KEETA_HOURS_SETTINGS_ROUTE,
+        write_keeta_today_hours,
+    )
+
+    page = _HoursPage()
+    result = await write_keeta_today_hours(
+        _HoursContext(page), wait_seconds=8, persist=False
+    )
+    assert result["saved"] == 0
+    assert result["probed"] is True
+    assert KEETA_HOURS_SAVE_PATH.endswith("/api/scm/business-hour/update")
+    assert result["save_path"] and "business-hour/update" in result["save_path"]
+    assert "todo" not in result
+    assert KEETA_HOURS_SETTINGS_ROUTE in page.gotos
+    assert 8000 in page.wait_ms
+    assert not any(
+        isinstance(arg, dict) and "payload" in arg for _, arg in page.evaluate_calls
+    )
+    assert page.closed
+
+
+async def test_write_keeta_today_hours_posts_when_save_path_and_windows():
+    from aggregator_bootstrap import keeta_pull as kp
+
+    page = _HoursPage(
+        weekly={
+            "mon": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+            "tue": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+            "wed": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+            "thu": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+            "fri": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+            "sat": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+            "sun": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        }
+    )
+    result = await kp.write_keeta_today_hours(
+        _HoursContext(page),
+        windows=[
+            {
+                "shop_id": "1644170195",
+                "closed": False,
+                "start_time": 28800,
+                "end_time": 84600,
+            }
+        ],
+        persist=False,
+    )
+    assert result["saved"] == 1
+    assert "business-hour/update" in (result["save_path"] or "")
+    payloads = [
+        arg["payload"]
+        for _, arg in page.evaluate_calls
+        if isinstance(arg, dict) and isinstance(arg.get("payload"), dict)
+    ]
+    assert payloads
+    assert payloads[0]["shopId"] == "1644170195"
+    assert "businessHourOfTheWeek" in payloads[0]
+    assert page.closed
+
+
+async def test_write_keeta_today_hours_records_captured_save_xhr():
+    from aggregator_bootstrap.keeta_pull import write_keeta_today_hours
+
+    page = _HoursPage(
+        emit_urls=[
+            (
+                "https://merchant.mykeeta.com/api/scm/business-hour/update?yodaReady=h5",
+                "POST",
+            )
+        ]
+    )
+    result = await write_keeta_today_hours(
+        _HoursContext(page), wait_seconds=1, persist=False
+    )
+    assert "business-hour/update" in (result["save_path"] or "")
+    assert result["captured_xhrs"]
+    assert "todo" not in result
+    assert page.closed
+
+
+async def test_write_keeta_today_hours_does_not_treat_unrelated_shop_post_as_save():
+    from aggregator_bootstrap.keeta_pull import write_keeta_today_hours
+
+    page = _HoursPage(
+        emit_urls=[
+            (
+                "https://merchant.mykeeta.com/api/scm/gw/shop/base/somethingElse",
+                "POST",
+            )
+        ]
+    )
+    result = await write_keeta_today_hours(
+        _HoursContext(page), wait_seconds=1, persist=False
+    )
+    assert "business-hour/update" in (result["save_path"] or "")
+    assert result["captured_xhrs"] == []
+    assert any(path.endswith("somethingElse") for path in result["all_shop_posts"])
+    assert "todo" not in result
+    assert page.closed
+
+
+async def test_write_keeta_today_hours_persist_identity_saves_weekly():
+    from aggregator_bootstrap.keeta_pull import write_keeta_today_hours
+
+    weekly = {
+        "mon": [{"startTime": 28800, "endTime": 84600, "option": 1}],
+        "sun": [{"startTime": 0, "endTime": 0, "option": 1}],
+    }
+    page = _HoursPage(weekly=weekly, shop_ids=["1644170195"])
+    result = await write_keeta_today_hours(_HoursContext(page), persist=True)
+    assert result["saved"] == 1
+    payloads = [
+        arg["payload"]
+        for _, arg in page.evaluate_calls
+        if isinstance(arg, dict) and isinstance(arg.get("payload"), dict)
+    ]
+    assert payloads == [{"shopId": "1644170195", "businessHourOfTheWeek": weekly}]
+    assert 8000 not in page.wait_ms
+    assert page.closed

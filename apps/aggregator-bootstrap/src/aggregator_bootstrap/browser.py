@@ -1084,6 +1084,9 @@ async def login_with_account(
     seen_urls: list[str] = []  # diagnosis only — see `_record_seen`
     profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
     port = free_debug_port()
+    # Careem reCAPTCHA-v3 scores the Chrome profile. Login/relogin MUST reopen
+    # `careem.chrome` (this spawn), never a fresh storage_state context — a
+    # virgin Chrome is exactly what fails the score. Same idea as keeta.chrome.
     chrome = _spawn_chrome(profile=profile, port=port, url=start_url)
     filled = False
 
@@ -1104,8 +1107,8 @@ async def login_with_account(
         hint = (
             f"Google Chrome opened on Careem Partners. I pick the Email method,\n"
             f"fill the email and poll the linked Graph mailbox for the OTP (up to\n"
-            f"{_LOGIN_WAIT_SECONDS // 60} minutes). If reCAPTCHA challenges, "
-            f"complete it in the window.\n"
+            f"{_LOGIN_WAIT_SECONDS // 60} minutes). If reCAPTCHA v2 appears, "
+            f"I click the checkbox and solve the puzzle (audio / 2captcha).\n"
         )
     elif channel == "keeta":
         hint = (

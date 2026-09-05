@@ -141,30 +141,16 @@ class _FlowPage:
 
 
 def _run_email_step(page, monkeypatch, tmp_path):
-    """Replay the email step's composition against the fake page.
+    """Drive `_careem_wait_email_input` against the fake page.
 
-    This mirrors the step rather than calling `login_careem` (which would need a
-    fake for the portal nav, the method chooser, the mailbox and the password
-    step). It documents the intended behaviour; the test below pins that the real
-    function is actually wired this way, so the mirror cannot drift silently.
+    The email-box wait+reload used to be inlined in `login_careem`; it now lives
+    in the helper so the recaptcha retry can reuse it. This still documents the
+    intended behaviour; the source-shape test below pins that `login_careem`
+    actually calls the helper.
     """
     monkeypatch.setattr(L.settings, "STORAGE_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(L, "_careem_is_authenticated", lambda _p: _false())
-
-    async def _step():
-        email_input = page.locator("input[type='email']").first
-        if not await L._careem_input_ready(email_input):
-            if await L._careem_is_authenticated(page):
-                return "authed"
-            await L._careem_capture_failure(page, "no-email-input")
-            await page.reload(wait_until="domcontentloaded", timeout=60_000)
-            await page.wait_for_timeout(3_000)
-            if not await L._careem_input_ready(email_input):
-                await L._careem_capture_failure(page, "no-email-input-retry")
-                raise L.LoginError(f"no email input at {page.url}")
-        return "ready"
-
-    return asyncio.run(_step())
+    return asyncio.run(L._careem_wait_email_input(page))
 
 
 async def _false():
@@ -175,7 +161,7 @@ def test_a_slow_spa_boot_is_recovered_by_the_reload(monkeypatch, tmp_path):
     """The form appears on the second look — the login proceeds instead of
     arming an hour-long needs-human backoff."""
     page = _FlowPage(ready_on_call=2)
-    assert _run_email_step(page, monkeypatch, tmp_path) == "ready"
+    assert _run_email_step(page, monkeypatch, tmp_path) is page.locator_obj
     assert page.reloads == 1
     assert (tmp_path / "careem-debug-no-email-input.json").exists()
 
@@ -193,23 +179,22 @@ def test_a_genuine_miss_still_fails_but_leaves_both_dumps(monkeypatch, tmp_path)
 
 
 def test_login_careem_really_retries_and_captures_on_both_misses():
-    """Guard the shape of the fix in the SHIPPING code, not just the mirror above.
+    """Guard the shape of the fix in the SHIPPING code, not just the helper.
 
     The bug was a single un-instrumented `wait_for` that failed the whole login.
-    So the real email step must: check readiness through the helper, capture
+    So the email wait must: check readiness through the helper, capture
     evidence on the first miss, reload, check again, and capture again before
     raising. If someone collapses this back to one bare wait, this fails.
     """
     import inspect
 
-    src = inspect.getsource(L.login_careem)
-    step = src.split("# auth.careem.com email step")[1].split("Verification-code")[0]
-
-    assert step.count("_careem_input_ready") == 2, "must re-check after reload"
-    assert step.count("_careem_capture_failure") == 2, "evidence on BOTH misses"
-    assert "page.reload" in step, "the retry must actually reload the SPA"
-    assert ".first" in step, "strict-mode guard on the email locator"
-    assert "timeout=20_000" not in step, "the flat 20s wait must be gone"
+    src = inspect.getsource(L._careem_wait_email_input)
+    assert src.count("_careem_input_ready") == 2, "must re-check after reload"
+    assert src.count("_careem_capture_failure") == 2, "evidence on BOTH misses"
+    assert "page.reload" in src, "the retry must actually reload the SPA"
+    assert ".first" in src, "strict-mode guard on the email locator"
+    assert "timeout=20_000" not in src, "the flat 20s wait must be gone"
+    assert "_careem_wait_email_input" in inspect.getsource(L.login_careem)
 
 
 # ── every step of the flow shares the budget ───────────────────────────────────
@@ -226,7 +211,9 @@ def test_no_step_of_the_careem_login_keeps_a_flat_20s_wait():
     """
     import inspect
 
-    src = inspect.getsource(L.login_careem)
+    src = (
+        inspect.getsource(L.login_careem) + inspect.getsource(L._careem_wait_email_input)
+    )
     assert "timeout=20_000" not in src
     assert src.count("_careem_input_ready") == 4  # email x2 (retry), otp, password
 

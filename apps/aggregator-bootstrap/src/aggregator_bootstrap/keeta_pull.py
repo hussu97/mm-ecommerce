@@ -724,6 +724,348 @@ async def fetch_keeta_today_hours(context: Any, shop_ids: list[str]) -> list[dic
         await page.close()
 
 
+# ── Business hours write (catalog-sync hours write) ──────────────────────────
+# Live capture 2026-09-04 from merchant.mykeeta.com/m/web/shop#/settings (logged-in
+# Chrome + shop SPA `825.cf93c.js` / `shop-normal-time-editor.3697b.js`):
+#   GET  /api/scm/business-hour/effective-data/get?shopId=… →
+#        {mon:[{startTime,endTime,option:1}], … sun:[…]}  (seconds-from-midnight)
+#   POST /api/scm/business-hour/update
+#        {shopId, businessHourOfTheWeek: <that weekly map>}
+# Closed day is `[{startTime:0,endTime:0,option:1}]`, not an empty list. A 23:59
+# end is stored as 86400. Holiday/special dates are a different verb
+# (`/api/scm/special-business-hour/update`) — not this job.
+KEETA_HOURS_SETTINGS_ROUTE = "https://merchant.mykeeta.com/m/web/shop#/settings"
+#: Captured save verb (shop-normal-time-editor `zr({businessHourOfTheWeek}, shopId)`).
+#: Query suffix is appended at call time (`KEETA_QUERY_SUFFIX`).
+KEETA_HOURS_SAVE_PATH = "/api/scm/business-hour/update"
+#: Matching weekly read the save body is built from.
+KEETA_HOURS_EFFECTIVE_GET_PATH = "/api/scm/business-hour/effective-data/get"
+#: Weekday keys on `businessHourOfTheWeek` — Sunday first, matching MM 0=Sunday.
+_KEETA_DAY_KEYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+
+
+def keeta_today_day_key(now: datetime | None = None) -> str:
+    """Today's `businessHourOfTheWeek` key on the shop clock (Dubai)."""
+    local = now or datetime.now(_BUSINESS_TZ)
+    if local.tzinfo is None:
+        local = local.replace(tzinfo=_BUSINESS_TZ)
+    else:
+        local = local.astimezone(_BUSINESS_TZ)
+    # datetime.weekday: Mon=0 … Sun=6 → our Sunday-first tuple.
+    return _KEETA_DAY_KEYS[(local.weekday() + 1) % 7]
+
+
+def _keeta_hour_slot(
+    start_time: int | None, end_time: int | None, *, closed: bool, option: int = 1
+) -> dict[str, int]:
+    if closed or start_time is None or end_time is None:
+        return {"startTime": 0, "endTime": 0, "option": option}
+    end = int(end_time)
+    if end == 86340:
+        end = 86400
+    return {"startTime": int(start_time), "endTime": end, "option": option}
+
+
+def build_keeta_hours_write_body(
+    shop_id: Any,
+    *,
+    closed: bool,
+    start_time: int | None = None,
+    end_time: int | None = None,
+    weekly: dict[str, Any] | None = None,
+    day_key: str | None = None,
+) -> dict:
+    """POST body for `/api/scm/business-hour/update`.
+
+    Captured shape: `{shopId, businessHourOfTheWeek:{mon:[{startTime,endTime,
+    option}],…}}`. Overlay `day_key` (default today DXB) onto `weekly` when the
+    GET succeeded so the other six days are not wiped; if `weekly` is missing,
+    fill all seven days with the same slot (the live shops' pattern).
+    """
+    sid = str(shop_id)
+    slot = _keeta_hour_slot(start_time, end_time, closed=closed)
+    today = day_key or keeta_today_day_key()
+    week: dict[str, Any] = {}
+    if isinstance(weekly, dict):
+        for key in _KEETA_DAY_KEYS:
+            existing = weekly.get(key)
+            if isinstance(existing, list) and existing:
+                week[key] = existing
+    week[today] = [slot]
+    for key in _KEETA_DAY_KEYS:
+        week.setdefault(key, [slot])
+    return {"shopId": sid, "businessHourOfTheWeek": week}
+
+
+def looks_like_keeta_hours_save(url: str, method: str = "POST") -> bool:
+    """True for a POST/PUT that looks like a shop-hours / status save, not the list read."""
+    if str(method).upper() not in ("POST", "PUT"):
+        return False
+    low = url.lower()
+    if "summary/list" in low or "effective-data/get" in low or "offline-data/get" in low:
+        return False
+    if "business-hour/update" in low:
+        return True
+    has_write = any(mark in low for mark in ("save", "update", "edit", "/w/"))
+    has_hours = any(
+        mark in low
+        for mark in ("hour", "business", "opentime", "closetime", "shop/base")
+    )
+    return has_write and has_hours
+
+
+def looks_like_keeta_shop_write(url: str, method: str = "POST") -> bool:
+    """Any shop-gateway POST/PUT except the summary/list read.
+
+    The probe records these so a click-Save is visible even when the path does
+    not yet match `looks_like_keeta_hours_save`. A hours body is never POSTed
+    to one of these unless it also looks like a hours save (or
+    `KEETA_HOURS_SAVE_PATH` is set).
+    """
+    if str(method).upper() not in ("POST", "PUT"):
+        return False
+    low = url.lower()
+    if "summary/list" in low:
+        return False
+    return "/api/scm/gw/" in low
+
+
+_HOURS_WRITE_JS = """
+async ({ endpoint, shopId, payload }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const response = await fetch(endpoint, {
+    method: "POST", credentials: "include", headers, body: JSON.stringify(payload)
+  });
+  const text = await response.text();
+  try { return JSON.parse(text); } catch (e) { return { status: response.status, text }; }
+}
+"""
+
+_HOURS_READ_JS = """
+async ({ endpoint, shopId }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const response = await fetch(endpoint, {
+    method: "GET", credentials: "include", headers
+  });
+  const text = await response.text();
+  try { return JSON.parse(text); } catch (e) { return { status: response.status, text }; }
+}
+"""
+
+
+def _hours_endpoint(path: str, shop_id: str | None = None) -> str:
+    """Relative merchant path + the captured yoda/csec query suffix."""
+    url = path + KEETA_QUERY_SUFFIX
+    if shop_id:
+        url += f"&shopId={shop_id}"
+    return url
+
+
+async def _post_keeta_hours(
+    page: Any, *, shop_id: str, payload: dict[str, Any], save_path: str
+) -> dict[str, Any]:
+    raw = await page.evaluate(
+        _HOURS_WRITE_JS,
+        {
+            "endpoint": save_path,
+            "shopId": str(shop_id),
+            "payload": payload,
+        },
+    )
+    return raw if isinstance(raw, dict) else {"raw": raw}
+
+
+async def write_keeta_today_hours(
+    context: Any,
+    *,
+    windows: list[dict[str, Any]] | None = None,
+    wait_seconds: int = 8,
+    persist: bool = False,
+) -> dict[str, Any]:
+    """Prime the persistent session, then POST `/api/scm/business-hour/update`.
+
+    Returns `{saved, probed, captured_xhrs, all_shop_posts, save_path, todo?}`.
+    `windows` items are `{shop_id|shopId, closed, start_time|startTime,
+    end_time|endTime}` in seconds-from-midnight.
+
+    `persist=False` (the CLI probe) never POSTs — it only listens for a save
+    XHR. The 05:00 daemon passes `persist=True`: GET each shop's weekly map,
+    overlay today's window when `windows` is supplied, and POST the captured
+    `{shopId, businessHourOfTheWeek}` body. An empty GET is not POSTed back
+    (that would wipe the week).
+    """
+    from .browser import NeedsHumanLogin
+
+    page = await context.new_page()
+    captured: list[str] = []
+    seen_posts: list[str] = []
+    save_path = KEETA_HOURS_SAVE_PATH.strip()
+    listen_ms = 0 if persist else max(0, int(wait_seconds) * 1000)
+
+    def _on_request(request: Any) -> None:
+        url = str(getattr(request, "url", "") or "")
+        method = str(getattr(request, "method", "GET") or "GET")
+        path = url.split("?", 1)[0]
+        if looks_like_keeta_shop_write(url, method) and path not in seen_posts:
+            seen_posts.append(path)
+        if looks_like_keeta_hours_save(url, method) and path not in captured:
+            captured.append(path)
+
+    try:
+        await page.goto(
+            KEETA_ORDER_ROUTE_HOURS, wait_until="domcontentloaded", timeout=60_000
+        )
+        account_id = ""
+        for _ in range(12):
+            await page.wait_for_timeout(2_000)
+            account_id = str(
+                await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS) or ""
+            ).strip()
+            if account_id:
+                break
+        if not account_id:
+            raise NeedsHumanLogin(
+                "keeta hours write: LOGIN_ACCOUNTID is empty — persistent "
+                "profile is signed out. Run: aggregator-bootstrap login --channel keeta"
+            )
+
+        page.on("request", _on_request)
+        try:
+            await page.goto(
+                KEETA_HOURS_SETTINGS_ROUTE,
+                wait_until="domcontentloaded",
+                timeout=60_000,
+            )
+            if listen_ms:
+                await page.wait_for_timeout(listen_ms)
+        finally:
+            try:
+                page.remove_listener("request", _on_request)
+            except Exception:  # noqa: BLE001 — fakes / already-removed
+                pass
+
+        if not save_path and captured:
+            save_path = captured[0]
+            logger.info("keeta hours: captured save XHR %s", save_path)
+        elif seen_posts:
+            logger.info(
+                "keeta hours: shop POSTs seen (none hours-save shaped): %s",
+                seen_posts,
+            )
+
+        if save_path and "yodaReady=" not in save_path:
+            save_path = save_path + KEETA_QUERY_SUFFIX
+
+        saved = 0
+        results: list[dict[str, Any]] = []
+        by_shop: dict[str, dict[str, Any]] = {}
+        for window in windows or []:
+            shop_id = window.get("shop_id") or window.get("shopId")
+            if shop_id:
+                by_shop[str(shop_id)] = window
+
+        shop_ids = list(by_shop)
+        if persist and not shop_ids:
+            shop_ids = await _read_shop_ids(page)
+
+        should_write = persist or bool(by_shop)
+        if save_path and should_write:
+            for shop_id in shop_ids:
+                weekly: dict[str, Any] | None = None
+                get_url = _hours_endpoint(KEETA_HOURS_EFFECTIVE_GET_PATH, shop_id)
+                got = await page.evaluate(
+                    _HOURS_READ_JS, {"endpoint": get_url, "shopId": str(shop_id)}
+                )
+                data = got.get("data") if isinstance(got, dict) else None
+                if not isinstance(data, dict) and isinstance(got, dict):
+                    data = got
+                if isinstance(data, dict) and isinstance(
+                    data.get("businessHourOfTheWeek"), dict
+                ):
+                    data = data["businessHourOfTheWeek"]
+                if isinstance(data, dict) and any(
+                    isinstance(data.get(k), list) for k in _KEETA_DAY_KEYS
+                ):
+                    weekly = data
+                window = by_shop.get(shop_id)
+                if window is None:
+                    if not weekly:
+                        logger.warning(
+                            "keeta hours: shop %s GET returned no weekly map; skip",
+                            shop_id,
+                        )
+                        results.append(
+                            {"shopId": str(shop_id), "raw": got, "skipped": True}
+                        )
+                        continue
+                    payload = {
+                        "shopId": str(shop_id),
+                        "businessHourOfTheWeek": weekly,
+                    }
+                else:
+                    payload = build_keeta_hours_write_body(
+                        shop_id,
+                        closed=bool(window.get("closed")),
+                        start_time=window.get("start_time", window.get("startTime")),
+                        end_time=window.get("end_time", window.get("endTime")),
+                        weekly=weekly,
+                    )
+                # page.evaluate (main world) — same as saveSpu; the isolated
+                # world 107000106s without the restaurant context.
+                raw = await _post_keeta_hours(
+                    page, shop_id=str(shop_id), payload=payload, save_path=save_path
+                )
+                results.append({"shopId": str(shop_id), "raw": raw})
+                code = raw.get("code") if isinstance(raw, dict) else None
+                if code == 0:
+                    saved += 1
+                else:
+                    logger.warning(
+                        "keeta hours write shop %s did not return code 0: %s",
+                        shop_id,
+                        raw,
+                    )
+
+        out: dict[str, Any] = {
+            "saved": saved,
+            "probed": True,
+            "captured_xhrs": captured,
+            "all_shop_posts": seen_posts,
+            "save_path": save_path or None,
+            "results": results,
+        }
+        if not save_path:
+            out["todo"] = (
+                "keeta hours save XHR not yet captured; sat on "
+                f"{KEETA_HOURS_SETTINGS_ROUTE} for {wait_seconds}s and recorded "
+                f"{len(captured)} hours-save POSTs / {len(seen_posts)} shop "
+                "POSTs. On the VM (one Chrome — stop the daemon if it holds "
+                "keeta.chrome): docker compose -f docker-compose.prod.yml run "
+                "--rm aggregator-worker probe-keeta-hours-save --wait-seconds 90"
+                " — attach CDP, click Save on Shop hours, paste the printed "
+                "path into KEETA_HOURS_SAVE_PATH."
+            )
+            logger.warning("keeta hours: %s", out["todo"])
+        return out
+    finally:
+        await page.close()
+
+
 # Keeta's finance figures are NOT in a JSON bill list — the merchant portal only
 # exposes them as downloadable files: a monthly VAT commission-invoice PDF (in a
 # zip) and a per-shop weekly billing-report XLSX. The three LIST endpoints below

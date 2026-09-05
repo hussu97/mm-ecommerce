@@ -547,6 +547,9 @@ def _month_windows(from_date: date, to_date: date) -> list[tuple[date, date]]:
 #: bearer + `x-global-entity-id` the SPA sends, and request_json's TLS impersonation
 #: passes PerimeterX, so the menu reads with the same session the sales ingest uses.
 _MENU_API = "https://vendor-api-gdp-ae.me.restaurant-partners.com/api/5/platforms/TB_AE"
+#: Origin of the vendor-api host — statement-attachment paths are often relative
+#: (`/api/5/platforms/.../file`) and must be fetched here, not against GraphQL.
+_VENDOR_API_ORIGIN = "https://vendor-api-gdp-ae.me.restaurant-partners.com"
 #: DeliveryHero Vendor Time Service — opening hours (not on the menu API).
 _VTS = "https://vts.eu.restaurant-partners.com/opening-times/v1"
 
@@ -689,6 +692,13 @@ class TalabatClient(BaseAggregatorClient):
     #   {_MENU_API}/vendors/{v}/catalogs/{catalogId}/categories/{categoryId}/products
     #     -> [{id, name, description, unitPrice, availability:{available}, active,
     #          productOptionIds, isVariation, ...}]
+    #
+    # Create: the nested per-category products URL is GET-only (405 on POST).
+    # The Add Product drawer (menuManagementV2 1.15.11, captured 2026-09-04 on
+    # Karama vendor 793319) POSTs `{_MENU_API}/vendors/{v}/catalogs/products`
+    # with `{name, description, unitPrice, catalogIds, category, type:"Simple",
+    # active}`. Response is `{commandId}` (async command, not an immediate
+    # product id). Still behind `CATALOG_SYNC_ENABLED`, dry-run default.
 
     async def list_catalogs(self, session: LoadedSession, vendor: str) -> Any:
         """The vendor's catalogs, each with its `categories` inline."""
@@ -712,6 +722,39 @@ class TalabatClient(BaseAggregatorClient):
             params={"locale": "en-AE", "sizeSupport": "true"},
         )
 
+    async def create_menu_item(
+        self,
+        session: LoadedSession,
+        vendor: str,
+        *,
+        name: str,
+        catalog_id: str,
+        category_id: str,
+        price: Any,
+        description: str = "",
+        active: bool = False,
+    ) -> Any:
+        """Create one item via the partner Add Product drawer POST.
+
+        Nested `.../catalogs/{id}/categories/{id}/products` is GET-only (405).
+        Off-shelf (`active=false`) by default so a sync never goes live before
+        review. Response is `{commandId}` — map the product on the next menu read.
+        """
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_MENU_API}/vendors/{vendor}/catalogs/products",
+            json_body={
+                "name": name,
+                "description": description or "",
+                "unitPrice": float(price),
+                "catalogIds": [str(catalog_id)],
+                "category": str(category_id),
+                "type": "Simple",
+                "active": bool(active),
+            },
+        )
+
     async def get_delivery_calendars(self, session: LoadedSession, vendor: str) -> Any:
         """The vendor's DELIVERY opening-hours calendars, read server-side.
 
@@ -728,6 +771,36 @@ class TalabatClient(BaseAggregatorClient):
             session,
             "GET",
             f"{_VTS}/vendor/TB_AE;{vendor}/calendars/DELIVERY",
+        )
+
+    async def put_delivery_calendars(
+        self, session: LoadedSession, vendor: str, calendars: Any
+    ) -> Any:
+        """Write the vendor's DELIVERY calendars (same path the GET reads).
+
+        Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
+        """
+        return await self.request_json(
+            session,
+            "PUT",
+            f"{_VTS}/vendor/TB_AE;{vendor}/calendars/DELIVERY",
+            json_body=calendars,
+        )
+
+    async def put_vendor_status(
+        self, session: LoadedSession, vendor: str, status: str
+    ) -> Any:
+        """Partner Outlet Management holiday close / reopen.
+
+        `PUT .../vendors/{id}/status` with `OPEN` / `CLOSED_TODAY` / `CLOSED_UNTIL`.
+        Used for a closed weekday or a holiday; the next open day's hours write
+        sends `OPEN` again.
+        """
+        return await self.request_json(
+            session,
+            "PUT",
+            f"{_MENU_API}/vendors/{vendor}/status",
+            json_body={"status": status},
         )
 
     async def prepare_session(
@@ -1140,6 +1213,18 @@ class TalabatClient(BaseAggregatorClient):
             if invoice.statement_id not in seen:
                 statements.append(invoice)
                 seen.add(invoice.statement_id)
+        statements = await self._enrich_statements_with_attachment_lines(
+            session, statements
+        )
+        if (
+            truncation_note is None
+            and statements
+            and not any(s.lines for s in statements)
+        ):
+            truncation_note = (
+                "Talabat statements carry no per-order lines — the xlsx bundle "
+                "and per-statement attachments were empty or unreadable."
+            )
         return StatementsResult(statements=statements, truncation_note=truncation_note)
 
     async def _payout_invoice_rows(
@@ -1462,7 +1547,7 @@ class TalabatClient(BaseAggregatorClient):
             .get("downloadUrl")
             or ""
         ).strip()
-        return url or None
+        return self._resolve_download_url(url) if url else None
 
     async def _download_bundle(
         self, session: LoadedSession, download_url: str
@@ -1473,7 +1558,7 @@ class TalabatClient(BaseAggregatorClient):
         response = await self.request_raw(
             session,
             "GET",
-            download_url,
+            self._resolve_download_url(download_url),
             headers=headers,
             timeout=_CSV_DOWNLOAD_TIMEOUT_SECONDS,
         )
@@ -1495,6 +1580,106 @@ class TalabatClient(BaseAggregatorClient):
         raise AggregatorUnavailableError(
             f"{self.channel} bundle download returned no binary content"
         )
+
+    @staticmethod
+    def _resolve_download_url(url: str) -> str:
+        """Absolute URL for a finance/menu attachment.
+
+        GraphQL sometimes returns a relative vendor-api path. The menu reads
+        already use that host; a relative GET against the GraphQL origin 404s
+        and is how statement lines stayed empty.
+        """
+        value = (url or "").strip()
+        if not value:
+            return value
+        if value.startswith("//"):
+            return f"https:{value}"
+        if value.startswith("http://") or value.startswith("https://"):
+            return value
+        if value.startswith("/"):
+            return f"{_VENDOR_API_ORIGIN}{value}"
+        return f"{_VENDOR_API_ORIGIN}/{value}"
+
+    @staticmethod
+    def _attachment_urls(raw: dict[str, Any] | None) -> list[str]:
+        """Download URLs/paths off a ListAdditional or invoice row."""
+        if not isinstance(raw, dict):
+            return []
+        atts = (
+            raw.get("attachments")
+            or raw.get("invoiceAttachments")
+            or raw.get("payoutAttachments")
+            or []
+        )
+        urls: list[str] = []
+        if isinstance(atts, str) and atts.strip():
+            return [atts.strip()]
+        if not isinstance(atts, list):
+            return []
+        for item in atts:
+            if isinstance(item, str) and item.strip():
+                urls.append(item.strip())
+            elif isinstance(item, dict):
+                path = item.get("path") or item.get("url") or item.get("downloadUrl")
+                if path:
+                    urls.append(str(path).strip())
+        return urls
+
+    @staticmethod
+    def _as_bundle_zip(body: bytes) -> bytes:
+        """A zip the existing Detailed_*.xlsx parser accepts.
+
+        Per-statement attachments are often a lone xlsx; the bulk download is
+        already a zip. Wrap the former so `_parse_bundle_bytes` is one parser.
+        """
+        if body[:2] == b"PK":
+            return body
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as archive:
+            archive.writestr("Detailed_attachment.xlsx", body)
+        return buf.getvalue()
+
+    async def _enrich_statements_with_attachment_lines(
+        self, session: LoadedSession, statements: list[StandardStatement]
+    ) -> list[StandardStatement]:
+        """Fill empty `lines` from each statement's own xlsx attachment.
+
+        Idempotent: statements that already have lines (the bulk bundle) are
+        left alone. A failed attachment is skipped so one bad file cannot drop
+        the metadata row.
+        """
+        out: list[StandardStatement] = []
+        for stmt in statements:
+            if stmt.lines:
+                out.append(stmt)
+                continue
+            lines: list[StandardStatementLine] = []
+            for url in self._attachment_urls(stmt.raw):
+                try:
+                    body = await self._download_bundle(session, url)
+                    parsed = self._parse_bundle_bytes(self._as_bundle_zip(body))
+                except AggregatorAuthError:
+                    raise
+                except AggregatorUnavailableError as exc:
+                    logger.warning(
+                        "%s attachment %s for %s skipped (%s)",
+                        self.channel,
+                        url,
+                        stmt.statement_id,
+                        exc,
+                    )
+                    continue
+                for parsed_stmt in parsed:
+                    for line in parsed_stmt.lines:
+                        lines.append(
+                            replace(
+                                line,
+                                statement_id=stmt.statement_id,
+                                source_key=(f"{stmt.statement_id}:{line.source_key}"),
+                            )
+                        )
+            out.append(replace(stmt, lines=lines) if lines else stmt)
+        return out
 
     @staticmethod
     def _parse_bundle_bytes(bundle_bytes: bytes) -> list[StandardStatement]:
@@ -1728,10 +1913,9 @@ class TalabatClient(BaseAggregatorClient):
         """A `ListAdditionalStatements` row mapped to a statement — port of
         `normalize_talabat_graphql_statement_rows`.
 
-        This is the settlement *metadata* (id, date, gross); the per-order fee
-        breakdown lives only inside the downloadable detailed xlsx bundle, which
-        this httpx port does not fetch (see module docstring), so `lines` is
-        empty and `total_fees`/`total_vat` are left unknown.
+        This is the settlement *metadata* (id, date, gross). Per-order fee
+        lines come from the row's `attachments` and/or the bulk xlsx bundle,
+        both wired in `fetch_statements` via `_parse_bundle_bytes`.
         """
         statement_id = str(row.get("statementId") or "").strip()
         statement_date = _date_str(row.get("statementDate"))

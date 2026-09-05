@@ -567,3 +567,72 @@ def test_merge_order_detail_preserves_display_ref():
     )
     merged = client._merge_order_detail(base, {"status": "delivered"}, "rest-1")
     assert merged.display_ref == "5254"
+
+
+@pytest.mark.asyncio
+async def test_request_json_remints_once_on_401_then_retries():
+    """A marketplace-invalidated JWT still has a future exp, so `_token_is_fresh`
+    lets it through and the first data call 401s. Remint via `_login` once (never
+    `/api/session/refresh`) and retry; a second 401 must not loop."""
+    from app.services.providers.aggregator_base import (
+        AggregatorAuthError,
+        BaseAggregatorClient,
+    )
+
+    client = DeliverooClient()
+    session = _org_session()
+    client._db = object()
+    client._remint_attempted = False
+    calls = {"n": 0}
+
+    async def fake_super(self, sess, method, url, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise AggregatorAuthError("401")
+        return {"ok": True}
+
+    async def fake_remint(self, sess):
+        sess.tokens = {**dict(sess.tokens or {}), "access_token": "fresh"}
+        return sess
+
+    async def boom_refresh(*_a, **_k):
+        raise AssertionError("must not call /api/session/refresh")
+
+    with (
+        patch.object(BaseAggregatorClient, "request_json", fake_super),
+        patch.object(DeliverooClient, "_remint_after_stale_token", fake_remint),
+        patch.object(client, "_refresh", boom_refresh),
+    ):
+        out = await client.request_json(session, "GET", "https://hub/api/orders")
+    assert out == {"ok": True}
+    assert calls["n"] == 2
+    assert session.tokens["access_token"] == "fresh"
+
+
+@pytest.mark.asyncio
+async def test_request_json_does_not_remint_twice():
+    from app.services.providers.aggregator_base import (
+        AggregatorAuthError,
+        BaseAggregatorClient,
+    )
+
+    client = DeliverooClient()
+    session = _org_session()
+    client._db = object()
+    client._remint_attempted = False
+    remints = {"n": 0}
+
+    async def always_401(self, sess, method, url, **kwargs):
+        raise AggregatorAuthError("401")
+
+    async def fake_remint(self, sess):
+        remints["n"] += 1
+        return sess
+
+    with (
+        patch.object(BaseAggregatorClient, "request_json", always_401),
+        patch.object(DeliverooClient, "_remint_after_stale_token", fake_remint),
+    ):
+        with pytest.raises(AggregatorAuthError):
+            await client.request_json(session, "GET", "https://hub/api/orders")
+    assert remints["n"] == 1

@@ -480,9 +480,9 @@ def delete_keeta_item(
 def fetch_keeta_hours() -> None:
     """Audit each Keeta shop's business status + today's opening hours.
 
-    Keeta exposes only *today's* hours (no weekly schedule), signed in-page. Reads
-    the hydrated Keeta session; open a headed `login --channel keeta` first if the
-    session is dead. Read-only — never part of a sweep.
+    Keeta exposes only *today's* hours (no weekly schedule), signed in-page. Opens
+    the persistent `keeta.chrome` profile; a headed `login --channel keeta` first
+    if the profile is missing. Read-only — never part of a sweep.
     """
     from .warm import pull_keeta_hours_in_page
 
@@ -508,6 +508,49 @@ def fetch_keeta_hours() -> None:
             f"keeta shop {shop.get('shopId')}: businessStatus={status} "
             f"(1=open) today={wins or 'closed'}"
         )
+
+
+@app.command("probe-keeta-hours-save")
+def probe_keeta_hours_save(
+    wait_seconds: int = typer.Option(
+        90,
+        help=(
+            "Seconds to sit on Shop settings listening for a save XHR. "
+            "Attach CDP and click Save once during this window."
+        ),
+    ),
+) -> None:
+    """Listen for the Keeta hours-save XHR on the persistent profile.
+
+    The save verb is captured (`POST /api/scm/business-hour/update`); the nightly
+    `KEETA_HOURS` job POSTs it. This command stays listen-only (`persist=False`)
+    so a confirmation click-Save cannot collide with a write. One Chrome — stop
+    the daemon first if it holds `keeta.chrome`.
+    """
+    from .warm import write_keeta_hours_in_page
+
+    try:
+        result = asyncio.run(
+            write_keeta_hours_in_page(wait_seconds=wait_seconds, persist=False)
+        )
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta hours probe needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    save_path = result.get("save_path")
+    captured = result.get("captured_xhrs") or []
+    shop_posts = result.get("all_shop_posts") or []
+    if save_path:
+        print(f"keeta hours save path: {save_path}")  # noqa: T201
+        for path in captured:
+            print(f"keeta hours captured xhr: {path}")  # noqa: T201
+        return
+    for path in shop_posts:
+        print(f"keeta shop POST (not hours-save shaped): {path}")  # noqa: T201
+    logger.error(
+        "keeta hours save XHR not captured. Attach CDP during the wait, click "
+        "Save on Shop hours, re-run."
+    )
+    raise typer.Exit(code=1)
 
 
 @app.command("serve")

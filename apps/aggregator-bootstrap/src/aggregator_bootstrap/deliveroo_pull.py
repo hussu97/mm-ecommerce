@@ -324,28 +324,37 @@ async def _download_pdf(page: Any, statement_id: str) -> tuple[str | None, int]:
     return base64.b64encode(data).decode("ascii"), len(data)
 
 
-# ── Menu + hours (catalog sync feed) ──────────────────────────────────────────
-# Discovered live 2026-09-01: the Partner Hub's Opening-Hours page loads BOTH the
-# webrom menu and the opening-hours in one go — the hub auto-exchanges a webrom
-# token (`/api-gw/webrom/logon-pass`), so no separate menu login is needed. We sit
-# on that page and capture the two responses (the menu is a cross-origin webrom
-# host an in-page fetch cannot reach without the webrom bearer, so capture beats
-# re-issuing it). One `{rst_id, menu, hours}` payload per restaurant the hub holds.
+# ── Menu (catalog sync feed) ──────────────────────────────────────────────────
+# Discovered live 2026-09-01: the Partner Hub's Opening-Hours page loads the
+# webrom menu (and used to load opening-hours in the same go). Hours are now
+# read over httpx on the API (`GET /api/restaurants/{id}/opening_hours`); this
+# headed job only captures the menu. The hub auto-exchanges a webrom token
+# (`/api-gw/webrom/logon-pass`), so we still sit on that page — the menu is a
+# cross-origin webrom host an in-page fetch cannot reach without the bearer, so
+# capture beats re-issuing it. One `{rst_id, menu}` payload per restaurant.
 DELIVEROO_OPENING_HOURS_ROUTE = f"{_HUB}/opening-hours"
 
-#: webrom menu — `.../rom/{rst}/menu`; hub hours — `.../api/restaurants/{rst}/opening_hours`.
+#: webrom menu — `.../rom/{rst}/menu`. Hours XHRs are ignored on purpose.
 _WEBROM_MENU_MARK = "/rom/"
-_OPENING_HOURS_MARK = "/opening_hours"
 
 
-async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
-    """The Deliveroo menu + opening hours for the hub's restaurant, read by sitting
-    on the Opening-Hours page and capturing the two JSON responses it fires.
+def rst_id_from_webrom_menu_url(url: str) -> str | None:
+    """The restaurant id in a webrom `.../rom/{rst}/menu` URL, or None."""
+    if _WEBROM_MENU_MARK not in url:
+        return None
+    rest = url.split(_WEBROM_MENU_MARK, 1)[1]
+    rst = rest.split("/")[0].split("?")[0].strip()
+    return rst or None
 
-    Returns `[{rst_id, menu, hours}]` for the API's `parse_deliveroo_menu` /
-    `parse_deliveroo_hours`. Mirrors `fetch_deliveroo_invoices`' context use; the
-    menu is captured (not re-fetched) because it is cross-origin (webrom) and the
-    hub's own request already carries the exchanged webrom bearer."""
+
+async def fetch_deliveroo_menu(context: Any) -> list[dict]:
+    """The Deliveroo menu for the hub's restaurant, read by sitting on the
+    Opening-Hours page and capturing the webrom menu JSON it fires.
+
+    Returns `[{rst_id, menu}]` for the API's `parse_deliveroo_menu`. Hours are
+    not captured — the API reads them over httpx. The menu is captured (not
+    re-fetched) because it is cross-origin (webrom) and the hub's own request
+    already carries the exchanged webrom bearer."""
     import asyncio
 
     grabbed: dict[str, Any] = {}
@@ -356,14 +365,10 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
         # Read the body AT RESPONSE TIME — Playwright evicts it after navigation, so
         # collecting the objects and reading later comes back empty (seen live).
         url = resp.url
-        # Diagnostic: record request URLs that could be the menu/hours feeds so a
+        # Diagnostic: record request URLs that could be the menu feed so a
         # run that captures nothing shows what the page actually fired (webrom token,
         # a restaurant picker, a changed path, or a Cloudflare gate).
         low = url.lower()
-        # Broad diagnostic: log the whole non-noise API surface the page fires, so a
-        # run that captures nothing reveals where Deliveroo moved the menu/hours feeds
-        # (the Partner Hub was restructured onto an /api-gw/ gateway — the old
-        # /rom/{rst}/menu + /api/restaurants/{rst}/opening_hours no longer fire).
         _noise = (
             "sentry",
             "/track",
@@ -392,10 +397,6 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
             "menu",
             "item",
             "catalog",
-            "hour",
-            "schedul",
-            "open",
-            "availab",
             "rom",
             "webrom",
             "site",
@@ -411,11 +412,13 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
             if entry not in seen_urls:
                 seen_urls.append(entry)
         try:
-            if _WEBROM_MENU_MARK in url and url.rstrip("/").endswith("menu"):
+            if _WEBROM_MENU_MARK in url and url.rstrip("/").split("?")[0].endswith(
+                "menu"
+            ):
                 grabbed["menu"] = await resp.json()
-            elif _OPENING_HOURS_MARK in url and "restaurants/" in url:
-                grabbed["rst_id"] = url.split("restaurants/")[1].split("/")[0]
-                grabbed["hours"] = await resp.json()
+                rst = rst_id_from_webrom_menu_url(url)
+                if rst:
+                    grabbed["rst_id"] = rst
         except Exception:  # noqa: BLE001 — a body we can't read is simply skipped
             pass
 
@@ -445,18 +448,17 @@ async def fetch_deliveroo_menu_hours(context: Any) -> list[dict]:
         if opened_here:
             await page.close()
 
-    if not grabbed.get("menu") and not grabbed.get("hours"):
+    if not grabbed.get("menu"):
         logger.warning(
-            "deliveroo: no menu/hours captured on the opening-hours page; final url=%s; "
+            "deliveroo: no menu captured on the opening-hours page; final url=%s; "
             "candidate responses seen=%s",
             page.url,
-            seen_urls[:30] or "(none — page fired no menu/hours/restaurant requests)",
+            seen_urls[:30] or "(none — page fired no menu/restaurant requests)",
         )
         return []
     return [
         {
             "rst_id": grabbed.get("rst_id"),
             "menu": grabbed.get("menu"),
-            "hours": grabbed.get("hours"),
         }
     ]

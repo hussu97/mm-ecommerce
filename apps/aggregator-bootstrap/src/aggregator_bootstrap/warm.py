@@ -8,7 +8,9 @@ reopens it, rotates the anti-bot cookie, and pushes the refresh back.
 Keeta is the exception: it has no httpx sweep, so warming it also pulls its
 orders (and best-effort finance) in-page (its `mtgsig` signing lives in the
 page) and pushes the raw payloads to `/aggregators/keeta/orders` and
-`/aggregators/keeta/finance`.
+`/aggregators/keeta/finance`. Keeta pulls reopen the persistent `keeta.chrome`
+profile login wrote — never a hydrated `storage_state` into a fresh Chrome,
+which signs the merchant session out within minutes.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from .accounts import pull_account
 from .browser import NeedsHumanLogin, NotLoggedInError, _storage_state_path
 from .config import settings
 from .deliveroo_pull import fetch_deliveroo_invoices
+from .fingerprint import chrome_profile_dir
 from .hydrate import hydrate_from_api
 from .keeta_pull import fetch_keeta_finance, fetch_keeta_orders
 from .push import (
@@ -113,19 +116,34 @@ async def warm_keeta_orders() -> dict[str, Any]:
     return await pull_keeta_orders_in_page()
 
 
-def _keeta_state_or_raise():
-    """The hydrated Keeta storage_state path, or raise if it was never captured.
+def _persistent_profile_or_raise(channel: str):
+    """The live Chrome profile `login` wrote, or raise if it was never used.
 
-    Both Keeta pulls open the hydrated Playwright `storage_state` + sessionStorage,
-    *not* the headed Chrome profile — that profile often keeps a stale HK login
-    redirect that clears `LOGIN_ACCOUNTID` even when the API session blob is good.
+    Keeta binds the merchant session to `keeta.chrome`. Hydrating cookies into a
+    fresh Playwright `storage_state` context signs out within minutes
+    (`LOGIN_ACCOUNTID` empty) even when the API session blob still looks live.
+    Pulls must reopen that same profile. Deliveroo's menu `logon-pass` capture
+    needs the persistent `deliveroo.chrome` profile for the same reason.
     """
-    state = _storage_state_path("keeta")
-    if not state.exists():
+    profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
+    if not profile.exists():
         raise NotLoggedInError(
-            f"keeta session state missing at {state}; run a login/bootstrap first"
+            f"{channel} chrome profile missing at {profile}; "
+            f"run: aggregator-bootstrap login --channel {channel}"
         )
-    return state
+    return profile
+
+
+async def _open_persistent(pw, channel: str):
+    """Open `channel`'s persistent Chrome profile — the same path headed login uses.
+
+    Never `_open_storage_state_context`: that launches a fresh Chrome and hydrates
+    cookies into it, which is the Keeta outage (session bound to keeta.chrome).
+    """
+    from .browser import _open_context
+
+    _persistent_profile_or_raise(channel)
+    return await _open_context(pw, channel, headed=not settings.HEADLESS)
 
 
 async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
@@ -138,12 +156,10 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
     hours to capture them first. Playwright is imported lazily so this module
     imports without the browser lib.
     """
-    from .browser import _open_storage_state_context
     from .engine import async_playwright
 
-    _keeta_state_or_raise()
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "keeta")
+        opened = await _open_persistent(pw, "keeta")
         try:
             payloads = await fetch_keeta_orders(opened.context, months_back=months_back)
         finally:
@@ -164,17 +180,16 @@ async def pull_keeta_orders_in_page(*, months_back: int = 1) -> dict[str, Any]:
 async def pull_keeta_menu_in_page() -> dict[str, Any]:
     """Fetch the Keeta menu in-page and push it to the API (the catalog-sync feed).
 
-    Mirrors `pull_keeta_orders_in_page`: open the hydrated state, read the menu
-    in-page (mtgsig-signed), push one payload per shop. The API stores it as the
-    keeta menu snapshot that `menu_readers._read_keeta_menu` parses."""
-    from .browser import _open_storage_state_context
+    Mirrors `pull_keeta_orders_in_page`: open the persistent `keeta.chrome`
+    profile, read the menu in-page (mtgsig-signed), push one payload per shop. The
+    API stores it as the keeta menu snapshot that `menu_readers._read_keeta_menu`
+    parses."""
     from .engine import async_playwright
     from .keeta_pull import fetch_keeta_menu
     from .push import push_keeta_menu
 
-    _keeta_state_or_raise()
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "keeta")
+        opened = await _open_persistent(pw, "keeta")
         try:
             payloads = await fetch_keeta_menu(opened.context)
         finally:
@@ -197,7 +212,6 @@ async def pull_keeta_hours_in_page() -> list[dict[str, Any]]:
     from midnight). Reads SHOP_IDS off the menu route, then calls
     `fetch_keeta_today_hours`. Mirrors `pull_keeta_menu_in_page`'s context setup;
     the operator entry point is `fetch-keeta-hours`."""
-    from .browser import _open_storage_state_context
     from .engine import async_playwright
     from .keeta_pull import (
         KEETA_MENU_ROUTE,
@@ -205,9 +219,8 @@ async def pull_keeta_hours_in_page() -> list[dict[str, Any]]:
         fetch_keeta_today_hours,
     )
 
-    _keeta_state_or_raise()
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "keeta")
+        opened = await _open_persistent(pw, "keeta")
         try:
             page = await opened.context.new_page()
             await page.goto(
@@ -239,13 +252,11 @@ async def create_keeta_item_in_page(
     The operator's entry point for the create (and the controlled create-then-delete
     verification) — a live storefront write, so it is a deliberate command, not part
     of any automatic sweep."""
-    from .browser import _open_storage_state_context
     from .engine import async_playwright
     from .keeta_pull import create_keeta_spu
 
-    _keeta_state_or_raise()
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "keeta")
+        opened = await _open_persistent(pw, "keeta")
         try:
             result = await create_keeta_spu(
                 opened.context,
@@ -267,13 +278,11 @@ async def delete_keeta_item_in_page(*, shop_id: str, spu_id: str) -> dict[str, A
     response. The reverse of `create_keeta_item_in_page` — the second half of the
     controlled create-then-delete verification, and the operator's cleanup entry
     point. A live storefront write, so it is a deliberate command, never a sweep."""
-    from .browser import _open_storage_state_context
     from .engine import async_playwright
     from .keeta_pull import delete_keeta_spu
 
-    _keeta_state_or_raise()
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "keeta")
+        opened = await _open_persistent(pw, "keeta")
         try:
             result = await delete_keeta_spu(
                 opened.context, shop_id=shop_id, spu_id=spu_id
@@ -299,7 +308,6 @@ async def pull_keeta_finance_in_page(
     *fallbacks* — the live V2 endpoint and sessionStorage still win, and an account
     with no extras behaves exactly as before.
     """
-    from .browser import _open_storage_state_context
     from .engine import async_playwright
 
     if months_back is None:
@@ -312,9 +320,8 @@ async def pull_keeta_finance_in_page(
     ) or None
     customer_id = str(extras.get("customer_id") or "").strip() or None
 
-    _keeta_state_or_raise()
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "keeta")
+        opened = await _open_persistent(pw, "keeta")
         try:
             finance_payloads, finance_note = await fetch_keeta_finance(
                 opened.context,
@@ -340,29 +347,55 @@ async def pull_keeta_finance_in_page(
     return out
 
 
-async def pull_deliveroo_menu_hours_in_page() -> dict[str, Any]:
-    """Capture the Deliveroo menu + opening hours in-page and push them (the
-    catalog-sync feed). Mirrors `pull_keeta_menu_in_page`: open the hydrated
-    storage_state (headed real Chrome under Xvfb, which passes Cloudflare), capture
-    the two JSON responses the Opening-Hours page fires, and push
-    `[{rst_id, menu, hours}]` to the API's `/deliveroo/menu`. Playwright imported
-    lazily by the context helper."""
-    from .browser import _open_storage_state_context
-    from .deliveroo_pull import fetch_deliveroo_menu_hours
+async def write_keeta_hours_in_page(
+    *,
+    windows: list[dict[str, Any]] | None = None,
+    wait_seconds: int = 8,
+    persist: bool = False,
+) -> dict[str, Any]:
+    """Write Keeta hours in-page on the persistent profile.
+
+    The daemon's nightly `KEETA_HOURS` job passes `persist=True` (GET weekly +
+    POST `/api/scm/business-hour/update`). `probe-keeta-hours-save` keeps
+    `persist=False` so it only listens. One Chrome, torn down after.
+    """
+    from .engine import async_playwright
+    from .keeta_pull import write_keeta_today_hours
+
+    async with async_playwright() as pw:
+        opened = await _open_persistent(pw, "keeta")
+        try:
+            result = await write_keeta_today_hours(
+                opened.context,
+                windows=windows,
+                wait_seconds=wait_seconds,
+                persist=persist,
+            )
+        finally:
+            await opened.close()
+    logger.info("keeta hours write: %s", result)
+    return result
+
+
+async def pull_deliveroo_menu_in_page() -> dict[str, Any]:
+    """Capture the Deliveroo menu in-page and push it (the catalog-sync feed).
+
+    Opens the persistent `deliveroo.chrome` profile (headed under Xvfb so the
+    `logon-pass` exchange clears Cloudflare). Hours are NOT captured here — the
+    API reads them over httpx (`GET /api/restaurants/{id}/opening_hours`). The
+    Opening-Hours page is still the sit-on surface because that is what fires
+    the webrom menu + logon-pass; only the hours JSON is ignored.
+    """
+    from .deliveroo_pull import fetch_deliveroo_menu
     from .engine import async_playwright
     from .push import push_deliveroo_menu
 
-    state = _storage_state_path("deliveroo")
-    if not state.exists():
-        raise NotLoggedInError(
-            f"deliveroo session state missing at {state}; run a login/bootstrap first"
-        )
     account = await pull_account("deliveroo")
     async with async_playwright() as pw:
-        opened = await _open_storage_state_context(pw, "deliveroo")
+        opened = await _open_persistent(pw, "deliveroo")
         try:
-            # Refresh the browser token FIRST — the hydrated web session goes stale
-            # fast and the hub redirects to /login (so the capture sees nothing).
+            # Refresh the browser token FIRST — the web session goes stale fast
+            # and the hub redirects to /login (so the capture sees nothing).
             # Deliveroo has no OTP, so an email/password re-login mints a fresh
             # `token` cookie context-wide. Best-effort, exactly like the invoice pull.
             if account and account.email and account.password:
@@ -377,17 +410,17 @@ async def pull_deliveroo_menu_hours_in_page() -> dict[str, Any]:
                 except Exception:  # noqa: BLE001 — try the capture with what we have
                     logger.warning(
                         "deliveroo: in-page re-login failed; attempting the "
-                        "menu/hours capture with the hydrated session anyway"
+                        "menu capture with the persistent session anyway"
                     )
-            payloads = await fetch_deliveroo_menu_hours(opened.context)
+            payloads = await fetch_deliveroo_menu(opened.context)
         finally:
             await opened.close()
     if not payloads:
-        logger.warning("deliveroo: no menu/hours captured; nothing to push")
-        observability.note_empty_capture("deliveroo", "menu_hours")
+        logger.warning("deliveroo: no menu captured; nothing to push")
+        observability.note_empty_capture("deliveroo", "menu")
         return {"payloads": 0}
     result = await push_deliveroo_menu(payloads)
-    logger.info("pushed %d deliveroo menu/hours payload(s): %s", len(payloads), result)
+    logger.info("pushed %d deliveroo menu payload(s): %s", len(payloads), result)
     return {"payloads": len(payloads), **(result or {})}
 
 
@@ -469,7 +502,9 @@ __all__ = [
     "warm_keeta_orders",
     "pull_keeta_orders_in_page",
     "pull_keeta_finance_in_page",
+    "write_keeta_hours_in_page",
     "pull_deliveroo_invoices_in_page",
+    "pull_deliveroo_menu_in_page",
     "push_keeta_orders",
     "hydrate_then_warm",
     "push_probe",

@@ -432,6 +432,21 @@ class NoonClient(BaseAggregatorClient):
             json_body={"outletCode": outlet_code, "version": 0},
         )
 
+    async def save_outlet_schedule(
+        self, session: LoadedSession, outlet_code: str, schedule: dict[str, Any]
+    ) -> Any:
+        """Persist an outlet's weekly schedule (the matching save for outlet/details).
+
+        Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
+        """
+        return await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/restaurant/outlet/save",
+            headers=self._rms_headers(session),
+            json_body={"outletCode": outlet_code, "schedule": schedule},
+        )
+
     # ── menu create/delete (catalog sync writer) ─────────────────────────────
     # VERIFIED live by a controlled create-then-delete on the MM menu 2026-09-01:
     # noon's menu is per-item (NOT a whole-document rewrite as first assumed).

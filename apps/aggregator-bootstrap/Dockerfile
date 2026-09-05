@@ -48,6 +48,12 @@ RUN pip install --no-cache-dir "playwright>=1.52" \
  && apt-get install -y --no-install-recommends xvfb xauth \
  && rm -rf /var/lib/apt/lists/* /root/.cache
 
+# ffmpeg for Careem reCAPTCHA-v2 audio transcription (pydub → WAV). Own layer so
+# it does not invalidate the ~1GB Chrome layer above.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 # App code + the package install — the ONLY layers a code change invalidates, and
 # both tiny. `pip install .` reuses the Playwright driver + browser installed above.
 COPY pyproject.toml ./

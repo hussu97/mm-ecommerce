@@ -246,6 +246,15 @@ def test_the_aggregator_worker_gets_sentry():
         )
 
 
+def test_the_aggregator_worker_gets_twocaptcha_key():
+    """Careem v2 solver key is worker-only — not on the api-environment anchor."""
+    worker_env = _load_compose()["services"]["aggregator-worker"]["environment"]
+    assert "TWOCAPTCHA_API_KEY" in worker_env, (
+        "TWOCAPTCHA_API_KEY never reaches the aggregator worker, so a GitHub "
+        "secret set for it is inert (W9 item 5, worker allow-list)"
+    )
+
+
 def _default_of(expression: str) -> str | None:
     """The `X` out of `${VAR:-X}`, or None if the entry has no default."""
     m = re.fullmatch(r"\$\{[A-Z0-9_]+:-(.*)\}", str(expression).strip())

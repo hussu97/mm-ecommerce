@@ -288,6 +288,22 @@ def test_keeta_is_a_wired_auto_login_channel():
     )
 
 
+def test_careem_auto_login_uses_persistent_chrome_not_storage_state():
+    """Careem v3 scores the Chrome profile. Relogin must reopen careem.chrome,
+    never hydrate cookies into a fresh storage_state context (the Keeta outage,
+    one channel over)."""
+    import inspect
+
+    from aggregator_bootstrap import browser as b
+
+    src = inspect.getsource(b.login_with_account)
+    assert "_spawn_chrome" in src
+    assert "chrome_profile_dir" in src
+    assert "_open_storage_state_context" not in src
+    assert "careem.chrome" in src
+    assert "solve the puzzle" in src
+
+
 def test_record_seen_keeps_api_paths_and_ignores_noise():
     from aggregator_bootstrap.browser import _CAREEM_SEEN_LIMIT, _record_seen
 

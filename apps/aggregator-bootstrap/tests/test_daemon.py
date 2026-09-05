@@ -5,7 +5,7 @@ job→coroutine routing, and dead-session escalation. No real browser is opened 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aggregator_bootstrap import daemon, reauth, warm
 from aggregator_bootstrap.browser import NeedsHumanLogin
@@ -145,6 +145,43 @@ async def test_run_job_guarded_does_not_reloop_relogin_when_in_cooldown(
     assert q.pending() == set()  # in cooldown → no relogin, no loop
 
 
+async def test_run_job_guarded_does_not_relogin_server_refreshable_on_failure(
+    monkeypatch,
+):
+    """A failed Deliveroo menu capture used to enqueue a headed RELOGIN even
+    though the API remints the token itself. Skip on job failure, not only heal."""
+
+    async def _dead(_job):
+        raise NeedsHumanLogin("menu capture signed out")
+
+    monkeypatch.setattr(daemon, "_dispatch", _dead)
+    monkeypatch.setattr(daemon, "_timeout_for", lambda kind: 30)
+
+    q = JobQueue()
+    await daemon.run_job_guarded(
+        q, Job(kind=JobKind.DELIVEROO_MENU, seq=0, channel="deliveroo")
+    )
+    assert q.pending() == set()  # server_refreshable → no headed relogin
+
+
+async def test_run_job_guarded_still_escalates_non_refreshable_channels(
+    monkeypatch,
+):
+    """Talabat is headed-only; a dead session on job failure still enqueues RELOGIN."""
+
+    async def _dead(_job):
+        raise NeedsHumanLogin("stored state no longer authenticates")
+
+    monkeypatch.setattr(daemon, "_dispatch", _dead)
+    monkeypatch.setattr(daemon, "_timeout_for", lambda kind: 30)
+
+    q = JobQueue()
+    await daemon.run_job_guarded(
+        q, Job(kind=JobKind.DELIVEROO_MENU, seq=0, channel="talabat")
+    )
+    assert (JobKind.RELOGIN, "talabat") in q.pending()
+
+
 # ── job → coroutine routing ──────────────────────────────────────────────────
 async def test_dispatch_relogin_clears_backoff_on_success(monkeypatch):
     calls = {}
@@ -194,10 +231,14 @@ async def test_dispatch_routes_warm_keeta_and_deliveroo(monkeypatch):
     async def _keeta_finance():
         seen.append(("keeta_finance", None))
 
+    async def _keeta_hours(**kwargs):
+        seen.append(("keeta_hours", kwargs.get("persist")))
+
     monkeypatch.setattr(warm, "warm_channel", _warm)
     monkeypatch.setattr(warm, "warm_keeta_orders", _keeta_orders)
     monkeypatch.setattr(warm, "pull_deliveroo_invoices_in_page", _deliveroo)
     monkeypatch.setattr(warm, "pull_keeta_finance_in_page", _keeta_finance)
+    monkeypatch.setattr(warm, "write_keeta_hours_in_page", _keeta_hours)
 
     await daemon._dispatch(Job(kind=JobKind.WARM, seq=0, channel="noon"))
     await daemon._dispatch(Job(kind=JobKind.KEETA_ORDERS, seq=1, channel="keeta"))
@@ -205,12 +246,14 @@ async def test_dispatch_routes_warm_keeta_and_deliveroo(monkeypatch):
     await daemon._dispatch(
         Job(kind=JobKind.DELIVEROO_FINANCE, seq=3, channel="deliveroo")
     )
+    await daemon._dispatch(Job(kind=JobKind.KEETA_HOURS, seq=4, channel="keeta"))
 
     assert seen == [
         ("warm", "noon"),
         ("keeta_orders", None),  # KEETA_ORDERS = session refresh + orders (no finance)
         ("keeta_finance", None),  # KEETA_FINANCE is the separate nightly finance pull
         ("deliveroo_finance", None),
+        ("keeta_hours", True),
     ]
 
 
@@ -253,3 +296,23 @@ async def test_heal_poll_respects_backoff(monkeypatch, tmp_path):
     q = JobQueue()
     await daemon._heal_poll(q)
     assert q.pending() == set()  # in backoff → not enqueued
+
+
+def test_daily_jobs_schedules_keeta_hours_after_finance(monkeypatch):
+    """KEETA_HOURS is a daily job at 05:00 DXB, after KEETA_FINANCE at 04:00."""
+    monkeypatch.setattr(daemon, "_jitter", lambda: timedelta(0))
+    monkeypatch.setattr(daemon, "_warm_channels", lambda: [])
+    # 20:00 UTC = 00:00 Dubai — both 04:00 and 05:00 DXB are still ahead today.
+    now = datetime(2026, 1, 1, 20, 0, tzinfo=timezone.utc)
+    jobs = daemon._daily_jobs(now)
+    by_kind = {j.kind: j for j in jobs}
+    assert JobKind.KEETA_HOURS in by_kind
+    hours = by_kind[JobKind.KEETA_HOURS]
+    finance = by_kind[JobKind.KEETA_FINANCE]
+    assert hours.channel == "keeta"
+    assert hours.hour == 5
+    assert finance.hour == 4
+    # 04:00 DXB = 00:00 UTC next day; 05:00 DXB = 01:00 UTC next day.
+    assert finance.next_at == datetime(2026, 1, 2, 0, 0, tzinfo=timezone.utc)
+    assert hours.next_at == datetime(2026, 1, 2, 1, 0, tzinfo=timezone.utc)
+    assert hours.next_at > finance.next_at

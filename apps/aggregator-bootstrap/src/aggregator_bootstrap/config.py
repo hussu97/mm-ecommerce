@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     CAREEM_EMAIL: str = ""
     CAREEM_PASSWORD: str = Field(default="", repr=False)
 
+    #: Optional 2captcha key for Careem reCAPTCHA v2 image grids. Empty → the
+    #: worker still attempts the audio challenge (Google STT via
+    #: playwright-recaptcha, no key). Last resort after a failed solve + one
+    #: login retry is NeedsHumanLogin.
+    #: NOTE (W9): must be named in the worker's docker-compose `environment:`
+    #: allow-list — the worker does not use the api-environment anchor.
+    TWOCAPTCHA_API_KEY: str = Field(default="", repr=False)
+
     # ── always-on worker daemon (Phase 3) tunables ───────────────────────────
     # Operational knobs, NOT secrets (so they are deliberately not on any secret
     # checklist): per-job hard timeouts, schedule cadences and poll intervals for
@@ -108,9 +116,13 @@ class Settings(BaseSettings):
     WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS: int = 900
     #: Keeta MENU pull (catalog sync) — two signed reads per shop, quick.
     WORKER_KEETA_MENU_TIMEOUT_SECONDS: int = 300
-    #: Deliveroo MENU+HOURS pull (catalog sync) — one headed page capture through
-    #: the Cloudflare wall, so it gets the same budget as the finance page.
+    #: Deliveroo MENU pull (catalog sync) — one headed page capture through
+    #: the Cloudflare wall (`logon-pass`); hours are httpx on the API, not here.
     WORKER_DELIVEROO_MENU_TIMEOUT_SECONDS: int = 300
+    #: Keeta HOURS write (today's window / close, persistent profile). Four shops,
+    #: one Chrome; sits after the nightly finance job so it must not overrun into
+    #: morning trading. Same budget as orders.
+    WORKER_KEETA_HOURS_TIMEOUT_SECONDS: int = 600
 
     #: Channels warmed nightly to rotate their decaying anti-bot cookie (Noon's
     #: Akamai bm_sv/_abck, Talabat's PerimeterX _px3). Careem/Deliveroo self-heal in
@@ -135,9 +147,9 @@ class Settings(BaseSettings):
     #: Keeta MENU-pull cadence (hours). The menu changes rarely, so a slow cadence;
     #: `<= 0` disables it. The API's catalog sync reads the pushed snapshot.
     WORKER_KEETA_MENU_INTERVAL_HOURS: int = 12
-    #: Deliveroo MENU+HOURS-pull cadence (hours). `<= 0` disables it (default OFF —
+    #: Deliveroo MENU-pull cadence (hours). `<= 0` disables it (default OFF —
     #: the catalog-sync read feature is opt-in). Set > 0 to push the snapshot the
-    #: API's `_read_deliveroo_menu`/`_read_deliveroo_hours` parse.
+    #: API's `_read_deliveroo_menu` parses. Hours are not captured here.
     WORKER_DELIVEROO_MENU_INTERVAL_HOURS: int = 0
     #: Dubai wall-clock hour for the nightly Keeta FINANCE pull (settled statement
     #: files). Split from the orders pull because it re-downloads settled files and
@@ -146,6 +158,10 @@ class Settings(BaseSettings):
     #: to a distinct post-midnight hour so the two heavy nightly workloads no longer
     #: contend for the same 2 vCPUs. Settled files have no freshness constraint.
     WORKER_KEETA_FINANCE_HOUR_DXB: int = 4
+    #: Dubai wall-clock hour for the Keeta HOURS write (today's window / close).
+    #: Queued after `WORKER_KEETA_FINANCE_HOUR_DXB` on the same one-Chrome queue so
+    #: the slow finance download finishes first; 05:00 DXB is still before trading.
+    WORKER_KEETA_HOURS_HOUR_DXB: int = 5
     #: How many months back the nightly Keeta finance pull lists — the LIST calls are
     #: newest-first, so this bounds how far back settled files are re-fetched (the
     #: pull used to re-download every historical file every run). 2 covers a

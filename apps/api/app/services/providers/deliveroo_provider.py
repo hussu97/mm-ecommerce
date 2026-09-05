@@ -290,6 +290,14 @@ class DeliverooClient(BaseAggregatorClient):
     # the real CSV/PDF (200). So impersonate, which the whole provider then uses.
     uses_tls_impersonation = True
 
+    def __init__(self, *, timeout: float | None = None) -> None:
+        super().__init__(timeout=timeout)
+        #: Stashed by `prepare_session` so a 401 on a still-unexpired JWT can
+        #: remint in-band. The singleton is leader-locked per sweep, so this is
+        #: one-caller-at-a-time, not shared mutable state across requests.
+        self._db: AsyncSession | None = None
+        self._remint_attempted = False
+
     def build_headers(
         self, session: LoadedSession, extra: dict[str, str] | None = None
     ) -> dict[str, str]:
@@ -360,6 +368,93 @@ class DeliverooClient(BaseAggregatorClient):
             session, "GET", f"{_API}/restaurants/{outlet_id}/opening_hours"
         )
 
+    async def put_opening_hours(
+        self, session: LoadedSession, outlet_id: str, hours: list[dict[str, Any]]
+    ) -> Any:
+        """Write one outlet's weekly opening hours (same shape the GET returns).
+
+        `PUT /api/restaurants/{id}/opening_hours` with `{hours:[...]}`. Dry-run
+        writers never reach here; a live write is behind `CATALOG_SYNC_ENABLED`.
+        """
+        return await self.request_json(
+            session,
+            "PUT",
+            f"{_API}/restaurants/{outlet_id}/opening_hours",
+            json_body={"hours": hours},
+        )
+
+    async def request_json(
+        self,
+        session: LoadedSession,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+        json_body: Any | None = None,
+        data: Any | None = None,
+    ) -> Any:
+        """One authenticated JSON call, reminting in-band on a stale-but-unexpired JWT.
+
+        `_token_is_fresh` trusts the JWT `exp`. Marketplace-invalidated tokens
+        still have a future exp, so the first data call 401s. On that
+        `AggregatorAuthError`, mint via `_login` once (never `/api/session/refresh`,
+        which persists a dead token) and retry the same request. A second 401
+        propagates so ingest flips `needs_bootstrap`.
+        """
+        try:
+            return await super().request_json(
+                session,
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json_body=json_body,
+                data=data,
+            )
+        except AggregatorAuthError:
+            reminted = await self._remint_after_stale_token(session)
+            if reminted is None:
+                raise
+            return await super().request_json(
+                reminted,
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json_body=json_body,
+                data=data,
+            )
+
+    async def _remint_after_stale_token(
+        self, session: LoadedSession
+    ) -> LoadedSession | None:
+        """Full `_login` once after a 401 on a token `_token_is_fresh` still trusted.
+
+        Overlays the minted cookies/tokens onto `session` so later calls in the
+        same sweep (which hold the original object) send the new Bearer.
+        """
+        if self._remint_attempted or self._db is None:
+            return None
+        self._remint_attempted = True
+        logger.info(
+            "deliveroo: 401 with a still-unexpired token; reminting via _login "
+            "(not /api/session/refresh)"
+        )
+        fresh = await self._login(self._db, session)
+        if fresh is None:
+            return None
+        fresh = await self._augment_from_db(self._db, fresh)
+        if fresh is None:
+            return None
+        session.cookies = dict(fresh.cookies or {})
+        session.tokens = dict(fresh.tokens or {})
+        session.header_profile = dict(fresh.header_profile or {})
+        session.token_expires_at = fresh.token_expires_at
+        session.cookie_expires_at = fresh.cookie_expires_at
+        session.status = fresh.status
+        return session
+
     def _token_is_fresh(self, session: LoadedSession) -> bool:
         exp = session.token_expires_at
         if exp is None:
@@ -379,6 +474,8 @@ class DeliverooClient(BaseAggregatorClient):
         the DB (account `extras` + `aggregator_branch_map`) so the sweep never
         relies on the stale hard-coded fallbacks.
         """
+        self._db = db
+        self._remint_attempted = False
         prepared = await self._resolve_session(db, session)
         return await self._augment_from_db(db, prepared)
 

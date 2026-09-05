@@ -229,3 +229,82 @@ async def test_fetched_payload_matches_provider_parse_contract(monkeypatch):
     fee_categories = {line.fee_category for line in stmt.lines}
     assert "gross_sales" in fee_categories
     assert "net_payable" in fee_categories
+
+
+def test_rst_id_from_webrom_menu_url():
+    from aggregator_bootstrap.deliveroo_pull import rst_id_from_webrom_menu_url
+
+    assert (
+        rst_id_from_webrom_menu_url("https://webrom.deliveroo.com/rom/497912/menu")
+        == "497912"
+    )
+    assert rst_id_from_webrom_menu_url("https://partner-hub.deliveroo.com/api/") is None
+
+
+class _MenuResp:
+    def __init__(self, url: str, body: dict) -> None:
+        self.url = url
+        self.status = 200
+        self.request = type("R", (), {"method": "GET"})()
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+class _MenuPage:
+    def __init__(self) -> None:
+        self.handlers: list = []
+        self.url = "https://partner-hub.deliveroo.com/opening-hours"
+
+    def on(self, event, handler) -> None:
+        self.handlers.append(handler)
+
+    def remove_listener(self, event, handler) -> None:
+        if handler in self.handlers:
+            self.handlers.remove(handler)
+
+    async def goto(self, url, **kwargs) -> None:
+        self.url = url
+        if "opening-hours" in url:
+            for h in list(self.handlers):
+                h(
+                    _MenuResp(
+                        "https://webrom.deliveroo.com/rom/497912/menu",
+                        {"items": []},
+                    )
+                )
+                h(
+                    _MenuResp(
+                        "https://partner-hub.deliveroo.com/api/restaurants/497912/opening_hours",
+                        {"hours": [{"day": "mon"}]},
+                    )
+                )
+
+    async def wait_for_timeout(self, *a, **k) -> None:
+        return None
+
+
+class _MenuContext:
+    def __init__(self, page: _MenuPage) -> None:
+        self.pages = [page]
+
+
+async def test_fetch_deliveroo_menu_captures_menu_not_hours(monkeypatch):
+    """The headed job captures menu only — hours ride httpx on the API."""
+    import asyncio
+
+    from aggregator_bootstrap import deliveroo_pull as dp
+
+    orig_wait = _MenuPage.wait_for_timeout
+
+    async def wait_and_yield(self, *a, **k):
+        await asyncio.sleep(0)
+        return await orig_wait(self, *a, **k)
+
+    monkeypatch.setattr(_MenuPage, "wait_for_timeout", wait_and_yield)
+    payloads = await dp.fetch_deliveroo_menu(_MenuContext(_MenuPage()))
+    assert len(payloads) == 1
+    assert payloads[0]["rst_id"] == "497912"
+    assert payloads[0]["menu"] == {"items": []}
+    assert "hours" not in payloads[0]

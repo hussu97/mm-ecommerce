@@ -341,6 +341,24 @@ async def test_find_mm_order_matches_both_noon_names():
     assert "'Talabat'" in captured["sql"]
 
 
+async def test_find_mm_order_matches_careem_now_alias():
+    """GrubTech writes source_channel='Careem Now'; MM's display label is 'Careem'.
+    Without the alias every Barsha Careem order fails to find its GrubOps maker."""
+    from app.models.aggregator import CHANNEL_CAREEM
+
+    captured = {}
+
+    class _DB:
+        async def scalar(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return None
+
+    await promote.reconcile._find_mm_order(_DB(), CHANNEL_CAREEM, "168934434", None)
+    sql = captured["sql"]
+    assert "'Careem'" in sql
+    assert "'Careem Now'" in sql
+
+
 def test_leading_zero_stripped_normalises_only_short_numeric_codes():
     """Deliveroo's handoff code is zero-padded on GrubTech ("0127") but unpadded in
     the scrape ("127"); both must normalise to the same value, while long ids (a
@@ -891,3 +909,13 @@ async def test_find_mm_order_matches_either_id_under_the_channel_label():
     assert "Noon Food" in db.sql
     assert "FG4LNN5NPGYI0JA" in db.sql
     assert "2253" in db.sql
+
+
+def test_promote_lookback_covers_last_7d_and_includes_keeta():
+    """Keeta is push-only; promote still walks AGGREGATOR_CHANNELS over 30 days
+    so last-7d orders are picked up once they flow — no prod backfill required."""
+    from app.core.config import settings
+    from app.models.aggregator import AGGREGATOR_CHANNELS, CHANNEL_KEETA
+
+    assert settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS >= 7
+    assert CHANNEL_KEETA in AGGREGATOR_CHANNELS

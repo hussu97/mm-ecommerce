@@ -20,6 +20,7 @@ import pytest
 from openpyxl import Workbook
 
 from app.services.providers.talabat_provider import (
+    _VENDOR_API_ORIGIN,
     TalabatClient,
     _extract_item_modifiers,
     _parse_items_text,
@@ -1116,3 +1117,110 @@ async def test_graphql_validation_error_stays_unavailable():
                 variables={},
                 operation_name="EstimateExportSize",
             )
+
+
+def test_resolve_download_url_relative_hits_vendor_api():
+    """A GraphQL-relative attachment path must not be fetched from the GraphQL host."""
+    assert (
+        TalabatClient._resolve_download_url("/files/a.xlsx")
+        == f"{_VENDOR_API_ORIGIN}/files/a.xlsx"
+    )
+    assert (
+        TalabatClient._resolve_download_url("files/a.xlsx")
+        == f"{_VENDOR_API_ORIGIN}/files/a.xlsx"
+    )
+    assert TalabatClient._resolve_download_url("https://cdn.example/a.xlsx") == (
+        "https://cdn.example/a.xlsx"
+    )
+
+
+def test_as_bundle_zip_wraps_lone_xlsx():
+    wrapped = TalabatClient._as_bundle_zip(b"not-a-zip")
+    assert wrapped[:2] == b"PK"
+    already = TalabatClient._as_bundle_zip(b"PK\x03\x04rest")
+    assert already.startswith(b"PK")
+
+
+@pytest.mark.asyncio
+async def test_enrich_attaches_attachment_lines_to_existing_statement():
+    """Per-statement xlsx lines land on the metadata statement_id (noon-like persist)."""
+    from app.services.aggregators.normalized import StandardStatement
+
+    client = TalabatClient()
+    bundle = _make_bundle_bytes(
+        rows=[
+            {
+                "Order Id": 200001,
+                "Branch Id": "BR001",
+                "Date / Time": datetime(2026, 8, 10),
+                "SubTotal": 80.0,
+                "Commission VAT Exclu.": 8.0,
+                "Commission VAT": 0.4,
+                "Payment Handling Charges": 3.0,
+                "Payment Handling Charges VAT": 0.15,
+                "Promotional Fees": 0.0,
+                "Sponsored Deal Fees": 0.0,
+                "Avoidable Wait Time Fee": 0.0,
+                "Avoidable Wait Time Fee VAT": 0.0,
+                "Cost Per Order": 0.0,
+                "GEM Fee": 0.0,
+                "Loyalty Charges": 0.0,
+                "Net Payment Per Order": 68.45,
+            }
+        ]
+    )
+    stmt = StandardStatement(
+        statement_id="TUAE-EXISTING",
+        lines=[],
+        raw={"attachments": ["/files/Detailed_August.xlsx"]},
+    )
+
+    async def fake_download(self, session, url):
+        assert url == "/files/Detailed_August.xlsx"
+        return bundle
+
+    with patch.object(TalabatClient, "_download_bundle", fake_download):
+        out = await client._enrich_statements_with_attachment_lines(MagicMock(), [stmt])
+    assert len(out) == 1
+    assert out[0].statement_id == "TUAE-EXISTING"
+    assert out[0].lines
+    assert all(line.statement_id == "TUAE-EXISTING" for line in out[0].lines)
+
+
+@pytest.mark.asyncio
+async def test_create_menu_item_posts_captured_add_product_path():
+    """Add Product drawer (menuManagementV2, Karama 793319): POST catalogs/products."""
+    from app.services.aggregators.session_store import LoadedSession
+    from app.services.providers.talabat_provider import _MENU_API
+
+    captured: dict = {}
+
+    async def fake_request(_session, method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json_body")
+        return {"commandId": "cmd-1"}
+
+    client = TalabatClient()
+    session = LoadedSession(channel="talabat", account_ref="")
+    with patch.object(client, "request_json", new=AsyncMock(side_effect=fake_request)):
+        out = await client.create_menu_item(
+            session,
+            "793319",
+            name="ZZ Test Slice",
+            catalog_id="1334277",
+            category_id="20241871",
+            price=Decimal("35"),
+        )
+    assert out == {"commandId": "cmd-1"}
+    assert captured["method"] == "POST"
+    assert captured["url"] == f"{_MENU_API}/vendors/793319/catalogs/products"
+    assert captured["json"] == {
+        "name": "ZZ Test Slice",
+        "description": "",
+        "unitPrice": 35.0,
+        "catalogIds": ["1334277"],
+        "category": "20241871",
+        "type": "Simple",
+        "active": False,
+    }

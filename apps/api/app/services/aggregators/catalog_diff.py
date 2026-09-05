@@ -3,8 +3,9 @@
 Pure functions, no DB, no I/O: given MM's desired menu (or schedule) and one
 integrator's actual menu (or schedule) — both as the channel-neutral shapes from
 `menu_normalized` — return a flat list of deltas an operator can read and approve.
-This is the read-only heart of the feature; the writer (a later phase) consumes an
-approved diff.
+This is the read-only heart of the feature; `hours_writers` and
+`create_menu_item` consume an approved diff (still dry-run by default, gated
+`CATALOG_SYNC_ENABLED`).
 
 **Matching.** Names have already drifted between channels (the audit found "Boxes"
 vs "Mix Boxes", "& Walnut" vs "and Walnut"), so items and categories match on a

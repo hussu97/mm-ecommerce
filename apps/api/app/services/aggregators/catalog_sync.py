@@ -1,10 +1,10 @@
 """Manage the catalogue + branch hours once in MM, reconcile them to the channels.
 
-The write-side counterpart to the ingest. Phase 1 (this module today) is the
-**safe half**: build MM's desired menu/schedule, compare it against each
-integrator's last read, and store the drift — no portal is written. Every write
-path is gated behind `CATALOG_SYNC_ENABLED` and, even then, Phase-1 `push` runs as
-a dry-run that records the plan and mutates nothing.
+The write-side counterpart to the ingest. The **safe half** builds MM's desired
+menu/schedule, compares it against each integrator's last read, and stores the
+drift. Every write path is gated behind `CATALOG_SYNC_ENABLED` and defaults to
+dry-run (`plan_push` always; `create_menu_item` / `hours_writers` unless the
+caller passes `dry_run=False`).
 
 Layers:
 - `build_mm_menu` / `build_mm_hours` — MM's catalogue and a branch's weekly
@@ -17,7 +17,9 @@ Layers:
 - `refresh_all` / `compute_drift_all` — the per-target-isolated sweep (one
   target failing never blocks the rest), the same shape `ingest._sweep_all` uses.
 - `plan_push` — the write entry point: 503s unless `CATALOG_SYNC_ENABLED`, and
-  returns a dry-run plan (the approved deltas it *would* apply) in Phase 1.
+  returns a dry-run plan (the approved deltas it *would* apply). Live hours
+  writes go through `hours_writers` (httpx) / the Keeta worker job; live menu
+  create goes through `create_menu_item`.
 
 Routing (from `docs/integrators-and-aggregators.md`): menu writes for the
 two integrated branches target Foodics' `Grubtech` group + price tag; non-Foodics
@@ -534,9 +536,10 @@ async def plan_push(
 ) -> dict[str, Any]:
     """The write entry point. 503s unless enabled; a dry-run plan even then.
 
-    Phase 1 never mutates a portal: with the flag on it returns the plan (the
-    deltas it *would* apply, routed per the audit's rule) so the shape can be
-    reviewed; the actual writers land in a later phase behind this same flag.
+    Never mutates a portal: with the flag on it returns the plan (the deltas
+    it *would* apply) so the shape can be reviewed. Live hours writes go
+    through `hours_writers` (httpx) / the Keeta worker job; live menu create
+    goes through `create_menu_item` — both still dry-run by default.
     """
     _ensure_write_enabled()
     warnings: list[str] = []
@@ -625,20 +628,18 @@ def _route_for(target: str) -> str:
 # up on their next menu read, and `resolve_menu` records the name→product mapping
 # for each channel automatically (no per-channel create). The mapping for Foodics
 # itself is stored inline here from the create response. Non-Foodics outlets
-# (Al Karama, Silicon Oasis) still need a direct-portal create — a later phase;
-# `create_menu_item` returns a clear "unsupported target" for them rather than a
-# half-built write.
+# (Al Karama, Silicon Oasis) use direct portal create for careem/noon/talabat
+# (`branch_id` required). keeta/deliveroo need the headed worker.
 
 
 #: Where a create for each target actually happens. Foodics is the master for the
-#: two integrated branches (one create → every marketplace). Careem's own catalog
-#: create is verified live (create-then-delete). Talabat's per-item POST is 405 —
-#: its menu writes are import-based, not yet verified — and Noon's is an RMS menu
-#: document rewrite; both raise until a controlled create confirms them. Keeta and
-#: Deliveroo have no server-callable menu API at all (H5guard / separate login), so
+#: two integrated branches (one create → every marketplace) once `foodics_branch_map`
+#: is seeded. Careem, Noon, and Talabat portal create are httpx — used for
+#: Karama + DSO (needs `branch_id`). Talabat's nested per-category products POST
+#: is 405; the Add Product drawer POSTs `/vendors/{v}/catalogs/products`. Keeta
+#: and Deliveroo have no server-callable menu API (H5guard / separate login), so
 #: their create needs the headed worker.
-_DIRECT_CREATE_CHANNELS = ("careem", "noon")
-_CREATE_NEEDS_VERIFY = ("talabat",)
+_DIRECT_CREATE_CHANNELS = ("careem", "noon", "talabat")
 _CREATE_NEEDS_WORKER = ("keeta", "deliveroo")
 
 
@@ -654,10 +655,13 @@ async def create_menu_item(
 
     `target=foodics` (default) is the master path for the two integrated branches —
     one Foodics create places the product in its Grubtech subgroup at price parity,
-    and Foodics pushes it to every marketplace. `target=careem` creates directly on a
-    non-Foodics Careem outlet (needs `branch_id`). The other marketplaces are gated
-    with a clear reason until their create is verified/built. `dry_run` (the default)
-    resolves everything and returns the exact create it *would* POST, mutating nothing.
+    and Foodics pushes it to every marketplace. Requires the Phase-0
+    `foodics_branch_map` seed so `integrated_branches()` is non-empty. `target=careem`
+    / `target=noon` / `target=talabat` create directly on a non-Foodics outlet
+    (Karama/DSO — needs `branch_id`). Talabat uses the Add Product drawer POST
+    (`/vendors/{v}/catalogs/products`); the nested per-category products URL is
+    GET-only (405). `dry_run` (the default) resolves everything and returns the
+    exact create it *would* POST, mutating nothing.
     """
     _ensure_write_enabled()
     product = (
@@ -675,16 +679,12 @@ async def create_menu_item(
             f"{target} has no server-callable menu API (H5guard / separate login) — "
             f"its create runs through the headed worker, not here."
         )
-    if target in _CREATE_NEEDS_VERIFY:
-        raise BadRequestError(
-            f"{target} create is not yet verified (its write path differs from a "
-            f"plain REST create) — use Foodics for the integrated branches, or run a "
-            f"controlled create to confirm the {target} endpoint before enabling."
-        )
-    if target == "careem":
-        return await _create_on_careem(db, product, branch_id, dry_run)
-    if target == "noon":
-        return await _create_on_noon(db, product, dry_run)
+    if target in _DIRECT_CREATE_CHANNELS:
+        if target == "careem":
+            return await _create_on_careem(db, product, branch_id, dry_run)
+        if target == "talabat":
+            return await _create_on_talabat(db, product, branch_id, dry_run)
+        return await _create_on_noon(db, product, dry_run, branch_id=branch_id)
     if target != TARGET_FOODICS:
         raise BadRequestError(f"Unknown create target {target!r}")
 
@@ -856,15 +856,22 @@ async def _create_on_careem(
 
 
 async def _create_on_noon(
-    db: AsyncSession, product: Product, dry_run: bool
+    db: AsyncSession, product: Product, dry_run: bool, branch_id: Any = None
 ) -> dict[str, Any]:
     """Create one product on the MM-managed noon menu (verified per-item create).
 
     Resolves the MM-managed menu (the one not fed by Foodics) and the noon category
     code matching the product's MM category (by name), then creates the item
     off-shelf. Records the noon `external_item_map` from the returned item code.
-    Verified live by a controlled create-then-delete (2026-09-01)."""
+    Verified live by a controlled create-then-delete (2026-09-01).
+
+    `branch_id` scopes RMS to that outlet's `n-restaurantcode` (Karama/DSO).
+    Without it the captured session's restaurant code is used.
+    """
+    from dataclasses import replace as dc_replace
+
     from app.services.aggregators import session_store
+    from app.services.aggregators.menu_readers import _noon_outlet_code
     from app.services.providers import noon_provider as np
 
     cat_name = product.category.name if product.category else None
@@ -873,6 +880,13 @@ async def _create_on_noon(
         raise BadRequestError(f"Product {product.name!r} has no base price.")
 
     session = await session_store.load(db, "noon")
+    if session is None:
+        raise BadRequestError("no noon session")
+    if branch_id is not None:
+        outlet_code = await _noon_outlet_code(db, branch_id)
+        tokens = dict(session.tokens or {})
+        tokens["restaurant_code"] = outlet_code
+        session = dc_replace(session, tokens=tokens)
     menus = await np.provider.list_menus(session)
     rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
     mm_menus = [m for m in rows if not str(m.get("menuName", "")).startswith("Ext.")]
@@ -939,6 +953,93 @@ async def _create_on_noon(
     plan["dry_run"] = False
     plan["noon_item_code"] = noon_id
     plan["note"] = "Created on noon (off-shelf) and mapped."
+    return plan
+
+
+async def _create_on_talabat(
+    db: AsyncSession, product: Product, branch_id: Any, dry_run: bool
+) -> dict[str, Any]:
+    """Create one product on a Talabat vendor (Karama; Barsha/Sharjah via Foodics).
+
+    Captured 2026-09-04 from the partner Add Product drawer
+    (`POST .../vendors/{vendor}/catalogs/products`). Created off-shelf. The
+    response is `{commandId}` (async), so the `external_item_map` row lands on
+    the next menu read rather than inline.
+    """
+    from app.services.aggregators import session_store
+    from app.services.aggregators.menu_readers import _talabat_vendor
+    from app.services.providers import talabat_provider as tp
+
+    if branch_id is None:
+        raise BadRequestError("talabat create needs a branch_id (the outlet).")
+    cat_name = product.category.name if product.category else None
+    price = product.base_price
+    if price is None:
+        raise BadRequestError(f"Product {product.name!r} has no base price.")
+
+    vendor = await _talabat_vendor(db, branch_id)
+    session = await session_store.load(db, "talabat")
+    session = await tp.provider.prepare_session(db, session)
+    if session is None:
+        raise BadRequestError("no talabat session")
+    catalogs = await tp.provider.list_catalogs(session, vendor)
+    catalog_list = (
+        catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
+    ) or []
+    if not catalog_list:
+        raise BadRequestError("talabat returned no catalog for this outlet.")
+    catalog = catalog_list[0]
+    catalog_id = str(catalog["id"])
+    cat_rows = catalog.get("categories") or []
+    talabat_cat = next(
+        (c for c in cat_rows if _norm(c.get("name")) == _norm(cat_name)), None
+    )
+    if talabat_cat is None:
+        raise BadRequestError(
+            f"No Talabat category matching {cat_name!r} on this outlet — create it "
+            f"on the portal first."
+        )
+    category_id = str(talabat_cat.get("id"))
+    plan: dict[str, Any] = {
+        "target": "talabat",
+        "route": "channel_portal",
+        "product": {"id": str(product.id), "name": product.name},
+        "talabat_create": {
+            "vendor": vendor,
+            "name": product.name,
+            "unitPrice": float(price),
+            "catalogIds": [catalog_id],
+            "category": category_id,
+            "type": "Simple",
+            "active": False,
+        },
+    }
+    if dry_run:
+        plan["dry_run"] = True
+        plan["note"] = (
+            "Dry run — nothing created. This is the exact Talabat "
+            "vendors/{vendor}/catalogs/products create (off-shelf, async "
+            "commandId) that would POST. Enable + dry_run=false to apply."
+        )
+        return plan
+
+    created = await tp.provider.create_menu_item(
+        session,
+        vendor,
+        name=product.name,
+        catalog_id=catalog_id,
+        category_id=category_id,
+        price=price,
+        active=False,
+    )
+    plan["dry_run"] = False
+    plan["command_id"] = (
+        (created or {}).get("commandId") if isinstance(created, dict) else None
+    )
+    plan["note"] = (
+        "Queued on Talabat (off-shelf, async commandId). The product id maps "
+        "on the next menu read."
+    )
     return plan
 
 

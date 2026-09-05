@@ -16,7 +16,11 @@ were taken from the live console:
   fills each with items, modifiers, category, the captain (name + mobile), the
   customer dropoff address and the full delivery status timeline. (The minimal
   feed alone is why Careem once looked "thin"; the detail endpoint is not.)
-- Payouts: `POST /v1/billing/payoutRequests/list` with a date window.
+- Payouts: `POST /v1/billing/payoutRequests/list` with a date window — the
+  endpoint exists and is called with the same billing accounts as the Tax
+  Invoice list, but the portal returns no payout-request rows. Careem settles
+  via the monthly Tax Invoice only; an empty fetch is a channel limit, not a
+  scraper gap.
 - Balances: `POST /v1/billing/billingAccounts/earnings` (a balance snapshot).
 - Invoices: `POST /v1/billing/billingReports/list` (reportType=INVOICE) lists the
   monthly Tax Invoices, and `GET /v1/billing/billingReports/{id}/download?
@@ -361,6 +365,25 @@ class CareemClient(BaseAggregatorClient):
             session,
             "GET",
             f"{self._outlet_base(company, brand, outlet)}/food-outlet-operational-hours",
+        )
+
+    async def save_operational_hours(
+        self,
+        session: LoadedSession,
+        company: str,
+        brand: str,
+        outlet: str,
+        rows: Any,
+    ) -> Any:
+        """Write the outlet's weekly operational hours (same path the GET reads).
+
+        Live writes are behind `CATALOG_SYNC_ENABLED` and default dry-run.
+        """
+        return await self.request_json(
+            session,
+            "PUT",
+            f"{self._outlet_base(company, brand, outlet)}/food-outlet-operational-hours",
+            json_body=rows,
         )
 
     # ── create / delete (catalog sync writer, non-Foodics outlets) ───────────
@@ -805,7 +828,18 @@ class CareemClient(BaseAggregatorClient):
                 _MAX_PAYOUT_PAGES,
                 len(payouts),
             )
-        return PayoutsResult(payouts=payouts)
+        note = None
+        if not payouts:
+            # The endpoint exists and is called with the same billing accounts
+            # that successfully list Tax Invoices. An empty list is the portal's
+            # answer, not a fetch bug: Careem settles via the monthly Tax Invoice
+            # (`billingReports/list`), not a payout-request feed. Documented in
+            # `docs/integrators-and-aggregators.md` — do not invent a scraper.
+            note = (
+                "Careem has no payout-request feed beyond the monthly Tax Invoice "
+                "(billingReports/list). payoutRequests/list returned no rows."
+            )
+        return PayoutsResult(payouts=payouts, truncation_note=note)
 
     def _payout_from(self, row: dict[str, Any]) -> StandardPayout:
         amount = _first(row, "amount", "payoutAmount", "transferAmount")

@@ -48,7 +48,15 @@ _TIMEOUT_FIELDS: dict[JobKind, str] = {
     JobKind.DELIVEROO_FINANCE: "WORKER_DELIVEROO_FINANCE_TIMEOUT_SECONDS",
     JobKind.KEETA_MENU: "WORKER_KEETA_MENU_TIMEOUT_SECONDS",
     JobKind.DELIVEROO_MENU: "WORKER_DELIVEROO_MENU_TIMEOUT_SECONDS",
+    JobKind.KEETA_HOURS: "WORKER_KEETA_HOURS_TIMEOUT_SECONDS",
 }
+
+#: Channels the API remints itself over httpx (`policy.server_refreshable` —
+#: currently Deliveroo only). heal_poll already skips these; job-failure used
+#: to enqueue a headed RELOGIN anyway (a failed DELIVEROO_MENU capture then
+#: burned Chrome doing what the next API sweep does for free). Instant set so
+#: a failed job does not wait on pull_sessions.
+_SERVER_REFRESHABLE_CHANNELS = frozenset({"deliveroo"})
 
 
 def next_daily_dxb(hour: int, now_utc: datetime) -> datetime:
@@ -176,8 +184,14 @@ async def _dispatch(job: Job) -> "reauth.ReloginOutcome | None":
         await warm.pull_deliveroo_invoices_in_page()
         return
     if job.kind is JobKind.DELIVEROO_MENU:
-        # Capture the Deliveroo menu + hours in-page and push them for catalog sync.
-        await warm.pull_deliveroo_menu_hours_in_page()
+        # Capture the Deliveroo menu in-page (headed logon-pass). Hours are
+        # httpx on the API — this job must not capture or push them.
+        await warm.pull_deliveroo_menu_in_page()
+        return
+    if job.kind is JobKind.KEETA_HOURS:
+        # Persistent-profile in-page POST of `/api/scm/business-hour/update`.
+        # One Chrome, torn down after — never a second browser beside finance/orders.
+        await warm.write_keeta_hours_in_page(persist=True)
         return
     raise ValueError(f"unknown job kind {job.kind!r}")  # pragma: no cover
 
@@ -218,6 +232,12 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
             if in_cooldown:
                 logger.info(
                     "daemon: %s is dead but in relogin cooldown — not re-driving",
+                    label,
+                )
+            elif job.channel in _SERVER_REFRESHABLE_CHANNELS:
+                # Same skip heal_poll applies: the API remints this channel.
+                logger.info(
+                    "daemon: %s is dead but server-refreshable — leaving it to the API",
                     label,
                 )
             else:
@@ -297,11 +317,12 @@ class _Daily:
     hour: int
 
 
-async def _run_scheduler(queue: JobQueue) -> None:
-    """Enqueue jobs on their cadence. Idempotent: the queue dedupes, so re-enqueuing
-    a still-pending job is a no-op — the scheduler never has to track in-flight state
-    beyond its own next-due timers."""
-    now = _now_utc()
+def _daily_jobs(now: datetime) -> list[_Daily]:
+    """The once-a-day jobs pinned to a Dubai wall-clock hour, with jitter applied.
+
+    Pure enough to unit-test: Keeta hours sits after Keeta finance on the same
+    one-Chrome queue (05:00 vs 04:00 DXB) so the slow download finishes first.
+    """
     daily: list[_Daily] = [
         _Daily(
             next_at=next_daily_dxb(settings.WORKER_WARM_HOUR_DXB, now) + _jitter(),
@@ -332,6 +353,24 @@ async def _run_scheduler(queue: JobQueue) -> None:
             hour=settings.WORKER_KEETA_FINANCE_HOUR_DXB,
         )
     )
+    daily.append(
+        _Daily(
+            next_at=next_daily_dxb(settings.WORKER_KEETA_HOURS_HOUR_DXB, now)
+            + _jitter(),
+            kind=JobKind.KEETA_HOURS,
+            channel="keeta",
+            hour=settings.WORKER_KEETA_HOURS_HOUR_DXB,
+        )
+    )
+    return daily
+
+
+async def _run_scheduler(queue: JobQueue) -> None:
+    """Enqueue jobs on their cadence. Idempotent: the queue dedupes, so re-enqueuing
+    a still-pending job is a no-op — the scheduler never has to track in-flight state
+    beyond its own next-due timers."""
+    now = _now_utc()
+    daily = _daily_jobs(now)
     # Interval jobs fire immediately on start, so a fresh deploy pulls Keeta orders
     # and heals dead sessions at once rather than waiting a full cadence.
     keeta_delta = timedelta(hours=settings.WORKER_KEETA_PULL_INTERVAL_HOURS)
@@ -342,7 +381,8 @@ async def _run_scheduler(queue: JobQueue) -> None:
     menu_hours = settings.WORKER_KEETA_MENU_INTERVAL_HOURS
     menu_delta = timedelta(hours=menu_hours) if menu_hours > 0 else None
     menu_next = now
-    #: Deliveroo MENU+HOURS cadence — disabled when the interval is <= 0.
+    #: Deliveroo MENU cadence — disabled when the interval is <= 0. Hours are
+    #: httpx on the API; this job is the headed logon-pass menu capture only.
     del_menu_hours = settings.WORKER_DELIVEROO_MENU_INTERVAL_HOURS
     del_menu_delta = timedelta(hours=del_menu_hours) if del_menu_hours > 0 else None
     del_menu_next = now
@@ -350,11 +390,12 @@ async def _run_scheduler(queue: JobQueue) -> None:
 
     logger.info(
         "daemon: scheduler up — warm=%s@%02d:00 DXB, keeta orders every %sh, "
-        "keeta finance @%02d:00 DXB, heal every %ss",
+        "keeta finance @%02d:00 DXB, keeta hours @%02d:00 DXB, heal every %ss",
         [d.channel for d in daily if d.kind is JobKind.WARM],
         settings.WORKER_WARM_HOUR_DXB,
         settings.WORKER_KEETA_PULL_INTERVAL_HOURS,
         settings.WORKER_KEETA_FINANCE_HOUR_DXB,
+        settings.WORKER_KEETA_HOURS_HOUR_DXB,
         settings.WORKER_HEAL_POLL_SECONDS,
     )
     while True:

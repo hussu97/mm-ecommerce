@@ -551,13 +551,91 @@ async def test_create_dispatch_gates_unverified_and_worker_channels(
         category = None
 
     mock_db.execute.return_value.scalar_one_or_none.return_value = _P()
-    # Keeta/Deliveroo → headed worker; Talabat → not yet verified (import-based).
-    # Careem + Noon are wired (verified create-then-delete) so they don't gate here.
+    # Keeta/Deliveroo → headed worker. Careem/Noon/Talabat are httpx (need branch_id).
     for target in ("keeta", "deliveroo"):
         with pytest.raises(BadRequestError, match="headed worker"):
             await catalog_sync.create_menu_item(mock_db, product_id="p1", target=target)
-    with pytest.raises(BadRequestError, match="not yet verified"):
+    with pytest.raises(BadRequestError, match="branch_id"):
         await catalog_sync.create_menu_item(mock_db, product_id="p1", target="talabat")
+
+
+@pytest.mark.asyncio
+async def test_talabat_create_dry_run_uses_captured_add_product_shape(
+    mock_db, monkeypatch
+):
+    import app.core.config as cfg
+    from app.services.aggregators import session_store
+    from app.services.providers import talabat_provider as tp
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+
+    class _Cat:
+        name = "Cakes"
+
+    class _P:
+        id = "p1"
+        name = "ZZ Test Slice"
+        sku = "s"
+        base_price = Decimal("35")
+        category = _Cat()
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = _P()
+
+    async def fake_vendor(_db, branch_id):
+        assert branch_id == "karama"
+        return "793319"
+
+    async def fake_load(_db, channel):
+        assert channel == "talabat"
+        return object()
+
+    async def fake_prepare(_db, session):
+        return session
+
+    async def fake_list(_session, vendor):
+        assert vendor == "793319"
+        return {
+            "catalogs": [
+                {
+                    "id": "1334277",
+                    "name": "Menu",
+                    "categories": [{"id": 20241871, "name": "Cakes"}],
+                }
+            ]
+        }
+
+    posted = []
+
+    async def fake_create(*_a, **_k):
+        posted.append(1)
+        return {"commandId": "should-not-run"}
+
+    monkeypatch.setattr(
+        "app.services.aggregators.menu_readers._talabat_vendor", fake_vendor
+    )
+    monkeypatch.setattr(session_store, "load", fake_load)
+    monkeypatch.setattr(tp.provider, "prepare_session", fake_prepare)
+    monkeypatch.setattr(tp.provider, "list_catalogs", fake_list)
+    monkeypatch.setattr(tp.provider, "create_menu_item", fake_create)
+
+    plan = await catalog_sync.create_menu_item(
+        mock_db,
+        product_id="p1",
+        target="talabat",
+        branch_id="karama",
+        dry_run=True,
+    )
+    assert plan["dry_run"] is True
+    assert plan["talabat_create"] == {
+        "vendor": "793319",
+        "name": "ZZ Test Slice",
+        "unitPrice": 35.0,
+        "catalogIds": ["1334277"],
+        "category": "20241871",
+        "type": "Simple",
+        "active": False,
+    }
+    assert posted == []
 
 
 @pytest.mark.asyncio
@@ -759,6 +837,12 @@ def test_keeta_today_hours_parser_converts_seconds():
         weekday=3,
     )
     assert closed.shifts == []
+
+
+def test_keeta_is_registered_hours_reader():
+    from app.services.aggregators.menu_readers import _HOURS_READERS
+
+    assert "keeta" in _HOURS_READERS
 
 
 # ── Deliveroo menu + hours parsers (real captured shapes, 2026-09-01) ──────────

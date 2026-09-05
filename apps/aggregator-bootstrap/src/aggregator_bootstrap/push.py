@@ -104,8 +104,9 @@ async def push_keeta_menu(payloads: list[dict]) -> dict[str, Any]:
 
 
 async def push_deliveroo_menu(payloads: list[dict]) -> dict[str, Any]:
-    """POST the in-page-captured Deliveroo menu + hours (one payload per restaurant:
-    `{rst_id, menu, hours}`) to /aggregators/deliveroo/menu. Small, single POST."""
+    """POST the in-page-captured Deliveroo menu (one payload per restaurant:
+    `{rst_id, menu}`) to /aggregators/deliveroo/menu. Hours are not in this
+    push — the API reads them over httpx. Small, single POST."""
     url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/deliveroo/menu"
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(url, json={"payloads": payloads}, headers=_headers())

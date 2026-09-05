@@ -98,6 +98,11 @@ async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
 #: display label need no entry here.
 _GRUBOPS_SOURCE_ALIASES: dict[str, tuple[str, ...]] = {
     CHANNEL_NOON: ("Noon",),
+    # GrubTech's foodAggregatorName / source.channel for Careem is "Careem Now"
+    # (the consumer brand); MM's display label is "Careem". Matching only the
+    # display label left every Barsha Careem order `no_maker_side` despite the
+    # kitchen being on GrubOps — the Noon "Noon" vs "Noon Food" bug again.
+    CHANNEL_CAREEM: ("Careem Now", "CareemNow"),
 }
 
 

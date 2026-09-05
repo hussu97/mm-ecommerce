@@ -12,8 +12,10 @@ fills the form after Cloudflare has passed. OTP/captcha channels stay headed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -785,11 +787,18 @@ CAREEM_OTP_SUBJECT = "Careem One Time Password"
 
 
 async def _careem_submit(page, field) -> None:
-    """Advance a Careem auth step. The "Continue" button lags behind the
-    reCAPTCHA-v3 token and field validation, so a bare `button[type=submit]`
-    click races it and times out — wait for the button, then fall back to
-    pressing Enter in the field (which submits the form just the same)."""
-    await page.wait_for_timeout(1_500)
+    """Advance a Careem auth step once a real reCAPTCHA-v3 token exists.
+
+    Continue used to race the token: a flat 1.5s wait then click (or Enter)
+    submitted a form Google had not scored yet, which Careem rejects. Wait for
+    `grecaptcha` to be ready, for a real token (or trigger the page's own
+    `execute`), then pause like a human and click. A visible v2 checkbox /
+    image / audio challenge is solved in-process (not waited out 45 minutes).
+    """
+    if await _careem_challenge_ui_present(page):
+        await _careem_wait_out_challenge(page)
+    await _careem_wait_for_token(page)
+    await page.wait_for_timeout(_CAREEM_PRE_SUBMIT_PAUSE_MS)
     button = page.get_by_role("button", name="Continue")
     try:
         await button.wait_for(state="visible", timeout=15_000)
@@ -833,7 +842,7 @@ async def login_careem(
         await page.goto(
             CAREEM_PORTAL_URL, wait_until="domcontentloaded", timeout=60_000
         )
-        await page.wait_for_timeout(4_000)
+        await _careem_dwell(page)
     if await _careem_is_authenticated(page):
         return page
 
@@ -845,7 +854,7 @@ async def login_careem(
                 break
             except Exception:  # noqa: BLE001 — try the next label / assume redirect
                 continue
-        await page.wait_for_timeout(3_000)
+        await _careem_dwell(page)
 
     # auth.careem.com email step. The form is CLIENT-rendered — the document is
     # a ~5 KB SPA shell and the input only exists once the bundle has booted — so
@@ -857,34 +866,52 @@ async def login_careem(
     # sales went uningested). Wait longer, reload once, and leave evidence if it
     # still misses — this was the one failure path in this flow that captured
     # nothing, which is why those 44 attempts produced no diagnosis at all.
-    email_input = page.locator("input[type='email']").first
-    if not await _careem_input_ready(email_input):
+    email_input = await _careem_wait_email_input(page)
+    if email_input is None:
+        return page
+    # One retry on a recaptcha/score miss OR a failed v2 solve (still on auth,
+    # error copy, email form still up). Full reload of the email step — not a
+    # tight loop. needs-human is last resort after this retry, never the
+    # first sight of a v2 iframe.
+    outcome = "unknown"
+    try:
+        otp_since = await _careem_submit_email(page, email_input, address)
+        logger.info("careem: after email submit, url=%s", page.url)
         if await _careem_is_authenticated(page):
-            return page
+            outcome = "authed"
+        else:
+            outcome = await _careem_post_email_outcome(page)
+            if outcome == "challenge":
+                await _careem_wait_out_challenge(page)
+                outcome = await _careem_post_email_outcome(page)
+            if outcome == "unknown" and await _careem_email_form_still_up(page):
+                outcome = "score_fail"
+    except AntiBotChallengeError:
         logger.warning(
-            "careem: no email input after %ss at %s — reloading once",
-            _CAREEM_STEP_SECONDS,
+            "careem: v2 solve failed at %s — reloading the email step once",
             page.url,
         )
-        await _careem_capture_failure(page, "no-email-input")
+        outcome = "score_fail"
+
+    if outcome == "score_fail":
+        logger.warning(
+            "careem: recaptcha/score failure at %s — reloading the email "
+            "step once",
+            page.url,
+        )
+        await _careem_capture_failure(page, "recaptcha-score")
         try:
             await page.reload(wait_until="domcontentloaded", timeout=60_000)
-            await page.wait_for_timeout(3_000)
-        except Exception:  # noqa: BLE001 — a failed reload is not fatal yet
-            logger.info("careem: reload failed, checking the page as-is")
-        if not await _careem_input_ready(email_input):
-            if await _careem_is_authenticated(page):
-                return page
-            await _careem_capture_failure(page, "no-email-input-retry")
-            raise LoginError(
-                f"Careem login did not expose an email input at {page.url}"
-            )
-    logger.info("careem: email step at %s", page.url)
-    await email_input.fill(address)
-    otp_since = datetime.now(UTC)
-    await _careem_submit(page, email_input)
-    await page.wait_for_timeout(3_000)
-    logger.info("careem: after email submit, url=%s", page.url)
+            await _careem_dwell(page)
+        except Exception:  # noqa: BLE001 — retry the page as-is if reload fails
+            logger.info("careem: score-fail reload failed, retrying as-is")
+        email_input = await _careem_wait_email_input(page)
+        if email_input is None:
+            return page
+        otp_since = await _careem_submit_email(page, email_input, address)
+        logger.info("careem: after email submit retry, url=%s", page.url)
+        if await _careem_challenge_ui_present(page):
+            await _careem_wait_out_challenge(page)
 
     # Verification-code step — one code box, submit, done. Same SPA, same slow
     # box, so the same budget as the email step: with only the email step
@@ -972,6 +999,620 @@ async def login_careem(
 #: flow renders in the same SPA on the same slow box, so they share one budget —
 #: fixing only the email step just moved the failure to the OTP step.
 _CAREEM_STEP_SECONDS = 45
+
+# Human-like dwells / token waits. Bounded so email + OTP mailbox (120s) +
+# password still fit inside WORKER_RELOGIN_TIMEOUT_SECONDS (480s). These are
+# not a captcha farm: v3 is a score on a real headed Chrome.
+_CAREEM_NAV_DWELL_MS = 3_500
+_CAREEM_PRE_SUBMIT_PAUSE_MS = 1_200
+_CAREEM_TYPE_DELAY_MS = 70
+_CAREEM_RECAPTCHA_READY_MS = 20_000
+_CAREEM_TOKEN_WAIT_MS = 12_000
+#: In-process v2 solve budget (checkbox + audio / 2captcha). Must not hold the
+#: e2-small's one Chrome for the 45-minute interactive human window.
+_CAREEM_CHALLENGE_SOLVE_SECONDS = 90
+_CAREEM_CHECKBOX_GRACE_MS = 4_000
+
+_CAREEM_GRECAPTCHA_PRESENT_JS = """() => {
+  const g = window.grecaptcha;
+  const api = g && (g.enterprise || g);
+  return !!(api && (typeof api.ready === 'function'
+             || typeof api.execute === 'function'));
+}"""
+
+_CAREEM_GRECAPTCHA_READY_JS = """() => new Promise((resolve) => {
+  const g = window.grecaptcha;
+  const api = g && (g.enterprise || g);
+  if (api && typeof api.ready === 'function') {
+    api.ready(() => resolve(true));
+    return;
+  }
+  resolve(!!(api && typeof api.execute === 'function'));
+})"""
+
+_CAREEM_TOKEN_PROBE_JS = """() => {
+  const ta = document.querySelector(
+    'textarea[name="g-recaptcha-response"], #g-recaptcha-response'
+  );
+  const hidden = document.querySelector(
+    'input[name="g-recaptcha-response"], input[name="recaptchaToken"]'
+  );
+  let token = ((ta && ta.value) || (hidden && hidden.value) || '').trim();
+  if (!token && window.grecaptcha) {
+    const api = window.grecaptcha.enterprise || window.grecaptcha;
+    try {
+      if (typeof api.getResponse === 'function') {
+        token = (api.getResponse() || '').trim();
+      }
+    } catch (e) {}
+  }
+  const btn = [...document.querySelectorAll('button')].find(b =>
+    /continue/i.test((b.textContent || '').trim())
+  );
+  return {
+    token,
+    tokenLen: token.length,
+    buttonEnabled: !!(btn && !btn.disabled
+                       && btn.getAttribute('aria-disabled') !== 'true'),
+    hasGrecaptcha: !!window.grecaptcha,
+    enterprise: !!(window.grecaptcha && window.grecaptcha.enterprise),
+  };
+}"""
+
+_CAREEM_SITEKEY_JS = """() => {
+  let sitekey = '';
+  let action = '';
+  const keyed = document.querySelector('[data-sitekey]');
+  if (keyed) {
+    sitekey = keyed.getAttribute('data-sitekey') || '';
+    action = keyed.getAttribute('data-action') || '';
+  }
+  if (!sitekey) {
+    for (const s of document.querySelectorAll('script[src]')) {
+      const m = (s.src || '').match(/[?&]render=([A-Za-z0-9_-]{20,})/);
+      if (m) { sitekey = m[1]; break; }
+    }
+  }
+  if (!sitekey) {
+    for (const f of document.querySelectorAll('iframe[src]')) {
+      const m = (f.src || '').match(/[?&]k=([A-Za-z0-9_-]{20,})/);
+      if (m) { sitekey = m[1]; break; }
+    }
+  }
+  try {
+    const cfg = window.___grecaptcha_cfg;
+    if (!sitekey && cfg && cfg.clients) {
+      const blob = JSON.stringify(cfg.clients);
+      const found = blob.match(/"sitekey":"([^"]+)"/);
+      if (found) sitekey = found[1];
+    }
+  } catch (e) {}
+  if (!action) {
+    const html = document.documentElement
+      ? document.documentElement.innerHTML : '';
+    const exec = html.match(
+      /execute\\s*\\([^)]*?action\\s*:\\s*['"]([A-Za-z0-9_/-]+)['"]/
+    );
+    if (exec) action = exec[1];
+    if (!action) {
+      const da = html.match(/data-action=['"]([A-Za-z0-9_/-]+)['"]/);
+      if (da) action = da[1];
+    }
+  }
+  return { sitekey, action };
+}"""
+
+_CAREEM_EXECUTE_JS = """async (info) => {
+  const g = window.grecaptcha;
+  const api = g && (g.enterprise || g);
+  if (!api || typeof api.execute !== 'function') return '';
+  const key = info && info.sitekey;
+  if (!key) return '';
+  try {
+    const token = info.action
+      ? await api.execute(key, { action: info.action })
+      : await api.execute(key);
+    if (typeof token === 'string' && token.length >= 20) {
+      const ta = document.querySelector(
+        'textarea[name="g-recaptcha-response"], #g-recaptcha-response'
+      );
+      if (ta) ta.value = token;
+      return token;
+    }
+    return '';
+  } catch (e) {
+    return '';
+  }
+}"""
+
+_CAREEM_CHALLENGE_PROBE_JS = """() => {
+  const iframes = [...document.querySelectorAll('iframe')].map(f => ({
+    id: f.id || '',
+    src: f.src || '',
+    title: (f.title || '').toLowerCase(),
+  }));
+  const v2 = iframes.some(f =>
+    f.id === 'recaptcha'
+    || /bframe/i.test(f.src)
+    || /recaptcha challenge/i.test(f.title)
+  );
+  const checkbox = !!document.querySelector(
+    '.recaptcha-checkbox, #recaptcha-anchor'
+  );
+  return { v2, checkbox, iframes: iframes.slice(0, 8) };
+}"""
+
+_CAREEM_SCORE_FAIL_MARKERS = (
+    "unusual traffic",
+    "unusual activity",
+    "failed recaptcha",
+    "recaptcha failed",
+    "captcha failed",
+    "could not verify",
+    "verification failed",
+    "please try again",
+    "try again later",
+    "something went wrong",
+    "request blocked",
+    "access denied",
+)
+
+
+def _careem_token_is_present(probe: dict | None) -> bool:
+    """A real v3 token is a long opaque string, not an empty textarea."""
+    if not isinstance(probe, dict):
+        return False
+    return len(str(probe.get("token") or "").strip()) >= 20
+
+
+def _careem_challenge_ui_from(probe: dict | None, body: str) -> bool:
+    """v2 checkbox / image / 'unusual traffic' — not the v3 badge iframe."""
+    text = (body or "").lower()
+    if "i'm not a robot" in text or "im not a robot" in text:
+        return True
+    if "unusual traffic" in text or "unusual activity" in text:
+        return True
+    if "select all images" in text or "select all squares" in text:
+        return True
+    if not isinstance(probe, dict):
+        return False
+    if probe.get("checkbox") or probe.get("v2"):
+        return True
+    for frame in probe.get("iframes") or []:
+        if not isinstance(frame, dict):
+            continue
+        if (frame.get("id") or "") == "recaptcha":
+            return True
+        src = (frame.get("src") or "").lower()
+        title = (frame.get("title") or "").lower()
+        if "bframe" in src or "recaptcha challenge" in title:
+            return True
+    return False
+
+
+def _careem_looks_like_score_failure(body: str) -> bool:
+    lower = (body or "").lower()
+    return any(marker in lower for marker in _CAREEM_SCORE_FAIL_MARKERS)
+
+
+async def _careem_eval(page, script, arg=None):
+    try:
+        if arg is None:
+            return await page.evaluate(script)
+        return await page.evaluate(script, arg)
+    except Exception:  # noqa: BLE001 — a torn-down page must not abort login
+        return None
+
+
+async def _careem_page_body(page) -> str:
+    try:
+        return (await page.locator("body").inner_text(timeout=5_000)).lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _careem_dwell(page) -> None:
+    """Several seconds after navigation, plus a small mouse move — v3 scores this."""
+    await page.wait_for_timeout(_CAREEM_NAV_DWELL_MS)
+    try:
+        mouse = page.mouse
+        await mouse.move(140, 180)
+        await page.wait_for_timeout(180)
+        await mouse.move(260, 320)
+        await page.wait_for_timeout(180)
+        await mouse.move(200, 240)
+    except Exception:  # noqa: BLE001 — CDP pages without a mouse are still usable
+        pass
+
+
+async def _careem_type_human(locator, value: str) -> None:
+    """Type the email with a per-key delay. Falls back to fill if the locator
+    has no sequential API (tests, or a non-Playwright stand-in)."""
+    try:
+        await locator.click(timeout=5_000)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await locator.fill("")
+        await locator.press_sequentially(value, delay=_CAREEM_TYPE_DELAY_MS)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await locator.type(value, delay=_CAREEM_TYPE_DELAY_MS)
+        return
+    except Exception:  # noqa: BLE001
+        await locator.fill(value)
+
+
+async def _careem_wait_for_grecaptcha(page) -> bool:
+    """Wait until grecaptcha (or enterprise) is present and ready().
+
+    A miss is not fatal: some steps have no widget, and the submit path then
+    skips the token wait instead of burning 20s.
+    """
+    try:
+        await page.wait_for_function(
+            _CAREEM_GRECAPTCHA_PRESENT_JS,
+            timeout=_CAREEM_RECAPTCHA_READY_MS,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "careem: grecaptcha did not become ready within %sms at %s",
+            _CAREEM_RECAPTCHA_READY_MS,
+            getattr(page, "url", ""),
+        )
+        return False
+    await _careem_eval(page, _CAREEM_GRECAPTCHA_READY_JS)
+    logger.info("careem: grecaptcha ready at %s", getattr(page, "url", ""))
+    return True
+
+
+async def _careem_challenge_ui_present(page) -> bool:
+    probe = await _careem_eval(page, _CAREEM_CHALLENGE_PROBE_JS)
+    body = await _careem_page_body(page)
+    return _careem_challenge_ui_from(probe if isinstance(probe, dict) else None, body)
+
+
+async def _careem_challenge_cleared(page) -> bool:
+    """True when the v2 wall is gone: authed, a real token, or no challenge UI."""
+    if await _careem_is_authenticated(page):
+        return True
+    probe = await _careem_eval(page, _CAREEM_TOKEN_PROBE_JS)
+    if _careem_token_is_present(probe if isinstance(probe, dict) else None):
+        return True
+    return not await _careem_challenge_ui_present(page)
+
+
+async def _careem_click_recaptcha_checkbox(page) -> bool:
+    """Click the v2 "I'm not a robot" box with a human-like mouse path.
+
+    Never clicks the image grid. Returns False if the checkbox iframe is absent
+    (already on a bframe puzzle, or the widget never rendered).
+    """
+    frame_locator = getattr(page, "frame_locator", None)
+    mouse = getattr(page, "mouse", None)
+    if frame_locator is None:
+        return False
+    selectors = (
+        "iframe[src*='recaptcha'][src*='anchor']",
+        "iframe#recaptcha",
+        "iframe[title*='reCAPTCHA' i]",
+        "iframe[src*='recaptcha/api2']",
+    )
+    for selector in selectors:
+        try:
+            loc = frame_locator(selector).locator("#recaptcha-anchor")
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            box = await loc.bounding_box()
+        except Exception:  # noqa: BLE001
+            box = None
+        try:
+            if box and mouse is not None:
+                cx = box["x"] + box["width"] / 2
+                cy = box["y"] + box["height"] / 2
+                await mouse.move(cx - 36, cy - 18, steps=8)
+                await page.wait_for_timeout(140)
+                await mouse.move(cx, cy, steps=6)
+                await page.wait_for_timeout(90)
+                await mouse.click(cx, cy)
+                logger.info("careem: clicked recaptcha checkbox at %s", page.url)
+                return True
+            await loc.click(timeout=5_000)
+            logger.info("careem: clicked recaptcha checkbox at %s", page.url)
+            return True
+        except Exception:  # noqa: BLE001 — try the next iframe selector
+            continue
+    logger.info("careem: recaptcha checkbox was not clickable at %s", page.url)
+    return False
+
+
+_CAREEM_INJECT_TOKEN_JS = """(token) => {
+  const apply = (el) => {
+    if (!el) return;
+    el.style.display = 'block';
+    el.value = token;
+    try { el.innerHTML = token; } catch (e) {}
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  apply(document.getElementById('g-recaptcha-response'));
+  document.querySelectorAll('textarea[name="g-recaptcha-response"]').forEach(apply);
+  const walk = (obj, depth) => {
+    if (!obj || depth > 5) return;
+    if (typeof obj.callback === 'function') {
+      try { obj.callback(token); } catch (e) {}
+      return;
+    }
+    if (typeof obj === 'object') {
+      for (const v of Object.values(obj)) walk(v, depth + 1);
+    }
+  };
+  try {
+    const cfg = window.___grecaptcha_cfg;
+    if (cfg && cfg.clients) walk(cfg.clients, 0);
+  } catch (e) {}
+  return (token || '').length;
+}"""
+
+
+async def _careem_inject_recaptcha_token(page, token: str) -> None:
+    """Put a real solver token into the page's g-recaptcha-response field.
+
+    Does not mock grecaptcha or Google's siteverify — the token is one Google
+    issued (via 2captcha's workers, or the audio challenge this Chrome completed).
+    """
+    await _careem_eval(page, _CAREEM_INJECT_TOKEN_JS, token)
+
+
+async def _careem_twocaptcha_token(page, api_key: str) -> str:
+    """Ask 2captcha for a v2 token for this page's sitekey. Bound by the caller."""
+    import httpx
+
+    meta = await _careem_eval(page, _CAREEM_SITEKEY_JS)
+    sitekey = ""
+    if isinstance(meta, dict):
+        sitekey = str(meta.get("sitekey") or "").strip()
+    if not sitekey:
+        raise LoginError("Careem recaptcha v2 has no sitekey for 2captcha")
+    page_url = getattr(page, "url", "") or ""
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        submitted = await client.post(
+            "https://2captcha.com/in.php",
+            data={
+                "key": api_key,
+                "method": "userrecaptcha",
+                "googlekey": sitekey,
+                "pageurl": page_url,
+                "json": "1",
+            },
+        )
+        body = submitted.json()
+        if int(body.get("status") or 0) != 1:
+            raise LoginError(f"2captcha submit failed: {body}")
+        captcha_id = str(body.get("request") or "")
+        deadline = time.monotonic() + max(_CAREEM_CHALLENGE_SOLVE_SECONDS - 15, 30)
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            polled = await client.get(
+                "https://2captcha.com/res.php",
+                params={
+                    "key": api_key,
+                    "action": "get",
+                    "id": captcha_id,
+                    "json": "1",
+                },
+            )
+            result = polled.json()
+            if int(result.get("status") or 0) == 1:
+                token = str(result.get("request") or "").strip()
+                if len(token) >= 20:
+                    return token
+                raise LoginError("2captcha returned an empty token")
+            if str(result.get("request") or "") not in (
+                "CAPCHA_NOT_READY",
+                "CAPTCHA_NOT_READY",
+            ):
+                raise LoginError(f"2captcha poll failed: {result}")
+    raise LoginError("2captcha timed out waiting for a v2 token")
+
+
+async def _careem_playwright_recaptcha_audio(page) -> str:
+    """Transcribe the v2 audio challenge via playwright-recaptcha (Google STT).
+
+    The headed Chrome still talks to Google; we type the transcription into
+    the widget Google served. No siteverify mock, no grecaptcha stub.
+    """
+    from playwright_recaptcha import recaptchav2
+
+    async with recaptchav2.AsyncSolver(page, attempts=3) as solver:
+        token = await solver.solve_recaptcha(attempts=3, image_challenge=False)
+    if not isinstance(token, str) or len(token) < 20:
+        raise LoginError("playwright-recaptcha audio solve returned no token")
+    return token
+
+
+async def _careem_invoke_v2_solver(page) -> str:
+    """Solve the visible puzzle: 2captcha when keyed, otherwise audio self-solve."""
+    key = (settings.TWOCAPTCHA_API_KEY or "").strip()
+    if key:
+        logger.info("careem: solving v2 via 2captcha")
+        token = await _careem_twocaptcha_token(page, key)
+        await _careem_inject_recaptcha_token(page, token)
+        return token
+    logger.info("careem: solving v2 via audio transcription")
+    return await _careem_playwright_recaptcha_audio(page)
+
+
+async def _careem_wait_out_challenge(page) -> bool:
+    """Solve a visible v2 challenge in-process. Do not wait 45 minutes.
+
+    Click the checkbox like a human. If a token appears, done. If an image or
+    audio puzzle appears, invoke the solver (audio transcription, or 2captcha
+    when TWOCAPTCHA_API_KEY is set). Bound to 90s so Chrome is not held on the
+    e2-small. Raises AntiBotChallengeError only after actual solve attempts.
+    """
+    logger.warning(
+        "careem: reCAPTCHA v2 at %s — solving in-process (budget %ds)",
+        getattr(page, "url", ""),
+        _CAREEM_CHALLENGE_SOLVE_SECONDS,
+    )
+    await _careem_capture_failure(page, "recaptcha-challenge")
+    deadline = time.monotonic() + _CAREEM_CHALLENGE_SOLVE_SECONDS
+
+    await _careem_click_recaptcha_checkbox(page)
+    await page.wait_for_timeout(_CAREEM_CHECKBOX_GRACE_MS)
+    if await _careem_challenge_cleared(page):
+        logger.info("careem: v2 checkbox was enough at %s", page.url)
+        return True
+
+    remaining = max(1.0, deadline - time.monotonic())
+    try:
+        await asyncio.wait_for(_careem_invoke_v2_solver(page), timeout=remaining)
+    except Exception as exc:  # noqa: BLE001 — last-resort raise only if still stuck
+        if await _careem_challenge_cleared(page):
+            logger.info("careem: v2 cleared after solver error at %s", page.url)
+            return True
+        raise AntiBotChallengeError(
+            "Careem reCAPTCHA v2 (checkbox / image / audio) could not be solved."
+        ) from exc
+
+    if await _careem_challenge_cleared(page):
+        logger.info("careem: v2 solved at %s", page.url)
+        return True
+    raise AntiBotChallengeError(
+        "Careem reCAPTCHA v2 (checkbox / image / audio) could not be solved."
+    )
+
+
+async def _careem_wait_for_token(page) -> bool:
+    """Do not click Continue until a real v3 token exists.
+
+    If the page's widget is missing (OTP/password steps), return immediately.
+    If a sitekey is on the page, call the page's own grecaptcha.execute with
+    the action read from the DOM/scripts — never a guessed 'login' fallback.
+    """
+    if await _careem_challenge_ui_present(page):
+        await _careem_wait_out_challenge(page)
+    probe = await _careem_eval(page, _CAREEM_TOKEN_PROBE_JS)
+    if _careem_token_is_present(probe if isinstance(probe, dict) else None):
+        logger.info(
+            "careem: recaptcha token already present (len=%s)",
+            (probe or {}).get("tokenLen"),
+        )
+        return True
+    if not (isinstance(probe, dict) and probe.get("hasGrecaptcha")):
+        logger.info("careem: no grecaptcha on this step; submitting")
+        return False
+    meta = await _careem_eval(page, _CAREEM_SITEKEY_JS)
+    sitekey = ""
+    action = ""
+    if isinstance(meta, dict):
+        sitekey = str(meta.get("sitekey") or "").strip()
+        action = str(meta.get("action") or "").strip()
+    if sitekey:
+        logger.info(
+            "careem: executing grecaptcha (enterprise=%s action=%s)",
+            probe.get("enterprise"),
+            action or "<page-default>",
+        )
+        token = await _careem_eval(
+            page, _CAREEM_EXECUTE_JS, {"sitekey": sitekey, "action": action}
+        )
+        if isinstance(token, str) and len(token) >= 20:
+            return True
+    deadline = time.monotonic() + _CAREEM_TOKEN_WAIT_MS / 1000
+    while time.monotonic() < deadline:
+        if await _careem_challenge_ui_present(page):
+            await _careem_wait_out_challenge(page)
+            return True
+        probe = await _careem_eval(page, _CAREEM_TOKEN_PROBE_JS)
+        if _careem_token_is_present(probe if isinstance(probe, dict) else None):
+            return True
+        await page.wait_for_timeout(500)
+    logger.warning("careem: no recaptcha token after wait at %s", page.url)
+    return False
+
+
+async def _careem_wait_email_input(page):
+    """The email box, after the SPA-boot wait + one reload. None if already in."""
+    email_input = page.locator("input[type='email']").first
+    if await _careem_input_ready(email_input):
+        return email_input
+    if await _careem_is_authenticated(page):
+        return None
+    logger.warning(
+        "careem: no email input after %ss at %s — reloading once",
+        _CAREEM_STEP_SECONDS,
+        page.url,
+    )
+    await _careem_capture_failure(page, "no-email-input")
+    try:
+        await page.reload(wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(3_000)
+    except Exception:  # noqa: BLE001 — a failed reload is not fatal yet
+        logger.info("careem: reload failed, checking the page as-is")
+    if not await _careem_input_ready(email_input):
+        if await _careem_is_authenticated(page):
+            return None
+        await _careem_capture_failure(page, "no-email-input-retry")
+        raise LoginError(
+            f"Careem login did not expose an email input at {page.url}"
+        )
+    return email_input
+
+
+async def _careem_submit_email(page, email_input, address: str):
+    """Wait for grecaptcha, type the email like a human, submit. Returns otp_since."""
+    logger.info("careem: email step at %s", page.url)
+    await _careem_wait_for_grecaptcha(page)
+    if await _careem_challenge_ui_present(page):
+        await _careem_wait_out_challenge(page)
+    await _careem_dwell(page)
+    await _careem_type_human(email_input, address)
+    otp_since = datetime.now(UTC)
+    await _careem_submit(page, email_input)
+    await page.wait_for_timeout(3_000)
+    return otp_since
+
+
+async def _careem_email_form_still_up(page) -> bool:
+    try:
+        loc = page.locator("input[type='email']").first
+        return await loc.is_visible(timeout=1_000)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _careem_post_email_outcome(page) -> str:
+    """'otp' | 'challenge' | 'score_fail' | 'authed' | 'unknown' — poll, don't spin."""
+    otp_loc = page.locator(
+        "input[autocomplete='one-time-code'], input[inputmode='numeric'], "
+        "input[type='tel'], input[type='number'], input[type='text']"
+    ).first
+    for _ in range(8):
+        await page.wait_for_timeout(2_000)
+        if await _careem_is_authenticated(page):
+            return "authed"
+        if await _careem_challenge_ui_present(page):
+            return "challenge"
+        try:
+            if await otp_loc.is_visible(timeout=400):
+                return "otp"
+        except Exception:  # noqa: BLE001
+            pass
+        body = await _careem_page_body(page)
+        if _careem_looks_like_score_failure(body) and await _careem_email_form_still_up(
+            page
+        ):
+            return "score_fail"
+    if await _careem_email_form_still_up(page):
+        body = await _careem_page_body(page)
+        if _careem_looks_like_score_failure(body):
+            return "score_fail"
+    return "unknown"
 
 
 async def _careem_input_ready(locator) -> bool:

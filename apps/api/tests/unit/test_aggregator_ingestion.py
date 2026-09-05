@@ -1899,3 +1899,49 @@ async def test_coverage_backfill_disabled_by_zero_guard(monkeypatch):
 
     monkeypatch.setattr(ingest, "_register_providers", boom)
     assert await ingest.run_coverage_backfill_once() == 0
+
+
+async def test_mm_order_for_external_matches_display_ref():
+    """Deliveroo invoice Order ID is the short display_ref, not the sales UUID."""
+    captured = {}
+
+    class _DB:
+        async def scalar(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return None
+
+    out = await ingest._mm_order_for_external(_DB(), "deliveroo", "5254")
+    assert out is None
+    sql = captured["sql"]
+    assert "display_ref" in sql
+    assert "5254" in sql
+    assert "external_order_id" in sql
+
+
+def test_upsert_statement_links_orders_on_display_ref():
+    import inspect
+
+    src = inspect.getsource(ingest._upsert_statement)
+    assert "AggregatorOrder.display_ref.in_(settled_order_ids)" in src
+
+
+async def test_careem_empty_payouts_notes_channel_limit(monkeypatch):
+    """An empty payoutRequests/list is the portal's answer, not a fetch bug."""
+    from app.services.providers import careem_provider as cp
+
+    client = cp.CareemClient()
+
+    async def fake_request_json(self, session, method, url, **kwargs):
+        if url.endswith("/user/scope"):
+            return _SCOPE
+        return {"payoutRequests": [], "paginationInfo": {"totalRecords": 0}}
+
+    monkeypatch.setattr(cp.CareemClient, "request_json", fake_request_json)
+    result = await client.fetch_payouts(
+        LoadedSession(channel="careem", account_ref=""),
+        since=datetime(2026, 7, 1),
+        until=datetime(2026, 7, 31),
+    )
+    assert result.payouts == []
+    assert result.truncation_note is not None
+    assert "Tax Invoice" in result.truncation_note

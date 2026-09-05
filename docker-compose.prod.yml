@@ -673,6 +673,9 @@ services:
       # (empty), the daemon's init is a clean no-op.
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      # Optional 2captcha key for Careem reCAPTCHA v2. Empty → audio self-solve.
+      # This block is an ALLOW-LIST (same silent-absence class as SENTRY_DSN).
+      TWOCAPTCHA_API_KEY: ${TWOCAPTCHA_API_KEY:-}
       # MUST stay "false": the anti-bot channels (Akamai/PerimeterX/Cloudflare)
       # drop headless real Chrome, so every per-job Chrome has to run HEADED under
       # the entrypoint's resident Xvfb display. This compose env overrides the
