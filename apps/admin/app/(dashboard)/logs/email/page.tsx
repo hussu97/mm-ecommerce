@@ -16,22 +16,31 @@ const STATUS_OPTIONS = [
   { value: 'skipped', label: 'Skipped' },
 ];
 
-const TEMPLATE_OPTIONS = [
-  { value: '', label: 'All Templates' },
+// Every template identifier the backend can write to email_logs, in one place.
+// The filter dropdown and the Template column both derive from this, so the two
+// can never drift apart the way they had (five names for ~twelve templates).
+// Keep in sync with the send sites in apps/api/app/services/email_service.py
+// (filename-minus-.html) and daily_sales_email.py (_TEMPLATE).
+const EMAIL_TEMPLATES: { value: string; label: string }[] = [
   { value: 'order_confirmation', label: 'Order Confirmation' },
+  { value: 'payment_failed', label: 'Payment Failed' },
   { value: 'order_packed', label: 'Order Packed' },
+  { value: 'order_out_for_delivery', label: 'Out for Delivery' },
+  { value: 'order_delivered', label: 'Order Delivered' },
+  { value: 'order_undelivered', label: 'Order Undelivered' },
   { value: 'order_cancelled', label: 'Order Cancelled' },
+  { value: 'order_refunded', label: 'Order Refunded' },
   { value: 'welcome', label: 'Welcome' },
   { value: 'password_reset', label: 'Password Reset' },
+  { value: 'owner_order_notification', label: 'Owner Order Notification' },
+  { value: 'daily_sales_report', label: 'Daily Sales Report' },
 ];
 
-const TEMPLATE_LABELS: Record<string, string> = {
-  order_confirmation: 'Order Confirmation',
-  order_packed: 'Order Packed',
-  order_cancelled: 'Order Cancelled',
-  welcome: 'Welcome',
-  password_reset: 'Password Reset',
-};
+const TEMPLATE_OPTIONS = [{ value: '', label: 'All Templates' }, ...EMAIL_TEMPLATES];
+
+const TEMPLATE_LABELS: Record<string, string> = Object.fromEntries(
+  EMAIL_TEMPLATES.map(t => [t.value, t.label]),
+);
 
 const STATUS_VARIANT: Record<EmailLogStatus, 'success' | 'danger' | 'warning'> = {
   sent: 'success',
