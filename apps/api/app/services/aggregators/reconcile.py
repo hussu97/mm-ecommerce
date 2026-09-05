@@ -75,13 +75,20 @@ def _d(value) -> Decimal | None:
 
 
 async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
+    """True when this branch has a GrubOps kitchen that files MM orders.
+
+    `is_active` on the location map only gates stock-push (see
+    `grubops_orders_service`), not whether orders arrive. Barsha's map has been
+    inactive since insert, but every Careem GrubOps order lands on that
+    location — gating recon on is_active left those orders `no_maker_side`
+    even after the Careem Now alias and the Foodics map seed.
+    """
     if branch_id is None:
         return False
     return bool(
         await db.scalar(
             select(GrubOpsLocationMap.id).where(
                 GrubOpsLocationMap.branch_id == branch_id,
-                GrubOpsLocationMap.is_active.is_(True),
             )
         )
     )

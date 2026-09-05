@@ -911,6 +911,24 @@ async def test_find_mm_order_matches_either_id_under_the_channel_label():
     assert "2253" in db.sql
 
 
+def test_branch_has_grubops_does_not_require_stock_push_to_be_on():
+    """`is_active` on grubops_location_map gates stock-push, not maker-side recon.
+
+    Barsha's row has been inactive since insert while every Careem GrubOps order
+    still lands on that location. Filtering is_active left those orders
+    `no_maker_side` after the Careem Now alias and the Foodics map seed.
+    """
+    import inspect
+
+    from app.services.aggregators import reconcile
+
+    src = inspect.getsource(reconcile._branch_has_grubops)
+    assert "GrubOpsLocationMap.branch_id" in src
+    assert "is_active.is_" not in src, (
+        "recon must treat a GrubOps location as maker-side even when stock-push is off"
+    )
+
+
 def test_promote_lookback_covers_last_7d_and_includes_keeta():
     """Keeta is push-only; promote still walks AGGREGATOR_CHANNELS over 30 days
     so last-7d orders are picked up once they flow — no prod backfill required."""
