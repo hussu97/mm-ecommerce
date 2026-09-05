@@ -390,6 +390,48 @@ async def test_a_slider_refusal_falls_through_rather_than_stranding_the_order(
     assert slider_spies == ["slider", "lalamove"]
     assert result.courier_order_id
     assert not result.needs_attention
+    # The Lalamove booking cleared `last_error`, but the reason it went to
+    # Lalamove at all survives on `fallback_reason` — the durable trace that was
+    # missing while an unfunded Slider wallet routed every order here in silence.
+    assert result.fallback_reason == "Slider: outside the service area"
+
+
+@pytest.mark.asyncio
+async def test_a_silent_fallback_now_records_its_reason_and_alerts(
+    slider_ready, monkeypatch, slider_spies
+):
+    """
+    The unfunded-wallet outage was invisible because the fallback was silent: the
+    reason was an INFO log nobody reads, `last_error` was cleared by the Lalamove
+    booking that worked, and nothing on the row or any dashboard said Slider had
+    stopped carrying anything. A Slider zone dropping to Lalamove now writes
+    `fallback_reason` and raises one fingerprinted Sentry warning.
+    """
+    alerts: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        courier_service,
+        "capture_issue",
+        lambda message, **kw: alerts.append((message, kw)),
+    )
+
+    async def wallet_402(db, order):
+        slider_spies.append("slider")
+        db.delivery.last_error = (
+            "Slider: Order could not be processed due to insufficient wallet balance."
+        )
+        return db.delivery
+
+    monkeypatch.setattr(courier_service.slider_service, "dispatch_order", wallet_402)
+    result = await courier_service.dispatch(_Db(_slider_delivery()), _order())
+
+    assert result.provider == "lalamove"
+    assert "insufficient wallet balance" in (result.fallback_reason or "")
+    assert not result.last_error  # a successful fallback is not needs-a-human
+    assert len(alerts) == 1
+    _, kw = alerts[0]
+    assert kw["level"] == "warning"
+    assert kw["fingerprint"][0] == "courier-auto-fallback"
+    assert kw["tags"]["carrier"] == "lalamove"
 
 
 @pytest.mark.asyncio

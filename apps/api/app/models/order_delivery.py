@@ -494,6 +494,19 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     #: admin who has to decide what to do about it.
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    #: Why an order left the courier its zone chose, when the **automatic**
+    #: dispatcher fell back to another one — Slider's wallet 402'd, noon Send was
+    #: out of range, a booking timed out. Unlike `last_error` this is *not* a
+    #: failure: the fallback booking succeeded, so it must never reach
+    #: `needs_attention`. It is the durable copy of the line
+    #: `courier_service._dispatch_once` logs, and it exists because a silent
+    #: fallback made a total Slider outage — an unfunded wallet returning 402 on
+    #: every booking — look identical to normal operation: every Slider order
+    #: quietly on Lalamove, nothing red anywhere. Reset at the top of each
+    #: dispatch attempt, so a later success on the zone's own courier (or a
+    #: manual reassignment) leaves it blank.
+    fallback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # ── retry ─────────────────────────────────────────────────────────────────
     #
     # Before these existed, a failed dispatch was terminal in everything but

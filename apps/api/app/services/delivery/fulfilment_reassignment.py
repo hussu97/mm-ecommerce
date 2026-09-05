@@ -640,6 +640,10 @@ async def _release(db: AsyncSession, order: Order, delivery: OrderDelivery) -> N
     delivery.dispatch_attempts = 0
     delivery.next_attempt_at = None
     delivery.last_error = None
+    # A person choosing a courier by hand is not the automatic dispatcher falling
+    # back, so any "fell back off its zone's courier" note from a past attempt is
+    # stale — clear it, the same as the retry ladder above.
+    delivery.fallback_reason = None
 
 
 async def move(

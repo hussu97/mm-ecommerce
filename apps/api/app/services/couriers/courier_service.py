@@ -47,6 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
+from app.core.alerting import capture_issue
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
@@ -297,10 +298,58 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     return await _record_outcome(db, order, await _dispatch_once(db, order, delivery))
 
 
+def _note_auto_fallback(
+    order: Order,
+    delivery: OrderDelivery,
+    *,
+    zone_provider: str | None,
+    carrier: str,
+    reason: str | None,
+) -> None:
+    """Record and raise the alarm that automatic dispatch left the zone's courier.
+
+    The fallback booking still succeeds, so this must **not** reach `last_error`,
+    which drives `needs_attention` — it would put every gated order on the
+    admin's needs-a-human list. It goes to two places that a success does not
+    poison: `fallback_reason`, the durable copy of the log line, and a
+    fingerprinted Sentry warning.
+
+    Both exist because this was silent. A Slider account whose prepaid wallet
+    could not cover a real fare returned 402 on every booking; every Slider order
+    dropped to Lalamove; `last_error` was cleared by the Lalamove booking that
+    worked; and nothing said Slider had stopped carrying anything. The log line
+    alone was an INFO nobody reads. The fingerprint groups a recurring condition
+    into one alertable issue rather than one event per order — "Slider is falling
+    back to Lalamove" is the thing worth waking up for.
+    """
+    delivery.fallback_reason = reason
+    logger.info(
+        "Order %s is in a %s zone and is going by %s: %s",
+        order.order_number,
+        zone_provider,
+        carrier,
+        reason,
+    )
+    capture_issue(
+        f"Courier auto-fallback: {zone_provider} → {carrier} ({reason})",
+        level="warning",
+        fingerprint=["courier-auto-fallback", zone_provider or "?", carrier],
+        tags={
+            "order_number": order.order_number,
+            "zone_provider": zone_provider or "",
+            "carrier": carrier,
+        },
+    )
+
+
 async def _dispatch_once(
     db: AsyncSession, order: Order, delivery: OrderDelivery
 ) -> OrderDelivery | None:
     """One attempt, on whichever courier ends up carrying it."""
+    # Cleared before the attempt, so a re-dispatch that now succeeds on the
+    # zone's own courier leaves no stale "fell back" note behind. Set again below
+    # only if this attempt actually falls back.
+    delivery.fallback_reason = None
     carrier, gated = carrier_for(order, delivery)
 
     if carrier in SLIDER_PROVIDERS:
@@ -336,13 +385,15 @@ async def _dispatch_once(
         #
         # What makes the swap visible is the same thing that makes the noon Send
         # one visible: the zone says one courier and the row says another, and
-        # this line is the explanation.
-        logger.info(
-            "Order %s is in a %s zone and is going by %s: %s",
-            order.order_number,
-            delivery.provider,
-            carrier,
-            gated,
+        # `_note_auto_fallback` is the explanation — a durable `fallback_reason`
+        # and a Sentry warning, because the log line alone let an unfunded Slider
+        # wallet route every order to Lalamove with nothing red anywhere.
+        _note_auto_fallback(
+            order,
+            delivery,
+            zone_provider=delivery.provider,
+            carrier=carrier,
+            reason=gated,
         )
         delivery.provider = carrier
 
@@ -366,15 +417,14 @@ async def _dispatch_once(
     # has to travel, so it travels with the courier that has no such limits, and
     # the row records honestly who ended up carrying it.
     #
-    # The reason goes to the log rather than to `last_error`, because a booking
-    # that succeeded is not a problem: `last_error` drives `needs_attention` and
-    # filling it here would put every fallback on the admin's needs-a-human
-    # list. A `noon_send` zone showing a `lalamove` delivery is the signal, and
-    # this line is the explanation.
-    logger.info(
-        "Order %s was offered to noon Send and is going by Lalamove: %s",
-        order.order_number,
-        reason,
+    # The reason goes to `fallback_reason` and a Sentry warning rather than to
+    # `last_error`, because a booking that succeeded is not a problem:
+    # `last_error` drives `needs_attention` and filling it here would put every
+    # fallback on the admin's needs-a-human list. A `noon_send` zone showing a
+    # `lalamove` delivery is the signal, and `_note_auto_fallback` is the
+    # explanation.
+    _note_auto_fallback(
+        order, delivery, zone_provider=NOON_SEND, carrier=LALAMOVE, reason=reason
     )
     delivery.provider = LALAMOVE
     return await lalamove_service.dispatch_order(db, order)
