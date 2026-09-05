@@ -235,6 +235,43 @@ def test_ar_and_image_drift_flagged_when_mm_has_them_and_channel_missing():
     assert K_OPTION_NAME_AR not in same
 
 
+def test_diff_tolerates_non_string_image_url():
+    # A reader may hand back a portal's image object (Talabat's images are
+    # {"url","width","height"} dicts) instead of a URL string. The diff must not
+    # crash on it — a non-string image counts as "no comparable image".
+    mm = NormalizedMenu(
+        source="mm",
+        categories=[
+            NormalizedCategory(
+                "Cakes",
+                items=[
+                    NormalizedItem(
+                        "Slice", image_url="https://mm/x.jpg", price=Decimal("35")
+                    )
+                ],
+            )
+        ],
+    )
+    ch = NormalizedMenu(
+        source="talabat",
+        categories=[
+            NormalizedCategory(
+                "Cakes",
+                items=[
+                    NormalizedItem(
+                        "Slice",
+                        image_url={"url": "https://portal/y.jpg", "width": 100},  # type: ignore[arg-type]
+                        price=Decimal("35"),
+                    )
+                ],
+            )
+        ],
+    )
+    # Must not raise; a dict channel image is treated as "no image" -> MM has one.
+    kinds = diff_menu(mm, ch, target="talabat").summary
+    assert kinds.get(K_ITEM_IMAGE) == 1
+
+
 def test_price_parity_toggle_suppresses_price_deltas():
     d = diff_menu(
         _mm_menu(), _careem_menu(), target="careem", enforce_price_parity=False

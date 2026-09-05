@@ -450,14 +450,20 @@ def _talabat_items(
     for p in products if isinstance(products, list) else []:
         if not isinstance(p, dict) or not p.get("name"):
             continue
+        # `imageUrls` is usually null; the real image is in `images`, a list of
+        # `{"url", "width", "height"}` dicts — take the first url as a string.
         image_urls = p.get("imageUrls") or p.get("images") or []
+        first_image = (
+            image_urls[0] if isinstance(image_urls, list) and image_urls else None
+        )
+        image_url = (
+            first_image.get("url") if isinstance(first_image, dict) else first_image
+        )
         item = NormalizedItem(
             name=p["name"],
             external_id=str(p["id"]) if p.get("id") is not None else None,
             description=p.get("description"),
-            image_url=image_urls[0]
-            if isinstance(image_urls, list) and image_urls
-            else None,
+            image_url=image_url,
             price=Decimal(str(p["unitPrice"]))
             if p.get("unitPrice") is not None
             else None,
