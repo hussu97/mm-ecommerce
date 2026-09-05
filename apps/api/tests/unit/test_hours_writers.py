@@ -234,3 +234,40 @@ def test_careem_weekly_builder_all_seven_rows():
     assert sun["extra"] == "keep"  # existing row fields preserved
     assert out[1]["active"] == 1  # Mon
     assert all(r["active"] == 0 and r["shifts"] == [] for r in out[2:])
+
+
+@pytest.mark.asyncio
+async def test_deliveroo_execute_verifies_persistence(monkeypatch):
+    # A live restaurant persists the write (read-back matches) -> no raise; a non-live
+    # outlet answers 204 but drops it (read-back empty) -> HoursWriteUnsupported so the
+    # sync skips honestly rather than recording a false "completed".
+    from app.services.providers import deliveroo_provider as dp
+
+    want = [
+        {"day_of_week": 0, "local_start_time": "08:00:00", "local_end_time": "22:00:00"}
+    ]
+    plan = {"session": object(), "outlet_id": "693359", "payload": {"hours": want}}
+
+    class _Persists:
+        async def put_opening_hours(self, *_a):
+            pass
+
+        async def get_opening_hours(self, *_a):
+            return {"hours": want}
+
+        async def restaurant_status(self, *_a):
+            return "CLOSED"
+
+    monkeypatch.setattr(dp, "provider", _Persists())
+    await hw._execute("deliveroo", plan)  # matches -> no raise
+
+    class _Drops(_Persists):
+        async def get_opening_hours(self, *_a):
+            return {"hours": []}
+
+        async def restaurant_status(self, *_a):
+            return "READY_TO_OPEN"
+
+    monkeypatch.setattr(dp, "provider", _Drops())
+    with pytest.raises(hw.HoursWriteUnsupported, match="did not persist"):
+        await hw._execute("deliveroo", plan)
