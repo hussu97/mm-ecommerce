@@ -14,7 +14,10 @@ from aggregator_bootstrap.browser import (
     _assert_keeta_account_captured,
     _await_careem_bearer,
     _clear_stale_singleton_locks,
+    _open_context,
+    _session_storage_init_script,
     _wait_for_cdp,
+    _write_session_storage,
     persist_extra_state,
 )
 from aggregator_bootstrap.config import settings
@@ -168,6 +171,135 @@ def test_keeta_guard_raises_when_signed_out(monkeypatch, tmp_path):
 def test_keeta_guard_is_a_noop_for_other_channels(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
     _assert_keeta_account_captured("noon", _keeta_result({}))  # no raise
+
+
+# ── persistent-profile sessionStorage restore (the post-relogin empty LOGIN_ACCOUNTID) ──
+
+
+def test_session_storage_init_script_is_an_iife_not_a_dangling_function():
+    """Playwright Python evaluates add_init_script(string) as a script body.
+
+    A bare `() => { sessionStorage.setItem(...) }` creates a function and never
+    calls it, so LOGIN_ACCOUNTID never lands in keeta.chrome. The source must
+    invoke itself.
+    """
+    src = _session_storage_init_script(
+        {"https://merchant.mykeeta.com": {"LOGIN_ACCOUNTID": "acc-1"}}
+    )
+    stripped = src.strip()
+    assert "LOGIN_ACCOUNTID" in src
+    assert "sessionStorage.setItem" in src
+    assert stripped.startswith("(() =>"), src
+    assert "})();" in src
+    assert not stripped.startswith("() =>"), (
+        "dangling arrow function is a no-op under add_init_script(string)"
+    )
+
+
+class _PersistentPage:
+    """A page on a persistent context: records evaluate writes and event binds."""
+
+    def __init__(self, url: str = "about:blank") -> None:
+        self.url = url
+        self.evaluate_args: list[object] = []
+        self.handlers: dict[str, list] = {}
+
+    def on(self, event: str, callback) -> None:
+        self.handlers.setdefault(event, []).append(callback)
+
+    async def evaluate(self, script: str, arg: object = None):
+        self.evaluate_args.append(arg)
+        return 1
+
+
+class _PersistentContext:
+    def __init__(self, page: _PersistentPage | None = None) -> None:
+        self.pages = [page or _PersistentPage()]
+        self.init_scripts: list[str] = []
+        self.page_listeners: list = []
+        self.browser = object()
+
+    async def add_init_script(self, script: str) -> None:
+        self.init_scripts.append(script)
+
+    def on(self, event: str, callback) -> None:
+        if event == "page":
+            self.page_listeners.append(callback)
+
+    async def new_page(self) -> _PersistentPage:
+        page = _PersistentPage()
+        self.pages.append(page)
+        for listener in self.page_listeners:
+            listener(page)
+        return page
+
+
+def test_write_session_storage_sets_login_accountid_on_matching_origin():
+    """The explicit write (not just init-script registration) that a pull needs."""
+    page = _PersistentPage("https://merchant.mykeeta.com/order-manager")
+    extra = {
+        "https://merchant.mykeeta.com": {
+            "LOGIN_ACCOUNTID": "acc-1",
+            "SHOP_IDS": "[1]",
+        }
+    }
+    asyncio.run(_write_session_storage(page, extra))
+    assert page.evaluate_args == [
+        {"LOGIN_ACCOUNTID": "acc-1", "SHOP_IDS": "[1]"}
+    ]
+
+
+def test_write_session_storage_skips_a_different_origin():
+    page = _PersistentPage("https://passport.mykeeta.com/login")
+    extra = {"https://merchant.mykeeta.com": {"LOGIN_ACCOUNTID": "acc-1"}}
+    asyncio.run(_write_session_storage(page, extra))
+    assert page.evaluate_args == []
+
+
+def test_open_context_writes_extras_into_the_persistent_profile(tmp_path, monkeypatch):
+    """Relogin snapshots LOGIN_ACCOUNTID into extra.json; the next pull reopens
+    keeta.chrome. Cookies are already in the profile; sessionStorage is not.
+    `_open_context` must install an IIFE init script AND bind a write so a
+    later new_page+goto still has LOGIN_ACCOUNTID — not only hydrate a
+    storage_state context."""
+    from aggregator_bootstrap import browser as b
+
+    monkeypatch.setattr(settings, "STORAGE_STATE_DIR", str(tmp_path))
+    (tmp_path / "keeta.chrome").mkdir()
+    persist_extra_state(
+        "keeta",
+        {"https://merchant.mykeeta.com": {"LOGIN_ACCOUNTID": "acc-1", "SHOP_IDS": "[1]"}},
+    )
+    fake = _PersistentContext()
+
+    async def _fake_launch(pw, profile, *, headed, channel):
+        assert channel == "keeta"
+        assert headed is True
+        return fake
+
+    monkeypatch.setattr(b, "_launch_persistent", _fake_launch)
+    monkeypatch.setattr(b, "_register_chrome", lambda *_a, **_k: None)
+
+    async def _pull_after_relogin():
+        opened = await _open_context(object(), "keeta", headed=True)
+        # A pull does context.new_page() then goto merchant.mykeeta.com.
+        page = await fake.new_page()
+        page.url = "https://merchant.mykeeta.com/order-manager/m/web/mach/history"
+        for cb in page.handlers.get("framenavigated", []):
+            cb()
+        await asyncio.sleep(0)  # flush the create_task(_seed)
+        return opened, page
+
+    opened, page = asyncio.run(_pull_after_relogin())
+    assert opened.persistent is True
+    assert opened.context is fake
+    assert fake.init_scripts, "persistent context must get the extra-state init script"
+    src = fake.init_scripts[0]
+    assert "LOGIN_ACCOUNTID" in src
+    assert src.strip().startswith("(() =>"), src
+    assert fake.page_listeners, "new pages on keeta.chrome must inherit the restore"
+    assert page.evaluate_args, "sessionStorage was not written into the persistent page"
+    assert page.evaluate_args[-1]["LOGIN_ACCOUNTID"] == "acc-1"
 
 
 class _FakePage:

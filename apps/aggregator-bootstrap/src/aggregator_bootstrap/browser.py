@@ -278,18 +278,97 @@ def load_extra_state(channel: str) -> dict[str, dict[str, str]]:
     }
 
 
+#: page.evaluate form — Playwright invokes this function. Distinct from the
+#: add_init_script body below, which is evaluated as a script and must IIFE.
+_WRITE_SESSION_STORAGE_JS = """
+(items) => {
+  if (!items) return 0;
+  let n = 0;
+  for (const [key, value] of Object.entries(items)) {
+    try { sessionStorage.setItem(key, String(value)); n++; } catch (e) {}
+  }
+  return n;
+}
+"""
+
+
 def _session_storage_init_script(by_origin: dict[str, dict[str, str]]) -> str:
+    """Script body that actually writes sessionStorage on every new document.
+
+    Playwright Python's `add_init_script(script=...)` evaluates the string as a
+    classic script, not as a function. A bare `() => { ... }` is a no-op (the
+    function is created and discarded), which is why a pull on persistent
+    `keeta.chrome` after relogin had cookies and an empty LOGIN_ACCOUNTID.
+    """
     payload = json.dumps(by_origin)
     return f"""
-() => {{
+(() => {{
   const byOrigin = {payload};
   const items = byOrigin[location.origin];
   if (!items) return;
   for (const [key, value] of Object.entries(items)) {{
     try {{ sessionStorage.setItem(key, value); }} catch (e) {{}}
   }}
-}}
+}})();
 """
+
+
+async def _write_session_storage(
+    page, extra: dict[str, dict[str, str]]
+) -> None:
+    """Write origin-scoped extras into THIS page's sessionStorage (main world).
+
+    Required on a persistent Chrome profile: Chromium restores empty Session
+    Storage for a new browser session *after* init scripts, wiping the IIFE.
+    Cookies survive in `keeta.chrome`; sessionStorage does not. `page.evaluate`
+    after the page has landed on the origin is the write that sticks.
+    """
+    origin = _origin_of(str(getattr(page, "url", "") or ""))
+    items = extra.get(origin) if origin else None
+    if not items:
+        return
+    try:
+        await evaluate_in_page(page, _WRITE_SESSION_STORAGE_JS, items)
+    except Exception:  # noqa: BLE001 — nav can tear the context; load retries
+        logger.debug("sessionStorage restore skipped on %s", origin, exc_info=True)
+
+
+async def _install_session_storage(
+    context, extra: dict[str, dict[str, str]]
+) -> None:
+    """Restore extras into a live context — persistent profile AND storage_state.
+
+    Two writes, both required on `keeta.chrome`:
+
+    1. An IIFE init script so every NEW document is seeded before page JS.
+    2. An explicit evaluate into each page after it lands on a matching origin,
+       because Chromium's persistent profile restores empty Session Storage
+       AFTER the init script. A function-expression init script never ran at
+       all (Playwright evaluates the string as a script body).
+    """
+    if not extra:
+        return
+    await context.add_init_script(_session_storage_init_script(extra))
+
+    def _bind(page) -> None:
+        async def _seed(*_args: Any) -> None:
+            await _write_session_storage(page, extra)
+
+        try:
+            page.on("framenavigated", lambda *_a, **_k: asyncio.create_task(_seed()))
+            page.on("load", lambda *_a, **_k: asyncio.create_task(_seed()))
+        except Exception:  # noqa: BLE001 — fakes / already-closed pages
+            pass
+
+    try:
+        context.on("page", _bind)
+    except Exception:  # noqa: BLE001 — a context without events still got the IIFE
+        pass
+    for page in list(getattr(context, "pages", None) or []):
+        _bind(page)
+        # Await, don't create_task: a restored tab already on the origin must
+        # be seeded before we return, and we must not leak a pending task.
+        await _write_session_storage(page, extra)
 
 
 async def _collect_session_storage(page) -> dict[str, str]:
@@ -575,12 +654,18 @@ async def _launch_persistent(pw, user_data_dir: Path, *, headed: bool, channel: 
 
 
 async def _open_context(pw, channel: str, *, headed: bool) -> _Opened:
-    """Open the channel's Chrome profile for a warm/probe (already logged in)."""
+    """Open the channel's Chrome profile for a warm/probe (already logged in).
+
+    SessionStorage (Keeta's LOGIN_ACCOUNTID) is not in the Chrome profile — it
+    dies when the headed login Chrome exits. `_install_session_storage` writes
+    the extras into this persistent context; `add_init_script` alone is not
+    enough (a function-expression source never runs, and Chromium restores
+    empty Session Storage after init scripts on a persistent profile).
+    """
     extra = load_extra_state(channel)
     profile = chrome_profile_dir(settings.STORAGE_STATE_DIR, channel)
     context = await _launch_persistent(pw, profile, headed=headed, channel=channel)
-    if extra:
-        await context.add_init_script(_session_storage_init_script(extra))
+    await _install_session_storage(context, extra)
     _register_chrome(context.browser)  # so a wedged warm/probe can be force-killed
     return _Opened(context=context, browser=context.browser, persistent=True)
 
@@ -625,8 +710,7 @@ async def _open_storage_state_context(pw, channel: str) -> _Opened:
             headed=headed,
         )
     )
-    if extra:
-        await context.add_init_script(_session_storage_init_script(extra))
+    await _install_session_storage(context, extra)
     _register_chrome(browser)  # so a wedged warm/probe can be force-killed
     return _Opened(context=context, browser=browser, persistent=False)
 
