@@ -43,11 +43,13 @@ from app.services.aggregators.session_store import LoadedSession
 logger = logging.getLogger(__name__)
 
 try:  # optional — only the anti-bot channels need it
+    from curl_cffi import CurlMime  # type: ignore
     from curl_cffi import requests as curl_requests  # type: ignore
 
     _HAS_CURL_CFFI = True
 except Exception:  # noqa: BLE001 - absence is a supported state, not an error
     curl_requests = None  # type: ignore
+    CurlMime = None  # type: ignore
     _HAS_CURL_CFFI = False
 
 _warned_no_curl = False
@@ -243,12 +245,15 @@ class BaseAggregatorClient(ABC):
         params: dict[str, Any] | None = None,
         json_body: Any | None = None,
         data: Any | None = None,
+        files: Any | None = None,
         timeout: float | None = None,
     ) -> Any:
         """One call, returning the transport's raw response (JSON or CSV/text).
 
-        Used directly by channels whose export is not JSON (Deliveroo CSV). Picks
-        the TLS-impersonating transport for the anti-bot channels when available.
+        Used directly by channels whose export is not JSON (Deliveroo CSV) or that
+        upload files (`files=` -> multipart/form-data, e.g. a Careem product image).
+        Picks the TLS-impersonating transport for the anti-bot channels when
+        available.
         """
         merged = self.build_headers(session, headers)
         last_response: Any = None
@@ -264,6 +269,7 @@ class BaseAggregatorClient(ABC):
                         params,
                         json_body,
                         data,
+                        files=files,
                         timeout=call_timeout,
                     )
                 else:
@@ -275,6 +281,7 @@ class BaseAggregatorClient(ABC):
                         params,
                         json_body,
                         data,
+                        files=files,
                         timeout=call_timeout,
                     )
                 status = getattr(last_response, "status_code", 0)
@@ -297,6 +304,7 @@ class BaseAggregatorClient(ABC):
         json_body: Any | None,
         data: Any | None,
         *,
+        files: Any | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
         async with httpx.AsyncClient(
@@ -308,6 +316,7 @@ class BaseAggregatorClient(ABC):
                 headers=headers,
                 params=params,
                 json=json_body,
+                files=files,
                 content=data if isinstance(data, (bytes, str)) else None,
                 data=data if not isinstance(data, (bytes, str)) else None,
             )
@@ -321,6 +330,7 @@ class BaseAggregatorClient(ABC):
         json_body: Any | None,
         data: Any | None,
         *,
+        files: Any | None = None,
         timeout: float | None = None,
     ) -> Any:
         # Hand curl_cffi the cookie JAR, not a pre-folded `Cookie` header: under
@@ -334,6 +344,23 @@ class BaseAggregatorClient(ABC):
         cookies: dict[str, str] | None = None
         for key in [k for k in headers if k.lower() == "cookie"]:
             cookies = _parse_cookie_header(headers.pop(key))
+        # curl_cffi does not accept httpx-style `files=`; it wants a CurlMime on
+        # its `multipart` param. Convert the same `{field: (filename, bytes,
+        # content_type)}` shape so callers stay transport-agnostic. Verified live
+        # against Careem's catalog-products-images endpoint (201 Created).
+        multipart = None
+        if files:
+            multipart = CurlMime()  # type: ignore[operator]
+            for field, spec in files.items():
+                filename, content, content_type = (
+                    spec if isinstance(spec, (tuple, list)) else (field, spec, None)
+                )
+                multipart.addpart(
+                    name=field,
+                    filename=filename,
+                    content_type=content_type or "application/octet-stream",
+                    data=content,
+                )
         async with curl_requests.AsyncSession() as client:  # type: ignore[union-attr]
             return await client.request(
                 method,
@@ -342,6 +369,7 @@ class BaseAggregatorClient(ABC):
                 params=params,
                 json=json_body,
                 data=data,
+                multipart=multipart,
                 cookies=cookies,
                 impersonate=self.impersonate_target,
                 timeout=timeout or self._timeout,
