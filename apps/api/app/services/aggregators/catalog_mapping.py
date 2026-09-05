@@ -37,8 +37,26 @@ from app.models.external_item_map import (
 )
 from app.models.modifier import ModifierOption
 from app.models.product import Product
+from app.services.aggregators.catalog_diff import normalize_name
 from app.services.aggregators.menu_normalized import NormalizedMenu
 from app.services.catalog.external_item_map_service import normalize_ref
+
+
+def _fold_index(pairs: list[tuple[Any, str]]) -> dict[str, Any]:
+    """A fold-key → id index for FALLBACK matching, using `catalog_diff
+    .normalize_name` (folds `&`↔`and`, punctuation and singular/plural — the same
+    matcher the diff uses). Ambiguous fold keys (two names collapsing to one) are
+    dropped so a fuzzy fallback never maps to the wrong entity; exact
+    `normalize_ref` matching stays the primary path."""
+    counts: dict[str, int] = {}
+    idx: dict[str, Any] = {}
+    for entity_id, name in pairs:
+        key = normalize_name(name)
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        idx[key] = entity_id
+    return {k: v for k, v in idx.items() if counts[k] == 1}
 
 
 @dataclass
@@ -149,9 +167,40 @@ async def resolve_menu(
     products = await _product_index(db)
     categories = await _category_index(db)
     options = await _option_index(db)
+    # Fallback fold indexes for cosmetic drift (& vs and, singular/plural, "[..]"
+    # prefixes) that exact normalize_ref matching misses. Built from the same rows;
+    # ambiguous fold keys are dropped so a fallback never mis-maps.
+    prod_rows = [
+        (pid, n)
+        for pid, n in (await db.execute(select(Product.id, Product.name))).all()
+        if n
+    ]
+    cat_rows = [
+        (cid, n)
+        for cid, n in (await db.execute(select(Category.id, Category.name))).all()
+        if n
+    ]
+    opt_rows = (
+        await db.execute(
+            select(ModifierOption.id, ModifierOption.name, ModifierOption.price)
+        )
+    ).all()
+    products_fold = _fold_index(prod_rows)
+    categories_fold = _fold_index(cat_rows)
+    opt_fold_counts: dict[tuple[str, Any], int] = {}
+    options_fold: dict[tuple[str, Any], Any] = {}
+    for oid, name, price in opt_rows:
+        if name is None or price is None:
+            continue
+        key = (normalize_name(name), Decimal(str(price)))
+        opt_fold_counts[key] = opt_fold_counts.get(key, 0) + 1
+        options_fold[key] = oid
+    options_fold = {k: v for k, v in options_fold.items() if opt_fold_counts[k] == 1}
 
     for cat in menu.categories:
-        cid = categories.get(normalize_ref(cat.name))
+        cid = categories.get(normalize_ref(cat.name)) or categories_fold.get(
+            normalize_name(cat.name)
+        )
         if cid is not None:
             rep.categories_matched += 1
             await _upsert(
@@ -164,7 +213,9 @@ async def resolve_menu(
                 approve=approve_exact,
             )
         for item in cat.items:
-            pid = products.get(normalize_ref(item.name))
+            pid = products.get(normalize_ref(item.name)) or products_fold.get(
+                normalize_name(item.name)
+            )
             if pid is not None:
                 rep.products_matched += 1
                 if await _upsert(
@@ -191,9 +242,10 @@ async def resolve_menu(
                 for opt in group.options:
                     if opt.price is None:
                         continue
+                    price_dec = Decimal(str(opt.price))
                     oid = options.get(
-                        (normalize_ref(opt.name), Decimal(str(opt.price)))
-                    )
+                        (normalize_ref(opt.name), price_dec)
+                    ) or options_fold.get((normalize_name(opt.name), price_dec))
                     ref = opt.external_ref or opt.name
                     if oid is not None:
                         rep.options_matched += 1

@@ -371,23 +371,29 @@ async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
             # must not abort the whole outlet's menu read; it contributes no items.
             logger.warning("careem: category %s has no products (%s)", cid, exc)
             products_by_cat[cid] = {"products": []}
-    # Option NAMES are empty in the embedded groups; fetch the expanded groups
-    # (options=true) for each product that has any customization group.
+    # Careem ALWAYS embeds `customizationGroups: []` in the products list (verified
+    # live 2026-09-05) even for products that have groups, so the only way to know a
+    # product's groups — and the only way to get option NAMES — is the per-product
+    # `catalog-customization-groups?...&options=true` call. Fetch it for every
+    # product; a product with no groups just returns [].
     groups_by_pid: dict[str, Any] = {}
     for payload in products_by_cat.values():
         plist = payload.get("products") if isinstance(payload, dict) else payload
         for p in plist or []:
-            if not isinstance(p, dict) or not p.get("customizationGroups"):
+            if not isinstance(p, dict) or p.get("id") is None:
                 continue
             pid = str(p.get("id"))
             try:
-                groups_by_pid[pid] = await cp.provider.list_customization_groups(
+                fetched = await cp.provider.list_customization_groups(
                     session, company, brand, outlet, pid, with_options=True
                 )
             except AggregatorUnavailableError as exc:
                 logger.warning(
                     "careem: product %s customizations unavailable (%s)", pid, exc
                 )
+                continue
+            if fetched:
+                groups_by_pid[pid] = fetched
     return parse_careem_catalog(categories, products_by_cat, groups_by_pid)
 
 
