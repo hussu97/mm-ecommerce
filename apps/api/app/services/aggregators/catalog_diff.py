@@ -45,13 +45,18 @@ ACTION_INFO = "info"
 K_CATEGORY_MISSING = "category_missing_on_channel"
 K_CATEGORY_EXTRA = "category_extra_on_channel"
 K_CATEGORY_RENAME = "category_name_drift"
+K_CATEGORY_NAME_AR = "category_name_ar_drift"
 K_ITEM_MISSING = "item_missing_on_channel"
 K_ITEM_EXTRA = "item_extra_on_channel"
 K_ITEM_RENAME = "item_name_drift"
+K_ITEM_NAME_AR = "item_name_ar_drift"
 K_ITEM_DESC = "item_description_drift"
+K_ITEM_DESC_AR = "item_description_ar_drift"
+K_ITEM_IMAGE = "item_image_missing_on_channel"
 K_ITEM_PRICE = "item_price_mismatch"
 K_ITEM_UNAVAILABLE = "item_unavailable_on_channel"
 K_OPTION_PRICE = "option_price_mismatch"
+K_OPTION_NAME_AR = "option_name_ar_drift"
 K_OPTION_MISSING = "option_missing_on_channel"
 K_OPTION_EXTRA = "option_extra_on_channel"
 
@@ -168,6 +173,18 @@ def _prices_disagree(a: Decimal | None, b: Decimal | None) -> bool:
     if a is None or b is None:
         return False
     return Decimal(a) != Decimal(b)
+
+
+def _ar_needs_write(desired: str | None, actual: str | None) -> bool:
+    """True when MM has an Arabic value that the channel is missing or differs on.
+
+    MM is the superset/source of truth for localisation, so a blank channel value
+    is itself a delta to write (unlike prices, where unknown is never drift). No
+    plural-fold — Arabic — just a whitespace-insensitive compare. A `None` desired
+    is never a delta (we have nothing to push)."""
+    if not (desired or "").strip():
+        return False
+    return (desired or "").strip() != (actual or "").strip()
 
 
 def _item_effective_prices(item: NormalizedItem) -> list[tuple[str, Decimal | None]]:
@@ -292,7 +309,20 @@ def _category_deltas(
 ) -> None:
     """Derive category-level deltas from where items actually landed."""
     actual_cat_names = {normalize_name(c.name): c.name for c in actual.categories}
+    actual_cat_by_name = {normalize_name(c.name): c for c in actual.categories}
     for dcat in desired.categories:
+        acat = actual_cat_by_name.get(normalize_name(dcat.name))
+        if acat is not None and _ar_needs_write(dcat.name_ar, acat.name_ar):
+            out.deltas.append(
+                Delta(
+                    kind=K_CATEGORY_NAME_AR,
+                    action=ACTION_UPDATE,
+                    entity=dcat.name,
+                    mm_value=dcat.name_ar,
+                    channel_value=acat.name_ar,
+                    detail="Arabic category name drift",
+                )
+            )
         landed = cat_landing.get(dcat.name, {})
         if not landed:
             out.deltas.append(
@@ -351,6 +381,37 @@ def _diff_one_item(
                 detail=f"category {category}",
             )
         )
+    if _ar_needs_write(ditem.name_ar, aitem.name_ar):
+        out.deltas.append(
+            Delta(
+                kind=K_ITEM_NAME_AR,
+                action=ACTION_UPDATE,
+                entity=ditem.name,
+                mm_value=ditem.name_ar,
+                channel_value=aitem.name_ar,
+                detail=f"category {category}",
+            )
+        )
+    if _ar_needs_write(ditem.description_ar, aitem.description_ar):
+        out.deltas.append(
+            Delta(
+                kind=K_ITEM_DESC_AR,
+                action=ACTION_UPDATE,
+                entity=ditem.name,
+                detail=f"category {category}",
+            )
+        )
+    # Image: MM has one, the channel does not. URLs are host-specific so equality
+    # is meaningless — only a MISSING image on the channel is an actionable delta.
+    if (ditem.image_url or "").strip() and not (aitem.image_url or "").strip():
+        out.deltas.append(
+            Delta(
+                kind=K_ITEM_IMAGE,
+                action=ACTION_UPDATE,
+                entity=ditem.name,
+                detail=f"image in MM, none on channel ({category})",
+            )
+        )
     if aitem.is_available is False and ditem.is_available is True:
         out.deltas.append(
             Delta(
@@ -360,6 +421,7 @@ def _diff_one_item(
                 detail=f"active in MM, unavailable on channel ({category})",
             )
         )
+    _diff_option_ar(out, ditem, aitem, category)
 
     if enforce_price_parity:
         if ditem.modifier_groups and aitem.modifier_groups:
@@ -381,6 +443,31 @@ def _diff_one_item(
         # else: one side is variant-priced and the other flat (e.g. a channel
         # reader that lists products but not their options) — we cannot compare
         # option prices we did not read, so we do not invent a "missing option".
+
+
+def _diff_option_ar(
+    out: MenuDiff, ditem: NormalizedItem, aitem: NormalizedItem, category: str
+) -> None:
+    """Flag Arabic option-name drift on options matched by name across both items'
+    modifier groups. Independent of price parity — localisation is always synced."""
+    a_ar = {
+        normalize_name(o.name): o.name_ar
+        for g in aitem.modifier_groups
+        for o in g.options
+    }
+    for g in ditem.modifier_groups:
+        for o in g.options:
+            key = normalize_name(o.name)
+            if key in a_ar and _ar_needs_write(o.name_ar, a_ar[key]):
+                out.deltas.append(
+                    Delta(
+                        kind=K_OPTION_NAME_AR,
+                        action=ACTION_UPDATE,
+                        entity=ditem.name,
+                        mm_value=o.name_ar,
+                        detail=f"option {o.name} ({category})",
+                    )
+                )
 
 
 def _diff_option_prices(
