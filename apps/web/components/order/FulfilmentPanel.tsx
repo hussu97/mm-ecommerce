@@ -106,12 +106,14 @@ export function BranchCard({ branch }: { branch: PickupBranch }) {
       {city && <p className="text-sm text-gray-400 font-body">{city}</p>}
 
       <dl className="mt-3 space-y-1">
-        <div className="flex gap-3 text-sm font-body">
-          <dt className="text-gray-400 w-20 shrink-0">{t('order.branch_open')}</dt>
-          <dd className="text-gray-700">
-            {branch.opening_from} – {branch.opening_to}
-          </dd>
-        </div>
+        {branch.opening_from && branch.opening_to && (
+          <div className="flex gap-3 text-sm font-body">
+            <dt className="text-gray-400 w-20 shrink-0">{t('order.branch_open')}</dt>
+            <dd className="text-gray-700">
+              {branch.opening_from} – {branch.opening_to}
+            </dd>
+          </div>
+        )}
         {branch.phone && (
           <div className="flex gap-3 text-sm font-body">
             <dt className="text-gray-400 w-20 shrink-0">{t('order.branch_phone')}</dt>

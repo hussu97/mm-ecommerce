@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import trading_hours
 from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.permissions import require
@@ -88,10 +90,15 @@ async def list_pickup_points(db: AsyncSession = Depends(get_db)):
     Declared above `/{branch_id}` so the literal path is matched before the
     UUID one gets a chance to reject it.
     """
-    return [
-        PickupBranchResponse.of(branch)
-        for branch in await fulfilment_service.pickup_branches(db)
-    ]
+    today = datetime.now(trading_hours.TZ).date()
+    branches = await fulfilment_service.pickup_branches(db)
+    out: list[PickupBranchResponse] = []
+    for branch in branches:
+        window = branch_hours_service.effective_window(
+            await branch_hours_service.schedule(db, branch.id), today
+        )
+        out.append(PickupBranchResponse.of(branch, window))
+    return out
 
 
 @router.post("", response_model=BranchResponse, status_code=status.HTTP_201_CREATED)
@@ -248,10 +255,11 @@ async def close_business_day(
 # ─── Weekly hours ─────────────────────────────────────────────────────────────
 #
 # The branch's per-weekday schedule — one shift a day, a weekday with no shift is
-# closed. The source of truth for when the branch trades: the daily branch-hours
-# cron derives `opening_from`/`opening_to` from it, a closed weekday reads through
-# `branch_holiday_service` exactly like a holiday, and the marketplace fan-out
-# sends it per portal. Editing it here moves both at once, from the next request.
+# closed. The single source of truth for when the branch trades: every reader
+# resolves its window from it via `branch_hours_service`, a closed weekday reads
+# through `branch_holiday_service` exactly like a holiday, and the marketplace
+# fan-out sends it per portal. Editing it here moves all of them from the next
+# request.
 
 
 @router.get("/{branch_id}/weekly-hours", response_model=WeeklyHoursResponse)
@@ -282,9 +290,8 @@ async def set_weekly_hours(
     """Replace the branch's weekly schedule (a weekday with no shift = closed).
 
     Changing this moves what every customer in the branch's zones is quoted and
-    what the marketplaces are sent — the same reach as a holiday.
-    `opening_from`/`opening_to` catches up when the branch-hours cron next runs, or
-    immediately on a manual sync.
+    what the marketplaces are sent — the same reach as a holiday — from the next
+    request, since every reader resolves its window from this schedule directly.
     """
     branch = await crud_service.get_or_404(db, Branch, branch_id)
     rows = await branch_hours_service.set_weekly(

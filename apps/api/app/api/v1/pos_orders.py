@@ -10,6 +10,7 @@ from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import trading_hours
 from app.core.deps import get_current_active_user, get_db
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.permissions import ensure, require
@@ -50,6 +51,7 @@ from app.schemas.pos_order import (
 )
 from app.services import (
     branch_holiday_service,
+    branch_hours_service,
     crud_service,
     email_service,
     option_snapshot,
@@ -173,13 +175,12 @@ def _serialise(order: Order) -> PosOrderResponse:
         aggregator_channel=order.aggregator_channel,
         delivery_provider=payload.delivery_provider,
     )
-    # Same guard, same reason. A hint for the terminal, not the enforcement —
-    # `accept_order` asks the question again with the branch definitely loaded
-    # *and the closed days*, so a payload that could not resolve the hours (or a
-    # hint computed without the closed set here, in a sync serialiser with no db)
-    # costs a 409 and an alarm rather than a driver at a shut shop.
-    if "branch" not in inspect(order).unloaded:
-        payload.may_auto_accept = pos_order_service.may_auto_accept(order, order.branch)
+    # A hint for the terminal, not the enforcement — `accept_order` asks the
+    # question again with the hours and closed days resolved from the weekly
+    # schedule. This is a sync serialiser with no db, so it cannot resolve the
+    # window; it passes None (an optimistic hint), and a wrong hint costs a 409
+    # and an alarm rather than a driver at a shut shop.
+    payload.may_auto_accept = pos_order_service.may_auto_accept(order, None)
     # Written out rather than left to the enum's `str` base, so the register
     # reads `"packed"` and never `"OrderStatusEnum.PACKED"`.
     payload.status = order.status.value if order.status is not None else None
@@ -759,9 +760,13 @@ async def accept_order(
     # accepting now prints a ticket and calls a driver, and doing both for a
     # 03:00 order sends a van to a dark shutter. Asked here with the branch
     # certainly loaded, rather than trusting the hint in the payload.
-    branch = await db.get(Branch, order.branch_id) if order.branch_id else None
     closed = await branch_holiday_service.closed_dates_for(db, order.branch_id)
-    if auto and not pos_order_service.may_auto_accept(order, branch, closed):
+    sched = await branch_hours_service.schedule(db, order.branch_id)
+    placed_at = order.created_at or order.opened_at or utcnow()
+    window = branch_hours_service.effective_window(
+        sched, trading_hours.local(placed_at).date()
+    )
+    if auto and not pos_order_service.may_auto_accept(order, window, closed):
         raise ConflictError(
             "This order was placed outside the branch's opening hours and has "
             "to be accepted by a person."

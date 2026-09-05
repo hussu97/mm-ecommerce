@@ -33,8 +33,6 @@ export interface Branch {
   /** The city, as a customer would name it. Shown on the collection picker. */
   city: string | null;
   city_localized: string | null;
-  opening_from: string;
-  opening_to: string;
   business_day_start: string;
   inventory_end_of_day_time: string;
   receipt_header: string | null;
@@ -97,9 +95,9 @@ export interface WeeklyShift {
 }
 
 /**
- * A branch's weekly schedule — the source of truth for when it trades. The
- * derived `opening_from`/`opening_to` window and the marketplace hours are both
- * kept in step with this by the branch-hours cron.
+ * A branch's weekly schedule — the single source of truth for when it trades.
+ * Every reader (storefront, POS, delivery estimate) resolves its window from
+ * this, and the marketplace hours are mirrored from it.
  */
 export interface WeeklyHours {
   branch_id: string;

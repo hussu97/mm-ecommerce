@@ -1862,9 +1862,8 @@ export interface paths {
          * @description Replace the branch's weekly schedule (a weekday with no shift = closed).
          *
          *     Changing this moves what every customer in the branch's zones is quoted and
-         *     what the marketplaces are sent — the same reach as a holiday.
-         *     `opening_from`/`opening_to` catches up when the branch-hours cron next runs, or
-         *     immediately on a manual sync.
+         *     what the marketplaces are sent — the same reach as a holiday — from the next
+         *     request, since every reader resolves its window from this schedule directly.
          */
         put: operations["set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put"];
         post?: never;
@@ -8970,16 +8969,6 @@ export interface components {
              * @default false
              */
             offers_pickup: boolean;
-            /**
-             * Opening From
-             * @default 00:00
-             */
-            opening_from: string;
-            /**
-             * Opening To
-             * @default 23:59
-             */
-            opening_to: string;
             /** Phone */
             phone?: string | null;
             /** Receipt Footer */
@@ -9237,10 +9226,6 @@ export interface components {
             noon_send_outlet_code: string | null;
             /** Offers Pickup */
             offers_pickup: boolean;
-            /** Opening From */
-            opening_from: string;
-            /** Opening To */
-            opening_to: string;
             /** Phone */
             phone: string | null;
             /** Receipt Footer */
@@ -9313,10 +9298,6 @@ export interface components {
             noon_send_outlet_code?: string | null;
             /** Offers Pickup */
             offers_pickup?: boolean | null;
-            /** Opening From */
-            opening_from?: string | null;
-            /** Opening To */
-            opening_to?: string | null;
             /** Phone */
             phone?: string | null;
             /** Receipt Footer */
@@ -14053,9 +14034,9 @@ export interface components {
             /** Name Ar */
             name_ar?: string | null;
             /** Opening From */
-            opening_from: string;
+            opening_from?: string | null;
             /** Opening To */
-            opening_to: string;
+            opening_to?: string | null;
             /** Phone */
             phone?: string | null;
             /** Reference */

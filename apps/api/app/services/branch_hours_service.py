@@ -1,21 +1,23 @@
 """Resolve a branch's trading window from its weekly schedule.
 
-`branch_weekly_hours` (one shift per weekday, 0=Sunday…6=Saturday) is the source
-of truth for when a branch trades. This turns that schedule into the two shapes
-the rest of the system already reads, so nothing else has to learn about weekdays:
+`branch_weekly_hours` (one shift per weekday, 0=Sunday…6=Saturday) is the single
+source of truth for when a branch trades. This turns that schedule into the two
+shapes the rest of the system reads, so nothing else has to learn about weekdays:
 
-- the `(opens, closes)` window for a given local date — what the daily branch-hours
-  cron stamps onto `Branch.opening_from`/`opening_to` (the derived cache the
-  storefront and the trading-hours engine read), and what the marketplace fan-out
-  sends per portal;
+- the `(opens, closes)` window for a given local date — `effective_window()` gives
+  the day's window, falling through a closed day to the next open one, which is what
+  every "what are today's hours" reader (the trading-hours engine's callers, the
+  storefront pickup display, the courier pickup point) feeds in; and what the
+  marketplace fan-out sends per portal;
 - the weekdays a branch is closed — folded by `branch_holiday_service` into the
   same `closed_dates` a one-off holiday produces, so every "is the branch open"
   consumer treats a closed weekday exactly like a closure with no new code.
 
-A branch with **no weekly rows at all** has no schedule yet (freshly created, or
-not yet filled in): `schedule()` returns None and callers keep the existing single
-`opening_from`/`opening_to` window, with only explicit holidays closing it. That
-keeps behaviour identical to before a schedule is entered.
+A branch with **no weekly rows at all** (freshly created, or not yet filled in)
+has no schedule: `schedule()` returns None and `effective_window()` returns None.
+The trading-hours engine reads an unresolvable window as **always open** (an
+over-optimistic promise beats a shop that silently stops quoting), so a branch is
+open until its schedule is entered — the schedule is the only place hours live now.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ __all__ = [
     "schedule",
     "window_for",
     "next_open_window",
+    "effective_window",
     "list_weekly",
     "set_weekly",
 ]
@@ -99,8 +102,9 @@ def next_open_window(
 ) -> tuple[str, str] | None:
     """The next open day's window at or after `start`, within `horizon` days.
 
-    Used to stamp the derived cache on a day the branch is closed, so the hours the
-    storefront shows are the ones it will next open on rather than a stale window.
+    Lets a reader show the hours a branch will next open on rather than a stale or
+    empty window when it is closed today. `effective_window` layers this on top of
+    today's own window.
     """
     if not sched:
         return None
@@ -111,6 +115,20 @@ def next_open_window(
         if win is not None:
             return win
     return None
+
+
+def effective_window(
+    sched: dict[int, tuple[str, str]] | None, day: date
+) -> tuple[str, str] | None:
+    """The `(opens, closes)` to show/enforce for `day`: its own window, else the
+    next open day's, else None (no schedule, or closed for the whole horizon).
+
+    The one shape every single-window reader wants now that the derived
+    `opening_from`/`opening_to` cache is gone — identical to what that cache held.
+    Callers pair it with `closed_dates` from `branch_holiday_service`, which makes
+    a closed `day` answer closed regardless of the window this returns.
+    """
+    return window_for(sched, day) or next_open_window(sched, day)
 
 
 async def list_weekly(db: AsyncSession, branch_id: Any) -> list[BranchWeeklyHours]:

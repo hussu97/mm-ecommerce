@@ -88,8 +88,6 @@ async def main() -> None:
             tax_number="100123456700003",
             tax_registration_name="Melting Moments Cakes LLC",
             tax_group_id=group.id,
-            opening_from="09:00",
-            opening_to="23:00",
             business_day_start="04:00",
             accepts_reservations=True,
         )

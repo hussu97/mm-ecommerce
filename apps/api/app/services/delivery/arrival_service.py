@@ -43,7 +43,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
-from app.models.branch import Branch
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum
@@ -111,16 +110,17 @@ async def _next_working_moment(db: AsyncSession, order: Order) -> datetime:
     if order.branch_id is None:  # pragma: no cover — column is NOT NULL
         return now
 
-    branch = await db.get(Branch, order.branch_id)
-    if branch is None:  # pragma: no cover — FK is RESTRICT
-        return now
-
-    from app.services import branch_holiday_service
+    from app.services import branch_holiday_service, branch_hours_service
 
     closed = await branch_holiday_service.closed_dates_for(db, order.branch_id)
-    if trading_hours.is_open(now, branch.opening_from, branch.opening_to, closed):
+    sched = await branch_hours_service.schedule(db, order.branch_id)
+    window = branch_hours_service.effective_window(
+        sched, trading_hours.local(now).date()
+    )
+    opens_at, closes_at = window if window else (None, None)
+    if trading_hours.is_open(now, opens_at, closes_at, closed):
         return now
-    return trading_hours.next_opening(now, branch.opening_from, closed)
+    return trading_hours.next_opening(now, opens_at, closed)
 
 
 async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:

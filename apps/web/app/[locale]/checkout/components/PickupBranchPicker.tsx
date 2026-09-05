@@ -64,7 +64,14 @@ export function PickupBranchPicker({
                     <span className="block font-body text-xs text-gray-500 mt-0.5">{address}</span>
                   )}
                   <span className="block font-body text-xs text-gray-400 mt-0.5">
-                    {[city, `${branch.opening_from} – ${branch.opening_to}`].filter(Boolean).join(' · ')}
+                    {[
+                      city,
+                      branch.opening_from && branch.opening_to
+                        ? `${branch.opening_from} – ${branch.opening_to}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </span>
                 </span>
               </button>

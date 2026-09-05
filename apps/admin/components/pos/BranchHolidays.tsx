@@ -142,7 +142,7 @@ export function BranchHolidays() {
         </label>
         {branch && (
           <span className="text-[11px] font-body text-gray-400">
-            Trades {branch.opening_from}–{branch.opening_to} on every other day
+            Trades on its weekly schedule on every other day
           </span>
         )}
       </div>

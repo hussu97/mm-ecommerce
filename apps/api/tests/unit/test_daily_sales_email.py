@@ -338,7 +338,9 @@ def _branches_db(branches):
 
 
 def _branch(name, opening_from="09:00", opening_to="23:00"):
-    return SimpleNamespace(name=name, opening_from=opening_from, opening_to=opening_to)
+    # id keys the stubbed schedule; the window is the same every weekday, which
+    # is what these single-window tests mean by "the branch closes at X".
+    return SimpleNamespace(id=name, name=name, _win=(opening_from, opening_to))
 
 
 async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
@@ -349,6 +351,12 @@ async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
     async def fake_send(_db, *, date_from, date_to, recipients):
         sent.append(date_from)
         return {"sent": []}
+
+    win_by_id = {b.id: b._win for b in branches}
+
+    async def fake_schedule(_db, branch_id):
+        win = win_by_id.get(branch_id)
+        return {wd: win for wd in range(7)} if win else None
 
     with (
         patch.object(
@@ -363,6 +371,7 @@ async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
         ),
         patch.object(dse, "send", fake_send),
         patch.object(dse.advisory_lock, "held", _lock_ok),
+        patch.object(dse.branch_hours_service, "schedule", fake_schedule),
     ):
         await dse._tick(_branches_db(branches), now=now)
     return sent

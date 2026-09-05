@@ -146,7 +146,7 @@ def paid_for_clause():
 
 def may_auto_accept(
     order: Order,
-    branch: Branch | None,
+    window: tuple[str, str] | None,
     closed_dates: Collection[str] = (),
 ) -> bool:
     """
@@ -175,25 +175,26 @@ def may_auto_accept(
     Counter orders are never in question: a cashier is ringing one up in person,
     which is as accepted as an order gets.
 
-    `closed_dates` carries the branch's closed days — holidays and the weekdays it
-    does not trade in its weekly schedule — so an order placed on a day the shop
-    was shut is not auto-accepted either. Empty by default, which reads as the
-    old always-trading behaviour for a caller that has no closed set to hand.
+    `window` is the branch's `(opens, closes)` for the placement day, resolved
+    from its weekly schedule (`branch_hours_service.effective_window`); `None`
+    when the hours are unknown (no schedule, or a sync serialiser with no db to
+    resolve them). `closed_dates` carries the branch's closed days — holidays and
+    the weekdays it does not trade — so an order placed on a shut day is not
+    auto-accepted either. Both default to the always-trading reading.
+
+    Unknown hours resolve to True: refusing would strand the order on a silent
+    terminal, while allowing it prints a ticket at a counter that is probably
+    staffed. The alarm rings either way now, and `accept_order` re-asks with the
+    hours definitely resolved, so an optimistic hint costs a 409, not a rider at
+    a dark shop.
     """
     if order.source != OrderSourceEnum.ONLINE.value:
-        return True
-    if branch is None:
-        # Hours unknown. Refusing would strand the order on a silent terminal;
-        # allowing it prints a ticket at a counter that is probably staffed,
-        # because a branch we cannot load is a database problem and not a shut
-        # shop. The alarm rings either way now, so somebody sees it.
         return True
     placed_at = order.created_at or order.opened_at
     if placed_at is None:  # pragma: no cover — both columns are populated
         return True
-    return trading_hours.is_open(
-        placed_at, branch.opening_from, branch.opening_to, closed_dates
-    )
+    opens_at, closes_at = window if window else (None, None)
+    return trading_hours.is_open(placed_at, opens_at, closes_at, closed_dates)
 
 
 # ─── Loading ──────────────────────────────────────────────────────────────────

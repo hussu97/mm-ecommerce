@@ -3221,18 +3221,6 @@
             "title": "Offers Pickup",
             "type": "boolean"
           },
-          "opening_from": {
-            "default": "00:00",
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-            "title": "Opening From",
-            "type": "string"
-          },
-          "opening_to": {
-            "default": "23:59",
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-            "title": "Opening To",
-            "type": "string"
-          },
           "phone": {
             "anyOf": [
               {
@@ -3944,14 +3932,6 @@
             "title": "Offers Pickup",
             "type": "boolean"
           },
-          "opening_from": {
-            "title": "Opening From",
-            "type": "string"
-          },
-          "opening_to": {
-            "title": "Opening To",
-            "type": "string"
-          },
           "phone": {
             "anyOf": [
               {
@@ -4077,8 +4057,6 @@
           "address_localized",
           "city",
           "city_localized",
-          "opening_from",
-          "opening_to",
           "business_day_start",
           "inventory_end_of_day_time",
           "receipt_header",
@@ -4312,30 +4290,6 @@
               }
             ],
             "title": "Offers Pickup"
-          },
-          "opening_from": {
-            "anyOf": [
-              {
-                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Opening From"
-          },
-          "opening_to": {
-            "anyOf": [
-              {
-                "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Opening To"
           },
           "phone": {
             "anyOf": [
@@ -18469,12 +18423,26 @@
             "title": "Name Ar"
           },
           "opening_from": {
-            "title": "Opening From",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening From"
           },
           "opening_to": {
-            "title": "Opening To",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening To"
           },
           "phone": {
             "anyOf": [
@@ -18495,9 +18463,7 @@
         "required": [
           "id",
           "reference",
-          "name",
-          "opening_from",
-          "opening_to"
+          "name"
         ],
         "title": "PickupBranchResponse",
         "type": "object"
@@ -36481,7 +36447,7 @@
         ]
       },
       "put": {
-        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).\n\nChanging this moves what every customer in the branch's zones is quoted and\nwhat the marketplaces are sent \u2014 the same reach as a holiday.\n`opening_from`/`opening_to` catches up when the branch-hours cron next runs, or\nimmediately on a manual sync.",
+        "description": "Replace the branch's weekly schedule (a weekday with no shift = closed).\n\nChanging this moves what every customer in the branch's zones is quoted and\nwhat the marketplaces are sent \u2014 the same reach as a holiday \u2014 from the next\nrequest, since every reader resolves its window from this schedule directly.",
         "operationId": "set_weekly_hours_api_v1_branches__branch_id__weekly_hours_put",
         "parameters": [
           {

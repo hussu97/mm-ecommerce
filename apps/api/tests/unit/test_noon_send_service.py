@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -487,7 +488,7 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
     "branch_code,expected", [("PCKP_BRANCH01", "PCKP_BRANCH01"), (None, "")]
 )
 async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
-    branch_code, expected
+    branch_code, expected, monkeypatch
 ):
     """
     Which outlet a rider collects from is a property of the place.
@@ -499,9 +500,11 @@ async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
     A branch with no code simply cannot dispatch through noon Send, which is a
     refusal an admin can fix in the field it belongs to.
     """
+    from app.services import branch_hours_service
     from app.services.couriers import lalamove_service
 
     branch = SimpleNamespace(
+        id=uuid.uuid4(),
         name="Melting Moments Cakes",
         reference="K001",
         address="Al Majaz 3, Sharjah",
@@ -511,9 +514,10 @@ async def test_the_outlet_code_comes_from_the_branch_and_nowhere_else(
         phone="+971501234567",
         noon_send_outlet_code=branch_code,
         noon_send_outlet_address_code=None,
-        opening_from="09:00",
-        opening_to="23:00",
     )
+    # Pickup hours are resolved from the weekly schedule now; this test asserts
+    # the outlet identity, not the hours, so a no-schedule stub is enough.
+    monkeypatch.setattr(branch_hours_service, "schedule", AsyncMock(return_value=None))
 
     class _Db:
         async def execute(self, _stmt):

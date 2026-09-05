@@ -23,8 +23,6 @@ export default function BranchesPage() {
       emptyMessage="No branches yet. Create one to start using the POS."
       defaults={{
         type: 'restaurant',
-        opening_from: '09:00',
-        opening_to: '23:00',
         business_day_start: '04:00',
         receives_online_orders: true,
         offers_pickup: false,
@@ -37,7 +35,6 @@ export default function BranchesPage() {
         { header: 'Name', priority: 'primary', render: (b) => <span className="font-medium">{b.name}</span> },
         { header: 'Reference', priority: 'secondary', render: (b) => <code className="text-xs text-gray-500">{b.reference}</code> },
         { header: 'Type', render: (b) => <span className="capitalize">{b.type}</span> },
-        { header: 'Hours', render: (b) => `${b.opening_from} – ${b.opening_to}` },
         { header: 'Day starts', render: (b) => b.business_day_start },
         { header: 'Online', render: (b) => (b.receives_online_orders ? 'Yes' : 'No') },
         { header: 'Collection', render: (b) => (b.offers_pickup ? 'Yes' : 'No') },
@@ -81,14 +78,6 @@ export default function BranchesPage() {
           helper: 'Shown to customers choosing where to collect from',
         },
         { name: 'city_localized', label: 'City (Arabic)', placeholder: 'الشارقة' },
-        {
-          name: 'opening_from',
-          label: 'Opens (today)',
-          placeholder: '09:00',
-          helper:
-            'Derived from the weekly hours below — the daily sync keeps it as today’s shift. Set it directly only as the starting window for a branch with no weekly schedule yet.',
-        },
-        { name: 'opening_to', label: 'Closes (today)', placeholder: '23:00' },
         {
           name: 'business_day_start',
           label: 'Trading day starts',
@@ -134,10 +123,10 @@ export default function BranchesPage() {
       ]}
     />
 
-    {/* The weekly schedule — the source of truth the single window above is
-        derived from. Its own section rather than seven fields on the branch
-        form, and it sits with the holidays below because both answer "when is
-        this branch open". */}
+    {/* The weekly schedule — the single source of truth for when the branch
+        trades. Its own section rather than fields on the branch form, and it
+        sits with the holidays below because both answer "when is this branch
+        open". */}
     <div className="mt-8">
       <BranchWeeklyHours />
     </div>

@@ -2,9 +2,8 @@
 
 For every branch that trades on a marketplace, this reads that marketplace's live
 opening hours and diffs them against MM's canonical weekly schedule
-(`branch_weekly_hours`) and the branch's derived `opening_from`/`opening_to`
-window. It prints a per-branch × channel report and, with `--csv`, writes the
-rows for a spreadsheet.
+(`branch_weekly_hours`) and the window it resolves to for today. It prints a
+per-branch × channel report and, with `--csv`, writes the rows for a spreadsheet.
 
 Read-only against the portals, but it opens real marketplace sessions — so it
 runs on the **live api slot** and needs `CATALOG_SYNC_READ_ENABLED=1` with warm
@@ -26,10 +25,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv as csvmod
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.core import trading_hours
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.models.branch import Branch
@@ -89,8 +90,13 @@ async def main() -> None:
             if not channels:
                 continue
             weekly = await branch_hours_service.list_weekly(db, branch.id)
+            today = datetime.now(trading_hours.TZ).date()
+            win = branch_hours_service.effective_window(
+                await branch_hours_service.schedule(db, branch.id), today
+            )
+            mm_window = f"{win[0]}–{win[1]}" if win else "(none set)"
             print(f"━━ {branch.name} ({branch.reference}) ━━")
-            print(f"   MM window (derived) : {branch.opening_from}–{branch.opening_to}")
+            print(f"   MM window (today)   : {mm_window}")
             print(f"   MM weekly schedule  : {_weekly_line(weekly) or '(none set)'}")
 
             if settings.CATALOG_SYNC_READ_ENABLED:
@@ -113,7 +119,7 @@ async def main() -> None:
                         "branch": branch.name,
                         "reference": branch.reference,
                         "channel": channel,
-                        "mm_window": f"{branch.opening_from}-{branch.opening_to}",
+                        "mm_window": f"{win[0]}-{win[1]}" if win else "",
                         "mm_weekly": _weekly_line(weekly),
                         "status": status,
                         "detail": detail,

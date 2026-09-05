@@ -1,14 +1,9 @@
-"""Keep each branch's derived window — and, later, the integrators — in step
-with its weekly schedule.
+"""Mirror each branch's weekly schedule out to the integrators.
 
-The weekly schedule (`branch_weekly_hours`) is the source of truth for when a
-branch trades; `Branch.opening_from`/`opening_to` is a **cache of today's shift**
-that the storefront and the trading-hours engine read. This is what refreshes
-that cache: it walks every active branch, resolves today's window from the
-schedule — falling through a holiday or a closed weekday to the next open day so
-the shown hours are the ones the branch next opens on — and stamps it. Idempotent:
-a branch already showing the right window is left untouched, so the loop can run
-often and write rarely.
+The weekly schedule (`branch_weekly_hours`) is the single source of truth for
+when a branch trades; there is no longer a `Branch.opening_from`/`opening_to`
+cache — every "is the branch open / what are today's hours" reader resolves the
+window from the schedule on demand via `branch_hours_service`.
 
 It runs as a background loop (once an hour, like its neighbours in
 `app_setup` — no cron in this stack, an advisory lock so a second copy is
@@ -252,11 +247,12 @@ async def _push_to_channels(
 async def sync_branch(
     db: AsyncSession, branch: Branch, *, today: date | None = None
 ) -> dict[str, object]:
-    """Refresh one branch's derived window from its schedule and push to channels.
+    """Mirror one branch's weekly schedule out to every integrator it maps to.
 
     Flushes; the caller commits (a request via `get_db`, or the loop's `_tick`).
-    A branch with no weekly schedule is left on whatever window it has — there is
-    nothing to derive, and overwriting it would erase a hand-set fallback.
+    A branch with no weekly schedule has nothing to mirror. The schedule is the
+    only place a branch's hours live now — there is no single-window column to
+    stamp — so open/closed everywhere is resolved from it on demand.
     """
     day = today or _today()
     sched = await branch_hours_service.schedule(db, branch.id)
@@ -264,26 +260,15 @@ async def sync_branch(
         return {"branch": branch.name, "status": "no-schedule"}
 
     open_today = branch_hours_service.window_for(sched, day)
-    # What to display: today's window when open, else the next open day's, so a
-    # closed day shows the hours it will next open on rather than a stale pair.
-    display = open_today or branch_hours_service.next_open_window(sched, day)
-
-    changed = False
-    if display is not None:
-        opens, closes = display
-        if (branch.opening_from, branch.opening_to) != (opens, closes):
-            branch.opening_from = opens
-            branch.opening_to = closes
-            changed = True
-    if changed:
-        await db.flush()
+    # Today's window when open, else the next open day's — what Foodics's single
+    # daily window is set to (the aggregators get the whole week regardless).
+    display = branch_hours_service.effective_window(sched, day)
 
     await _push_to_channels(db, branch, sched, display=display)
     return {
         "branch": branch.name,
         "status": "closed-today" if open_today is None else "open",
         "window": None if display is None else f"{display[0]}-{display[1]}",
-        "updated": changed,
     }
 
 
@@ -317,13 +302,13 @@ async def _tick(db: AsyncSession) -> None:
             return
         results = await sync_all(db)
         await db.commit()
-        updated = sum(1 for r in results if r.get("updated"))
-        if updated:
-            logger.info("branch-hours sync: stamped %s branch window(s)", updated)
+        synced = sum(1 for r in results if r.get("status") != "no-schedule")
+        if synced:
+            logger.info("branch-hours sync: mirrored %s branch(es)", synced)
 
 
 async def run_forever() -> None:
-    """Refresh the derived windows once an hour, forever."""
+    """Mirror every branch's weekly schedule to its integrators once an hour."""
     logger.info("Branch hours sync loop started")
     while True:
         try:

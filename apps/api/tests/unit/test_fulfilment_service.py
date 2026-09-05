@@ -95,6 +95,12 @@ class _Db:
             def first(self_inner):
                 return delivery
 
+            def all(self_inner):
+                # The branch's weekly schedule query (for the pickup window)
+                # resolves to "no schedule" here — these tests are about the
+                # stage machine and the branch identity, not the hours.
+                return []
+
         class _Result:
             def scalars(self_inner):
                 return _Scalars()

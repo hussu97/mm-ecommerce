@@ -211,9 +211,8 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
 
             # Branch hours sync. Same reasoning as its neighbours — no cron here,
             # an advisory lock so a second copy is harmless, storefront app only.
-            # Hourly it re-derives each branch's `opening_from`/`opening_to` from
-            # its weekly schedule (the source of truth) and, once writers exist,
-            # pushes the day's hours to the marketplaces.
+            # Hourly it mirrors each branch's weekly schedule (the source of truth)
+            # out to the marketplaces + Foodics, gated behind the sync flags.
             from app.services import branch_hours_sync
 
             background.append(

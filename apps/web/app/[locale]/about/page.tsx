@@ -291,9 +291,11 @@ export default async function AboutPage({
                       {address}
                     </p>
                   )}
-                  <p className="font-body text-xs text-gray-400 mb-4">
-                    {point.opening_from} – {point.opening_to}
-                  </p>
+                  {point.opening_from && point.opening_to && (
+                    <p className="font-body text-xs text-gray-400 mb-4">
+                      {point.opening_from} – {point.opening_to}
+                    </p>
+                  )}
                   {point.maps_url && (
                     <a
                       href={point.maps_url}
