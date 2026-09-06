@@ -12333,6 +12333,10 @@ export interface components {
         InventoryLevelResponse: {
             /** Average Cost */
             average_cost: string;
+            /** Branch Id */
+            branch_id?: string | null;
+            /** Branch Name */
+            branch_name?: string | null;
             /**
              * Id
              * Format: uuid
@@ -12373,6 +12377,8 @@ export interface components {
              * Format: uuid
              */
             warehouse_id: string;
+            /** Warehouse Name */
+            warehouse_name?: string | null;
         };
         /** InventoryTransactionCreate */
         InventoryTransactionCreate: {

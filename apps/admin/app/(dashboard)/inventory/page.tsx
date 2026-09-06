@@ -317,6 +317,56 @@ function LevelsTab() {
 
   const totalValue = levels.reduce((sum, l) => sum + Number(l.total_value ?? 0), 0);
 
+  // Default to branch then item (the server already returns that order); the
+  // headers let a manager re-sort by any unit column without losing the branch
+  // grouping as the tie-break.
+  const [sortKey, setSortKey] = useState<'branch' | 'item' | 'qty' | 'unit' | 'value'>('branch');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const toggleSort = (key: typeof sortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+  const sortHeader =
+    (label: string, key: typeof sortKey) =>
+    () => (
+      <button
+        type="button"
+        onClick={() => toggleSort(key)}
+        className="inline-flex items-center gap-1 hover:text-primary"
+      >
+        {label}
+        {sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+      </button>
+    );
+  const fieldOf = (l: InventoryLevel): string | number => {
+    switch (sortKey) {
+      case 'qty':
+        return Number(l.quantity);
+      case 'value':
+        return Number(l.total_value ?? 0);
+      case 'item':
+        return l.item_name ?? '';
+      case 'unit':
+        return l.ingredient_unit ?? '';
+      default:
+        return l.branch_name ?? '';
+    }
+  };
+  const sorted = [...levels].sort((a, b) => {
+    const av = fieldOf(a);
+    const bv = fieldOf(b);
+    let c =
+      typeof av === 'number' && typeof bv === 'number'
+        ? av - bv
+        : String(av).localeCompare(String(bv));
+    if (c === 0) c = String(a.branch_name ?? '').localeCompare(String(b.branch_name ?? ''));
+    if (c === 0) c = String(a.item_name ?? '').localeCompare(String(b.item_name ?? ''));
+    return sortDir === 'asc' ? c : -c;
+  });
+
   return (
     <div className="p-6 max-w-[1400px]">
       <div className="mb-4 flex flex-wrap items-end gap-3">
@@ -361,10 +411,20 @@ function LevelsTab() {
         </p>
       ) : (
         <DataTable<InventoryLevel>
-          rows={levels}
+          rows={sorted}
           rowKey={(l) => l.id}
           columns={[
-            { header: 'Item', priority: 'primary', render: (l) => l.item_name },
+            {
+              header: 'Branch',
+              headerRender: sortHeader('Branch', 'branch'),
+              render: (l) => l.branch_name ?? '—',
+            },
+            {
+              header: 'Item',
+              priority: 'primary',
+              headerRender: sortHeader('Item', 'item'),
+              render: (l) => l.item_name,
+            },
             {
               header: 'SKU',
               priority: 'secondary',
@@ -373,6 +433,7 @@ function LevelsTab() {
             {
               header: 'On hand',
               className: 'text-right',
+              headerRender: sortHeader('On hand', 'qty'),
               render: (l) => (
                 <>
                   {Number(l.quantity)}{' '}
@@ -398,6 +459,7 @@ function LevelsTab() {
             {
               header: 'Value',
               className: 'text-right',
+              headerRender: sortHeader('Value', 'value'),
               render: (l) => formatCurrency(l.total_value ?? 0),
             },
             {
@@ -482,18 +544,25 @@ function BranchFilter({ value, onChange }: { value: string; onChange: (id: strin
 
 function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
   const [branchId, setBranchId] = useState('');
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<InventoryTransaction[]>([]);
   useEffect(() => {
-    if (!branchId) return;
+    void branchesApi.list().then(setBranches).catch(() => setBranches([]));
+  }, []);
+  useEffect(() => {
+    // Load every branch when none is picked — a super-admin sees the whole
+    // ledger, which is what "nothing shows until you choose a branch" was hiding.
     void inventoryApi
       .transactions({
-        branch_id: branchId,
+        branch_id: branchId || undefined,
         type: countOnly ? 'inventory_count' : undefined,
       })
       .then(setRows);
   }, [branchId, countOnly]);
-  return <div className="p-6 max-w-[1500px] space-y-4"><BranchFilter value={branchId} onChange={setBranchId} /><p className="text-sm text-gray-500">{countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : 'Every signed stock movement in immutable posting order, with source and running balance.'}</p><DataTable rows={branchId ? rows : []} rowKey={(row) => row.id} columns={[
+  const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
+  return <div className="p-6 max-w-[1500px] space-y-4"><BranchFilter value={branchId} onChange={setBranchId} /><p className="text-sm text-gray-500">{countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : 'Every signed stock movement in immutable posting order, with source and running balance.'}</p><DataTable rows={rows} rowKey={(row) => row.id} columns={[
     { header: 'Seq', render: (row) => row.posting_sequence ?? 'Draft' },
+    { header: 'Branch', render: (row) => branchName(row.branch_id) },
     { header: 'Reference', priority: 'primary', render: (row) => row.reference },
     { header: 'Type', render: (row) => row.type.replaceAll('_', ' ') },
     { header: 'Source', render: (row) => row.source_type ? `${row.source_type} · ${row.source_id ?? ''}` : 'Manual' },

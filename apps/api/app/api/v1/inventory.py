@@ -321,9 +321,15 @@ async def list_levels(
 ):
     """The inventory levels report: what is on hand and what needs reordering."""
 
+    # Always carry the warehouse and its branch: a level is one row per
+    # (item, warehouse), so without the branch the same item shows once per
+    # branch and reads as a duplicate. Naming the branch — and sorting by it
+    # first — is what tells the two rows apart.
     stmt = (
-        select(InventoryLevel, InventoryItem)
+        select(InventoryLevel, InventoryItem, Warehouse, Branch)
         .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
+        .join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id)
+        .join(Branch, Branch.id == Warehouse.branch_id)
         .where(InventoryItem.deleted_at.is_(None))
     )
     if warehouse_id:
@@ -332,17 +338,13 @@ async def list_levels(
         stmt = stmt.where(InventoryLevel.warehouse_id == warehouse_id)
     elif branch_id:
         await access_service.assert_branch_access(db, user, branch_id)
-        stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(
-            Warehouse.branch_id == branch_id
-        )
+        stmt = stmt.where(Warehouse.branch_id == branch_id)
     elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(
-            Warehouse.branch_id.in_(access_service.branch_ids_for(user))
-        )
-    stmt = stmt.order_by(InventoryItem.name).limit(limit)
+        stmt = stmt.where(Warehouse.branch_id.in_(access_service.branch_ids_for(user)))
+    stmt = stmt.order_by(Branch.name, InventoryItem.name).limit(limit)
 
     payload: list[InventoryLevelResponse] = []
-    for level, item in (await db.execute(stmt)).all():
+    for level, item, warehouse_row, branch_row in (await db.execute(stmt)).all():
         below = Decimal(str(level.quantity)) < Decimal(str(item.minimum_level))
         if below_minimum_only and not below:
             continue
@@ -354,6 +356,9 @@ async def list_levels(
         row.par_level = item.par_level
         row.total_value = level.total_value
         row.is_below_minimum = below
+        row.branch_id = branch_row.id
+        row.branch_name = branch_row.name
+        row.warehouse_name = warehouse_row.name
         payload.append(row)
     return payload
 

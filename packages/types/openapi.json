@@ -11940,6 +11940,29 @@
             "title": "Average Cost",
             "type": "string"
           },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -12068,6 +12091,17 @@
             "format": "uuid",
             "title": "Warehouse Id",
             "type": "string"
+          },
+          "warehouse_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warehouse Name"
           }
         },
         "required": [

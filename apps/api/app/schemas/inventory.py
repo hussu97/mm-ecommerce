@@ -209,6 +209,9 @@ class InventoryLevelResponse(ORMModel):
     par_level: Decimal | None = None
     total_value: Decimal | None = None
     is_below_minimum: bool = False
+    branch_id: UUID | None = None
+    branch_name: str | None = None
+    warehouse_name: str | None = None
 
 
 # ─── Suppliers ────────────────────────────────────────────────────────────────

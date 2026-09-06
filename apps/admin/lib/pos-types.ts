@@ -412,6 +412,9 @@ export interface InventoryLevel {
   par_level: number | null;
   total_value: number | null;
   is_below_minimum: boolean;
+  branch_id: string | null;
+  branch_name: string | null;
+  warehouse_name: string | null;
 }
 
 export interface Supplier {
