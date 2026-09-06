@@ -111,6 +111,19 @@ class Order(Base, UUIDMixin, TimestampMixin):
         status_vocabulary("orders", "order_type", OrderTypeEnum, nullable=True),
         # Migration 100: check numbers, tills and Z-reports join on this string.
         business_date_format("orders"),
+        # Migration 199: an aggregator order's marketplace ref is unique per DAY per
+        # channel, not for all time — Noon reuses its short code ("6227") daily. The
+        # business_date keeps a new day's 6227 from colliding with an old one while
+        # still forbidding two of the same code on the same day.
+        Index(
+            "uq_orders_agg_channel_ref_business_date",
+            "source",
+            "aggregator_channel",
+            "external_reference",
+            "business_date",
+            unique=True,
+            postgresql_where=text("(source)::text = 'aggregator'::text"),
+        ),
     )
 
     order_number: Mapped[str] = mapped_column(

@@ -835,16 +835,23 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # `uq_orders_source_external_reference` (now keyed on aggregator_channel too,
         # migration 183) lets the two coexist once the adopt no longer merges them.
         channel_names = reconcile.grubops_channel_names_including(channel)
-        match = [Order.external_reference == order_map.external_id]
+        # BOTH the external_reference and the display-code match must be scoped to
+        # this branch and placed day. The short externalId ("6227") is a
+        # per-branch-per-DAY sequence Noon reuses, and GrubOps stores it on
+        # `external_reference` too — so an un-scoped `external_reference == 6227`
+        # match adopted a *different day's* order with the same code (a Sept-6 Noon
+        # order merged onto a Sept-4 one and never appeared in MM). Only the
+        # display-code half used to be scoped; scope both.
+        scope = [Order.branch_id == branch_id]
         if placed_day:
-            match.append(
-                and_(
-                    Order.aggregator_display_code == order_map.external_id,
-                    Order.branch_id == branch_id,
-                    func.to_char(func.timezone(_TZ, Order.created_at), "YYYY-MM-DD")
-                    == placed_day,
-                )
+            scope.append(
+                func.to_char(func.timezone(_TZ, Order.created_at), "YYYY-MM-DD")
+                == placed_day
             )
+        match = [
+            and_(Order.external_reference == order_map.external_id, *scope),
+            and_(Order.aggregator_display_code == order_map.external_id, *scope),
+        ]
         adopted = await db.scalar(
             select(Order)
             .where(
