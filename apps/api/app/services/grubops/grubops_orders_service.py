@@ -654,15 +654,32 @@ def money_fields_from_info(info: dict) -> dict[str, Decimal]:
     sets nor collects the aggregator's delivery charge (it is not part of `total`),
     so `delivery_fee`/`low_order_fee` stay zero and what the customer paid rides the
     aggregator-only column, for the receipt alone."""
+    from app.services.orders.order_pricing import VAT_RATE
+    from app.services.pos import pos_pricing
+
     header = info.get("orderHeader") or {}
     total = _num(header.get("totalPrice"))
-    vat_amount = _num(header.get("taxAmount"))
     subtotal = header.get("subtotal")
     subtotal = _num(subtotal) if subtotal is not None else _num(header.get("unitPrice"))
-    net = header.get("netPrice")
-    total_excl_vat = _num(net) if net is not None else money(total - vat_amount)
     taxes = info.get("orderTaxes") or []
-    vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else Decimal("0.05")
+    vat_amount = _num(header.get("taxAmount"))
+    if vat_amount <= 0:
+        # The payload did not itemise tax. A UAE storefront price is VAT-inclusive
+        # and every catalogue item is standard-rated, so the shop owes 5% on the
+        # gross whatever GrubTech reported — deriving it (like the counter/website
+        # canon, order_pricing.VAT_RATE, and the scrape path) rather than booking the
+        # sale VAT-free. Trusting taxAmount left ~1 in 4 aggregator sales at zero VAT.
+        total_excl_vat, vat_amount = pos_pricing.split_inclusive_tax(
+            money(total), VAT_RATE
+        )
+        vat_rate = VAT_RATE
+    else:
+        vat_amount = money(vat_amount)
+        net = header.get("netPrice")
+        total_excl_vat = (
+            money(_num(net)) if net is not None else money(total) - vat_amount
+        )
+        vat_rate = _num(taxes[0].get("rate")) / Decimal("100") if taxes else VAT_RATE
     return {
         "delivery_fee": Decimal("0"),
         "aggregator_delivery_fee": money(_num(header.get("deliveryTotalPrice"))),
@@ -671,8 +688,8 @@ def money_fields_from_info(info: dict) -> dict[str, Decimal]:
         "discount_amount": money(_num(header.get("discountAmount"))),
         "total": money(total),
         "vat_rate": vat_rate.quantize(Decimal("0.0001")),
-        "vat_amount": money(vat_amount),
-        "total_excl_vat": money(total_excl_vat),
+        "vat_amount": vat_amount,
+        "total_excl_vat": total_excl_vat,
     }
 
 

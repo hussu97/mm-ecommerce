@@ -71,7 +71,7 @@ from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
 from app.services.orders.order_pricing import VAT_RATE
-from app.services.pos import pos_order_service
+from app.services.pos import pos_order_service, pos_pricing
 
 logger = logging.getLogger(__name__)
 
@@ -269,8 +269,13 @@ def _money_fields(agg: AggregatorOrder) -> dict:
     kept them — so only the customer-facing delivery charge is carried, on its own
     column, for the record."""
     total = money(agg.gross_sales or Decimal("0"))
-    vat = money(agg.vat_amount or Decimal("0"))
-    excl = money(total - vat)
+    # Output VAT is the shop's to owe on the gross it charged, not the aggregator's
+    # to report: a UAE storefront price is VAT-inclusive and every catalogue item is
+    # standard-rated, so VAT is DERIVED from the total the way the counter/website
+    # canon does (order_pricing.VAT_RATE) rather than trusted from the provider's
+    # `vat_amount` — which is absent or zero on ~1 in 4 orders and would otherwise
+    # book a real sale VAT-free, leaving the shop owing 5% it never recorded.
+    excl, vat = pos_pricing.split_inclusive_tax(total, VAT_RATE)
     return {
         "subtotal": excl,
         "discount_amount": Decimal("0"),
@@ -614,8 +619,11 @@ async def _build_order(
     # the lifecycle (net zero for an order that arrives already cancelled).
     if draw_stock:
         await _decrement_stock(db, order.id)
-    if (agg.vat_amount or 0) > 0:
-        fields = _money_fields(agg)
+    # The VAT row is written whenever the DERIVED output VAT is non-zero (i.e. any
+    # sale with a total), not only when the provider itemised tax — same reasoning
+    # as `_money_fields`: the shop owes the 5% regardless of what the payload said.
+    fields = _money_fields(agg)
+    if fields["vat_amount"] > 0:
         db.add(
             OrderTax(
                 order_id=order.id,

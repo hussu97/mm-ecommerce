@@ -194,9 +194,12 @@ def test_unknown_channel_has_no_mapping():
 
 
 # ── money mapping ────────────────────────────────────────────────────────────
-def test_money_fields_split_vat_out_of_total():
+def test_money_fields_derives_inclusive_vat_from_total():
+    # Output VAT is derived from the gross the shop charged (inclusive 5%), NOT
+    # trusted from the provider figure — a clean 42.00 splits to 40.00 + 2.00, and
+    # the wrong provider vat_amount is ignored.
     fields = promote._money_fields(
-        _agg(gross_sales=Decimal("42.00"), vat_amount=Decimal("2.00"))
+        _agg(gross_sales=Decimal("42.00"), vat_amount=Decimal("999.00"))
     )
     assert fields["total"] == Decimal("42.00")
     assert fields["vat_amount"] == Decimal("2.00")
@@ -208,11 +211,14 @@ def test_money_fields_split_vat_out_of_total():
     assert fields["discount_amount"] == Decimal("0")
 
 
-def test_money_fields_no_vat_is_zero_rate():
+def test_money_fields_derives_vat_even_when_provider_reports_none():
+    # A provider that itemised no tax must not book the sale VAT-free: 40.00
+    # inclusive is 38.10 + 1.90 (the whole reason the zero-VAT backfill exists).
     fields = promote._money_fields(_agg(gross_sales=Decimal("40.00"), vat_amount=None))
-    assert fields["vat_amount"] == Decimal("0")
-    assert fields["vat_rate"] == Decimal("0")
-    assert fields["total"] == fields["subtotal"] == Decimal("40.00")
+    assert fields["total"] == Decimal("40.00")
+    assert fields["total_excl_vat"] == Decimal("38.10")
+    assert fields["vat_amount"] == Decimal("1.90")
+    assert fields["vat_rate"] == Decimal("0.05")
     assert fields["aggregator_delivery_fee"] == Decimal("0")
 
 

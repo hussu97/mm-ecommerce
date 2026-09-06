@@ -144,6 +144,27 @@ async def test_a_line_priced_only_on_a_modifier_gets_a_nonzero_total():
     assert items["Plain Box"].total_price == Decimal("100.00")
 
 
+def test_money_fields_derive_vat_when_the_payload_omits_it():
+    # GrubTech often sends no taxAmount. A UAE storefront price is VAT-inclusive
+    # and standard-rated, so the shop owes 5% on the gross regardless — derive it
+    # (40.00 → 38.10 + 1.90) rather than booking the sale VAT-free.
+    fields = g.money_fields_from_info({"orderHeader": {"totalPrice": 40}})
+    assert fields["total"] == Decimal("40.00")
+    assert fields["total_excl_vat"] == Decimal("38.10")
+    assert fields["vat_amount"] == Decimal("1.90")
+    assert fields["vat_rate"] == Decimal("0.0500")
+
+
+def test_money_fields_keep_the_payloads_own_tax_when_it_reports_one():
+    # When GrubTech DID itemise the tax, its figure is kept verbatim.
+    fields = g.money_fields_from_info(
+        {"orderHeader": {"totalPrice": 42, "taxAmount": 2, "netPrice": 40}}
+    )
+    assert fields["total"] == Decimal("42.00")
+    assert fields["vat_amount"] == Decimal("2.00")
+    assert fields["total_excl_vat"] == Decimal("40.00")
+
+
 def test_a_prepared_order_stops_at_the_shop_not_packed():
     # The shop, not the poll loop, owns `packed`: it is the Packed button that
     # fires the Foodics dispatch and calls the rider. So the prepared/dispatched
