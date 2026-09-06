@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -321,7 +321,12 @@ class TransactionLineResponse(ORMModel):
     balance_after_quantity: Decimal | None = None
     balance_after_value: Decimal | None = None
     recipe_version_id: UUID | None = None
-    recipe_path: list[dict] = []
+    #: The recipe expansion this movement came from. The consumption poster stores
+    #: the *paths* it walked (a list of paths, each path a list of hop dicts), while
+    #: simpler movements store a single flat path — so this is a list of arbitrary
+    #: JSON, not a fixed shape. Declaring it `list[dict]` made every
+    #: consumption_from_orders row fail validation and 500'd the whole ledger.
+    recipe_path: list[Any] = []
     lot_id: UUID | None = None
     expected_quantity: Decimal | None
     notes: str | None

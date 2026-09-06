@@ -580,23 +580,47 @@ function BranchFilter({ value, onChange }: { value: string; onChange: (id: strin
 
 function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
   const [branchId, setBranchId] = useState('');
+  const [businessDate, setBusinessDate] = useState('');
+  const [search, setSearch] = useState('');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<InventoryTransaction[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     void branchesApi.list().then(setBranches).catch(() => setBranches([]));
   }, []);
   useEffect(() => {
     // Load every branch when none is picked — a super-admin sees the whole
     // ledger, which is what "nothing shows until you choose a branch" was hiding.
+    setLoading(true);
+    setError(null);
     void inventoryApi
       .transactions({
         branch_id: branchId || undefined,
+        business_date: businessDate || undefined,
         type: countOnly ? 'inventory_count' : undefined,
       })
-      .then(setRows);
-  }, [branchId, countOnly]);
+      .then(setRows)
+      .catch(() => {
+        setRows([]);
+        setError('Could not load the ledger. Try again in a moment.');
+      })
+      .finally(() => setLoading(false));
+  }, [branchId, businessDate, countOnly]);
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
-  return <div className="p-6 max-w-[1500px] space-y-4"><BranchFilter value={branchId} onChange={setBranchId} /><p className="text-sm text-gray-500">{countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : 'Every signed stock movement in immutable posting order, with source and running balance.'}</p><DataTable rows={rows} rowKey={(row) => row.id} columns={[
+  // Client-side search across reference, type, branch and the item names in each
+  // movement — so "flour" or a reference number narrows the loaded ledger without
+  // a round trip.
+  const term = search.trim().toLowerCase();
+  const visible = term
+    ? rows.filter((row) =>
+        [row.reference, row.type, branchName(row.branch_id), ...row.items.map((i) => i.item_name)]
+          .join(' ')
+          .toLowerCase()
+          .includes(term),
+      )
+    : rows;
+  return <div className="p-6 max-w-[1500px] space-y-4"><div className="flex flex-wrap items-end gap-3"><BranchFilter value={branchId} onChange={setBranchId} /><Input label="Business date" type="date" value={businessDate} onChange={(e) => setBusinessDate(e.target.value)} className="w-44" /><Input label="Search reference or item" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. flour, CFO-000459" className="w-72" />{(branchId || businessDate || search) && <Button variant="outline" size="sm" className="mb-1" onClick={() => { setBranchId(''); setBusinessDate(''); setSearch(''); }}>Clear</Button>}</div><p className="text-sm text-gray-500">{loading ? 'Loading…' : error ? error : countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : `${visible.length} movement${visible.length === 1 ? '' : 's'} — every signed stock movement in immutable posting order, with source and running balance.`}</p><DataTable rows={visible} rowKey={(row) => row.id} columns={[
     { header: 'Seq', render: (row) => row.posting_sequence ?? 'Draft' },
     { header: 'Branch', render: (row) => branchName(row.branch_id) },
     { header: 'Reference', priority: 'primary', render: (row) => row.reference },

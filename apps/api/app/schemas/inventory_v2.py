@@ -295,7 +295,9 @@ class OrderInventoryMovementLine(BaseModel):
     signed_quantity: Decimal
     balance_after_quantity: Decimal | None
     recipe_version_id: UUID | None
-    recipe_path: list[dict[str, Any]]
+    # A list of arbitrary JSON, not a fixed shape — the consumption poster stores a
+    # list of paths (each a list of hop dicts). See TransactionLineResponse.recipe_path.
+    recipe_path: list[Any]
 
 
 class OrderInventoryMovement(BaseModel):
