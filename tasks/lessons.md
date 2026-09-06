@@ -1444,3 +1444,14 @@ recipe worked.
 **Rule:** after creating an ORM aggregate, carry the known empty state forward
 instead of reading an unloaded relationship. Test first-creation as well as
 update/idempotency paths for every async importer.
+
+### Operator scripts must not depend on the caller's working directory (2026-09-06)
+
+The direct-recipe seed ran locally because the shell was already in `apps/api`,
+but production invokes `python scripts/…` from its container. Python then puts
+`/app/scripts` rather than `/app` on `sys.path`, so the script could not import
+the application package. The dry-run failed before its transaction committed.
+
+**Rule:** standalone API scripts must add their API-root parent to `sys.path`
+before importing `app.*`, and be smoke-tested from a different working
+directory—the same form used by the production operator command.

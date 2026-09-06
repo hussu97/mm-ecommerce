@@ -16,13 +16,20 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import re
+import sys
 from collections import Counter
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
+
+# ``python scripts/...`` sets sys.path to ``scripts`` rather than the API root.
+# Production operator commands use that invocation form, so make the package
+# import independent of the caller's working directory.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import settings
 from app.models.inventory import InventoryItem
