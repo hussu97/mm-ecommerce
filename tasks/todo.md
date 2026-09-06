@@ -150,7 +150,7 @@ Three parallel audits. Real gaps found + FIXED:
 - [x] Initialise all required report-template columns before the first database flush and preserve the existing update/versioning path.
 - [x] Add a focused regression test for first-time template creation.
 - [x] Make the admin builder explain the right Sharjah workflow, select relevant items safely, and show a recoverable save error.
-- [ ] Verify backend/admin checks, deploy, and confirm the production endpoint no longer produces a null `report_type` failure.
+- [x] Verify backend/admin checks, deploy, and confirm the production endpoint no longer produces a null `report_type` failure (GitHub Actions 34016015407 green; live API first-create smoke test passed and rolled back).
 
 ## Invariants and business-logic review
 
