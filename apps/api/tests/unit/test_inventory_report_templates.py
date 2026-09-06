@@ -26,6 +26,17 @@ class _TemplateResult:
         return self.template
 
 
+class _TemplateListResult:
+    def __init__(self, templates: list[InventoryReportTemplate]):
+        self.templates = templates
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.templates
+
+
 @pytest.mark.asyncio
 async def test_new_report_template_has_required_columns_before_first_flush():
     """The flush that allocates the template ID must be insertable on PostgreSQL."""
@@ -39,6 +50,7 @@ async def test_new_report_template_has_required_columns_before_first_flush():
         ),
         add=MagicMock(side_effect=added.append),
         flush=AsyncMock(),
+        scalar=AsyncMock(return_value=0),
         execute=AsyncMock(),
     )
     data = ReportTemplateUpsert(
@@ -76,8 +88,11 @@ async def test_new_report_template_has_required_columns_before_first_flush():
 
     async def execute(_statement):
         template = next(
-            value for value in added if isinstance(value, InventoryReportTemplate)
+            (value for value in added if isinstance(value, InventoryReportTemplate)),
+            None,
         )
+        if template is None:
+            return SimpleNamespace()
         return _TemplateResult(template)
 
     db.execute.side_effect = execute
@@ -96,4 +111,135 @@ async def test_new_report_template_has_required_columns_before_first_flush():
         "approval_cost_threshold": Decimal("100"),
         "approval_variance_percent": Decimal("10"),
     }
+    assert result.version_number == 1
     db.flush.assert_awaited()
+
+
+def test_pos_template_selection_never_falls_back_after_latest_is_deactivated():
+    branch_id = uuid4()
+    production_v1 = InventoryReportTemplate(
+        id=uuid4(),
+        branch_id=branch_id,
+        name="Production Report - SHJ",
+        report_type="production",
+        version_number=1,
+        is_active=True,
+    )
+    production_v2 = InventoryReportTemplate(
+        id=uuid4(),
+        branch_id=branch_id,
+        name="Production Report - SHJ",
+        report_type="production",
+        version_number=2,
+        is_active=False,
+    )
+    packaging_v1 = InventoryReportTemplate(
+        id=uuid4(),
+        branch_id=branch_id,
+        name="Packaging Report - SHJ",
+        report_type="packaging",
+        version_number=1,
+        is_active=True,
+    )
+
+    current = report_service.latest_active_templates(
+        [production_v1, production_v2, packaging_v1]
+    )
+
+    assert [
+        (template.report_type, template.version_number) for template in current
+    ] == [("packaging", 1)]
+
+
+@pytest.mark.asyncio
+async def test_template_update_appends_a_same_name_revision():
+    branch_id = uuid4()
+    item_id = uuid4()
+    existing = InventoryReportTemplate(
+        id=uuid4(),
+        branch_id=branch_id,
+        name="Production Report - SHJ",
+        report_type="production",
+        cadence="per_business_day",
+        version_number=1,
+        is_active=True,
+    )
+    added: list[object] = []
+    db = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=[SimpleNamespace(id=branch_id), SimpleNamespace(id=item_id)]
+        ),
+        add=MagicMock(side_effect=added.append),
+        flush=AsyncMock(),
+        scalar=AsyncMock(return_value=1),
+        execute=AsyncMock(),
+    )
+    data = ReportTemplateUpsert(
+        branch_id=branch_id,
+        name="Production Report - SHJ",
+        report_type="production",
+        cadence="per_till",
+        is_required=True,
+        is_active=True,
+        configuration={},
+        items=[{"item_id": item_id, "required_input": "production"}],
+    )
+
+    async def flush_assigns_id():
+        created = next(
+            value for value in added if isinstance(value, InventoryReportTemplate)
+        )
+        created.id = uuid4()
+
+    async def execute(_statement):
+        created = next(
+            (value for value in added if isinstance(value, InventoryReportTemplate)),
+            None,
+        )
+        return _TemplateResult(created) if created else SimpleNamespace()
+
+    db.flush.side_effect = flush_assigns_id
+    db.execute.side_effect = execute
+
+    created = await report_service.upsert_template(db, template=existing, data=data)
+
+    assert created.id != existing.id
+    assert created.name == existing.name
+    assert created.version_number == 2
+    assert created.cadence == "per_till"
+    assert existing.version_number == 1
+    assert existing.cadence == "per_business_day"
+
+
+@pytest.mark.asyncio
+async def test_deactivating_latest_revision_does_not_mutate_prior_revision():
+    branch_id = uuid4()
+    prior = InventoryReportTemplate(
+        id=uuid4(),
+        branch_id=branch_id,
+        name="Production Report - SHJ",
+        report_type="production",
+        version_number=1,
+        is_active=True,
+    )
+    latest = InventoryReportTemplate(
+        id=uuid4(),
+        branch_id=branch_id,
+        name="Production Report - SHJ",
+        report_type="production",
+        version_number=2,
+        is_active=True,
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[SimpleNamespace(), _TemplateListResult([prior, latest])]
+        ),
+        flush=AsyncMock(),
+    )
+
+    result = await report_service.deactivate_template(db, template=latest)
+
+    assert result is latest
+    assert latest.is_active is False
+    assert prior.is_active is True
+    db.flush.assert_awaited_once()

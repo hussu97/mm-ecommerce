@@ -1480,3 +1480,15 @@ NOT NULL, producing a 500 for every first template creation.
 the object with every non-nullable request field first. Keep the creation and
 update field set in one shared definition, and test the object state observed at
 the first flush—not just its final in-memory state.
+
+### A versioned operator configuration cannot use its display name as identity (2026-09-06)
+
+Report-template creation initially kept a unique `(branch_id, name)` constraint.
+That made the normal operation—create the next version with the same staff-facing
+name but a different cadence—fail with a database 500. Updating the old row
+would have hidden history and changed the meaning of issued reports.
+
+**Rule:** versioned configuration uses a stable owner plus a monotonic revision
+number as identity. Display names may repeat across revisions. Append the new
+row, keep old snapshots intact, and select the latest revision before checking
+whether it is active so deactivation never silently revives an older config.

@@ -156,6 +156,14 @@ Three parallel audits. Real gaps found + FIXED:
 
 - [x] Show the resolved category in the inventory-items table alongside the existing category filter and sort.
 
+## Branch report-template revisions (2026-09-06)
+
+- [x] Confirm live templates are branch-owned and capture the requested POS behaviour.
+- [x] Make report-template versions monotonic per branch and report type, with a database uniqueness guard.
+- [x] Resolve only the latest active version for each branch/report type when generating POS tasks; never fall back after its deactivation.
+- [x] Add a branch-first admin view and a safe action to deactivate only the latest template revision.
+- [ ] Cover version selection/deactivation behaviour, migrate, deploy, and verify the live Sharjah templates remain intact.
+
 ## Invariants and business-logic review
 
 - [x] Compare the implementation with the approved inventory plan and both repositories' `CLAUDE.md` rules.

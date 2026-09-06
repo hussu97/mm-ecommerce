@@ -353,7 +353,12 @@ class InventorySourceEvent(Base, UUIDMixin, TimestampMixin):
 class InventoryReportTemplate(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "inventory_report_templates"
     __table_args__ = (
-        UniqueConstraint("branch_id", "name", name="uq_inventory_report_template_name"),
+        UniqueConstraint(
+            "branch_id",
+            "report_type",
+            "version_number",
+            name="uq_inventory_report_template_revision",
+        ),
         CheckConstraint(
             "report_type IN ('production', 'finished_goods', 'raw_materials', "
             "'packaging', 'spot_check')",

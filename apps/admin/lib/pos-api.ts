@@ -260,6 +260,8 @@ export const inventoryApi = {
     api.post<ReportTemplate>('/inventory/report-templates', data),
   updateReportTemplate: (id: string, data: ReportTemplateWrite) =>
     api.put<ReportTemplate>(`/inventory/report-templates/${id}`, data),
+  deactivateReportTemplate: (id: string) =>
+    api.post<ReportTemplate>(`/inventory/report-templates/${id}/deactivate`, {}),
   shiftReports: (params?: { branch_id?: string; status?: string }) =>
     api.get<ShiftInventoryReport[]>(`/inventory/shift-reports${buildQs(params)}`),
   branchSettings: (branchId: string) =>

@@ -379,7 +379,15 @@ async def list_report_templates(
     elif not (user.is_admin or (user.role and user.role.is_super_admin)):
         stmt = stmt.where(InventoryReportTemplate.branch_id.in_(_branch_ids_for(user)))
     return list(
-        (await db.execute(stmt.order_by(InventoryReportTemplate.name)))
+        (
+            await db.execute(
+                stmt.order_by(
+                    InventoryReportTemplate.branch_id,
+                    InventoryReportTemplate.report_type,
+                    InventoryReportTemplate.version_number.desc(),
+                )
+            )
+        )
         .scalars()
         .unique()
     )
@@ -414,6 +422,22 @@ async def update_report_template(
     await _assert_branch_access(db, user, template.branch_id)
     await _assert_branch_access(db, user, data.branch_id)
     return await report_service.upsert_template(db, template=template, data=data)
+
+
+@control_router.post(
+    "/report-templates/{template_id}/deactivate",
+    response_model=ReportTemplateResponse,
+)
+async def deactivate_report_template(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    template = await db.get(InventoryReportTemplate, template_id)
+    if template is None:
+        raise NotFoundError("Inventory report template not found")
+    await _assert_branch_access(db, user, template.branch_id)
+    return await report_service.deactivate_template(db, template=template)
 
 
 @control_router.get("/shift-reports", response_model=list[ShiftReportResponse])

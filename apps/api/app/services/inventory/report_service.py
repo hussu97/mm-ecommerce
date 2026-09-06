@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -40,6 +40,44 @@ from app.services.inventory import (
     source_event_service,
     transfer_service,
 )
+
+
+def latest_active_templates(
+    templates: list[InventoryReportTemplate],
+) -> list[InventoryReportTemplate]:
+    """Return the one current template per branch/report type for POS task creation.
+
+    Revision rows stay visible in the control centre, but an older active row
+    must never silently return after an operator deactivates the newest one.
+    Selecting the latest row *before* considering ``is_active`` gives that
+    explicit deactivation its intended meaning.
+    """
+    newest: dict[tuple[uuid.UUID, str], InventoryReportTemplate] = {}
+    for template in templates:
+        key = (template.branch_id, template.report_type)
+        current = newest.get(key)
+        if current is None or (int(template.version_number or 0), str(template.id)) > (
+            int(current.version_number or 0),
+            str(current.id),
+        ):
+            newest[key] = template
+    return sorted(
+        (template for template in newest.values() if template.is_active),
+        key=lambda template: (template.report_type, template.name),
+    )
+
+
+async def _next_template_version(
+    db: AsyncSession, *, branch_id: uuid.UUID, report_type: str
+) -> int:
+    """Allocate the next revision under the branch inventory transaction lock."""
+    current = await db.scalar(
+        select(func.max(InventoryReportTemplate.version_number)).where(
+            InventoryReportTemplate.branch_id == branch_id,
+            InventoryReportTemplate.report_type == report_type,
+        )
+    )
+    return int(current or 0) + 1
 
 
 async def load_report(db: AsyncSession, report_id: uuid.UUID) -> ShiftInventoryReport:
@@ -98,9 +136,22 @@ async def upsert_template(
     template: InventoryReportTemplate | None,
     data,
 ) -> InventoryReportTemplate:
-    is_new = template is None
     if await db.get(Branch, data.branch_id) is None:
         raise NotFoundError("Branch not found")
+    if template is not None:
+        if template.branch_id != data.branch_id:
+            raise ConflictError("A report template cannot move between branches")
+        if template.report_type != data.report_type:
+            raise ConflictError(
+                "Create a new template instead of changing its report type"
+            )
+    # This also serializes adjacent template revisions.  The unique constraint
+    # remains the database backstop for imports or future writers that do not
+    # use this service.
+    await source_event_service.lock_branch_inventory(db, data.branch_id)
+    next_version = await _next_template_version(
+        db, branch_id=data.branch_id, report_type=data.report_type
+    )
 
     # PostgreSQL validates NOT NULL columns on ``flush()``, not when attributes
     # are subsequently assigned below.  A new template needs its complete
@@ -120,22 +171,16 @@ async def upsert_template(
             "approval_variance_percent",
         )
     }
-    if template is None:
-        template = InventoryReportTemplate(branch_id=data.branch_id, **template_values)
-        db.add(template)
-        await db.flush()
-    elif template.branch_id != data.branch_id:
-        raise ConflictError("A report template cannot move between branches")
-
-    for field, value in template_values.items():
-        setattr(template, field, value)
-    template.version_number = 1 if is_new else int(template.version_number or 1) + 1
-    if not is_new:
-        await db.execute(
-            delete(InventoryReportTemplateItem).where(
-                InventoryReportTemplateItem.template_id == template.id
-            )
-        )
+    # Templates are append-only revisions. Existing issued reports keep their
+    # original template FK and snapshot, while the POS resolver selects this
+    # newest version for subsequent checklist creation.
+    template = InventoryReportTemplate(
+        branch_id=data.branch_id,
+        version_number=next_version,
+        **template_values,
+    )
+    db.add(template)
+    await db.flush()
     seen: set[uuid.UUID] = set()
     for index, item_data in enumerate(data.items):
         if item_data.item_id in seen:
@@ -168,19 +213,51 @@ async def upsert_template(
     )
 
 
+async def deactivate_template(
+    db: AsyncSession, *, template: InventoryReportTemplate
+) -> InventoryReportTemplate:
+    """Deactivate the current revision without allowing an older revision to revive."""
+    await source_event_service.lock_branch_inventory(db, template.branch_id)
+    templates = list(
+        (
+            await db.execute(
+                select(InventoryReportTemplate)
+                .where(
+                    InventoryReportTemplate.branch_id == template.branch_id,
+                    InventoryReportTemplate.report_type == template.report_type,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latest_revision = max(
+        templates,
+        key=lambda row: (int(row.version_number or 0), str(row.id)),
+    )
+    if latest_revision.id != template.id:
+        raise ConflictError(
+            "Only the latest report-template version can be deactivated"
+        )
+    if template.is_active:
+        template.is_active = False
+        await db.flush()
+    return template
+
+
 async def ensure_tasks_for_till(
     db: AsyncSession, *, till: Till
 ) -> list[ShiftInventoryReport]:
     # Also serializes the per-business-day unique task when two tills finish at
     # nearly the same time, and freezes every prefill at a stable ledger point.
     await source_event_service.lock_branch_inventory(db, till.branch_id)
-    templates = list(
+    template_revisions = list(
         (
             await db.execute(
                 select(InventoryReportTemplate)
                 .where(
                     InventoryReportTemplate.branch_id == till.branch_id,
-                    InventoryReportTemplate.is_active.is_(True),
                     InventoryReportTemplate.cadence.in_(
                         [
                             InventoryReportCadenceEnum.PER_TILL.value,
@@ -196,6 +273,7 @@ async def ensure_tasks_for_till(
         .unique()
         .all()
     )
+    templates = latest_active_templates(template_revisions)
     reports: list[ShiftInventoryReport] = []
     has_other_open_tills = bool(
         await db.scalar(

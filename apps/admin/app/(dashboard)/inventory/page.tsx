@@ -661,9 +661,14 @@ function ShiftReportsTab() {
   }, [guidance.kinds.length, itemSearch, items, suggestedItems]);
 
   const reload = useCallback(async () => {
+    if (!branchId) {
+      setRows([]);
+      setTemplates([]);
+      return;
+    }
     const [reports, reportTemplates] = await Promise.all([
-      inventoryApi.shiftReports({ branch_id: branchId || undefined }),
-      inventoryApi.reportTemplates(branchId || undefined),
+      inventoryApi.shiftReports({ branch_id: branchId }),
+      inventoryApi.reportTemplates(branchId),
     ]);
     setRows(reports);
     setTemplates(reportTemplates);
@@ -671,9 +676,18 @@ function ShiftReportsTab() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!branchId) {
+      void Promise.resolve().then(() => {
+        if (!cancelled) {
+          setRows([]);
+          setTemplates([]);
+        }
+      });
+      return () => { cancelled = true; };
+    }
     void Promise.all([
-      inventoryApi.shiftReports({ branch_id: branchId || undefined }),
-      inventoryApi.reportTemplates(branchId || undefined),
+      inventoryApi.shiftReports({ branch_id: branchId }),
+      inventoryApi.reportTemplates(branchId),
     ]).then(([reports, reportTemplates]) => {
       if (cancelled) return;
       setRows(reports);
@@ -706,7 +720,7 @@ function ShiftReportsTab() {
           required_input: guidance.requiredInput,
         })),
       });
-      setMessage({ text: 'Template created. It will appear in the next matching business-day checklist.', error: false });
+      setMessage({ text: 'Template created. It will appear in the next matching POS checklist.', error: false });
       setSelectedItems([]);
       await reload();
     } catch (error) {
@@ -724,9 +738,34 @@ function ShiftReportsTab() {
     setMessage(null);
   };
 
+  const latestTemplateIds = useMemo(() => {
+    const latestByType = new Map<string, ReportTemplate>();
+    for (const template of templates) {
+      const current = latestByType.get(template.report_type);
+      if (!current || template.version_number > current.version_number) {
+        latestByType.set(template.report_type, template);
+      }
+    }
+    return new Set(Array.from(latestByType.values(), (template) => template.id));
+  }, [templates]);
+
+  const deactivateTemplate = async (template: ReportTemplate) => {
+    setSavingTemplate(true);
+    setMessage(null);
+    try {
+      await inventoryApi.deactivateReportTemplate(template.id);
+      setMessage({ text: `${template.name} v${template.version_number} is deactivated. POS will no longer create this report.`, error: false });
+      await reload();
+    } catch (error) {
+      setMessage({ text: error instanceof ApiError ? error.message : 'Could not deactivate the template. Please try again.', error: true });
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
   return <div className="p-6 max-w-[1400px] space-y-5">
     <BranchFilter value={branchId} onChange={setBranchId} />
-    <p className="text-sm text-gray-500">Outstanding reports remain visible after the till closes. Variances above branch tolerance wait for manager approval as one atomic movement.</p>
+    <p className="text-sm text-gray-500">Choose a branch first: its templates own their own item list. POS receives only the latest active version of each report type for that branch. Outstanding reports remain visible after the till closes.</p>
     <div className="border border-gray-200 p-4 space-y-3">
       <div className="flex items-center justify-between"><h3 className="font-medium text-gray-800">Branch report templates</h3><Badge>{templates.length} active/versioned</Badge></div>
       <div className="grid gap-3 md:grid-cols-4">
@@ -757,13 +796,16 @@ function ShiftReportsTab() {
       </select>
       <div className="flex items-center justify-between"><span className="text-xs text-gray-500">Select multiple items with Shift/Cmd. Default approval is AED 100 or 10%.</span><Button onClick={() => void createTemplate()} loading={savingTemplate} disabled={!branchId || selectedItems.length === 0}>Create template</Button></div>
       {message && <p className={`p-2 text-sm ${message.error ? 'bg-red-50 text-red-800' : 'bg-green-50 text-green-800'}`}>{message.text}</p>}
+      {branchId && templates.length === 0 && <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">No templates for this branch yet. Create the first version above.</p>}
       {templates.length > 0 && <DataTable rows={templates} rowKey={(row) => row.id} columns={[
         { header: 'Template', priority: 'primary', render: (row) => row.name },
         { header: 'Type', render: (row) => row.report_type.replaceAll('_', ' ') },
         { header: 'Cadence', render: (row) => row.cadence.replaceAll('_', ' ') },
         { header: 'Version', render: (row) => `v${row.version_number}` },
         { header: 'Items', render: (row) => row.items.length },
+        { header: 'POS status', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },
         { header: 'Required', render: (row) => row.is_required ? <Badge variant="warning">Required</Badge> : 'Optional' },
+        { header: 'Action', render: (row) => latestTemplateIds.has(row.id) && row.is_active ? <Button size="sm" variant="outline" disabled={savingTemplate} onClick={() => void deactivateTemplate(row)}>Deactivate</Button> : '—' },
       ]} />}
     </div>
     <h3 className="font-medium text-gray-800">Report submissions</h3>
