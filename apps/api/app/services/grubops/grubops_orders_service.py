@@ -183,7 +183,9 @@ def _num(value: Any, default: str = "0") -> Decimal:
 _SHORT_CODE_RE = re.compile(r"short.?code[:\s]+(\d{3,6})", re.IGNORECASE)
 
 
-def _driver_code(header: dict, external_id: str | None, info: dict) -> str | None:
+def _driver_code(
+    header: dict, external_id: str | None, info: dict, *, channel: str | None = None
+) -> str | None:
     """The short, driver-facing pickup code, by the surest rule per channel.
 
     There is no single field for it — each marketplace surfaces its handoff code
@@ -193,10 +195,14 @@ def _driver_code(header: dict, external_id: str | None, info: dict) -> str | Non
     2. the external id when it is already short and numeric (Noon "5717",
        Deliveroo "0037" — for these the "external id" *is* the customer's number);
     3. the GrubOps sequence number, which is what the console shows the counter
-       for a Keeta/Careem order whose own id is a long machine string;
-    4. as a last resort, the last four of the external id.
+       for a Careem order whose own id is a long machine string;
+    4. the last four of the external id.
 
-    `external_reference` always keeps the full marketplace id regardless.
+    **Keeta is the exception to (3):** its driver app shows the last four of the
+    order id (the "#2109" the rider reads), not the GrubOps counter sequence, so
+    for Keeta we skip the sequence and go straight to the last four — otherwise the
+    ticket prints a number (the GrubOps "16015") the driver never sees and cannot
+    match. `external_reference` always keeps the full marketplace id regardless.
     """
     instructions = header.get("instructions") or ""
     match = _SHORT_CODE_RE.search(instructions)
@@ -205,9 +211,10 @@ def _driver_code(header: dict, external_id: str | None, info: dict) -> str | Non
     ext = str(external_id).strip() if external_id else ""
     if ext and ext.isdigit() and len(ext) <= 6:
         return ext
-    seq = (info.get("orderSequenceNumber") or {}).get("createdSequence")
-    if seq:
-        return str(seq)
+    if "keeta" not in (channel or "").casefold():
+        seq = (info.get("orderSequenceNumber") or {}).get("createdSequence")
+        if seq:
+            return str(seq)
     if ext:
         return ext[-4:]
     return None
@@ -793,7 +800,9 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         status=OrderStatusEnum.CREATED,
         source=OrderSourceEnum.AGGREGATOR.value,
         aggregator_channel=channel,
-        aggregator_display_code=_driver_code(header, order_map.external_id, info),
+        aggregator_display_code=_driver_code(
+            header, order_map.external_id, info, channel=channel
+        ),
         external_reference=order_map.external_id,
         branch_id=branch_id,
         # What the customer actually paid with, so the console and reports read
