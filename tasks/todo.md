@@ -152,6 +152,10 @@ Three parallel audits. Real gaps found + FIXED:
 - [x] Make the admin builder explain the right Sharjah workflow, select relevant items safely, and show a recoverable save error.
 - [x] Verify backend/admin checks, deploy, and confirm the production endpoint no longer produces a null `report_type` failure (GitHub Actions 34016015407 green; live API first-create smoke test passed and rolled back).
 
+## Inventory category visibility (2026-09-06)
+
+- [x] Show the resolved category in the inventory-items table alongside the existing category filter and sort.
+
 ## Invariants and business-logic review
 
 - [x] Compare the implementation with the approved inventory plan and both repositories' `CLAUDE.md` rules.

@@ -210,6 +210,11 @@ function ItemsTab() {
         { header: 'SKU', priority: 'secondary', render: (i) => <code className="text-xs text-gray-500">{i.sku}</code> },
         { header: 'Name', priority: 'primary', render: (i) => <span className="font-medium">{i.name}</span> },
         {
+          header: 'Category',
+          priority: 'secondary',
+          render: (i) => categoryNames.get(i.category_id ?? '') ?? <span className="text-gray-400">Uncategorised</span>,
+        },
+        {
           header: 'Units',
           render: (i) => (
             <span className="text-xs text-gray-600">
