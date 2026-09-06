@@ -22,7 +22,12 @@
 
 - [x] Reproduce the manager's `/inventory/*` calls against `pos.meltingmomentscakes.com`; all three were incorrectly absent from the dedicated POS app despite being present on the storefront API.
 - [x] Mount only the read-only levels, transactions, and shift-reports endpoints on the POS sub-application at their existing mobile paths.
-- [ ] Deploy the routing correction and verify the POS host returns authenticated-route responses instead of 404.
+- [x] Deploy the routing correction and verify the POS host returns authenticated-route responses instead of 404.
+
+Result: production `pos.meltingmomentscakes.com` returned `401 Not authenticated`
+for levels, transactions, and shift reports after the GCP deployment. This is
+the expected unauthenticated response and proves the dedicated POS application,
+not the storefront API, owns all manager inventory calls.
 
 ---
 
