@@ -657,21 +657,10 @@ async def submit_report(
     ):
         raise BadRequestError("Every report line must be actively confirmed")
 
-    for line in report.lines:
-        required_input = (line.source_summary or {}).get(
-            "required_input", "physical_count"
-        )
-        needs_reason = (
-            required_input == "physical_count"
-            and Decimal(str(line.variance_quantity or 0)) != 0
-        ) or (
-            required_input in {"internal_use", "waste"}
-            and Decimal(str(line.entered_quantity or 0)) > 0
-        )
-        if needs_reason and not (line.override_reason or "").strip():
-            raise BadRequestError(
-                "A reason is required for variances, internal use and waste"
-            )
+    # The reason/remark is an optional note, not a gate. Requiring one on every
+    # variance made a 30-item count a wall of mandatory typing and stalled the
+    # close; the variance and its cost are already captured on the line and drive
+    # the approval thresholds below, which is where an unexplained swing is caught.
 
     settings = (
         await db.execute(
