@@ -303,9 +303,14 @@ async def delete_item(
 # ─── Levels ───────────────────────────────────────────────────────────────────
 
 levels_router = APIRouter()
+# The manager companion always talks to the dedicated POS host.  Re-register
+# only its immutable read models there; catalogue and stock mutation endpoints
+# remain console-only on the storefront API.
+pos_manager_read_router = APIRouter()
 
 
 @levels_router.get("", response_model=list[InventoryLevelResponse])
+@pos_manager_read_router.get("/levels", response_model=list[InventoryLevelResponse])
 async def list_levels(
     branch_id: uuid.UUID | None = None,
     warehouse_id: uuid.UUID | None = None,
@@ -400,6 +405,9 @@ async def _item_lookup_for_transactions(
 
 
 @transactions_router.get("", response_model=list[InventoryTransactionResponse])
+@pos_manager_read_router.get(
+    "/transactions", response_model=list[InventoryTransactionResponse]
+)
 async def list_transactions(
     branch_id: uuid.UUID | None = None,
     item_id: uuid.UUID | None = None,

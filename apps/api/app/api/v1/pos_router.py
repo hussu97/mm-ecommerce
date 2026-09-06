@@ -20,7 +20,9 @@ from .business_settings import router as business_settings_router
 from .categories import router as categories_router
 from .devices import printers_router
 from .devices import router as devices_router
+from .inventory import pos_manager_read_router as inventory_manager_read_router
 from .inventory_v2 import pos_inventory_router
+from .inventory_v2 import pos_manager_read_router as inventory_v2_manager_read_router
 from .marketing import (
     discounts_router,
     promotions_router,
@@ -105,6 +107,17 @@ pos_api_router.include_router(
 )
 pos_api_router.include_router(
     pos_inventory_router, prefix="/pos/inventory", tags=["POS Inventory"]
+)
+# Manager inventory screens use the same POS hostname as every other terminal.
+# Mount only the three read endpoints the companion consumes; report entry and
+# stock movements keep their existing, narrower register routes and permissions.
+pos_api_router.include_router(
+    inventory_manager_read_router, prefix="/inventory", tags=["Manager Inventory"]
+)
+pos_api_router.include_router(
+    inventory_v2_manager_read_router,
+    prefix="/inventory",
+    tags=["Manager Inventory"],
 )
 pos_api_router.include_router(
     dashboard_router, prefix="/pos/dashboard", tags=["POS Dashboard"]

@@ -18,6 +18,12 @@
 - `/inventory/transactions` accepts an optional `item_id`, implemented with an `EXISTS` predicate so one transaction is returned once even when it contains several inventory lines.
 - Verification: focused inventory API tests (18 passed), focused Swift inventory-model tests (3 passed), full `swift test`, iPhone manager build, iPad register build, Ruff, OpenAPI export, and generated-type freshness checks all passed.
 
+## POS-host correction (2026-09-06)
+
+- [x] Reproduce the manager's `/inventory/*` calls against `pos.meltingmomentscakes.com`; all three were incorrectly absent from the dedicated POS app despite being present on the storefront API.
+- [x] Mount only the read-only levels, transactions, and shift-reports endpoints on the POS sub-application at their existing mobile paths.
+- [ ] Deploy the routing correction and verify the POS host returns authenticated-route responses instead of 404.
+
 ---
 
 # Inventory bulk workflows, reconciliation navigation, and hour-sync hardening (2026-09-06)

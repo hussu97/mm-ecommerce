@@ -62,6 +62,22 @@ def test_the_register_carries_what_a_till_needs():
         assert any(p.startswith(present) for p in pos), f"{present} missing"
 
 
+def test_the_manager_inventory_surface_is_read_only_and_on_the_pos_host():
+    """
+    The iPhone manager shares the register hostname, not the storefront API.
+    These routes deliberately expose ledger-derived information only; mounting
+    the whole inventory router here would put catalogue and stock mutations on
+    a counter-facing service.
+    """
+    paths = pos_app.openapi()["paths"]
+    for path in (
+        "/api/v1/inventory/levels",
+        "/api/v1/inventory/transactions",
+        "/api/v1/inventory/shift-reports",
+    ):
+        assert set(paths[path]) == {"get"}, f"{path} must stay read-only"
+
+
 def test_the_register_is_smaller_than_the_main_api():
     assert len(_paths(pos_app)) < len(_paths(web_app))
 

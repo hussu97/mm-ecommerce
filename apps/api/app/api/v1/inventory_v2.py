@@ -62,6 +62,10 @@ from app.services.inventory import (
 
 control_router = APIRouter()
 pos_inventory_router = APIRouter()
+# This is intentionally separate from ``pos_inventory_router``: the latter is
+# the register's report-entry workflow, while this router is the manager
+# companion's branch-scoped, read-only view of the ledger and reconciliation.
+pos_manager_read_router = APIRouter()
 order_inventory_router = APIRouter()
 
 
@@ -413,6 +417,7 @@ async def update_report_template(
 
 
 @control_router.get("/shift-reports", response_model=list[ShiftReportResponse])
+@pos_manager_read_router.get("/shift-reports", response_model=list[ShiftReportResponse])
 async def list_shift_reports(
     branch_id: uuid.UUID | None = None,
     report_status: str | None = Query(None, alias="status"),

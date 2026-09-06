@@ -1383,3 +1383,11 @@ ordering, historical snapshot, branch boundary, and retry identity), exercise
 their multi-event transitions, and compare the projection rebuilt from history
 with the live cache. Endpoint happy paths and a green build are necessary but
 do not substitute for this audit.
+# POS companion routes belong on the POS sub-application (2026-09-06)
+
+When adding a manager-companion API call, test its exact path against
+`app.pos_main`, not only the storefront `app.main`. The iPhone companion is a
+POS client and must retain `https://pos.meltingmomentscakes.com/api/v1`; do not
+solve a missing route by sending it to `api.meltingmomentscakes.com`. Expose the
+smallest read-only POS router needed and pin the route set in
+`test_pos_subapp.py`.
