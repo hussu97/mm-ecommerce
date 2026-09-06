@@ -55,6 +55,33 @@ async def session():
 
 
 @pytest.fixture
+async def branch_root(session) -> MenuGroup:
+    """A shop's menu root — every test group hangs under this now.
+
+    A top-level group is a *root* and a branch root must name its branch, so the
+    CRUD these tests exercise happens one level down, inside a shop's tree, the
+    same way the console builds it. Migration 191 seeds a root for every active
+    branch, so this borrows one rather than minting a branch (which an inventory
+    trigger requires a default stock container for). The test groups it hangs are
+    named `pytest-%` and cleaned up by the `session` fixture.
+    """
+    root = (
+        await session.execute(
+            select(MenuGroup)
+            .where(
+                MenuGroup.parent_id.is_(None),
+                MenuGroup.root_kind == "branch",
+                MenuGroup.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if root is None:
+        pytest.skip("no branch menu root in this database")
+    yield root
+
+
+@pytest.fixture
 async def product_ids(session) -> list[uuid.UUID]:
     """
     Three products, created here rather than borrowed from the database.
@@ -96,18 +123,32 @@ async def product_ids(session) -> list[uuid.UUID]:
     await session.commit()
 
 
-async def test_creating_a_group_with_products_does_not_blow_up(session, product_ids):
+async def test_creating_a_group_with_products_does_not_blow_up(
+    session, branch_root, product_ids
+):
     """The lazy-load-in-async case: this 500'd in production."""
     group = await svc.create(
-        session, {"name": "pytest-create", "product_ids": product_ids[:2]}
+        session,
+        {
+            "name": "pytest-create",
+            "parent_id": branch_root.id,
+            "product_ids": product_ids[:2],
+        },
     )
     assert len(group.members) == 2
 
 
-async def test_the_response_describes_the_state_just_saved(session, product_ids):
+async def test_the_response_describes_the_state_just_saved(
+    session, branch_root, product_ids
+):
     """The stale-read case: the write landed, the response predated it."""
     group = await svc.create(
-        session, {"name": "pytest-stale", "product_ids": product_ids[:2]}
+        session,
+        {
+            "name": "pytest-stale",
+            "parent_id": branch_root.id,
+            "product_ids": product_ids[:2],
+        },
     )
     group = await svc.update(session, group.id, {"product_ids": product_ids})
 
@@ -121,16 +162,24 @@ async def test_the_response_describes_the_state_just_saved(session, product_ids)
     assert len(group.members) == in_database == 3
 
 
-async def test_removing_a_product_takes_effect(session, product_ids):
+async def test_removing_a_product_takes_effect(session, branch_root, product_ids):
     group = await svc.create(
-        session, {"name": "pytest-remove", "product_ids": product_ids}
+        session,
+        {
+            "name": "pytest-remove",
+            "parent_id": branch_root.id,
+            "product_ids": product_ids,
+        },
     )
     group = await svc.update(session, group.id, {"product_ids": product_ids[:1]})
     assert len(group.members) == 1
 
 
-async def test_a_group_nests_and_the_tree_reports_it(session, product_ids):
-    parent = await svc.create(session, {"name": "pytest-parent", "product_ids": []})
+async def test_a_group_nests_and_the_tree_reports_it(session, branch_root, product_ids):
+    parent = await svc.create(
+        session,
+        {"name": "pytest-parent", "parent_id": branch_root.id, "product_ids": []},
+    )
     child = await svc.create(
         session,
         {
@@ -141,15 +190,19 @@ async def test_a_group_nests_and_the_tree_reports_it(session, product_ids):
     )
     assert child.parent_id == parent.id
 
-    tree = await svc.list_tree(session)
-    node = next(n for n in tree if n["name"] == "pytest-parent")
+    tree = await svc.list_tree(session, branch_id=branch_root.branch_id)
+    root = next(n for n in tree if n["id"] == branch_root.id)
+    node = next(c for c in root["children"] if c["name"] == "pytest-parent")
     assert [c["name"] for c in node["children"]] == ["pytest-child"]
 
 
-async def test_a_cycle_is_refused(session):
+async def test_a_cycle_is_refused(session, branch_root):
     from app.core.exceptions import BadRequestError
 
-    parent = await svc.create(session, {"name": "pytest-cyc-a", "product_ids": []})
+    parent = await svc.create(
+        session,
+        {"name": "pytest-cyc-a", "parent_id": branch_root.id, "product_ids": []},
+    )
     child = await svc.create(
         session, {"name": "pytest-cyc-b", "parent_id": parent.id, "product_ids": []}
     )
@@ -157,8 +210,11 @@ async def test_a_cycle_is_refused(session):
         await svc.update(session, parent.id, {"parent_id": child.id})
 
 
-async def test_deleting_a_parent_takes_its_children(session):
-    parent = await svc.create(session, {"name": "pytest-del-a", "product_ids": []})
+async def test_deleting_a_parent_takes_its_children(session, branch_root):
+    parent = await svc.create(
+        session,
+        {"name": "pytest-del-a", "parent_id": branch_root.id, "product_ids": []},
+    )
     await svc.create(
         session, {"name": "pytest-del-b", "parent_id": parent.id, "product_ids": []}
     )
@@ -179,8 +235,15 @@ async def test_deleting_a_parent_takes_its_children(session):
     assert left == [], "a child left behind is unreachable from any root"
 
 
-async def test_an_unknown_product_is_rejected(session):
+async def test_an_unknown_product_is_rejected(session, branch_root):
     from app.core.exceptions import BadRequestError
 
     with pytest.raises(BadRequestError, match="No such product"):
-        await svc.create(session, {"name": "pytest-bad", "product_ids": [uuid.uuid4()]})
+        await svc.create(
+            session,
+            {
+                "name": "pytest-bad",
+                "parent_id": branch_root.id,
+                "product_ids": [uuid.uuid4()],
+            },
+        )
