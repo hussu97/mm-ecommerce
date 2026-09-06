@@ -15,7 +15,9 @@ def test_every_column_key_is_a_real_report_line_field() -> None:
     fields = set(ShiftInventoryReportLine.__table__.columns.keys())
     for report_type in ("finished_goods", "raw_materials", "packaging", "spot_check"):
         for column in rc.columns_for(report_type):
-            assert column.key in fields, f"{report_type}:{column.key} is not a line field"
+            assert column.key in fields, (
+                f"{report_type}:{column.key} is not a line field"
+            )
 
 
 def test_finished_goods_is_the_combined_production_sheet() -> None:

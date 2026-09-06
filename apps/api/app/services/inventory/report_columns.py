@@ -69,18 +69,48 @@ class ColumnSpec:
 # Reusable cells shared by every kind: the derived ends and the physical count.
 _OPENING = ColumnSpec("opening_quantity", "Opening", ROLE_OPENING, SOURCE_DERIVED)
 _NET = ColumnSpec("expected_quantity", "Closing (system)", ROLE_NET, SOURCE_DERIVED)
-_PHYSICAL = ColumnSpec("entered_quantity", "Physical closing", ROLE_PHYSICAL, SOURCE_ENTERED)
-_DIFFERENCE = ColumnSpec("variance_quantity", "Difference", ROLE_DIFFERENCE, SOURCE_DERIVED)
+_PHYSICAL = ColumnSpec(
+    "entered_quantity", "Physical closing", ROLE_PHYSICAL, SOURCE_ENTERED
+)
+_DIFFERENCE = ColumnSpec(
+    "variance_quantity", "Difference", ROLE_DIFFERENCE, SOURCE_DERIVED
+)
 
 # Movement cells, named once so a sign/label/posting is defined in exactly one place.
-_PRODUCED = ColumnSpec("production_quantity", "Produced", ROLE_IN, SOURCE_ENTERED, TX.PRODUCTION.value)
-_RECEIVED = ColumnSpec("purchasing_quantity", "Received", ROLE_IN, SOURCE_ENTERED, TX.PURCHASING.value)
-_TRANSFER_IN = ColumnSpec("transfer_in_quantity", "Transfer in", ROLE_IN, SOURCE_ENTERED, TX.TRANSFER_RECEIVE.value)
+_PRODUCED = ColumnSpec(
+    "production_quantity", "Produced", ROLE_IN, SOURCE_ENTERED, TX.PRODUCTION.value
+)
+_RECEIVED = ColumnSpec(
+    "purchasing_quantity", "Received", ROLE_IN, SOURCE_ENTERED, TX.PURCHASING.value
+)
+_TRANSFER_IN = ColumnSpec(
+    "transfer_in_quantity",
+    "Transfer in",
+    ROLE_IN,
+    SOURCE_ENTERED,
+    TX.TRANSFER_RECEIVE.value,
+)
 _SOLD = ColumnSpec("sales_consumption_quantity", "Sold", ROLE_OUT, SOURCE_LEDGER)
-_PRODUCTION_USE = ColumnSpec("production_consumption_quantity", "Used in production", ROLE_OUT, SOURCE_LEDGER)
-_TRANSFER_OUT = ColumnSpec("transfer_out_quantity", "Transfer out", ROLE_OUT, SOURCE_ENTERED, TX.TRANSFER_SEND.value)
-_WASTE = ColumnSpec("waste_quantity", "Waste", ROLE_OUT, SOURCE_ENTERED, TX.WASTE_FROM_PRODUCTION.value)
-_INTERNAL = ColumnSpec("internal_use_quantity", "Internal use", ROLE_OUT, SOURCE_ENTERED, TX.INTERNAL_USE.value)
+_PRODUCTION_USE = ColumnSpec(
+    "production_consumption_quantity", "Used in production", ROLE_OUT, SOURCE_LEDGER
+)
+_TRANSFER_OUT = ColumnSpec(
+    "transfer_out_quantity",
+    "Transfer out",
+    ROLE_OUT,
+    SOURCE_ENTERED,
+    TX.TRANSFER_SEND.value,
+)
+_WASTE = ColumnSpec(
+    "waste_quantity", "Waste", ROLE_OUT, SOURCE_ENTERED, TX.WASTE_FROM_PRODUCTION.value
+)
+_INTERNAL = ColumnSpec(
+    "internal_use_quantity",
+    "Internal use",
+    ROLE_OUT,
+    SOURCE_ENTERED,
+    TX.INTERNAL_USE.value,
+)
 
 
 # Per report kind, in the order the grid shows them. Opening leads, then movements
@@ -89,22 +119,51 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
     # The combined Production & Finished Goods reconciliation: produced goods, with
     # Production entered (and posting produce()) alongside the count.
     "finished_goods": [
-        _OPENING, _PRODUCED, _SOLD, _INTERNAL, _TRANSFER_OUT, _WASTE,
-        _NET, _PHYSICAL, _DIFFERENCE,
+        _OPENING,
+        _PRODUCED,
+        _SOLD,
+        _INTERNAL,
+        _TRANSFER_OUT,
+        _WASTE,
+        _NET,
+        _PHYSICAL,
+        _DIFFERENCE,
     ],
     # Kept as an alias of the combined sheet so an existing production template
     # renders the same grid rather than a lonely produced-only column.
     "production": [
-        _OPENING, _PRODUCED, _SOLD, _INTERNAL, _TRANSFER_OUT, _WASTE,
-        _NET, _PHYSICAL, _DIFFERENCE,
+        _OPENING,
+        _PRODUCED,
+        _SOLD,
+        _INTERNAL,
+        _TRANSFER_OUT,
+        _WASTE,
+        _NET,
+        _PHYSICAL,
+        _DIFFERENCE,
     ],
     "raw_materials": [
-        _OPENING, _RECEIVED, _TRANSFER_IN, _PRODUCTION_USE, _SOLD,
-        _INTERNAL, _WASTE, _TRANSFER_OUT, _NET, _PHYSICAL, _DIFFERENCE,
+        _OPENING,
+        _RECEIVED,
+        _TRANSFER_IN,
+        _PRODUCTION_USE,
+        _SOLD,
+        _INTERNAL,
+        _WASTE,
+        _TRANSFER_OUT,
+        _NET,
+        _PHYSICAL,
+        _DIFFERENCE,
     ],
     "packaging": [
-        _OPENING, _RECEIVED, _TRANSFER_IN, _INTERNAL, _TRANSFER_OUT,
-        _NET, _PHYSICAL, _DIFFERENCE,
+        _OPENING,
+        _RECEIVED,
+        _TRANSFER_IN,
+        _INTERNAL,
+        _TRANSFER_OUT,
+        _NET,
+        _PHYSICAL,
+        _DIFFERENCE,
     ],
     "spot_check": [_OPENING, _NET, _PHYSICAL, _DIFFERENCE],
 }

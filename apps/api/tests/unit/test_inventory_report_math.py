@@ -39,7 +39,9 @@ def test_report_source_columns_reconcile_to_expected_closing_stock():
 
 def _line() -> ShiftInventoryReportLine:
     return ShiftInventoryReportLine(
-        item_id=uuid4(), unit="unit", source_summary={"required_input": "physical_count"}
+        item_id=uuid4(),
+        unit="unit",
+        source_summary={"required_input": "physical_count"},
     )
 
 

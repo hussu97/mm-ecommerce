@@ -623,7 +623,9 @@ async def save_report(
         raise BadRequestError("Report contains items outside its template")
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
     report_type = report.template_snapshot.get("report_type", "")
-    editable_keys = {column.key for column in report_columns.editable_columns(report_type)}
+    editable_keys = {
+        column.key for column in report_columns.editable_columns(report_type)
+    }
     for line in report.lines:
         update = updates.get(line.item_id)
         if update is None:
@@ -912,7 +914,8 @@ async def post_report(
         valued = [
             (report_line, quantity(getattr(report_line, column.key) or 0))
             for report_line in report.lines
-            if column.key in (report_line.source_summary or {}).get("entered_columns", [])
+            if column.key
+            in (report_line.source_summary or {}).get("entered_columns", [])
             and quantity(getattr(report_line, column.key) or 0) != 0
         ]
         if not valued:
