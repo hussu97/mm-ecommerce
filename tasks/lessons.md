@@ -1391,3 +1391,11 @@ POS client and must retain `https://pos.meltingmomentscakes.com/api/v1`; do not
 solve a missing route by sending it to `api.meltingmomentscakes.com`. Expose the
 smallest read-only POS router needed and pin the route set in
 `test_pos_subapp.py`.
+
+# Inventory export queries must be exercised (2026-09-06)
+
+The inventory-items exporter is an operator-facing path and cannot rely on a
+new bulk-import test for coverage. Whenever an exporter follows a model
+relationship, add a focused CSV test that builds the SQLAlchemy statement and
+asserts the resulting column value. A foreign key alone does not provide the
+ORM attribute used by `joinedload`.

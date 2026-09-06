@@ -270,6 +270,10 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # Catalogue exports need the stable category reference, and using the
+    # relationship keeps that lookup in the query instead of issuing one query
+    # per inventory row.
+    category: Mapped[InventoryCategory | None] = relationship("InventoryCategory")
     levels: Mapped[list[InventoryLevel]] = relationship(
         "InventoryLevel", back_populates="item", cascade="all, delete-orphan"
     )

@@ -29,6 +29,12 @@ for levels, transactions, and shift reports after the GCP deployment. This is
 the expected unauthenticated response and proves the dedicated POS application,
 not the storefront API, owns all manager inventory calls.
 
+## Inventory item export correction (2026-09-06)
+
+- [x] Trace the production 500 from the admin export to its API stack trace.
+- [x] Restore the missing inventory-item category ORM relationship used by the CSV export and cover the exported category reference with a regression test.
+- [ ] Deploy and verify that the admin inventory-items export no longer raises a server error.
+
 ---
 
 # Inventory bulk workflows, reconciliation navigation, and hour-sync hardening (2026-09-06)
