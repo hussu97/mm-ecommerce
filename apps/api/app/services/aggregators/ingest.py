@@ -1100,8 +1100,16 @@ async def _sweep_channel(
         # Release this session's pooled connection BEFORE the up-to-360s reauth
         # wait — otherwise `db` sits idle-in-transaction holding a connection for
         # the whole wait, and several such waits at once exhaust the pool and wedge
-        # the API (the 2026-08-30 incident). `_session_for` only read, so a rollback
-        # loses nothing; `db` re-acquires a connection on its next statement.
+        # the API (the 2026-08-30 incident). `db` re-acquires a connection on its
+        # next statement.
+        #
+        # This used to say "`_session_for` only read, so a rollback loses nothing",
+        # and for Deliveroo that was false: `prepare_session` performs a real login
+        # and the rollback discarded the token it had just minted, so the channel
+        # re-authenticated on every pass and kept 401-ing on the dead one it had
+        # stored. A provider that mints credentials now persists them on its own
+        # committed session (`deliveroo_provider._persist_minted`), so the rollback
+        # genuinely loses nothing — by construction, not by assumption.
         await db.rollback()
         session = await _await_reauth(channel, provider)
         if session is None:

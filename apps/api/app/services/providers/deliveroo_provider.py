@@ -518,14 +518,11 @@ class DeliverooClient(BaseAggregatorClient):
         Overlays the minted cookies/tokens onto `session` so later calls in the
         same sweep (which hold the original object) send the new Bearer.
 
-        Runs on its OWN session, committed here — the dedicated-session rule for a
-        side-write that must survive the caller (canon rule 2, like
-        `webhook_log_service.Recorder`). It has to be its own for two reasons. The
-        old token is dead the moment Deliveroo mints a replacement, so losing this
-        write to a caller's rollback means every following call 401s again — which
-        is what produced the four logins in eight seconds in the 2026-09-06 logs.
-        And there is no caller transaction to join: this fires deep inside an
-        arbitrary request, and the handle it used to borrow was a stale one.
+        Runs on its own session because there is no caller transaction to join —
+        this fires deep inside an arbitrary request, and the handle it used to
+        borrow was a stale one (see `__init__`). The minted token itself is durable
+        regardless: `_login` persists it through `_persist_minted`, which owns its
+        own committed session.
         """
         if self._remint_attempted:
             return None
@@ -538,9 +535,8 @@ class DeliverooClient(BaseAggregatorClient):
             fresh = await self._login(db, session)
             if fresh is not None:
                 fresh = await self._augment_from_db(db, fresh)
-            # Commit even when the augment came back None: `_login` already minted a
-            # real token and wrote it, and throwing that away is what leaves the next
-            # call authenticating against a token Deliveroo has already replaced.
+            # Commit regardless of the augment's result: `_login` has already stored
+            # the token durably, and anything the augment wrote belongs with it.
             await db.commit()
         if fresh is None:
             return None
@@ -632,10 +628,58 @@ class DeliverooClient(BaseAggregatorClient):
                 return str(value)
         return None
 
+    async def _persist_minted(
+        self,
+        *,
+        cookies: dict[str, str],
+        tokens: dict,
+        header_profile: dict[str, str],
+        expires_at: datetime | None,
+    ) -> LoadedSession | None:
+        """Store a freshly minted token on its OWN session, committed here.
+
+        Every Deliveroo login lands through this, and it deliberately does NOT use
+        the caller's session. Deliveroo hands out a real token, and the moment it
+        does, whatever we held before is dead — so this write has to survive the
+        caller no matter what the caller decides to do (canon rule 2: a side-write
+        that must outlive a rollback goes on a dedicated session, like
+        `webhook_log_service.Recorder`).
+
+        It did not, and that was the underlying Deliveroo failure. `_session_for`
+        runs `prepare_session`, which for this channel performs a real login and
+        wrote through the caller's session; every path that then declined to keep
+        that session threw the token away:
+
+        - `_sweep_channel` rolled back before the reauth wait, on the documented but
+          (for this channel) false premise that "`_session_for` only read";
+        - `_await_reauth`'s poll loop and the coverage backfill left their
+          `async with AsyncSessionFactory()` block without committing;
+        - the in-band re-mint wrote through a session whose scope had already exited.
+
+        So Deliveroo authenticated over and over while the database kept the dead
+        token, and every following call 401'd — five logins in one burst, then
+        "session dead — deliveroo returned 401". Persisting here, once, fixes all of
+        those call sites at the same time, because none of them can lose it any more.
+        """
+        from app.services.aggregators import session_store
+
+        async with AsyncSessionFactory() as db:
+            await session_store.upsert_bootstrap(
+                db,
+                channel=self.channel,
+                cookies=cookies,
+                tokens=tokens,
+                header_profile=header_profile,
+                token_expires_at=expires_at,
+                cookie_expires_at=expires_at,
+            )
+            await db.commit()
+            return await session_store.load(db, self.channel)
+
     async def _login(
         self, db: AsyncSession, previous: LoadedSession | None
     ) -> LoadedSession | None:
-        from app.services.aggregators import account_store, session_store
+        from app.services.aggregators import account_store
 
         account = await account_store.load(db, self.channel)
         if account is None or not account.email or not account.password:
@@ -707,14 +751,11 @@ class DeliverooClient(BaseAggregatorClient):
             tokens["restaurant_records"] = restaurant_records
         if org_id:
             tokens["org_id"] = org_id
-        await session_store.upsert_bootstrap(
-            db,
-            channel=self.channel,
+        stored = await self._persist_minted(
             cookies=cookies,
             tokens=tokens,
             header_profile=header_profile,
-            token_expires_at=exp,
-            cookie_expires_at=exp,
+            expires_at=exp,
         )
         logger.info(
             "deliveroo HTTP login ok; org=%s, %s outlet(s), carried cookies=%s, "
@@ -724,12 +765,11 @@ class DeliverooClient(BaseAggregatorClient):
             sorted(cookies.keys()),
             exp.isoformat() if exp else "unknown",
         )
-        return await session_store.load(db, self.channel)
+        return stored
 
     async def _refresh(
         self, db: AsyncSession, session: LoadedSession
     ) -> LoadedSession | None:
-        from app.services.aggregators import session_store
 
         try:
             data = await self.request_json(session, "POST", _REFRESH_URL, json_body={})
@@ -746,16 +786,12 @@ class DeliverooClient(BaseAggregatorClient):
         tokens["access_token"] = token
         cookies = dict(session.cookies or {})
         cookies["token"] = token
-        await session_store.upsert_bootstrap(
-            db,
-            channel=self.channel,
+        return await self._persist_minted(
             cookies=cookies,
             tokens=tokens,
             header_profile=dict(session.header_profile or {}),
-            token_expires_at=exp,
-            cookie_expires_at=exp,
+            expires_at=exp,
         )
-        return await session_store.load(db, self.channel)
 
     # ── sales ────────────────────────────────────────────────────────────────
     async def fetch_sales(

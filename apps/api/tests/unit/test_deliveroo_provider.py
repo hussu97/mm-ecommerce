@@ -826,3 +826,80 @@ async def test_remint_runs_at_most_once_per_sweep():
     client = DeliverooClient()
     client._remint_attempted = True
     assert await client._remint_after_stale_token(_org_session()) is None
+
+
+# ── the underlying failure: a minted token that never reached the database ────
+
+
+@pytest.mark.asyncio
+async def test_login_persists_the_token_on_its_own_committed_session():
+    """Deliveroo's old token is dead the moment it mints a replacement, so the write
+    has to survive whatever the caller does. It did not: `_session_for` runs
+    `prepare_session`, which for this channel performs a real login, and every path
+    that then declined the session threw the token away — `_sweep_channel` rolled
+    back before the reauth wait, the poll loop and the coverage backfill never
+    committed. So Deliveroo authenticated over and over while the database kept the
+    dead token and every following call 401'd."""
+    client = DeliverooClient()
+    caller_db = MagicMock()  # the caller's session — must NOT be written through
+    committed: list[str] = []
+    upserts: list[dict] = []
+
+    class _FakeSession:
+        async def commit(self):
+            committed.append("commit")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    own_db = _FakeSession()
+
+    async def fake_upsert(db, **kwargs):
+        assert db is own_db, "the token must not be written on the caller's session"
+        upserts.append(kwargs)
+
+    async def fake_load(db, channel, *a, **k):
+        return _org_session()
+
+    import app.services.aggregators.session_store as ss
+
+    with (
+        patch(
+            "app.services.providers.deliveroo_provider.AsyncSessionFactory",
+            lambda: own_db,
+        ),
+        patch.object(ss, "upsert_bootstrap", fake_upsert),
+        patch.object(ss, "load", fake_load),
+    ):
+        out = await client._persist_minted(
+            cookies={"token": "jwt-new"},
+            tokens={"access_token": "jwt-new"},
+            header_profile={},
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=45),
+        )
+
+    assert out is not None
+    assert len(upserts) == 1
+    assert upserts[0]["tokens"]["access_token"] == "jwt-new"
+    # Committed before anyone can roll it back.
+    assert committed == ["commit"]
+    caller_db.assert_not_called()
+
+
+def test_every_login_path_persists_through_the_one_helper():
+    """`_login` and `_refresh` are the only places a token is minted, and both must
+    go through `_persist_minted` — a direct `upsert_bootstrap` on a caller's session
+    would reintroduce the write-loss."""
+    import inspect
+
+    import app.services.providers.deliveroo_provider as dp
+
+    for name in ("_login", "_refresh"):
+        src = inspect.getsource(getattr(dp.DeliverooClient, name))
+        assert "_persist_minted" in src, f"{name} must persist via _persist_minted"
+        assert "upsert_bootstrap" not in src, (
+            f"{name} must not write the session itself"
+        )
