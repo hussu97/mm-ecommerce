@@ -817,6 +817,23 @@ async def promote_order(
             _fill_scraped_contact(grubops_order, agg)
             if agg.commission_amount is not None or agg.payment_fee is not None:
                 await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
+            # Carry the terminal status the scrape reports. This is the one
+            # deliberate exception to "never touch a GrubOps order's status here":
+            # GrubOps' live push climbs the order only as far as out_for_delivery —
+            # its "OrderCompleted" event means the parcel left the kitchen, and
+            # GrubTech emits no delivered signal at all — so the final rung was
+            # always meant to come from the channel scrape (see grubops_orders_
+            # service: "DELIVERED is left for the channel to carry"). Without it,
+            # an order the marketplace has since delivered (or cancelled) sits at
+            # out_for_delivery forever even after its scrape says delivered.
+            # Driven through the same lifecycle door and status vocabulary as a
+            # promotion-owned order, under acting_as(AGGREGATOR) so nothing echoes
+            # to POS/Foodics. Idempotent: _drive_status only ever advances up the
+            # ladder and skips an invalid move, so the live push and a later scrape
+            # converge rather than fight. `items` is loaded because a cancel status
+            # walks them in `_move_stock`.
+            await db.refresh(grubops_order, ["items"])
+            await _drive_status(db, grubops_order, agg)
             await db.flush()
             await _record_fulfilment(db, grubops_order)
             return grubops_order

@@ -76,6 +76,16 @@ class _FakeDB:
     async def execute(self, _stmt):
         return None
 
+    async def refresh(self, _obj, _attrs=None):
+        return None
+
+
+async def _no_drive(db, order, agg):
+    """A `_drive_status` stand-in for the tests whose concern is elsewhere
+    (attach, build, customer fill): the real one walks the lifecycle against a DB
+    and needs an `order.status` the SimpleNamespace fixtures deliberately omit."""
+    return None
+
 
 @pytest.fixture(autouse=True)
 def _noop_pos_attach(monkeypatch):
@@ -307,12 +317,42 @@ async def test_grubops_owned_order_is_not_re_attached_to_pos(monkeypatch):
     monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
     monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
     monkeypatch.setattr(promote.order_fees, "stamp", fake_stamp)
+    monkeypatch.setattr(promote, "_drive_status", _no_drive)
     monkeypatch.setattr(
         promote.pos_order_service, "attach_promoted_aggregator_order", rec_attach
     )
 
     await promote.promote_order(_FakeDB(), _agg())
     assert attach_calls == []  # never re-attached — GrubOps owns the register row
+
+
+async def test_grubops_owned_order_carries_scraped_delivered_status(monkeypatch):
+    """GrubOps' live push climbs a Barsha/Sharjah order only as far as
+    out_for_delivery; the delivered (and cancelled) rung is the scrape's to carry.
+    The matched path must drive the linked order's status from the scrape, or an
+    order the marketplace has delivered sits at out_for_delivery forever."""
+    grubops_order = _mm_order()
+    driven = []
+
+    async def fake_has_grubops(db, branch_id):
+        return True
+
+    async def fake_find_mm(db, channel, ext, display_ref=None):
+        return grubops_order
+
+    async def fake_stamp(db, order, **kwargs):
+        return None
+
+    async def rec_drive(db, order, agg):
+        driven.append(order)
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
+    monkeypatch.setattr(promote.order_fees, "stamp", fake_stamp)
+    monkeypatch.setattr(promote, "_drive_status", rec_drive)
+
+    await promote.promote_order(_FakeDB(), _agg(status="completed"))
+    assert driven == [grubops_order]  # the scrape's status reached the MM order
 
 
 def test_keeta_status_accepts_both_numeric_and_words():
@@ -442,6 +482,7 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
     monkeypatch.setattr(promote, "_build_order", fake_build)
     monkeypatch.setattr(promote.order_fees, "stamp", fake_stamp)
+    monkeypatch.setattr(promote, "_drive_status", _no_drive)
 
     agg = _agg()
     agg.commission_amount = Decimal("9.00")  # the marketplace has settled it
@@ -476,6 +517,7 @@ async def test_grubops_owned_order_backfills_scraped_customer_fill_only(monkeypa
     monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
     monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
     monkeypatch.setattr(promote.order_fees, "stamp", _noop)
+    monkeypatch.setattr(promote, "_drive_status", _no_drive)
     monkeypatch.setattr(promote, "_record_fulfilment", _noop)
 
     agg = _agg(
