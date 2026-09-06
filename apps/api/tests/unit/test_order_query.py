@@ -68,3 +68,30 @@ def test_courier_clause_is_none_for_an_empty_selection():
     assert order_query.courier_clause([]) is None
     # A real selection builds a clause (an OR); it just has to exist.
     assert order_query.courier_clause(["counter", "talabat"]) is not None
+
+
+# ── revenue must not fall out of the reports when a status stops being invented ─
+
+
+def test_an_aggregator_sale_stands_once_the_parcel_leaves():
+    """The auto-close used to assert `delivered` five minutes after packing, and
+    the revenue reads leaned on that. With the claim dropped, an aggregator order
+    sits at `out_for_delivery` until the channel's own status arrives — which for
+    most channels is the next morning — so a read still keyed on `delivered` would
+    have quietly emptied the day's aggregator revenue."""
+    sql = str(
+        order_query.fulfilled_clause().compile(compile_kwargs={"literal_binds": True})
+    )
+    assert "out_for_delivery" in sql
+    assert "aggregator" in sql
+    assert "delivered" in sql
+
+
+def test_a_website_order_is_not_fulfilled_while_it_is_still_on_a_van():
+    """Our own courier can still fail one, and `undelivered` is a real outcome
+    there — nothing about that changed."""
+    sql = str(
+        order_query.fulfilled_clause().compile(compile_kwargs={"literal_binds": True})
+    )
+    # out_for_delivery only ever appears alongside the aggregator source.
+    assert "online" not in sql

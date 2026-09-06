@@ -111,8 +111,24 @@ _DELIVERED = or_(
         Order.source == "cashier", Order.pos_status == PosOrderStatusEnum.CLOSED.value
     ),
     and_(
-        Order.source.in_(["aggregator", "online"]),
+        Order.source == "online",
         Order.status == OrderStatusEnum.DELIVERED.value,
+    ),
+    # An aggregator order's sale stands once the parcel leaves the counter — the
+    # money is settled with the marketplace whatever the rider then does, and that
+    # is when its check closes. This used to read `delivered`, which worked only
+    # because an auto-close asserted a doorstep five minutes after packing; that
+    # claim is gone, so the arm names what it means. Without this the day's
+    # aggregator revenue would sit out of the email until the channel's own status
+    # arrived, which for most channels is the next morning.
+    and_(
+        Order.source == "aggregator",
+        Order.status.in_(
+            [
+                OrderStatusEnum.OUT_FOR_DELIVERY.value,
+                OrderStatusEnum.DELIVERED.value,
+            ]
+        ),
     ),
 )
 

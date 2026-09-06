@@ -28,9 +28,14 @@ def test_every_live_status_maps_to_a_lifecycle_state_except_on_hold():
     assert "OrderOnHold" not in g._STATUS_TO_MM
 
 
-def test_a_completed_order_means_delivered_and_a_rejected_one_cancelled():
-    assert g._STATUS_TO_MM["OrderCompleted"] == OrderStatusEnum.DELIVERED
+def test_a_completed_order_means_the_parcel_left_not_that_it_arrived():
+    """GrubTech has no doorstep event. `OrderCompleted` is its terminal word for its
+    OWN side of the job, and reading it as DELIVERED is how a Talabat order the
+    marketplace later cancelled — no driver ever collected it — sat `delivered` in
+    MM. The real delivered arrives with the channel's status through the ingest."""
+    assert g._STATUS_TO_MM["OrderCompleted"] == OrderStatusEnum.OUT_FOR_DELIVERY
     assert g._STATUS_TO_MM["OrderRejected"] == OrderStatusEnum.CANCELLED
+    assert OrderStatusEnum.DELIVERED not in g._STATUS_TO_MM.values()
 
 
 def test_the_foodics_order_id_is_parsed_from_the_publish_history():
@@ -183,13 +188,15 @@ async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
     )
     moved: list[OrderStatusEnum] = []
 
-    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
         moved.append(new_status)
         o.status = new_status
         return True
 
     # A first-seen already-completed order still backfills honestly, one rung at
-    # a time, through `arrived_at_pos` and `packed` on its way to `delivered`.
+    # a time, through `arrived_at_pos`, `packed` and now `out_for_delivery` — the
+    # rung the ladder was missing, which is why it used to jump straight from a
+    # packed box to a delivered one.
     with patch.object(g.order_lifecycle, "transition", new=fake_transition):
         await g._apply_status(None, order, OrderStatusEnum.DELIVERED, [])
 
@@ -197,6 +204,7 @@ async def test_the_ladder_climbs_created_to_delivered_one_rung_at_a_time():
         OrderStatusEnum.CONFIRMED,
         OrderStatusEnum.ARRIVED_AT_POS,
         OrderStatusEnum.PACKED,
+        OrderStatusEnum.OUT_FOR_DELIVERY,
         OrderStatusEnum.DELIVERED,
     ]
     # Delivered closes the check on the board.
@@ -215,7 +223,7 @@ async def test_a_live_order_climbs_only_to_the_shop_and_waits():
     order = SimpleNamespace(status=OrderStatusEnum.CREATED, pos_status="pending")
     moved: list[OrderStatusEnum] = []
 
-    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
         moved.append(new_status)
         o.status = new_status
         return True
@@ -234,7 +242,7 @@ async def test_a_cancel_is_attempted_directly_rather_than_climbed():
     )
     seen: list[OrderStatusEnum] = []
 
-    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
         seen.append(new_status)
         o.status = new_status
         return True
@@ -648,7 +656,7 @@ async def test_a_cancel_records_its_reason_on_the_order_and_the_event():
     )
     notes: list[str | None] = []
 
-    async def fake_transition(db, o, new_status, *, on_invalid="raise"):
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
         notes.append(current_actor().note)
         o.status = new_status
         return True
@@ -749,3 +757,72 @@ async def test_sweep_open_orders_ignores_an_order_that_has_not_moved():
 
     assert touched == 0
     assert ingested == []
+
+
+# ── no invented doorstep: the 2026-09-06 status audit ─────────────────────────
+
+
+def test_the_ladder_has_the_rung_between_a_packed_box_and_a_doorstep():
+    """`out_for_delivery` existed in the enum ("the parcel has left the kitchen")
+    and was missing from this ladder, so every aggregator order jumped it."""
+    i = g._LADDER.index
+    assert i(OrderStatusEnum.PACKED) < i(OrderStatusEnum.OUT_FOR_DELIVERY)
+    assert i(OrderStatusEnum.OUT_FOR_DELIVERY) < i(OrderStatusEnum.DELIVERED)
+
+
+def test_the_board_still_clears_when_the_parcel_leaves():
+    """The check closing is a fact about our counter; `delivered` is a fact about a
+    doorstep. Dropping the second must not stop the first — otherwise every
+    aggregator check stays open on the register."""
+    assert g._POS_STATUS[OrderStatusEnum.OUT_FOR_DELIVERY] == "closed"
+    assert g._POS_STATUS[OrderStatusEnum.CANCELLED] == "void"
+
+
+def test_no_grubtech_event_is_read_as_a_doorstep():
+    """`_history_at` stamps a rung from GrubTech's own event. There is no doorstep
+    event, so DELIVERED must have nothing to stamp from here."""
+    at = g._history_at(
+        [{"status": "OrderCompleted", "timeStamp": "2026-09-05T19:10:58Z"}],
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+    )
+    assert at is not None
+    assert (
+        g._history_at(
+            [{"status": "OrderCompleted", "timeStamp": "2026-09-05T19:10:58Z"}],
+            OrderStatusEnum.DELIVERED,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_marketplace_cancel_lands_on_a_packed_or_dispatched_order():
+    """The map refuses `packed → cancelled` because OUR rider failing does not
+    cancel a paid, boxed order. A marketplace cancelling is the opposite case — it
+    owns the customer and has already refunded them — so it is named in
+    `extra_from`. Talabat 3872488968 was lost for want of this."""
+    seen: list[tuple] = []
+
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
+        seen.append((new_status, tuple(extra_from)))
+        o.status = new_status
+        return True
+
+    for start in (OrderStatusEnum.PACKED, OrderStatusEnum.OUT_FOR_DELIVERY):
+        seen.clear()
+        order = SimpleNamespace(
+            status=start,
+            pos_status="active",
+            closed_at=None,
+            aggregator_cancel_reason=None,
+        )
+        with patch.object(g.order_lifecycle, "transition", new=fake_transition):
+            await g._apply_status(None, order, OrderStatusEnum.CANCELLED, [])
+        assert seen[0][0] == OrderStatusEnum.CANCELLED
+        assert start in seen[0][1]
+
+
+def test_delivered_is_never_widened_into_a_cancellation():
+    """Once we have real evidence the customer received it, a later cancellation is
+    a refund or dispute question — not a status to quietly rewind."""
+    assert OrderStatusEnum.DELIVERED not in g._CANCEL_EXTRA_FROM

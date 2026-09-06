@@ -86,14 +86,43 @@ _LADDER: list[OrderStatusEnum] = [
     OrderStatusEnum.CONFIRMED,
     OrderStatusEnum.ARRIVED_AT_POS,
     OrderStatusEnum.PACKED,
+    # The parcel has left the kitchen, which is the last thing a marketplace
+    # actually tells us in the moment. It was missing from this ladder, so an
+    # order jumped `packed → delivered` and MM asserted a handover nobody had
+    # reported.
+    OrderStatusEnum.OUT_FOR_DELIVERY,
     OrderStatusEnum.DELIVERED,
 ]
+
+#: Source statuses a MARKETPLACE cancellation may leave, beyond what the map
+#: allows. The map refuses `packed → cancelled` and `out_for_delivery → cancelled`
+#: on purpose, and that reasoning is sound for a delivery WE run: our rider failing
+#: does not cancel an order that is paid for and boxed — the delivery row records
+#: the failure and an admin re-dispatches.
+#:
+#: A marketplace is the other case. Talabat cancelling is not a courier hiccup, it
+#: is the order ending: the marketplace owns the customer and the money, it has
+#: already refunded them, and our copy saying the cake is on its way is simply
+#: wrong. Talabat 3872488968 sat `delivered` in MM for a day for want of this.
+#:
+#: `delivered` is deliberately NOT in here. Once we have real evidence the customer
+#: received it, a later cancellation is a refund/dispute question and not a status
+#: to quietly rewind.
+_CANCEL_EXTRA_FROM = (
+    OrderStatusEnum.PACKED,
+    OrderStatusEnum.OUT_FOR_DELIVERY,
+)
 
 #: English status words shared by Deliveroo, Talabat, and similar portals.
 _ENGLISH_AGGREGATOR_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "delivered": OrderStatusEnum.DELIVERED,
     "completed": OrderStatusEnum.DELIVERED,
-    "picked up": OrderStatusEnum.DELIVERED,
+    # A rider holding the box is not a customer holding the box. This used to say
+    # DELIVERED, which is the same invention as the auto-close: it reads the last
+    # thing we hear as though it were the last thing that happens.
+    "picked up": OrderStatusEnum.OUT_FOR_DELIVERY,
+    "out for delivery": OrderStatusEnum.OUT_FOR_DELIVERY,
+    "on the way": OrderStatusEnum.OUT_FOR_DELIVERY,
     "canceled": OrderStatusEnum.CANCELLED,
     "cancelled": OrderStatusEnum.CANCELLED,
     "rejected": OrderStatusEnum.CANCELLED,
@@ -439,7 +468,13 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
 
     if target == OrderStatusEnum.CANCELLED:
         with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, target)):
-            await order_lifecycle.transition(db, order, target, on_invalid="skip")
+            await order_lifecycle.transition(
+                db,
+                order,
+                target,
+                extra_from=_CANCEL_EXTRA_FROM,
+                on_invalid="skip",
+            )
         return
 
     if target not in _LADDER:

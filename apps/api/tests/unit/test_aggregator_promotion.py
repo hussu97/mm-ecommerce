@@ -1027,3 +1027,64 @@ def test_promote_lookback_covers_last_7d_and_includes_keeta():
 
     assert settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS >= 7
     assert CHANNEL_KEETA in AGGREGATOR_CHANNELS
+
+
+# ── no invented doorstep: the 2026-09-06 status audit ─────────────────────────
+
+
+def test_a_rider_holding_the_box_is_not_a_customer_holding_the_box():
+    """`picked up` used to map to DELIVERED. It is the same invention as the
+    auto-close — reading the last thing we hear as though it were the last thing
+    that happens."""
+    assert (
+        promote._target_status("talabat", "picked up")
+        == OrderStatusEnum.OUT_FOR_DELIVERY
+    )
+    assert (
+        promote._target_status("talabat", "out for delivery")
+        == OrderStatusEnum.OUT_FOR_DELIVERY
+    )
+    # A channel's real terminal word is still real evidence, and still lands.
+    assert promote._target_status("talabat", "Delivered") == OrderStatusEnum.DELIVERED
+    assert promote._target_status("keeta", "completed") == OrderStatusEnum.DELIVERED
+    assert promote._target_status("talabat", "Cancelled") == OrderStatusEnum.CANCELLED
+
+
+def test_the_ladder_passes_through_out_for_delivery():
+    i = promote._LADDER.index
+    assert i(OrderStatusEnum.PACKED) < i(OrderStatusEnum.OUT_FOR_DELIVERY)
+    assert i(OrderStatusEnum.OUT_FOR_DELIVERY) < i(OrderStatusEnum.DELIVERED)
+
+
+@pytest.mark.asyncio
+async def test_a_marketplace_cancel_outranks_our_bookkeeping(monkeypatch):
+    """The map refuses `packed → cancelled` — our rider failing does not cancel a
+    paid, boxed order. A marketplace cancelling is the order ENDING: it owns the
+    customer and has already refunded them. Talabat 3872488968 sat `delivered` in
+    MM for a day because nothing let that fact through."""
+    calls: list[tuple] = []
+
+    async def fake_transition(db, o, new_status, *, extra_from=(), on_invalid="raise"):
+        calls.append((new_status, tuple(extra_from)))
+        return True
+
+    monkeypatch.setattr(promote.order_lifecycle, "transition", fake_transition)
+    agg = SimpleNamespace(
+        channel="talabat",
+        status="Cancelled",
+        external_order_id="3872488968",
+        cancelled_at=None,
+        placed_at=datetime(2026, 9, 5, 18, 54, tzinfo=timezone.utc),
+    )
+    order = SimpleNamespace(status=OrderStatusEnum.PACKED)
+    await promote._drive_status(None, order, agg)
+
+    assert calls[0][0] == OrderStatusEnum.CANCELLED
+    assert OrderStatusEnum.PACKED in calls[0][1]
+    assert OrderStatusEnum.OUT_FOR_DELIVERY in calls[0][1]
+
+
+def test_delivered_is_never_rewound_into_a_cancellation():
+    """Once the channel has told us the customer received it, a later cancellation
+    is a refund or dispute question, not a status to quietly undo."""
+    assert OrderStatusEnum.DELIVERED not in promote._CANCEL_EXTRA_FROM

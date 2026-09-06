@@ -43,6 +43,33 @@ AGGREGATOR_CHANNEL_PREFIX: dict[str, str] = {
 }
 
 
+#: "The sale happened", for revenue and dashboard reads.
+#:
+#: A marketplace order is complete for US when the parcel leaves the counter — the
+#: money is settled with the marketplace whatever the rider then does — and that is
+#: the moment its check closes on the board. It used to be spelled `delivered`,
+#: because an auto-close moved every aggregator order there five minutes after
+#: packing. That claim was false (1,141 orders asserted a doorstep nobody had
+#: reported) and has been dropped, so these reads have to name what they actually
+#: mean instead of leaning on it: an aggregator order counts from
+#: `out_for_delivery` onward, and only the channel's own status promotes it to
+#: `delivered` later.
+#:
+#: A website order is NOT included at `out_for_delivery`: our own courier can still
+#: fail one, and `undelivered` is a real outcome there. Nothing about that changed.
+def fulfilled_clause():
+    """SQLAlchemy predicate for an order whose sale stands."""
+    from app.models.order import Order, OrderStatusEnum
+
+    return or_(
+        Order.status == OrderStatusEnum.DELIVERED.value,
+        and_(
+            Order.source == "aggregator",
+            Order.status == OrderStatusEnum.OUT_FOR_DELIVERY.value,
+        ),
+    )
+
+
 def courier_predicate(code: str):
     """A SQL predicate selecting the orders carried by `code`."""
     if code == COUNTER_CODE:

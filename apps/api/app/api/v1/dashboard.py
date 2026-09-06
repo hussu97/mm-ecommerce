@@ -181,7 +181,7 @@ async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownR
             ).where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                Order.status == OrderStatusEnum.DELIVERED,
+                order_query.fulfilled_clause(),
             )
         )
     ).all()
@@ -319,7 +319,7 @@ async def dashboard_today(
         select(func.count(Order.id)).where(
             Order.created_at >= start,
             Order.created_at <= end,
-            Order.status == OrderStatusEnum.DELIVERED,
+            order_query.fulfilled_clause(),
             *([delivered_clause] if delivered_clause is not None else []),
         ),
     )

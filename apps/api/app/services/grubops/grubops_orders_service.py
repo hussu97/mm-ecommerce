@@ -106,7 +106,12 @@ _STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "OrderPrepared": OrderStatusEnum.ARRIVED_AT_POS,
     "OrderReadyToDispatch": OrderStatusEnum.ARRIVED_AT_POS,
     "OrderDispatched": OrderStatusEnum.ARRIVED_AT_POS,
-    "OrderCompleted": OrderStatusEnum.DELIVERED,
+    # GrubTech's terminal word for its OWN side: the order is off the aggregator's
+    # board. It is not a handover, and this line used to say DELIVERED — which is
+    # how a Talabat order the marketplace later CANCELLED (no driver ever collected
+    # it) sat `delivered` in MM. GrubTech has no delivered signal at all; the real
+    # one arrives with the channel's own status through the ingest.
+    "OrderCompleted": OrderStatusEnum.OUT_FOR_DELIVERY,
     "OrderCanceled": OrderStatusEnum.CANCELLED,
     "OrderRejected": OrderStatusEnum.CANCELLED,
     "OrderFailed": OrderStatusEnum.CANCELLED,
@@ -123,6 +128,7 @@ _LADDER: list[OrderStatusEnum] = [
     OrderStatusEnum.CONFIRMED,
     OrderStatusEnum.ARRIVED_AT_POS,
     OrderStatusEnum.PACKED,
+    OrderStatusEnum.OUT_FOR_DELIVERY,
     OrderStatusEnum.DELIVERED,
 ]
 
@@ -133,7 +139,21 @@ _LADDER: list[OrderStatusEnum] = [
 #: aggregator delivered it, `void` when it was cancelled. A never-accepted order
 #: that GrubOps completes still gets closed here, which is correct — Foodics
 #: fulfilled it and nobody needs to accept it on MM any more.
+#: Source statuses a MARKETPLACE cancellation may leave beyond the map — see
+#: `promote._CANCEL_EXTRA_FROM`, which this deliberately mirrors: both are the same
+#: fact (the channel ended the order) arriving by two routes, live and by ingest.
+_CANCEL_EXTRA_FROM = (
+    OrderStatusEnum.PACKED,
+    OrderStatusEnum.OUT_FOR_DELIVERY,
+)
+
 _POS_STATUS: dict[OrderStatusEnum, str] = {
+    # The board clears when the parcel leaves, which is the moment it used to clear
+    # anyway — the old `packed → delivered` auto-close ran five minutes after
+    # packing. Keeping the register behaviour while dropping the claim about the
+    # customer is the whole point: the check closing is a fact about our counter,
+    # `delivered` is a fact about a doorstep.
+    OrderStatusEnum.OUT_FOR_DELIVERY: PosOrderStatusEnum.CLOSED.value,
     OrderStatusEnum.DELIVERED: PosOrderStatusEnum.CLOSED.value,
     OrderStatusEnum.CANCELLED: PosOrderStatusEnum.VOID.value,
 }
@@ -421,7 +441,12 @@ def _history_at(histories: list[dict], mm_status: OrderStatusEnum) -> datetime |
     wanted = {
         OrderStatusEnum.CONFIRMED: {"OrderCreated", "OrderAccepted", "OrderStarted"},
         OrderStatusEnum.PACKED: {"OrderPrepared", "OrderReadyToDispatch"},
-        OrderStatusEnum.DELIVERED: {"OrderCompleted"},
+        # `OrderCompleted` stamps the rung it now MEANS. There is no GrubTech event
+        # for a doorstep, so DELIVERED has no entry here: when the ingest later
+        # carries the channel's real delivered status it stamps that rung from the
+        # channel's own timestamp, and until then this ladder simply does not climb
+        # that far.
+        OrderStatusEnum.OUT_FOR_DELIVERY: {"OrderCompleted"},
         OrderStatusEnum.CANCELLED: {"OrderCanceled", "OrderRejected", "OrderFailed"},
     }.get(mm_status, set())
     best: datetime | None = None
@@ -960,13 +985,24 @@ async def _apply_status(
     if target == OrderStatusEnum.CANCELLED:
         at = _history_at(histories, target)
         # Set before the transition so the value is in place whether or not the
-        # move lands — a GrubOps cancel of an order our board has already closed
-        # (packed/delivered) is refused, but the reason it gives is still the
-        # truth about that order and worth keeping.
+        # move lands — a GrubOps cancel of an order already delivered is refused,
+        # but the reason it gives is still the truth about that order and worth
+        # keeping.
         if reason:
             order.aggregator_cancel_reason = reason
         with acting_as(StatusSourceEnum.AGGREGATOR, at=at, note=reason):
-            await order_lifecycle.transition(db, order, target, on_invalid="skip")
+            await order_lifecycle.transition(
+                db,
+                order,
+                target,
+                # Same reasoning as `promote._CANCEL_EXTRA_FROM`: the map refuses a
+                # cancel from packed/out_for_delivery because OUR rider failing does
+                # not cancel a paid, boxed order — but a marketplace cancelling is
+                # the order ending, and it has already refunded the customer.
+                # `delivered` stays refused.
+                extra_from=_CANCEL_EXTRA_FROM,
+                on_invalid="skip",
+            )
         _sync_pos_status(order, target)
         return
 
@@ -1016,13 +1052,21 @@ _AUTO_CLOSE_LIMIT = 200
 async def sweep_auto_close(db) -> int:
     """Move packed aggregator orders to `delivered` once their window has passed.
 
-    An aggregator order gives us no on-the-way or delivered signal — the dispatch
-    calls the rider and then GrubTech goes quiet — so from our side the order is
-    done a few minutes after it is packed. This closes it: a `packed → delivered`
-    move attributed to `system`, which clears the check off the register board via
-    `_sync_pos_status` and (unlike an ingest-driven move) mirrors out to *finalise*
-    the Foodics order on the delivery axis, via `order_lifecycle`'s DELIVERED
-    mirror-out. This is the 5-minute delay the write-back's "close" hangs off.
+    The dispatch calls the rider and then GrubTech goes quiet, so a few minutes
+    after packing nobody is going to tell us anything more in the moment. This
+    closes the order out on our side: a `packed → out_for_delivery` move attributed
+    to `system`, which clears the check off the register board via
+    `_sync_pos_status`. This is the 5-minute delay the write-back's "close" hangs
+    off, unchanged.
+
+    It used to move to `delivered`, and that was the single largest source of
+    invented status in the system: 1,141 aggregator orders in the history went
+    `packed → delivered` inside sixty seconds, none of them because anyone had
+    reported a handover. The one honest thing we know at this point is that the
+    parcel has left, so that is what it now says. DELIVERED is left for the channel
+    to tell us through the ingest, which every channel eventually does — and which
+    is what lets a marketplace CANCELLATION still land afterwards, instead of
+    hitting an order we had already declared delivered.
 
     The packed moment is read from `order_status_events` rather than a column, the
     way the rest of the stack derives its timestamps — there is no `packed_at`.
@@ -1052,6 +1096,9 @@ async def sweep_auto_close(db) -> int:
                     Order.status == OrderStatusEnum.PACKED,
                     packed_at.c.packed_at <= cutoff,
                 )
+                # (status is still read from `packed` only — an order the live
+                # GrubOps push has already moved to out_for_delivery is off the
+                # query, so this stays the safety net it was.)
                 # The restock a cancellation would walk is not needed here, but a
                 # delivered move touches no lines; `items` is loaded anyway so a
                 # consequence that grows later cannot trip a `MissingGreenlet`.
@@ -1071,10 +1118,10 @@ async def sweep_auto_close(db) -> int:
             note="auto-closed: aggregator sends no further status after packed",
         ):
             moved = await order_lifecycle.transition(
-                db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
+                db, order, OrderStatusEnum.OUT_FOR_DELIVERY, on_invalid="skip"
             )
         if moved:
-            _sync_pos_status(order, OrderStatusEnum.DELIVERED)
+            _sync_pos_status(order, OrderStatusEnum.OUT_FOR_DELIVERY)
             closed += 1
     if closed:
         await db.flush()
