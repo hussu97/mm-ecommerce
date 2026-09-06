@@ -82,6 +82,15 @@ def _owner_column(kind: str):
     raise BadRequestError(f"Unknown recipe owner kind '{kind}'")
 
 
+#: Inventory kinds a recipe must never be created for: they are bought and counted
+#: directly, not produced, so a recipe on one would double-count its own stock (the
+#: item would be consumed AND expand into ingredients). Only a produced_good or a
+#: semi_finished item is *made* from other things and so carries a recipe. This is
+#: the maker-checker on recipe creation — enforced on the write, since a stocked
+#: retail/raw/packaging item having a recipe is a data error by construction.
+_PURCHASED_ITEM_KINDS = frozenset({"raw_material", "packaging", "resale_good"})
+
+
 async def _assert_owner_exists(
     db: AsyncSession, kind: str, owner_id: uuid.UUID
 ) -> None:
@@ -97,6 +106,12 @@ async def _assert_owner_exists(
     ).scalar_one_or_none()
     if owner is None:
         raise NotFoundError(f"{kind.replace('_', ' ').title()} not found")
+    if isinstance(owner, InventoryItem) and owner.kind in _PURCHASED_ITEM_KINDS:
+        raise BadRequestError(
+            f"'{owner.name}' is a {owner.kind.replace('_', ' ')} — a purchased item "
+            "counted directly in stock, so it has no recipe. A recipe describes how a "
+            "produced or semi-finished item is made from other items."
+        )
 
 
 async def get_recipe(db: AsyncSession, kind: str, owner_id: uuid.UUID) -> Recipe | None:
