@@ -1088,3 +1088,45 @@ def test_delivered_is_never_rewound_into_a_cancellation():
     """Once the channel has told us the customer received it, a later cancellation
     is a refund or dispute question, not a status to quietly undo."""
     assert OrderStatusEnum.DELIVERED not in promote._CANCEL_EXTRA_FROM
+
+
+# ── every channel really does tell us the order finished ──────────────────────
+
+
+def test_every_status_word_prod_has_ever_sent_maps_to_a_terminal_state():
+    """The whole point of dropping the auto-close is that DELIVERED now has to come
+    FROM the channel. So it matters that every channel actually sends one.
+
+    This is the complete vocabulary prod has recorded across 2,422 aggregator
+    orders (2026-07-01 → 2026-09-05), taken from
+    `SELECT channel, status, count(*) FROM aggregator_order GROUP BY 1,2`. Every
+    value maps to a terminal state — there is no channel that leaves an order
+    hanging, and no unmapped word waiting to strand one at `confirmed`.
+    """
+    observed = {
+        "careem": {"delivered": 37},
+        "deliveroo": {"delivered": 41, "cancelled": 1},
+        "keeta": {"completed": 1748, "50": 25},
+        "noon": {"delivered": 186, "canceled": 2},
+        "talabat": {"Delivered": 374, "Cancelled": 6},
+    }
+    terminal = {OrderStatusEnum.DELIVERED, OrderStatusEnum.CANCELLED}
+    for channel, words in observed.items():
+        for word in words:
+            got = promote._target_status(channel, word)
+            assert got in terminal, f"{channel} {word!r} → {got!r}"
+
+    # And each channel can actually reach DELIVERED, not only CANCELLED.
+    for channel, words in observed.items():
+        assert any(
+            promote._target_status(channel, w) == OrderStatusEnum.DELIVERED
+            for w in words
+        ), f"{channel} has no word that means delivered"
+
+
+def test_an_unknown_word_strands_the_order_rather_than_guessing():
+    """The 2 keeta rows in prod with a blank status (of 1,775) take this path: no
+    guess, left at `confirmed`, and logged — which is the honest outcome now that
+    nothing downstream invents the rest."""
+    assert promote._target_status("keeta", "") is None
+    assert promote._target_status("talabat", "some new word") is None
