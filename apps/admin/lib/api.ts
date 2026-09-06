@@ -869,6 +869,8 @@ const EXPORT_FILENAMES: Record<string, string> = {
   modifiers: 'modifiers.csv',
   'modifier-options': 'modifier_options.csv',
   'product-modifiers': 'product_modifiers.csv',
+  'inventory-items': 'inventory_items.csv',
+  recipes: 'recipes.xlsx',
 };
 
 /**

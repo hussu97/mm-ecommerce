@@ -823,7 +823,7 @@ async def import_recipes(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 owner_id=owner_id,
                 lines=lines,
                 source="mm",
-                source_metadata={"import": "recipes.csv"},
+                source_metadata={"import": "recipes-workbook"},
             )
             result.updated += 1
         except Exception as exc:  # noqa: BLE001 - turn a bad group into spreadsheet feedback

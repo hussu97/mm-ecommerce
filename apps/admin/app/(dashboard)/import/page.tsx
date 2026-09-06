@@ -12,6 +12,7 @@ interface ImportSection {
   title: string;
   description: string;
   columns: string;
+  accept?: string;
 }
 
 function ImportCard({ section }: { section: ImportSection }) {
@@ -74,7 +75,7 @@ function ImportCard({ section }: { section: ImportSection }) {
         <input
           ref={fileRef}
           type="file"
-          accept=".csv"
+          accept={section.accept ?? '.csv'}
           onChange={handleFileChange}
           className="text-xs font-body text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:border file:border-gray-300 file:text-xs file:font-body file:text-gray-700 file:bg-gray-50 hover:file:bg-gray-100"
         />
@@ -176,8 +177,9 @@ export default function ImportPage() {
         key: 'recipes',
         exportKey: 'recipes',
         title: '7. Recipes',
-        description: 'Bulk-edit recipe ingredients for products, modifier options and inventory items. Import creates or updates drafts only; review and activate from the owning item.',
-        columns: 'owner_kind, owner_id, owner_sku, owner_name, ingredient_item_id, ingredient_sku, ingredient_name, quantity, ingredient_unit, yield_percentage, inactive_in_order_types, display_order',
+        description: 'Download the workbook, edit only its Recipes sheet, and use the protected Owner reference sheet to copy valid owner IDs/SKUs. Import ignores the reference sheet and stages drafts only; review and activate from the owning item.',
+        columns: 'owner_kind, owner_id, owner_sku, owner_name, exported_version, exported_status, ingredient_item_id, ingredient_sku, ingredient_name, quantity, ingredient_unit, yield_percentage, inactive_in_order_types, display_order',
+        accept: '.xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       },
     ];
   }, [languages]);

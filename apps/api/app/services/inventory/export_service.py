@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Sequence
 from datetime import date
 from typing import Optional
 
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, with_loader_criteria
 
 from app.models.category import Category
 from app.models.inventory import InventoryItem
@@ -25,7 +29,29 @@ __all__ = [
     "export_product_modifiers",
     "export_products",
     "export_recipes",
+    "export_recipes_workbook",
 ]
+
+
+RECIPE_EXPORT_HEADERS = [
+    "owner_kind",
+    "owner_id",
+    "owner_sku",
+    "owner_name",
+    "exported_version",
+    "exported_status",
+    "ingredient_item_id",
+    "ingredient_sku",
+    "ingredient_name",
+    "quantity",
+    "ingredient_unit",
+    "yield_percentage",
+    "inactive_in_order_types",
+    "display_order",
+]
+RECIPE_OWNER_REFERENCE_HEADERS = ["owner_kind", "owner_id", "owner_sku", "owner_name"]
+_WORKBOOK_HEADER_FILL = PatternFill("solid", fgColor="2D241E")
+_WORKBOOK_HEADER_FONT = Font(color="FFFFFF", bold=True)
 
 
 async def export_categories(db: AsyncSession, languages: list[str]) -> str:
@@ -363,8 +389,10 @@ async def export_inventory_items(db: AsyncSession) -> str:
     return buf.getvalue()
 
 
-async def export_recipes(db: AsyncSession) -> str:
-    """Export one editable recipe version per owner.
+async def _recipe_export_rows(
+    db: AsyncSession,
+) -> tuple[list[list[str | int]], list[list[str]]]:
+    """Return the editable recipe rows and every valid recipe-owner reference.
 
     A draft takes precedence over the active version so a downloaded file is an
     honest representation of what an operator would edit next. Importing this
@@ -374,7 +402,20 @@ async def export_recipes(db: AsyncSession) -> str:
         (
             await db.execute(
                 select(Recipe).options(
-                    joinedload(Recipe.versions).joinedload(RecipeVersion.lines)
+                    joinedload(Recipe.versions).joinedload(RecipeVersion.lines),
+                    # A workbook exposes the current editable state only; loading
+                    # every retired historical version makes export cost grow with
+                    # recipe age while producing no editable row.
+                    with_loader_criteria(
+                        RecipeVersion,
+                        RecipeVersion.status.in_(
+                            [
+                                RecipeVersionStatusEnum.DRAFT.value,
+                                RecipeVersionStatusEnum.ACTIVE.value,
+                            ]
+                        ),
+                        include_aliases=True,
+                    ),
                 )
             )
         )
@@ -382,77 +423,51 @@ async def export_recipes(db: AsyncSession) -> str:
         .unique()
         .all()
     )
-    product_ids = {recipe.product_id for recipe in recipes if recipe.product_id}
-    option_ids = {
-        recipe.modifier_option_id for recipe in recipes if recipe.modifier_option_id
+    # The reference worksheet must include owners that do not have a recipe
+    # yet; those are exactly the rows an operator needs when building a first
+    # import. These are four bounded catalogue queries, not per-recipe lookups.
+    products = {
+        value.id: value
+        for value in (
+            await db.execute(select(Product).order_by(Product.sku, Product.name))
+        )
+        .scalars()
+        .all()
     }
-    item_ids = {
-        recipe.inventory_item_id for recipe in recipes if recipe.inventory_item_id
+    options = {
+        value.id: value
+        for value in (
+            await db.execute(
+                select(ModifierOption).order_by(ModifierOption.sku, ModifierOption.name)
+            )
+        )
+        .scalars()
+        .all()
     }
-    ingredient_ids = {
-        line.item_id
-        for recipe in recipes
-        for version in recipe.versions
-        for line in version.lines
+    items = {
+        value.id: value
+        for value in (
+            await db.execute(
+                select(InventoryItem).order_by(InventoryItem.sku, InventoryItem.name)
+            )
+        )
+        .scalars()
+        .all()
     }
-    products = (
-        {
-            value.id: value
-            for value in (
-                await db.execute(select(Product).where(Product.id.in_(product_ids)))
-            ).scalars()
-        }
-        if product_ids
-        else {}
-    )
-    options = (
-        {
-            value.id: value
-            for value in (
-                await db.execute(
-                    select(ModifierOption).where(ModifierOption.id.in_(option_ids))
-                )
-            ).scalars()
-        }
-        if option_ids
-        else {}
-    )
-    items = (
-        {
-            value.id: value
-            for value in (
-                await db.execute(
-                    select(InventoryItem).where(
-                        InventoryItem.id.in_(item_ids | ingredient_ids)
-                    )
-                )
-            ).scalars()
-        }
-        if (item_ids or ingredient_ids)
-        else {}
-    )
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(
-        [
-            "owner_kind",
-            "owner_id",
-            "owner_sku",
-            "owner_name",
-            "exported_version",
-            "exported_status",
-            "ingredient_item_id",
-            "ingredient_sku",
-            "ingredient_name",
-            "quantity",
-            "ingredient_unit",
-            "yield_percentage",
-            "inactive_in_order_types",
-            "display_order",
-        ]
-    )
-    for recipe in sorted(recipes, key=lambda value: (value.owner_kind, str(value.id))):
+    editable_rows: list[list[str | int]] = []
+    for recipe in sorted(
+        recipes,
+        key=lambda value: (
+            value.owner_kind,
+            str(
+                value.product_id
+                or value.modifier_option_id
+                or value.inventory_item_id
+                or value.id
+            ),
+        ),
+    ):
         draft = next(
             (
                 v
@@ -477,12 +492,18 @@ async def export_recipes(db: AsyncSession) -> str:
         )
         if owner_id is None:
             continue
-        owner = products.get(owner_id) or options.get(owner_id) or items.get(owner_id)
+        owner = {
+            "product": products,
+            "modifier_option": options,
+            "inventory_item": items,
+        }.get(recipe.owner_kind, {}).get(owner_id)
         owner_sku = getattr(owner, "sku", "") or ""
         owner_name = getattr(owner, "name", "") or ""
-        for line in sorted(version.lines, key=lambda value: value.display_order):
+        for line in sorted(
+            version.lines, key=lambda value: (value.display_order, str(value.item_id))
+        ):
             ingredient = items.get(line.item_id)
-            writer.writerow(
+            editable_rows.append(
                 [
                     recipe.owner_kind,
                     str(owner_id),
@@ -500,4 +521,73 @@ async def export_recipes(db: AsyncSession) -> str:
                     line.display_order,
                 ]
             )
+
+    owner_rows = [
+        [kind, str(value.id), getattr(value, "sku", "") or "", value.name]
+        for kind, values in (
+            ("product", products.values()),
+            ("modifier_option", options.values()),
+            ("inventory_item", items.values()),
+        )
+        for value in values
+    ]
+    return editable_rows, owner_rows
+
+
+async def export_recipes(db: AsyncSession) -> str:
+    """Keep the original CSV export available for existing integrations."""
+    editable_rows, _ = await _recipe_export_rows(db)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(RECIPE_EXPORT_HEADERS)
+    writer.writerows(editable_rows)
+    return buf.getvalue()
+
+
+def _write_workbook_sheet(
+    sheet,
+    headers: list[str],
+    rows: Sequence[Sequence[str | int]],
+    *,
+    protected: bool,
+) -> None:
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.fill = _WORKBOOK_HEADER_FILL
+        cell.font = _WORKBOOK_HEADER_FONT
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = (
+        f"A1:{get_column_letter(len(headers))}{max(1, len(rows) + 1)}"
+    )
+    for row in rows:
+        sheet.append(row)
+    for column_index, header in enumerate(headers, start=1):
+        values = [header, *(str(row[column_index - 1]) for row in rows)]
+        sheet.column_dimensions[get_column_letter(column_index)].width = min(
+            max(len(value) for value in values) + 2, 36
+        )
+    if protected:
+        # Excel sheet protection is an editing guard, not a security boundary.
+        # The importer independently selects only the editable worksheet.
+        sheet.protection.sheet = True
+
+
+async def export_recipes_workbook(db: AsyncSession) -> bytes:
+    """Export editable recipes beside a guarded, reference-only owner catalogue."""
+    editable_rows, owner_rows = await _recipe_export_rows(db)
+    workbook = Workbook()
+    recipes_sheet = workbook.active
+    recipes_sheet.title = "Recipes"
+    _write_workbook_sheet(
+        recipes_sheet, RECIPE_EXPORT_HEADERS, editable_rows, protected=False
+    )
+    owners_sheet = workbook.create_sheet("Owner reference")
+    _write_workbook_sheet(
+        owners_sheet,
+        RECIPE_OWNER_REFERENCE_HEADERS,
+        owner_rows,
+        protected=True,
+    )
+    buf = io.BytesIO()
+    workbook.save(buf)
     return buf.getvalue()

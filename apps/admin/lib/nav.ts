@@ -56,6 +56,10 @@ export const NAV: Array<
   { section: 'Reports' },
   { href: '/analytics',     label: 'Analytics',       icon: 'bar_chart' },
   { href: '/pos-reports',   label: 'Counter Reports', icon: 'insights' },
+  // One front door for marketplace reconciliation. GrubOps, invoices, VAT,
+  // sync runs and mappings stay lateral tabs so the sidebar does not repeat
+  // the same operational area several times.
+  { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'fact_check', match: '/aggregators' },
 
   // What a URL says and where it leads. Redirects sits by Content because it is
   // the same job — and it holds the URLs nothing else knows about, like one

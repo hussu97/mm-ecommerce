@@ -35,6 +35,22 @@ not the storefront API, owns all manager inventory calls.
 - [x] Restore the missing inventory-item category ORM relationship used by the CSV export and cover the exported category reference with a regression test.
 - [ ] Deploy and verify that the admin inventory-items export no longer raises a server error.
 
+## Recipe workbook and reconciliation navigation (2026-09-06)
+
+- [x] Restore a single Reconciliation sidebar entry under Reports, retaining GrubOps, invoices, VAT, sync runs, and mappings as lateral reconciliation tabs.
+- [x] Replace the recipe CSV download with a workbook containing an editable `Recipes` sheet and a protected, complete owner reference sheet (`owner_kind`, `owner_id`, `owner_sku`, and owner name).
+- [x] Make recipe import read only the editable workbook sheet, while preserving CSV compatibility and draft-only recipe staging.
+- [ ] Run focused backend/admin regression checks and deploy the operator workflow.
+
+## Inventory catalogue audit and Foodics recipe seed (2026-09-06)
+
+- [x] Reconcile the live 100-item MM catalogue with the 98-item Foodics extraction and the product catalogue; identify produced, packaging, raw, and direct-resale families without changing stock or availability.
+- [x] Add guarded categories and classifications: raw inputs, physical packaging, stocked produced goods, and Foodics-marked direct resale goods. Keep every currently countable item stocked; no phantom is inferred from a recipe.
+- [x] Correct the Foodics extractor to read detail `ingredients` payloads and the stager to normalize Foodics display units/yield percentages and retain product/option mappings.
+- [ ] Obtain a complete, Cloudflare-clear Foodics detail snapshot, then stage its exact recipes as Foodics drafts and review before activation. The extractor fails closed rather than staging an incomplete graph.
+- [x] Verify the migration on a fresh PostgreSQL database, including downgrade/re-upgrade and representative finished/resale/raw catalogue rows.
+- [ ] Run the remaining full checks, deploy, and publish the audited recipe staging report.
+
 ---
 
 # Inventory bulk workflows, reconciliation navigation, and hour-sync hardening (2026-09-06)

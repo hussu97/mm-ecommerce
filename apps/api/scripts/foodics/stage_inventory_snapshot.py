@@ -63,6 +63,52 @@ def _unit_name(value: Any) -> str | None:
     return str(value).strip() if value else None
 
 
+def _canonical_unit(value: Any) -> str | None:
+    """Use MM's stable unit vocabulary, not Foodics display-capitalisation."""
+    raw = _unit_name(value)
+    if raw is None:
+        return None
+    normalized = raw.strip().casefold().replace(".", "")
+    aliases = {
+        "gram": "g",
+        "grams": "g",
+        "g": "g",
+        "kilogram": "kg",
+        "kilograms": "kg",
+        "kg": "kg",
+        "liter": "l",
+        "litre": "l",
+        "liters": "l",
+        "litres": "l",
+        "l": "l",
+        "milliliter": "ml",
+        "millilitre": "ml",
+        "milliliters": "ml",
+        "millilitres": "ml",
+        "ml": "ml",
+        "piece": "unit",
+        "pieces": "unit",
+        "pc": "unit",
+        "pcs": "unit",
+        "no": "unit",
+        "nos": "unit",
+        "number": "unit",
+        "unit": "unit",
+        "units": "unit",
+        "bottle": "bottle",
+        "bottles": "bottle",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _yield(value: Any) -> Decimal:
+    """Foodics stores yields as percentages; MM stores a 0 < yield <= 1 ratio."""
+    result = Decimal(str(value if value is not None else 1))
+    if result > 1:
+        result /= Decimal("100")
+    return result
+
+
 async def _one_by_sku(db, model, sku: str | None):
     if not sku:
         return None, False
@@ -129,13 +175,13 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
             or {}
         )
         storage_unit = (
-            _unit_name(storage_unit_row)
+            _canonical_unit(storage_unit_row)
             or source.get("storage_unit_name")
             or (item.storage_unit if item else None)
             or "unit"
         )
         ingredient_unit = (
-            _unit_name(ingredient_unit_row)
+            _canonical_unit(ingredient_unit_row)
             or source.get("ingredient_unit_name")
             or (item.ingredient_unit if item else None)
             or "unit"
@@ -256,6 +302,20 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
             )
             if entity:
                 maps[(kind, external_id)] = entity.id
+                if stage and mapped is None:
+                    db.add(
+                        ExternalItemMap(
+                            system="foodics",
+                            external_ref=external_id,
+                            external_name=source.get("name"),
+                            mm_kind=kind,
+                            **{field: entity.id},
+                            match_method=METHOD_EXACT,
+                            match_score=100,
+                            approved=False,
+                            notes=f"Staged from Foodics snapshot {actual_hash}",
+                        )
+                    )
 
     await map_catalogue(KIND_PRODUCT, Product, data.get("products", []))
     await map_catalogue(KIND_OPTION, ModifierOption, data.get("modifier_options", []))
@@ -297,7 +357,7 @@ async def reconcile(db, snapshot: dict[str, Any], *, stage: bool) -> dict[str, A
                     missing.append(ingredient_ref)
                     continue
                 recipe_quantity = _quantity(ingredient)
-                recipe_yield = Decimal(str(ingredient.get("yield_percentage") or 1))
+                recipe_yield = _yield(ingredient.get("yield_percentage"))
                 if recipe_quantity <= 0 or recipe_yield <= 0 or recipe_yield > 1:
                     invalid.append(ingredient.get("id"))
                     continue

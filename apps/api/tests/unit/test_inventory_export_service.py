@@ -9,6 +9,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from openpyxl import load_workbook
 
 from app.services.inventory import export_service
 
@@ -28,11 +29,11 @@ class _Result:
 
 
 class _Db:
-    def __init__(self, rows: list[object]):
-        self.rows = rows
+    def __init__(self, *result_sets: list[object]):
+        self.result_sets = iter(result_sets)
 
     async def execute(self, _statement):
-        return _Result(self.rows)
+        return _Result(next(self.result_sets))
 
 
 @pytest.mark.asyncio
@@ -87,4 +88,75 @@ async def test_inventory_item_export_uses_the_category_reference():
             "count_order": "10",
             "is_active": "True",
         }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_recipe_workbook_includes_all_valid_owners_in_a_protected_reference_sheet():
+    """Operators can build new recipes without guessing an owner UUID."""
+    product = SimpleNamespace(id=uuid.uuid4(), sku="BOX-3", name="Box of 3")
+    modifier_option = SimpleNamespace(
+        id=uuid.uuid4(), sku="ADD-CHOC", name="Add chocolate"
+    )
+    inventory_item = SimpleNamespace(id=uuid.uuid4(), sku="RM-BUTTER", name="Butter")
+    version = SimpleNamespace(
+        status="active",
+        version_number=1,
+        lines=[
+            SimpleNamespace(
+                item_id=inventory_item.id,
+                quantity=Decimal("3"),
+                ingredient_unit="g",
+                yield_percentage=Decimal("1"),
+                inactive_in_order_types=[],
+                display_order=0,
+            )
+        ],
+    )
+    recipe = SimpleNamespace(
+        id=uuid.uuid4(),
+        owner_kind="product",
+        product_id=product.id,
+        modifier_option_id=None,
+        inventory_item_id=None,
+        versions=[version],
+    )
+
+    content = await export_service.export_recipes_workbook(
+        _Db([recipe], [product], [modifier_option], [inventory_item])
+    )
+
+    workbook = load_workbook(io.BytesIO(content), data_only=True)
+    assert workbook.sheetnames == ["Recipes", "Owner reference"]
+    assert workbook["Recipes"].protection.sheet is False
+    assert workbook["Owner reference"].protection.sheet is True
+    assert list(workbook["Recipes"].values) == [
+        tuple(export_service.RECIPE_EXPORT_HEADERS),
+        (
+            "product",
+            str(product.id),
+            "BOX-3",
+            "Box of 3",
+            1,
+            "active",
+            str(inventory_item.id),
+            "RM-BUTTER",
+            "Butter",
+            "3",
+            "g",
+            "1",
+            None,
+            0,
+        ),
+    ]
+    assert list(workbook["Owner reference"].values) == [
+        tuple(export_service.RECIPE_OWNER_REFERENCE_HEADERS),
+        ("product", str(product.id), "BOX-3", "Box of 3"),
+        (
+            "modifier_option",
+            str(modifier_option.id),
+            "ADD-CHOC",
+            "Add chocolate",
+        ),
+        ("inventory_item", str(inventory_item.id), "RM-BUTTER", "Butter"),
     ]

@@ -29,10 +29,10 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/logs/audit')).toBe('/logs');
   });
 
-  it('keeps reconciliation routes out of the sidebar when they are lateral tabs', () => {
-    expect(activeNavHref('/aggregators/reconciliation')).toBeNull();
-    expect(activeNavHref('/aggregators/grubops')).toBeNull();
-    expect(activeNavHref('/aggregators/invoices')).toBeNull();
+  it('uses Reconciliation as the sidebar front door for its lateral tabs', () => {
+    expect(activeNavHref('/aggregators/reconciliation')).toBe('/aggregators/reconciliation');
+    expect(activeNavHref('/aggregators/grubops')).toBe('/aggregators/reconciliation');
+    expect(activeNavHref('/aggregators/invoices')).toBe('/aggregators/reconciliation');
   });
 
   it('lights a section up from one of its detail pages', () => {

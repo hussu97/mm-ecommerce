@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,14 @@ def _csv_response(content: str, filename: str) -> StreamingResponse:
     return StreamingResponse(
         iter([content]),
         media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _xlsx_response(content: bytes, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
@@ -115,4 +123,6 @@ async def export_recipes(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("catalogue.recipes.manage")),
 ):
-    return _csv_response(await export_service.export_recipes(db), "recipes.csv")
+    return _xlsx_response(
+        await export_service.export_recipes_workbook(db), "recipes.xlsx"
+    )

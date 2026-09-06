@@ -1399,3 +1399,21 @@ new bulk-import test for coverage. Whenever an exporter follows a model
 relationship, add a focused CSV test that builds the SQLAlchemy statement and
 asserts the resulting column value. A foreign key alone does not provide the
 ORM attribute used by `joinedload`.
+
+# Editable worksheets and reference data must be explicitly separated (2026-09-06)
+
+When an operator workbook includes a lookup tab, the import path must select
+the named editable worksheet directly rather than enumerate every sheet or
+infer intent from headers. The export should make the separation clear in the
+file itself, but the parser is the enforcement point. Likewise, a consolidated
+sidebar entry needs to remain a discoverable front door when its child pages
+are intentionally represented as tabs instead of duplicate navigation items.
+
+# Migration IDs are database data too (2026-09-06)
+
+Alembic's default `alembic_version.version_num` is `varchar(32)`. A descriptive
+filename can be longer, but its revision string cannot. Always count the actual
+revision ID and run an upgrade on a clean PostgreSQL database before calling a
+migration ready; the database rejects an overlong ID only after the migration
+body has run, although the surrounding Alembic transaction safely rolls it
+back.
