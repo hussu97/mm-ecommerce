@@ -2,6 +2,24 @@
 
 ---
 
+# iPhone manager inventory visibility (2026-09-06)
+
+## Plan
+
+- [x] Audit the immutable-ledger, cached-level, and shift-report APIs and keep the new surface scoped to the iPhone manager companion.
+- [x] Add a bounded, branch-scoped inventory-item ledger-history filter and regenerate the public API contracts.
+- [x] Build branch-specific on-hand, item-history, report-list, and report-detail views with ledger provenance and source-movement context.
+- [x] Keep inventory entry in the register/iPad workflows; verify iPhone and iPad builds plus focused inventory tests.
+
+## Results
+
+- The manager app now requires a branch before showing stock, avoiding misleading cross-branch inventory aggregation. It shows cached on-hand quantity/value, projection state, attention signals, and actual immutable ledger movements for each item.
+- Inventory reports cover production, finished-goods, raw-material, packaging, and spot-check templates. Detail views expose status, cadence, prefill sequence, expected-versus-physical variance, approvals, notes, and every recorded source movement.
+- `/inventory/transactions` accepts an optional `item_id`, implemented with an `EXISTS` predicate so one transaction is returned once even when it contains several inventory lines.
+- Verification: focused inventory API tests (18 passed), focused Swift inventory-model tests (3 passed), full `swift test`, iPhone manager build, iPad register build, Ruff, OpenAPI export, and generated-type freshness checks all passed.
+
+---
+
 # Inventory bulk workflows, reconciliation navigation, and hour-sync hardening (2026-09-06)
 
 ## Plan

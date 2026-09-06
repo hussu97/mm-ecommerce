@@ -27560,6 +27560,7 @@ export interface operations {
         parameters: {
             query?: {
                 branch_id?: string | null;
+                item_id?: string | null;
                 type?: string | null;
                 status?: string | null;
                 business_date?: string | null;

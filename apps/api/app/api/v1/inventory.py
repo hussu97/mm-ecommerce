@@ -402,6 +402,7 @@ async def _item_lookup_for_transactions(
 @transactions_router.get("", response_model=list[InventoryTransactionResponse])
 async def list_transactions(
     branch_id: uuid.UUID | None = None,
+    item_id: uuid.UUID | None = None,
     type: str | None = None,
     status_filter: str | None = Query(None, alias="status"),
     business_date: str | None = None,
@@ -418,6 +419,15 @@ async def list_transactions(
     elif not (user.is_admin or (user.role and user.role.is_super_admin)):
         stmt = stmt.where(
             InventoryTransaction.branch_id.in_(access_service.branch_ids_for(user))
+        )
+    if item_id:
+        # Use an EXISTS predicate rather than joining the line table. A ledger
+        # transaction may have several lines, and a join would duplicate its
+        # response when an item is represented by more than one normalized
+        # line. The manager's item view needs one immutable transaction row per
+        # posting, with the relevant line nested below it.
+        stmt = stmt.where(
+            InventoryTransaction.items.any(InventoryTransactionItem.item_id == item_id)
         )
     if type:
         stmt = stmt.where(InventoryTransaction.type == type)
