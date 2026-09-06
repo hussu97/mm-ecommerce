@@ -1,30 +1,42 @@
 'use client';
 
 /**
- * The register's menu.
+ * The menus.
  *
- * Groups nest, and a product reaches the terminal through this tree — the same
- * way Foodics builds a POS menu. Switching a group off hides everything beneath
- * it, which is why the tree is shown as a tree rather than a flat list: the
- * blast radius of that toggle has to be visible before you click it.
+ * There is one tree per shop — the menu that branch's terminals render — and one
+ * integrator tree, the menu pushed to the marketplaces. Groups nest, and a
+ * product reaches a till (or a marketplace) through the tree rather than through
+ * the website's category taxonomy. Switching a group off hides everything
+ * beneath it, which is why the tree is shown as a tree: the blast radius of that
+ * toggle has to be visible before you click it.
+ *
+ * The integrator tree is exactly two levels — a category, then its items — the
+ * shape Foodics' Grubtech menu maps onto; the console blocks a third.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { menuGroupsApi, productsApi, ApiError } from '@/lib/api';
+import { menuGroupsApi, productsApi, uploadsApi, ApiError } from '@/lib/api';
 import type { MenuGroupNode } from '@/lib/api';
 import type { Product } from '@/lib/types';
+import { branchesApi } from '@/lib/pos-api';
+import type { Branch } from '@/lib/pos-types';
 import { Button, Input } from '@/components/ui';
 import { RowAction } from '@/components/ui/DataTable';
 import { useConfirm } from '@/components/ui/feedback';
 
-const BLANK = { name: '', name_localized: '', parent_id: null as string | null, is_active: true };
+const BLANK = {
+  name: '',
+  name_localized: '',
+  reference: '',
+  image_url: '' as string,
+  parent_id: null as string | null,
+  is_active: true,
+};
 
-/**
- * The API caps `per_page` at 2000 (it was 100 when this page was written), so
- * one request covers today's catalogue — the loop below only matters if the
- * catalogue ever outgrows a single page.
- */
+/** The API caps `per_page` at 2000, so one request covers today's catalogue. */
 const CATALOGUE_PAGE_SIZE = 2000;
+
+const INTEGRATOR_REFERENCE = 'integrator-root';
 
 /** Flattened, depth-annotated, for the parent picker. */
 function flatten(nodes: MenuGroupNode[], depth = 0): { node: MenuGroupNode; depth: number }[] {
@@ -39,8 +51,10 @@ function subtreeIds(node: MenuGroupNode): string[] {
 export default function MenuGroupsPage() {
   const confirm = useConfirm();
   const [tree, setTree] = useState<MenuGroupNode[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedRootId, setSelectedRootId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<MenuGroupNode | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -48,17 +62,10 @@ export default function MenuGroupsPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [productSearch, setProductSearch] = useState('');
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [apiError, setApiError] = useState('');
   const [loadError, setLoadError] = useState('');
 
-  /**
-   * The whole catalogue, a page at a time.
-   *
-   * The API returns 422 for a `per_page` above its cap, so asking for
-   * everything in one request fails outright rather than returning a short
-   * page — which is how a group editor ends up with no products to pick from.
-   * Paging by the cap stays correct whatever the catalogue grows to.
-   */
   const loadEveryProduct = useCallback(async () => {
     const all: Product[] = [];
     let page = 1;
@@ -77,16 +84,16 @@ export default function MenuGroupsPage() {
   const load = useCallback(async () => {
     setLoadError('');
     try {
-      const [groups, catalogue] = await Promise.all([
-        menuGroupsApi.tree(true),
+      const [groups, catalogue, branchList] = await Promise.all([
+        menuGroupsApi.tree({ includeInactive: true }),
         loadEveryProduct(),
+        branchesApi.list(),
       ]);
       setTree(groups);
       setProducts(catalogue);
+      setBranches(branchList);
     } catch (e) {
-      // Without this the screen sits on "Loading…" for ever and says nothing
-      // about why, which is indistinguishable from the page being broken.
-      setLoadError(e instanceof ApiError ? e.message : 'Could not load the menu');
+      setLoadError(e instanceof ApiError ? e.message : 'Could not load the menus');
     } finally {
       setLoading(false);
     }
@@ -94,11 +101,46 @@ export default function MenuGroupsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const flat = useMemo(() => flatten(tree), [tree]);
+  const branchRoots = useMemo(
+    () => tree.filter(n => n.root_kind === 'branch'),
+    [tree],
+  );
+  const integratorRoot = useMemo(
+    () => tree.find(n => n.root_kind === 'integrator') ?? null,
+    [tree],
+  );
+  const branchName = useCallback(
+    (id?: string | null) => branches.find(b => b.id === id)?.name ?? 'Branch',
+    [branches],
+  );
+
+  // Keep a valid selection: default to the first branch menu, then the integrator.
+  const selectedRoot = useMemo(
+    () =>
+      tree.find(n => n.id === selectedRootId) ?? branchRoots[0] ?? integratorRoot ?? null,
+    [tree, selectedRootId, branchRoots, integratorRoot],
+  );
+  const isIntegrator = selectedRoot?.root_kind === 'integrator';
+
+  const branchesWithoutMenu = useMemo(
+    () =>
+      branches.filter(
+        b => b.is_active && !branchRoots.some(r => r.branch_id === b.id),
+      ),
+    [branches, branchRoots],
+  );
+
+  const rows = selectedRoot?.children ?? [];
+  const flat = useMemo(
+    () => (selectedRoot ? flatten(selectedRoot.children) : []),
+    [selectedRoot],
+  );
 
   function openAdd(parent: MenuGroupNode | null) {
+    if (!selectedRoot) return;
     setEditing(null);
-    setForm({ ...BLANK, parent_id: parent?.id ?? null });
+    // A new group at the top of a tree sits directly under its root.
+    setForm({ ...BLANK, parent_id: parent?.id ?? selectedRoot.id });
     setPicked(new Set());
     setApiError('');
     setProductSearch('');
@@ -110,6 +152,8 @@ export default function MenuGroupsPage() {
     setForm({
       name: node.name,
       name_localized: node.name_localized ?? '',
+      reference: node.reference ?? '',
+      image_url: node.image_url ?? '',
       parent_id: node.parent_id ?? null,
       is_active: node.is_active,
     });
@@ -119,6 +163,19 @@ export default function MenuGroupsPage() {
     setShowForm(true);
   }
 
+  async function uploadGroupImage(file: File) {
+    setUploading(true);
+    setApiError('');
+    try {
+      const { url } = await uploadsApi.uploadImage(file, 'menu-groups');
+      setForm(f => ({ ...f, image_url: url }));
+    } catch (e) {
+      setApiError(e instanceof ApiError ? e.message : 'Could not upload the image');
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function save() {
     setSaving(true);
     setApiError('');
@@ -126,6 +183,8 @@ export default function MenuGroupsPage() {
       const payload = {
         name: form.name.trim(),
         name_localized: form.name_localized.trim() || null,
+        reference: form.reference.trim() || null,
+        image_url: form.image_url.trim() || null,
         parent_id: form.parent_id,
         is_active: form.is_active,
         product_ids: [...picked],
@@ -138,6 +197,45 @@ export default function MenuGroupsPage() {
       setApiError(e instanceof ApiError ? e.message : 'Could not save the group');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function createBranchMenu(branchId: string) {
+    try {
+      const root = await menuGroupsApi.create({
+        name: 'Menu',
+        root_kind: 'branch',
+        branch_id: branchId,
+      });
+      await load();
+      setSelectedRootId(root.id);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Could not create the menu');
+    }
+  }
+
+  async function createIntegratorMenu() {
+    try {
+      const root = await menuGroupsApi.create({
+        name: 'Integrator Menu',
+        root_kind: 'integrator',
+        reference: INTEGRATOR_REFERENCE,
+      });
+      await load();
+      setSelectedRootId(root.id);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Could not create the menu');
+    }
+  }
+
+  async function cloneInto(branchId: string) {
+    if (!selectedRoot || selectedRoot.root_kind !== 'branch') return;
+    try {
+      const root = await menuGroupsApi.clone(selectedRoot.id, { branch_id: branchId });
+      await load();
+      setSelectedRootId(root.id);
+    } catch (e) {
+      setLoadError(e instanceof ApiError ? e.message : 'Could not clone the menu');
     }
   }
 
@@ -185,7 +283,6 @@ export default function MenuGroupsPage() {
     });
   }
 
-  /** Everything reachable through this node, for the "sells N" count. */
   function reach(node: MenuGroupNode): number {
     return node.product_count + node.children.reduce((n, c) => n + reach(c), 0);
   }
@@ -193,6 +290,9 @@ export default function MenuGroupsPage() {
   function Row({ node, depth }: { node: MenuGroupNode; depth: number }) {
     const isOpen = expanded.has(node.id);
     const hasChildren = node.children.length > 0;
+    // The integrator menu is two levels — a category, then its items — so a
+    // category never takes a nested group. Branch trees nest freely.
+    const canAddInside = !isIntegrator;
     return (
       <>
         <tr className={node.is_active ? '' : 'opacity-50'}>
@@ -209,9 +309,13 @@ export default function MenuGroupsPage() {
               ) : (
                 <span className="w-4" />
               )}
-              <span className="material-symbols-outlined text-base text-gray-400">
-                {hasChildren ? 'folder' : 'sell'}
-              </span>
+              {node.image_url ? (
+                <img src={node.image_url} alt="" className="w-6 h-6 rounded object-cover" />
+              ) : (
+                <span className="material-symbols-outlined text-base text-gray-400">
+                  {hasChildren ? 'folder' : 'sell'}
+                </span>
+              )}
               <span className="font-body">{node.name}</span>
               {node.name_localized && (
                 <span className="text-xs text-gray-400" dir="rtl">{node.name_localized}</span>
@@ -229,14 +333,11 @@ export default function MenuGroupsPage() {
                 node.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'
               }`}
             >
-              {node.is_active ? 'On the register' : 'Hidden'}
+              {node.is_active ? (isIntegrator ? 'Synced' : 'On the register') : 'Hidden'}
             </button>
           </td>
           <td className="px-4 py-2 text-right whitespace-nowrap">
-            {/* `RowAction` rather than bare buttons: these sat 20px tall and
-                8px apart in a tree whose rows are already indented, which on a
-                phone is three targets inside one thumb. */}
-            <RowAction onClick={() => openAdd(node)}>Add inside</RowAction>
+            {canAddInside && <RowAction onClick={() => openAdd(node)}>Add inside</RowAction>}
             <RowAction onClick={() => openEdit(node)}>Edit</RowAction>
             <RowAction danger onClick={() => remove(node)}>Delete</RowAction>
           </td>
@@ -258,17 +359,73 @@ export default function MenuGroupsPage() {
 
   if (loading) return <div className="p-8 font-body text-gray-500">Loading…</div>;
 
+  const addLabel = isIntegrator ? 'New category' : 'New top-level group';
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-display">Menu Groups</h1>
-        <Button onClick={() => openAdd(null)}>New top-level group</Button>
+        {selectedRoot && <Button onClick={() => openAdd(null)}>{addLabel}</Button>}
       </div>
-      <p className="text-sm text-gray-500 font-body mb-6 max-w-2xl">
-        The register builds its menu from these groups, and a product only reaches a
-        cashier through one. Groups nest — switching a parent off hides everything
-        inside it.
+      <p className="text-sm text-gray-500 font-body mb-4 max-w-2xl">
+        Each shop&apos;s terminals render its own menu, and the integrator menu is
+        what goes to the marketplaces. A product reaches a till — or a marketplace —
+        only through the tree.
       </p>
+
+      {/* Which menu you are looking at. */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        {branchRoots.map(r => (
+          <button
+            key={r.id}
+            onClick={() => setSelectedRootId(r.id)}
+            className={`px-3 py-1.5 text-sm rounded-full border font-body ${
+              selectedRoot?.id === r.id
+                ? 'border-primary bg-primary/5 text-primary'
+                : 'border-gray-300 text-gray-600 hover:border-gray-400'
+            }`}
+          >
+            {branchName(r.branch_id)}
+          </button>
+        ))}
+        {integratorRoot && (
+          <button
+            onClick={() => setSelectedRootId(integratorRoot.id)}
+            className={`px-3 py-1.5 text-sm rounded-full border font-body ${
+              selectedRoot?.id === integratorRoot.id
+                ? 'border-primary bg-primary/5 text-primary'
+                : 'border-gray-300 text-gray-600 hover:border-gray-400'
+            }`}
+          >
+            Integrator (marketplaces)
+          </button>
+        )}
+        {!integratorRoot && (
+          <Button variant="secondary" onClick={createIntegratorMenu}>
+            Create integrator menu
+          </Button>
+        )}
+      </div>
+
+      {/* Branches with no menu yet: start one empty, or clone the one on screen. */}
+      {branchesWithoutMenu.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2 text-sm font-body">
+          <span className="text-gray-500">No menu yet:</span>
+          {branchesWithoutMenu.map(b => (
+            <span key={b.id} className="inline-flex items-center gap-1">
+              <span className="text-gray-700">{b.name}</span>
+              <button className="underline text-primary" onClick={() => createBranchMenu(b.id)}>
+                start empty
+              </button>
+              {selectedRoot?.root_kind === 'branch' && (
+                <button className="underline text-primary" onClick={() => cloneInto(b.id)}>
+                  clone {branchName(selectedRoot.branch_id)}
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
 
       {loadError && (
         <div className="mb-4 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded font-body text-sm">
@@ -290,13 +447,19 @@ export default function MenuGroupsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {tree.length === 0 ? (
+            {!selectedRoot ? (
               <tr>
                 <td colSpan={5} className="px-4 py-8 text-center text-gray-500 font-body">
-                  No groups yet — every active product shows on the register until you make one.
+                  No menus yet — create one for a branch to begin.
                 </td>
               </tr>
-            ) : tree.map(node => <Row key={node.id} node={node} depth={0} />)}
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-gray-500 font-body">
+                  This menu is empty. Add a {isIntegrator ? 'category' : 'group'} to begin.
+                </td>
+              </tr>
+            ) : rows.map(node => <Row key={node.id} node={node} depth={0} />)}
           </tbody>
         </table>
       </div>
@@ -306,7 +469,7 @@ export default function MenuGroupsPage() {
           <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
             <div className="p-6 border-b">
               <h2 className="text-xl font-display">
-                {editing ? `Edit ${editing.name}` : 'New menu group'}
+                {editing ? `Edit ${editing.name}` : isIntegrator ? 'New category' : 'New menu group'}
               </h2>
             </div>
 
@@ -327,6 +490,47 @@ export default function MenuGroupsPage() {
                 onChange={e => setForm(f => ({ ...f, name_localized: e.target.value }))}
               />
 
+              {isIntegrator && (
+                <Input
+                  label="Foodics subgroup id (reference)"
+                  value={form.reference}
+                  onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
+                />
+              )}
+
+              {/* Group image, shown on the register's cards. */}
+              <div>
+                <span className="block text-xs uppercase tracking-wider text-gray-600 font-body mb-1">
+                  Image
+                </span>
+                <div className="flex items-center gap-3">
+                  {form.image_url && (
+                    <img src={form.image_url} alt="" className="w-14 h-14 rounded object-cover" />
+                  )}
+                  <label className="cursor-pointer text-sm text-primary underline font-body">
+                    {uploading ? 'Uploading…' : form.image_url ? 'Replace' : 'Upload'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (file) uploadGroupImage(file);
+                      }}
+                    />
+                  </label>
+                  {form.image_url && (
+                    <button
+                      type="button"
+                      className="text-sm text-gray-400 underline font-body"
+                      onClick={() => setForm(f => ({ ...f, image_url: '' }))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <label className="block">
                 <span className="text-xs uppercase tracking-wider text-gray-600 font-body">
                   Sits inside
@@ -335,15 +539,21 @@ export default function MenuGroupsPage() {
                   value={form.parent_id ?? ''}
                   onChange={e => setForm(f => ({ ...f, parent_id: e.target.value || null }))}
                   className="mt-1 w-full border rounded px-3 py-2 font-body"
+                  // The integrator menu is two levels: a category cannot sit
+                  // inside another category, only at the top.
+                  disabled={isIntegrator}
                 >
-                  <option value="">— top level —</option>
-                  {flat
-                    .filter(({ node }) => !forbidden.has(node.id))
-                    .map(({ node, depth }) => (
-                      <option key={node.id} value={node.id}>
-                        {' '.repeat(depth * 3)}{node.name}
-                      </option>
-                    ))}
+                  <option value={selectedRoot?.id ?? ''}>
+                    — top level of {isIntegrator ? 'the integrator menu' : branchName(selectedRoot?.branch_id)} —
+                  </option>
+                  {!isIntegrator &&
+                    flat
+                      .filter(({ node }) => !forbidden.has(node.id))
+                      .map(({ node, depth }) => (
+                        <option key={node.id} value={node.id}>
+                          {' '.repeat(depth * 3)}{node.name}
+                        </option>
+                      ))}
                 </select>
               </label>
 
@@ -354,7 +564,7 @@ export default function MenuGroupsPage() {
                   onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))}
                   className="accent-primary"
                 />
-                On the register
+                {isIntegrator ? 'Synced to marketplaces' : 'On the register'}
               </label>
 
               <div>
@@ -384,17 +594,12 @@ export default function MenuGroupsPage() {
                       />
                       <span className="font-body text-sm">{p.name}</span>
                       <span className="text-xs text-gray-400 ml-auto">{p.sku}</span>
-                      {!p.sales_channels?.includes('pos') && (
-                        <span className="text-xs text-amber-700 bg-amber-50 px-1.5 rounded">
-                          off register
-                        </span>
-                      )}
                     </label>
                   ))}
                 </div>
                 {picked.size > 0 && (
                   <p className="text-xs text-gray-400 mt-1 font-body">
-                    Products already in {editing ? 'this' : 'another'} group can belong to several.
+                    A product can belong to several groups.
                   </p>
                 )}
               </div>

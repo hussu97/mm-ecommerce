@@ -298,7 +298,6 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 for field in (
                     "is_featured",
                     "is_sold_by_weight",
-                    "sync_to_aggregators",
                 ):
                     if field in row and str(row[field] or "").strip():
                         setattr(existing, field, _parse_bool(row[field]))
@@ -346,9 +345,6 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     is_featured=_parse_bool(row.get("is_featured", "false")),
                     is_sold_by_weight=_parse_bool(
                         row.get("is_sold_by_weight", "false")
-                    ),
-                    sync_to_aggregators=_parse_bool(
-                        row.get("sync_to_aggregators", "false")
                     ),
                     image_urls=[image_url] if image_url else [],
                 )

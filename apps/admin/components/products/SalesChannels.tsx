@@ -66,14 +66,12 @@ export function SalesChannelPicker({
       </div>
       <p className="text-[11px] font-body text-gray-400 mt-1.5">
         {value.length === 0
-          ? 'Not sold anywhere — the product stays in the catalogue but no channel lists it.'
+          ? 'Not on the website — the product stays in the catalogue but the storefront does not list it.'
           : `Sold on ${value.map(c => SALES_CHANNEL_LABELS[c]).join(' and ')}.`}
       </p>
-      {value.includes('pos') && (
-        <p className="text-[11px] font-body text-gray-400 mt-1">
-          The register also needs the product in an active menu group.
-        </p>
-      )}
+      <p className="text-[11px] font-body text-gray-400 mt-1">
+        Where this sells on the register or the marketplaces is set in Menu Groups, not here.
+      </p>
     </div>
   );
 }

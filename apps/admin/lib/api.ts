@@ -240,10 +240,8 @@ export const catalogSyncApi = {
     ),
   createItem: (data: Schemas['CreateItemRequest']) =>
     api.post<Record<string, unknown>>('/catalog-sync/items', data),
-  setProductSync: (productId: string, data: Schemas['SyncFlagUpdate']) =>
-    api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/products/${productId}/sync`, data),
-  setCategorySync: (categoryId: string, data: Schemas['SyncFlagUpdate']) =>
-    api.put<Schemas['SyncFlagResponse']>(`/catalog-sync/categories/${categoryId}/sync`, data),
+  // The per-product/-category "sync to aggregators" flag was retired — what goes
+  // to the marketplaces is membership of the integrator menu (see menuGroupsApi).
   // Weekly hours moved to `branchesApi.weeklyHours` / `.setWeeklyHours`
   // (`/branches/{id}/weekly-hours`) — they are a branch setting, edited in the
   // Branches tab. This surface keeps only the read-only per-channel hours drift.
@@ -251,13 +249,22 @@ export const catalogSyncApi = {
 
 // ─── Menu groups ──────────────────────────────────────────────────────────────
 
-/** A node of the register's menu tree, with its descendants nested inside. */
+/**
+ * What a root is for. A `branch` root is one shop's menu (its terminals render
+ * it); the single `integrator` root is the menu pushed to the marketplaces.
+ */
+export type MenuRootKind = 'branch' | 'integrator';
+
+/** A node of a menu tree, with its descendants nested inside. */
 export interface MenuGroupNode {
   id: string;
   name: string;
   name_localized?: string | null;
   reference?: string | null;
   image_url?: string | null;
+  root_kind: MenuRootKind;
+  branch_id?: string | null;
+  root_id?: string | null;
   parent_id?: string | null;
   display_order: number;
   is_active: boolean;
@@ -269,6 +276,11 @@ export interface MenuGroupNode {
 export interface MenuGroupInput {
   name: string;
   name_localized?: string | null;
+  /** Only read when creating a root; a child inherits from its parent. */
+  root_kind?: MenuRootKind;
+  branch_id?: string | null;
+  reference?: string | null;
+  image_url?: string | null;
   parent_id?: string | null;
   display_order?: number;
   is_active?: boolean;
@@ -276,11 +288,19 @@ export interface MenuGroupInput {
 }
 
 export const menuGroupsApi = {
-  tree: (includeInactive = true) =>
-    api.get<MenuGroupNode[]>(`/menu-groups/tree?include_inactive=${includeInactive}`),
+  tree: (opts: { includeInactive?: boolean; branchId?: string; rootKind?: MenuRootKind } = {}) => {
+    const q = new URLSearchParams();
+    q.set('include_inactive', String(opts.includeInactive ?? true));
+    if (opts.branchId) q.set('branch_id', opts.branchId);
+    if (opts.rootKind) q.set('root_kind', opts.rootKind);
+    return api.get<MenuGroupNode[]>(`/menu-groups/tree?${q.toString()}`);
+  },
   create: (data: MenuGroupInput) => api.post<MenuGroupNode>('/menu-groups', data),
   update: (id: string, data: Partial<MenuGroupInput>) =>
     api.patch<MenuGroupNode>(`/menu-groups/${id}`, data),
+  // Open a new shop's menu as a copy of an existing branch root.
+  clone: (id: string, data: { branch_id: string; name?: string }) =>
+    api.post<MenuGroupNode>(`/menu-groups/${id}/clone`, data),
   // Takes every group nested underneath it with it.
   delete: (id: string) => api.delete<void>(`/menu-groups/${id}`),
 };

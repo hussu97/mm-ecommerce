@@ -4773,10 +4773,7 @@
       "BulkVisibilityRequest": {
         "properties": {
           "channel": {
-            "enum": [
-              "pos",
-              "web"
-            ],
+            "const": "web",
             "title": "Channel",
             "type": "string"
           },
@@ -14411,8 +14408,48 @@
         "title": "MappingResolveResult",
         "type": "object"
       },
+      "MenuGroupClone": {
+        "description": "Open a new shop's menu as a copy of an existing branch's tree.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "branch_id"
+        ],
+        "title": "MenuGroupClone",
+        "type": "object"
+      },
       "MenuGroupCreate": {
         "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "display_order": {
             "default": 0,
             "title": "Display Order",
@@ -14485,6 +14522,15 @@
             ],
             "title": "Reference"
           },
+          "root_kind": {
+            "default": "branch",
+            "enum": [
+              "branch",
+              "integrator"
+            ],
+            "title": "Root Kind",
+            "type": "string"
+          },
           "translations": {
             "additionalProperties": {
               "additionalProperties": {
@@ -14505,6 +14551,18 @@
       "MenuGroupNode": {
         "description": "One node of the tree, with its descendants nested inside it.",
         "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "children": {
             "default": [],
             "items": {
@@ -14588,6 +14646,23 @@
               }
             ],
             "title": "Reference"
+          },
+          "root_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Id"
+          },
+          "root_kind": {
+            "default": "branch",
+            "title": "Root Kind",
+            "type": "string"
           }
         },
         "required": [
@@ -14601,6 +14676,18 @@
       },
       "MenuGroupResponse": {
         "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "display_order": {
             "title": "Display Order",
             "type": "integer"
@@ -14671,6 +14758,23 @@
               }
             ],
             "title": "Reference"
+          },
+          "root_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Id"
+          },
+          "root_kind": {
+            "default": "branch",
+            "title": "Root Kind",
+            "type": "string"
           },
           "translations": {
             "additionalProperties": {
@@ -20984,10 +21088,7 @@
           },
           "sales_channels": {
             "items": {
-              "enum": [
-                "pos",
-                "web"
-              ],
+              "const": "web",
               "type": "string"
             },
             "title": "Sales Channels",
@@ -21304,10 +21405,7 @@
           },
           "sales_channels": {
             "items": {
-              "enum": [
-                "pos",
-                "web"
-              ],
+              "const": "web",
               "type": "string"
             },
             "title": "Sales Channels",
@@ -21584,10 +21682,7 @@
             "anyOf": [
               {
                 "items": {
-                  "enum": [
-                    "pos",
-                    "web"
-                  ],
+                  "const": "web",
                   "type": "string"
                 },
                 "type": "array"
@@ -27898,71 +27993,6 @@
           }
         },
         "title": "SupplierUpdate",
-        "type": "object"
-      },
-      "SyncFlagResponse": {
-        "properties": {
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "sync_channels": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sync Channels"
-          },
-          "sync_to_aggregators": {
-            "title": "Sync To Aggregators",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "sync_to_aggregators"
-        ],
-        "title": "SyncFlagResponse",
-        "type": "object"
-      },
-      "SyncFlagUpdate": {
-        "description": "Toggle whether a product/category is pushed to the aggregators.",
-        "properties": {
-          "sync_channels": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sync Channels"
-          },
-          "sync_to_aggregators": {
-            "title": "Sync To Aggregators",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "sync_to_aggregators"
-        ],
-        "title": "SyncFlagUpdate",
         "type": "object"
       },
       "TableCreate": {
@@ -39386,65 +39416,6 @@
         ]
       }
     },
-    "/api/v1/catalog-sync/categories/{category_id}/sync": {
-      "put": {
-        "description": "Opt a category into (or out of) the aggregator sync.",
-        "operationId": "set_category_sync_api_v1_catalog_sync_categories__category_id__sync_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "category_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Category Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SyncFlagUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncFlagResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Set Category Sync",
-        "tags": [
-          "Catalog Sync"
-        ]
-      }
-    },
     "/api/v1/catalog-sync/drift": {
       "get": {
         "description": "Menu + hours drift for one branch, per target \u2014 computed from snapshots.\n\nRead-only: it diffs MM's flagged catalogue against the last stored read of\neach integrator. Targets with no snapshot yet come back with null diffs\n(nothing has been read for them).",
@@ -39604,65 +39575,6 @@
           }
         ],
         "summary": "Resolve Mappings",
-        "tags": [
-          "Catalog Sync"
-        ]
-      }
-    },
-    "/api/v1/catalog-sync/products/{product_id}/sync": {
-      "put": {
-        "description": "Opt a product into (or out of) the aggregator sync.",
-        "operationId": "set_product_sync_api_v1_catalog_sync_products__product_id__sync_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "product_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Product Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SyncFlagUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncFlagResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Set Product Sync",
         "tags": [
           "Catalog Sync"
         ]
@@ -44201,7 +44113,7 @@
     },
     "/api/v1/import/recipes": {
       "post": {
-        "description": "Stage recipe spreadsheet changes as drafts; this endpoint never activates them.",
+        "description": "Stage Recipes-sheet changes as drafts; reference sheets are ignored.",
         "operationId": "import_recipes_api_v1_import_recipes_post",
         "requestBody": {
           "content": {
@@ -46498,6 +46410,54 @@
         ]
       }
     },
+    "/api/v1/inventory/report-templates/{template_id}/deactivate": {
+      "post": {
+        "operationId": "deactivate_report_template_api_v1_inventory_report_templates__template_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Deactivate Report Template",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/shift-reports": {
       "get": {
         "operationId": "list_shift_reports_api_v1_inventory_shift_reports_get",
@@ -48763,7 +48723,7 @@
     },
     "/api/v1/menu-groups/tree": {
       "get": {
-        "description": "The whole menu, nested. This is what the terminal renders.",
+        "description": "A menu, nested. A terminal fetches its own branch's tree; the console can\nask for every tree, one branch's, or the integrator menu.",
         "operationId": "get_tree_api_v1_menu_groups_tree_get",
         "parameters": [
           {
@@ -48776,6 +48736,43 @@
               "description": "Include groups switched off, for the console's builder",
               "title": "Include Inactive",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Only this shop's menu \u2014 what a terminal fetches",
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this shop's menu \u2014 what a terminal fetches",
+              "title": "Branch Id"
+            }
+          },
+          {
+            "description": "'branch' for the shop trees, 'integrator' for the sync menu",
+            "in": "query",
+            "name": "root_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "'branch' for the shop trees, 'integrator' for the sync menu",
+              "title": "Root Kind"
             }
           }
         ],
@@ -48955,6 +48952,65 @@
           }
         ],
         "summary": "Update Group",
+        "tags": [
+          "Menu"
+        ]
+      }
+    },
+    "/api/v1/menu-groups/{group_id}/clone": {
+      "post": {
+        "description": "Open a new shop's menu as a copy of an existing branch root.",
+        "operationId": "clone_group_api_v1_menu_groups__group_id__clone_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MenuGroupClone"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuGroupResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Clone Group",
         "tags": [
           "Menu"
         ]

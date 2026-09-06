@@ -12,7 +12,7 @@ from app.models.product import SALES_CHANNELS
 from .category import CategoryResponse
 from .modifier import ProductModifierResponse
 
-SalesChannel = Literal["pos", "web"]
+SalesChannel = Literal["web"]
 
 #: The kinds of text a product can ask a customer for.
 #:

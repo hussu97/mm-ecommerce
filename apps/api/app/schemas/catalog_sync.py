@@ -9,24 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
-
-
-class SyncFlagUpdate(BaseModel):
-    """Toggle whether a product/category is pushed to the aggregators."""
-
-    sync_to_aggregators: bool
-    #: Restrict to specific channels, or null/omit for all the outlet's targets.
-    sync_channels: list[str] | None = None
-
-
-class SyncFlagResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    name: str
-    sync_to_aggregators: bool
-    sync_channels: list[str] | None = None
+from pydantic import BaseModel
 
 
 class CatalogSyncStatus(BaseModel):

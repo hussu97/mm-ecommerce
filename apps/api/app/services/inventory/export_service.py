@@ -111,7 +111,6 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
             "display_order",
             "is_featured",
             "is_sold_by_weight",
-            "sync_to_aggregators",
         ]
     )
     w.writerow(header)
@@ -145,7 +144,6 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
                 str(r.display_order),
                 str(r.is_featured),
                 str(r.is_sold_by_weight),
-                str(r.sync_to_aggregators),
             ]
         )
         w.writerow(row_data)

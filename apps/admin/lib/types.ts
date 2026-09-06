@@ -165,13 +165,17 @@ export interface Product {
   category: Category | null;
 }
 
-/** The order here is the order the console offers them in. */
-export const SALES_CHANNELS = ['pos', 'web'] as const;
+/**
+ * Where a product's own flag can put it. Only the storefront lives here now:
+ * whether an item is on a register is decided by the branch menu tree, and
+ * whether it goes to the marketplaces is membership of the integrator menu tree
+ * — both edited in the Menu Groups console, not on the product form.
+ */
+export const SALES_CHANNELS = ['web'] as const;
 
 export type SalesChannel = (typeof SALES_CHANNELS)[number];
 
 export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
-  pos: 'POS',
   web: 'Website',
 };
 

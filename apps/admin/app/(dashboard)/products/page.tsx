@@ -213,9 +213,7 @@ export default function ProductsPage() {
           <span className="text-xs font-body text-gray-500">Website</span>
           <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('web', true)}>Show</Button>
           <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('web', false)}>Hide</Button>
-          <span className="text-xs font-body text-gray-500 ml-2">Register</span>
-          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('pos', true)}>Show</Button>
-          <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkVisibility('pos', false)}>Hide</Button>
+          {/* Register placement is set in Menu Groups now, not by a per-product flag. */}
           <div className="w-px h-5 bg-primary/30 mx-1" />
           <Button size="sm" loading={bulking} onClick={() => handleBulkStatus(true)}>Activate</Button>
           <Button size="sm" variant="ghost" loading={bulking} onClick={() => handleBulkStatus(false)}>Deactivate</Button>

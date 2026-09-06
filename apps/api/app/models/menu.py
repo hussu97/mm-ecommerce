@@ -24,11 +24,13 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -39,14 +41,44 @@ if TYPE_CHECKING:
     pass
 
 
+#: What a *root* group is for. Only meaningful on a root (``parent_id IS NULL``);
+#: descendants inherit it through their root. A ``branch`` root is the menu one
+#: shop's terminals render — one per branch. The single ``integrator`` root is
+#: the menu MM pushes to every marketplace (Foodics + the five aggregators); a
+#: product reaches the marketplaces by being a member of that tree, which is what
+#: the old ``Product.sync_to_aggregators`` flag used to say. A DB CHECK holds this
+#: set, so a typo is rejected rather than becoming a root nothing renders.
+ROOT_KINDS: tuple[str, ...] = ("branch", "integrator")
+
+ROOT_KIND_BRANCH = "branch"
+ROOT_KIND_INTEGRATOR = "integrator"
+
+#: The well-known ``reference`` of the one integrator root. Lets the sync find it
+#: without threading an id through config.
+INTEGRATOR_ROOT_REFERENCE = "integrator-root"
+
+#: How deep the integrator root is allowed to nest: L1 = category groups, L2 =
+#: items. Foodics lays its Grubtech menu out as subgroup → product and nothing
+#: deeper, so a third level would have no place to map to.
+INTEGRATOR_MAX_DEPTH = 2
+
+
 class MenuGroup(Base, UUIDMixin, TimestampMixin):
     """
-    A node in the register's menu tree.
+    A node in a menu tree.
 
-    Categories are taxonomy ("Cakes"); groups are how the menu is laid out on
-    the terminal, and they nest — "Drinks" holds "Hot Coffee" and "Cold
-    Coffee", each holding products. Deactivating a group hides everything
-    beneath it in one move, which is the point of the tree.
+    Categories are taxonomy ("Cakes"); groups are how a menu is laid out, and
+    they nest — "Drinks" holds "Hot Coffee" and "Cold Coffee", each holding
+    products. Deactivating a group hides everything beneath it in one move,
+    which is the point of the tree.
+
+    There is more than one tree. Each **branch** has its own root
+    (``root_kind='branch'``, ``branch_id`` set) — that is the menu its terminals
+    render, so Sharjah and Barsha can lay their counters out differently. A
+    single **integrator** root (``root_kind='integrator'``) is the menu MM pushes
+    to the marketplaces. ``root_kind`` and ``branch_id`` are only meaningful on a
+    root; every node also carries ``root_id`` pointing at its own root so "which
+    tree is this in" is a column read rather than a walk to the top.
     """
 
     __tablename__ = "menu_groups"
@@ -60,6 +92,29 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
         String(50), unique=True, nullable=True, index=True
     )
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: What a root is for — ``branch`` or ``integrator`` (see ``ROOT_KINDS``).
+    #: Set on every node, but only a root's own value is authoritative; a child's
+    #: is kept equal to its root's so a branch-scoped query never has to climb.
+    root_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=ROOT_KIND_BRANCH
+    )
+    #: Which shop this tree belongs to, on a ``branch`` root (and mirrored onto its
+    #: descendants). Null on the integrator tree, which is branch-agnostic.
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    #: The root this node lives under (a root points at itself). Denormalised so
+    #: "every group in Sharjah's menu" is an indexed equality rather than a
+    #: recursive walk; the service keeps it in step on create and reparent.
+    root_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("menu_groups.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     #: Null for a top-level group. Self-referential, so groups nest to any
     #: depth; the database rejects a group parenting itself and the service
     #: rejects longer cycles.
@@ -79,14 +134,52 @@ class MenuGroup(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    __table_args__ = (
+        CheckConstraint(
+            "root_kind IN ('branch', 'integrator')",
+            name="ck_menu_groups_root_kind",
+        ),
+        # A branch root must name its branch; the integrator tree must not.
+        # (Enforced on roots, which is where the columns are authoritative.)
+        CheckConstraint(
+            "parent_id IS NOT NULL OR (root_kind = 'branch') = (branch_id IS NOT NULL)",
+            name="ck_menu_groups_branch_root_has_branch",
+        ),
+        # One live root per branch, and one live integrator root, so the sync and
+        # the register never have to choose between two trees.
+        Index(
+            "uq_menu_groups_branch_root",
+            "branch_id",
+            unique=True,
+            postgresql_where=text(
+                "parent_id IS NULL AND deleted_at IS NULL AND root_kind = 'branch'"
+            ),
+        ),
+        Index(
+            "uq_menu_groups_integrator_root",
+            "root_kind",
+            unique=True,
+            postgresql_where=text(
+                "parent_id IS NULL AND deleted_at IS NULL AND root_kind = 'integrator'"
+            ),
+        ),
+    )
+
     children: Mapped[list[MenuGroup]] = relationship(
         "MenuGroup",
         back_populates="parent",
         cascade="all, delete-orphan",
         lazy="selectin",
+        # Two self-referential FKs live on this table now (parent_id and
+        # root_id); name the one the hierarchy is built from so SQLAlchemy does
+        # not have to guess.
+        foreign_keys="MenuGroup.parent_id",
     )
     parent: Mapped[MenuGroup | None] = relationship(
-        "MenuGroup", back_populates="children", remote_side="MenuGroup.id"
+        "MenuGroup",
+        back_populates="children",
+        remote_side="MenuGroup.id",
+        foreign_keys="MenuGroup.parent_id",
     )
 
     members: Mapped[list[MenuGroupProduct]] = relationship(

@@ -14,11 +14,16 @@ if TYPE_CHECKING:
     from .modifier import ProductModifier
 
 
-#: Every channel a product can be sold on. The order is the order the console
-#: offers them in. A database check constraint holds the same set, so a typo in
-#: an import is rejected rather than becoming a product that sells nowhere.
-SALES_CHANNELS: tuple[str, ...] = ("pos", "web")
+#: Every channel a product's *own* flag can put it on. Only the storefront lives
+#: here now: whether an item is on the register is decided by the branch menu
+#: tree, not a flag, and whether it goes to the marketplaces is membership of the
+#: integrator menu tree — see `menu_group_service`. A database check constraint
+#: holds this set, so a typo in an import is rejected.
+SALES_CHANNELS: tuple[str, ...] = ("web",)
 
+#: A **query** channel — "the caller wants the POS catalogue" — not a value in
+#: `sales_channels` any more. `product_service` / `category_service` still branch
+#: on it to pick the tree-based POS visibility clause.
 POS_CHANNEL = "pos"
 WEB_CHANNEL = "web"
 
@@ -84,32 +89,18 @@ class Product(Base, UUIDMixin, TimestampMixin):
     #: one place — and so adding a channel is data rather than a migration.
     #:
     #: An empty list is legitimate: an item in the catalogue, sold nowhere yet.
-    #: On the register this is still only half the answer — the menu tree
-    #: decides layout and can switch a whole branch off; see
-    #: `menu_group_service.pos_visibility_clause`.
+    #: On the register the only answer is the menu tree — a product is on a till
+    #: because a group in that branch's tree holds it. There is no ``'pos'``
+    #: half any more; ``'web'`` is the storefront, and marketplace push is
+    #: membership of the integrator menu tree, not a column here. See
+    #: `menu_group_service.pos_visibility_clause` and
+    #: `services/aggregators/catalog_sync.build_mm_menu`.
     sales_channels: Mapped[Any] = mapped_column(
         ARRAY(String),
         nullable=False,
         default=lambda: list(SALES_CHANNELS),
-        server_default="{pos,web}",
+        server_default="{web}",
     )
-    #: Whether this product should be pushed to the delivery marketplaces by the
-    #: catalog sync — its own switch, deliberately NOT `sales_channels`.
-    #:
-    #: The two answer different questions and the audit found they disagree: every
-    #: Brownie and Cookie is `sales_channels = ['web']` (not the POS counter) yet
-    #: lives on every marketplace today. So "goes to the aggregators" is a third
-    #: axis, seeded from the current Foodics `Grubtech` group membership, not
-    #: inferred from where else the item sells. Off by default: a product joins the
-    #: aggregator sync only when an operator opts it in. See
-    #: `services/aggregators/catalog_sync.py`.
-    sync_to_aggregators: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="false", default=False
-    )
-    #: Restrict the sync to specific channels (a subset of the outlet's live
-    #: targets), or null for "all of them". Lets an item go to Keeta but not
-    #: Deliveroo without a column per channel — data, not a migration.
-    sync_channels: Mapped[Any | None] = mapped_column(ARRAY(String), nullable=True)
     is_stock_product: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )

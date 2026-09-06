@@ -22,8 +22,6 @@ from app.core.exceptions import NotFoundError
 from app.core.permissions import require
 from app.models.branch import Branch
 from app.models.catalog_sync import SNAPSHOT_MENU, SYNC_TARGETS
-from app.models.category import Category
-from app.models.product import Product
 from app.models.user import User
 from app.schemas.catalog_sync import (
     BranchDriftReport,
@@ -31,8 +29,6 @@ from app.schemas.catalog_sync import (
     CreateItemRequest,
     MappingResolveResult,
     PushPlan,
-    SyncFlagResponse,
-    SyncFlagUpdate,
 )
 from app.services import audit_service
 from app.services.aggregators import catalog_sync
@@ -192,82 +188,9 @@ async def create_item(
     return result
 
 
-@router.put("/products/{product_id}/sync", response_model=SyncFlagResponse)
-async def set_product_sync(
-    product_id: UUID,
-    payload: SyncFlagUpdate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require("catalogue.manage")),
-) -> SyncFlagResponse:
-    """Opt a product into (or out of) the aggregator sync."""
-    product = (
-        await db.execute(select(Product).where(Product.id == product_id))
-    ).scalar_one_or_none()
-    if product is None:
-        raise NotFoundError("Product not found")
-    before = {
-        "sync_to_aggregators": product.sync_to_aggregators,
-        "sync_channels": product.sync_channels,
-    }
-    product.sync_to_aggregators = payload.sync_to_aggregators
-    product.sync_channels = payload.sync_channels
-    await db.flush()
-    await audit_service.log_action(
-        db,
-        action="UPDATE",
-        entity_type="product",
-        entity_id=str(product.id),
-        entity_label=f"{product.name} — aggregator sync",
-        admin=admin,
-        changes={"before": before, "after": payload.model_dump()},
-        request=request,
-    )
-    return SyncFlagResponse(
-        id=str(product.id),
-        name=product.name,
-        sync_to_aggregators=product.sync_to_aggregators,
-        sync_channels=product.sync_channels,
-    )
-
-
-@router.put("/categories/{category_id}/sync", response_model=SyncFlagResponse)
-async def set_category_sync(
-    category_id: UUID,
-    payload: SyncFlagUpdate,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require("catalogue.manage")),
-) -> SyncFlagResponse:
-    """Opt a category into (or out of) the aggregator sync."""
-    category = (
-        await db.execute(select(Category).where(Category.id == category_id))
-    ).scalar_one_or_none()
-    if category is None:
-        raise NotFoundError("Category not found")
-    before = {
-        "sync_to_aggregators": category.sync_to_aggregators,
-        "sync_channels": category.sync_channels,
-    }
-    category.sync_to_aggregators = payload.sync_to_aggregators
-    category.sync_channels = payload.sync_channels
-    await db.flush()
-    await audit_service.log_action(
-        db,
-        action="UPDATE",
-        entity_type="category",
-        entity_id=str(category.id),
-        entity_label=f"{category.name} — aggregator sync",
-        admin=admin,
-        changes={"before": before, "after": payload.model_dump()},
-        request=request,
-    )
-    return SyncFlagResponse(
-        id=str(category.id),
-        name=category.name,
-        sync_to_aggregators=category.sync_to_aggregators,
-        sync_channels=category.sync_channels,
-    )
+# The per-product / per-category "sync to aggregators" flag was retired: what
+# goes to the marketplaces is now membership of the integrator menu tree, edited
+# in the menu-groups console. See `menu_group_service` and `build_mm_menu`.
 
 
 # Weekly hours moved to the branches router (`GET/PUT /branches/{id}/weekly-hours`)

@@ -195,10 +195,10 @@ async def get_all(
             )
         )
     elif channel == "pos":
-        # The per-product flag and the menu tree together — see
-        # menu_group_service.pos_visibility_clause for why membership only
-        # gates once a tree actually exists.
-        stmt = stmt.where(menu_group_service.pos_visibility_clause())
+        # Purely the menu tree now — a product is on a register because a group
+        # in that branch's tree holds it. Scoped to the terminal's branch when
+        # we know it; unioned across shops for the admin's estate-wide list.
+        stmt = stmt.where(menu_group_service.pos_visibility_clause(branch_id))
 
     if category_slugs:
         if sort != "category":

@@ -2078,26 +2078,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/catalog-sync/categories/{category_id}/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Set Category Sync
-         * @description Opt a category into (or out of) the aggregator sync.
-         */
-        put: operations["set_category_sync_api_v1_catalog_sync_categories__category_id__sync_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/catalog-sync/drift": {
         parameters: {
             query?: never;
@@ -2167,26 +2147,6 @@ export interface paths {
          *     human. Idempotent; never overrides a manual mapping.
          */
         post: operations["resolve_mappings_api_v1_catalog_sync_mappings_resolve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/catalog-sync/products/{product_id}/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Set Product Sync
-         * @description Opt a product into (or out of) the aggregator sync.
-         */
-        put: operations["set_product_sync_api_v1_catalog_sync_products__product_id__sync_put"];
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3547,7 +3507,7 @@ export interface paths {
         put?: never;
         /**
          * Import Recipes
-         * @description Stage recipe spreadsheet changes as drafts; this endpoint never activates them.
+         * @description Stage Recipes-sheet changes as drafts; reference sheets are ignored.
          */
         post: operations["import_recipes_api_v1_import_recipes_post"];
         delete?: never;
@@ -4070,6 +4030,23 @@ export interface paths {
         /** Update Report Template */
         put: operations["update_report_template_api_v1_inventory_report_templates__template_id__put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/report-templates/{template_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deactivate Report Template */
+        post: operations["deactivate_report_template_api_v1_inventory_report_templates__template_id__deactivate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4610,7 +4587,8 @@ export interface paths {
         };
         /**
          * Get Tree
-         * @description The whole menu, nested. This is what the terminal renders.
+         * @description A menu, nested. A terminal fetches its own branch's tree; the console can
+         *     ask for every tree, one branch's, or the integrator menu.
          */
         get: operations["get_tree_api_v1_menu_groups_tree_get"];
         put?: never;
@@ -4641,6 +4619,26 @@ export interface paths {
         head?: never;
         /** Update Group */
         patch: operations["update_group_api_v1_menu_groups__group_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/menu-groups/{group_id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone Group
+         * @description Open a new shop's menu as a copy of an existing branch root.
+         */
+        post: operations["clone_group_api_v1_menu_groups__group_id__clone_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/modifiers": {
@@ -9958,9 +9956,9 @@ export interface components {
         BulkVisibilityRequest: {
             /**
              * Channel
-             * @enum {string}
+             * @constant
              */
-            channel: "pos" | "web";
+            channel: "web";
             /** Enabled */
             enabled: boolean;
             /** Ids */
@@ -13195,8 +13193,23 @@ export interface components {
             /** System */
             system: string;
         };
+        /**
+         * MenuGroupClone
+         * @description Open a new shop's menu as a copy of an existing branch's tree.
+         */
+        MenuGroupClone: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Name */
+            name?: string | null;
+        };
         /** MenuGroupCreate */
         MenuGroupCreate: {
+            /** Branch Id */
+            branch_id?: string | null;
             /**
              * Display Order
              * @default 0
@@ -13219,6 +13232,12 @@ export interface components {
             product_ids?: string[];
             /** Reference */
             reference?: string | null;
+            /**
+             * Root Kind
+             * @default branch
+             * @enum {string}
+             */
+            root_kind: "branch" | "integrator";
             /** Translations */
             translations?: {
                 [key: string]: {
@@ -13231,6 +13250,8 @@ export interface components {
          * @description One node of the tree, with its descendants nested inside it.
          */
         MenuGroupNode: {
+            /** Branch Id */
+            branch_id?: string | null;
             /**
              * Children
              * @default []
@@ -13265,9 +13286,18 @@ export interface components {
             product_ids: string[];
             /** Reference */
             reference?: string | null;
+            /** Root Id */
+            root_id?: string | null;
+            /**
+             * Root Kind
+             * @default branch
+             */
+            root_kind: string;
         };
         /** MenuGroupResponse */
         MenuGroupResponse: {
+            /** Branch Id */
+            branch_id?: string | null;
             /** Display Order */
             display_order: number;
             /**
@@ -13292,6 +13322,13 @@ export interface components {
             product_ids: string[];
             /** Reference */
             reference?: string | null;
+            /** Root Id */
+            root_id?: string | null;
+            /**
+             * Root Kind
+             * @default branch
+             */
+            root_kind: string;
             /**
              * Translations
              * @default {}
@@ -15339,7 +15376,7 @@ export interface components {
              */
             pricing_method: "fixed" | "open";
             /** Sales Channels */
-            sales_channels?: ("pos" | "web")[];
+            sales_channels?: "web"[];
             /** Sku */
             sku?: string | null;
             /** Slug */
@@ -15485,7 +15522,7 @@ export interface components {
              */
             product_modifiers: components["schemas"]["ProductModifierResponse"][];
             /** Sales Channels */
-            sales_channels?: ("pos" | "web")[];
+            sales_channels?: "web"[];
             /** Sku */
             sku: string | null;
             /** Slug */
@@ -15546,7 +15583,7 @@ export interface components {
             /** Pricing Method */
             pricing_method?: ("fixed" | "open") | null;
             /** Sales Channels */
-            sales_channels?: ("pos" | "web")[] | null;
+            sales_channels?: "web"[] | null;
             /** Sku */
             sku?: string | null;
             /** Slug */
@@ -17609,27 +17646,6 @@ export interface components {
             reference?: string | null;
             /** Tax Number */
             tax_number?: string | null;
-        };
-        /** SyncFlagResponse */
-        SyncFlagResponse: {
-            /** Id */
-            id: string;
-            /** Name */
-            name: string;
-            /** Sync Channels */
-            sync_channels?: string[] | null;
-            /** Sync To Aggregators */
-            sync_to_aggregators: boolean;
-        };
-        /**
-         * SyncFlagUpdate
-         * @description Toggle whether a product/category is pushed to the aggregators.
-         */
-        SyncFlagUpdate: {
-            /** Sync Channels */
-            sync_channels?: string[] | null;
-            /** Sync To Aggregators */
-            sync_to_aggregators: boolean;
         };
         /** TableCreate */
         TableCreate: {
@@ -23020,41 +23036,6 @@ export interface operations {
             };
         };
     };
-    set_category_sync_api_v1_catalog_sync_categories__category_id__sync_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                category_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SyncFlagUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncFlagResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     branch_drift_api_v1_catalog_sync_drift_get: {
         parameters: {
             query: {
@@ -23141,41 +23122,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MappingResolveResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_product_sync_api_v1_catalog_sync_products__product_id__sync_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                product_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SyncFlagUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncFlagResponse"];
                 };
             };
             /** @description Validation Error */
@@ -27164,6 +27110,37 @@ export interface operations {
             };
         };
     };
+    deactivate_report_template_api_v1_inventory_report_templates__template_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportTemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_shift_reports_api_v1_inventory_shift_reports_get: {
         parameters: {
             query?: {
@@ -28453,6 +28430,10 @@ export interface operations {
             query?: {
                 /** @description Include groups switched off, for the console's builder */
                 include_inactive?: boolean;
+                /** @description Only this shop's menu — what a terminal fetches */
+                branch_id?: string | null;
+                /** @description 'branch' for the shop trees, 'integrator' for the sync menu */
+                root_kind?: string | null;
             };
             header?: never;
             path?: never;
@@ -28557,6 +28538,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MenuGroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clone_group_api_v1_menu_groups__group_id__clone_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MenuGroupClone"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

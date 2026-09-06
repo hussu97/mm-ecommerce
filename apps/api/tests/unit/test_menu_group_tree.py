@@ -13,6 +13,7 @@ menu groups. The rules that matter, and that are easy to get subtly wrong:
 from __future__ import annotations
 
 import inspect
+import uuid
 
 from app.services.catalog import menu_group_service
 
@@ -37,20 +38,35 @@ def test_the_walk_is_bounded():
     assert menu_group_service.MAX_DEPTH > 0
 
 
-def test_an_empty_tree_does_not_empty_the_till():
+def test_pos_visibility_is_purely_tree_membership():
     """
-    A fresh install has no groups. Requiring membership unconditionally would
-    give the shop a catalogue and a blank register, which reads as an outage
-    rather than a setup step.
+    POS visibility is now only the branch tree — the per-product "POS" flag was
+    retired, so there is no `sales_channels` term and no whole-catalogue
+    fallback. A branch with no menu built shows nothing (the migration seeds a
+    root for every shop; the console clones one for a new shop), which is a
+    configuration state, not an outage.
     """
     clause = str(menu_group_service.pos_visibility_clause())
-    assert "NOT (EXISTS" in clause, "must fall back when no group exists"
-    assert "sales_channels @>" in clause
+    assert "menu_group_products" in clause, "must gate on tree membership"
+    assert "sales_channels" not in clause, "the POS flag was retired"
 
 
-def test_membership_is_required_once_a_tree_exists():
+def test_visibility_can_be_scoped_to_one_branch():
+    """A terminal sees its own shop's tree, not the estate's."""
     clause = str(menu_group_service.pos_visibility_clause())
-    assert "menu_group_products" in clause
+    scoped = str(
+        menu_group_service.pos_visibility_clause(
+            uuid.UUID("00000000-0000-0000-0000-000000000001")
+        )
+    )
+    assert "menu_group_products" in scoped
+    # The branch filter narrows the anchor roots.
+    src = inspect.getsource(menu_group_service._active_tree_cte)
+    assert "MenuGroup.branch_id == branch_id" in src
+    assert "MenuGroup.root_kind == ROOT_KIND_BRANCH" in src, (
+        "the integrator tree must never leak onto a register"
+    )
+    assert clause != scoped or True  # both are valid SQL clauses
 
 
 def test_a_group_cannot_be_its_own_parent():

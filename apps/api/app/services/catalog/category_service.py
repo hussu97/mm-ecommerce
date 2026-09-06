@@ -105,7 +105,9 @@ def _countable_products(channel: str, branch_id=None):
             else ~out_at_every_branch_subquery()
         )
     elif channel == POS_CHANNEL:
-        clause = clause & menu_group_service.pos_visibility_clause()
+        # Scoped to the shop when we know it, so a POS category header counts
+        # only what that branch's tree actually holds.
+        clause = clause & menu_group_service.pos_visibility_clause(branch_id)
     return clause
 
 

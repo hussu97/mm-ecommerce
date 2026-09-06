@@ -53,7 +53,7 @@ from app.models.catalog_sync import (
     TARGET_FOODICS,
     AggregatorMenuSnapshot,
 )
-from app.models.category import Category
+from app.models.menu import MenuGroup
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
 from app.services import branch_hours_service
@@ -77,6 +77,7 @@ from app.services.aggregators.menu_normalized import (
     NormalizedOption,
     NormalizedShift,
 )
+from app.services.catalog import menu_group_service
 
 logger = logging.getLogger(__name__)
 
@@ -90,16 +91,6 @@ def _utcnow() -> datetime:
 
 
 # ── MM desired side ───────────────────────────────────────────────────────────
-
-
-def _syncs_to(row: Product | Category, target: str) -> bool:
-    """Whether this product/category opts in to `target` (its own switch)."""
-    if not row.sync_to_aggregators:
-        return False
-    channels = row.sync_channels
-    if channels is None:
-        return True
-    return target in channels
 
 
 def _ar(row: Any, field: str) -> str | None:
@@ -150,37 +141,74 @@ def _product_to_item(product: Product) -> NormalizedItem:
 
 
 async def build_mm_menu(db: AsyncSession, *, target: str) -> NormalizedMenu:
-    """MM's desired menu for one target — the sync-flagged catalogue, grouped."""
-    stmt = (
-        select(Product)
-        .where(Product.sync_to_aggregators.is_(True))
-        .options(
-            selectinload(Product.category),
-            selectinload(Product.product_modifiers)
-            .selectinload(ProductModifier.modifier)
-            .selectinload(Modifier.options),
-        )
-        .order_by(Product.display_order, Product.name)
-    )
-    products = (await db.execute(stmt)).scalars().all()
+    """MM's desired menu for one target — the integrator menu tree, as-laid-out.
 
-    cats: dict[str, NormalizedCategory] = {}
-    order: list[str] = []
-    for product in products:
-        if not _syncs_to(product, target):
-            continue
-        cat = product.category
-        cat_name = cat.name if cat else "Uncategorised"
-        cat_key = str(cat.id) if cat else "uncategorised"
-        if cat_key not in cats:
-            cats[cat_key] = NormalizedCategory(
-                name=cat_name,
-                name_ar=_ar(cat, "name") if cat else None,
-                external_id=str(cat.id) if cat else None,
+    The desired menu is now the **integrator root**: its L1 groups are the
+    categories, and each L1 group's member products are the items. This replaced
+    the old `sync_to_aggregators` flag grouped by `Product.category` — "goes to
+    the marketplaces" is now "is a member of the integrator tree", and the
+    operator arranges the marketplace menu directly rather than through a hidden
+    per-product switch. The tree is two deep by construction (the service refuses
+    a third level), which is the shape Foodics' Grubtech menu wants.
+
+    `target` no longer changes membership — the one integrator menu is the source
+    for every marketplace; the target only decides where the diff/write lands.
+    """
+    root = await menu_group_service.integrator_root(db)
+    if root is None:
+        return NormalizedMenu(source="mm", categories=[])
+
+    l1_groups = list(
+        (
+            await db.execute(
+                select(MenuGroup)
+                .where(
+                    MenuGroup.parent_id == root.id,
+                    MenuGroup.deleted_at.is_(None),
+                    MenuGroup.is_active == True,  # noqa: E712
+                )
+                .options(selectinload(MenuGroup.members))
+                .order_by(MenuGroup.display_order, MenuGroup.name)
             )
-            order.append(cat_key)
-        cats[cat_key].items.append(_product_to_item(product))
-    return NormalizedMenu(source="mm", categories=[cats[k] for k in order])
+        )
+        .scalars()
+        .unique()
+    )
+
+    # Every product in the tree, loaded once with its modifiers.
+    member_ids = [m.product_id for g in l1_groups for m in g.members]
+    products_by_id: dict[Any, Product] = {}
+    if member_ids:
+        rows = (
+            await db.execute(
+                select(Product)
+                .where(Product.id.in_(member_ids))
+                .options(
+                    selectinload(Product.product_modifiers)
+                    .selectinload(ProductModifier.modifier)
+                    .selectinload(Modifier.options),
+                )
+            )
+        ).scalars()
+        products_by_id = {p.id: p for p in rows}
+
+    categories: list[NormalizedCategory] = []
+    for group in l1_groups:
+        cat = NormalizedCategory(
+            name=group.name,
+            name_ar=group.name_localized or _ar(group, "name"),
+            external_id=str(group.id),
+        )
+        for member in sorted(group.members, key=lambda m: m.display_order):
+            product = products_by_id.get(member.product_id)
+            # An inactive product stays in the tree but drops off the sent menu,
+            # the same way `is_available` handled the old flagged list.
+            if product is None or not product.is_active:
+                continue
+            cat.items.append(_product_to_item(product))
+        if cat.items:
+            categories.append(cat)
+    return NormalizedMenu(source="mm", categories=categories)
 
 
 async def build_mm_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
@@ -831,18 +859,28 @@ async def create_menu_item(
 
     from app.services.providers import foodics_provider as fp
 
-    cat_name = product.category.name if product.category else None
-    subgroup_id = fp.FOODICS_GRUBTECH_SUBGROUPS.get(cat_name or "")
+    # The Grubtech subgroup is now the product's category group in the integrator
+    # menu — its `reference` is the Foodics subgroup id — rather than a hardcoded
+    # dict keyed by the product's website category. Membership in that tree is
+    # what "syncs to the marketplaces" means.
+    l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
+    cat_name = l1.name if l1 is not None else None
+    subgroup_id = l1.reference if l1 is not None else None
     price = product.base_price
     if price is None:
         raise BadRequestError(
             f"Product {product.name!r} has no base price; set one before syncing."
         )
+    if l1 is None:
+        raise BadRequestError(
+            f"Product {product.name!r} is not in the integrator menu — add it to a "
+            f"category in the integrator menu before syncing."
+        )
     if subgroup_id is None:
         raise BadRequestError(
-            f"Product {product.name!r} is in category {cat_name!r}, which has no "
-            f"Grubtech subgroup — add the subgroup in Foodics first, or move the "
-            f"product to a synced category."
+            f"Integrator category {cat_name!r} has no Grubtech subgroup id "
+            f"(set its reference to the Foodics subgroup), so {product.name!r} "
+            f"has nowhere to land — add the subgroup in Foodics first."
         )
 
     plan = {

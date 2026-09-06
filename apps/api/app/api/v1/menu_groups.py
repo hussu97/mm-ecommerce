@@ -18,6 +18,7 @@ from app.core.deps import get_current_active_user, get_db
 from app.core.permissions import require
 from app.models import User
 from app.schemas.menu_group import (
+    MenuGroupClone,
     MenuGroupCreate,
     MenuGroupNode,
     MenuGroupResponse,
@@ -36,6 +37,9 @@ def _to_response(group) -> MenuGroupResponse:
         translations=group.translations or {},
         reference=group.reference,
         image_url=group.image_url,
+        root_kind=group.root_kind,
+        branch_id=group.branch_id,
+        root_id=group.root_id,
         parent_id=group.parent_id,
         display_order=group.display_order,
         is_active=group.is_active,
@@ -48,11 +52,23 @@ async def get_tree(
     include_inactive: bool = Query(
         False, description="Include groups switched off, for the console's builder"
     ),
+    branch_id: uuid.UUID | None = Query(
+        None, description="Only this shop's menu — what a terminal fetches"
+    ),
+    root_kind: str | None = Query(
+        None, description="'branch' for the shop trees, 'integrator' for the sync menu"
+    ),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_active_user),
 ):
-    """The whole menu, nested. This is what the terminal renders."""
-    return await menu_group_service.list_tree(db, include_inactive=include_inactive)
+    """A menu, nested. A terminal fetches its own branch's tree; the console can
+    ask for every tree, one branch's, or the integrator menu."""
+    return await menu_group_service.list_tree(
+        db,
+        include_inactive=include_inactive,
+        branch_id=branch_id,
+        root_kind=root_kind,
+    )
 
 
 @router.get("/{group_id}", response_model=MenuGroupResponse)
@@ -71,6 +87,24 @@ async def create_group(
     _: User = Depends(require("catalogue.manage")),
 ):
     group = await menu_group_service.create(db, data.model_dump())
+    return _to_response(group)
+
+
+@router.post(
+    "/{group_id}/clone",
+    response_model=MenuGroupResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def clone_group(
+    group_id: uuid.UUID,
+    data: MenuGroupClone,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+):
+    """Open a new shop's menu as a copy of an existing branch root."""
+    group = await menu_group_service.clone_tree(
+        db, group_id, into_branch_id=data.branch_id, name=data.name
+    )
     return _to_response(group)
 
 
