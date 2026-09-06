@@ -243,3 +243,23 @@ async def test_deactivating_latest_revision_does_not_mutate_prior_revision():
     assert latest.is_active is False
     assert prior.is_active is True
     db.flush.assert_awaited_once()
+
+
+def test_create_report_adds_lines_without_lazy_loading_the_collection():
+    """`_create_report` must not touch `report.lines` on a freshly-flushed report.
+
+    Appending to the relationship emits a lazy load of the unloaded collection,
+    which raises `MissingGreenlet` under asyncio and 500s /pos/inventory/tasks —
+    so no till-close report is ever created (the shift_inventory_reports table
+    stayed empty in production). The fix sets the FK and adds each line on its
+    own; this asserts the shape so the trap cannot creep back. (Same class of bug
+    as menu_group_service._set_products.)
+    """
+    import inspect
+
+    source = inspect.getsource(report_service._create_report)
+    assert "report.lines.append" not in source, (
+        "appending to report.lines lazy-loads the collection (MissingGreenlet)"
+    )
+    assert "report_id=report.id" in source, "each line must set its FK directly"
+    assert "db.add(report_line)" in source, "each line is added on its own"

@@ -480,6 +480,15 @@ async def _create_report(
         level = await inventory_service.level_for(db, item.id, warehouse.id)
         expected = quantity(level.quantity)
         report_line = ShiftInventoryReportLine(
+            # Set the FK directly and add the line on its own, rather than
+            # appending to the report's unloaded lines collection. The report was
+            # just added and flushed, so touching that collection emits a lazy
+            # load, which raises MissingGreenlet under asyncio and 500s the whole
+            # /pos/inventory/tasks request — so no report is ever created and the
+            # till-close count never appears. (Same trap as
+            # menu_group_service._set_products.) load_report re-reads with the
+            # lines eager-loaded.
+            report_id=report.id,
             item_id=item.id,
             unit=item.ingredient_unit,
             source_summary={
@@ -494,7 +503,7 @@ async def _create_report(
             item_movements=movements.get(item.id, {}),
             through_sequence=base_sequence,
         )
-        report.lines.append(report_line)
+        db.add(report_line)
     await db.flush()
     return await load_report(db, report.id)
 
