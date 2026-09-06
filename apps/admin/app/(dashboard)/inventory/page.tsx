@@ -282,6 +282,35 @@ function ItemsTab() {
   );
 }
 
+type LevelSortKey = 'branch' | 'item' | 'qty' | 'unit' | 'value';
+
+// A named component, not an inline factory — the same shape the delivery-zones
+// table uses — so eslint's react/display-name has a name to point at.
+function LevelSortHeader({
+  label,
+  col,
+  sort,
+  direction,
+  onSort,
+}: {
+  label: string;
+  col: LevelSortKey;
+  sort: LevelSortKey;
+  direction: 'asc' | 'desc';
+  onSort: (col: LevelSortKey) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(col)}
+      className="inline-flex items-center gap-1 hover:text-primary"
+    >
+      {label}
+      {sort === col ? (direction === 'asc' ? ' ↑' : ' ↓') : ''}
+    </button>
+  );
+}
+
 function LevelsTab() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState('');
@@ -320,27 +349,15 @@ function LevelsTab() {
   // Default to branch then item (the server already returns that order); the
   // headers let a manager re-sort by any unit column without losing the branch
   // grouping as the tie-break.
-  const [sortKey, setSortKey] = useState<'branch' | 'item' | 'qty' | 'unit' | 'value'>('branch');
+  const [sortKey, setSortKey] = useState<LevelSortKey>('branch');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const toggleSort = (key: typeof sortKey) => {
+  const toggleSort = (key: LevelSortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     else {
       setSortKey(key);
       setSortDir('asc');
     }
   };
-  const sortHeader =
-    (label: string, key: typeof sortKey) =>
-    () => (
-      <button
-        type="button"
-        onClick={() => toggleSort(key)}
-        className="inline-flex items-center gap-1 hover:text-primary"
-      >
-        {label}
-        {sortKey === key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-      </button>
-    );
   const fieldOf = (l: InventoryLevel): string | number => {
     switch (sortKey) {
       case 'qty':
@@ -416,13 +433,17 @@ function LevelsTab() {
           columns={[
             {
               header: 'Branch',
-              headerRender: sortHeader('Branch', 'branch'),
+              headerRender: () => (
+                <LevelSortHeader label="Branch" col="branch" sort={sortKey} direction={sortDir} onSort={toggleSort} />
+              ),
               render: (l) => l.branch_name ?? '—',
             },
             {
               header: 'Item',
               priority: 'primary',
-              headerRender: sortHeader('Item', 'item'),
+              headerRender: () => (
+                <LevelSortHeader label="Item" col="item" sort={sortKey} direction={sortDir} onSort={toggleSort} />
+              ),
               render: (l) => l.item_name,
             },
             {
@@ -433,7 +454,9 @@ function LevelsTab() {
             {
               header: 'On hand',
               className: 'text-right',
-              headerRender: sortHeader('On hand', 'qty'),
+              headerRender: () => (
+                <LevelSortHeader label="On hand" col="qty" sort={sortKey} direction={sortDir} onSort={toggleSort} />
+              ),
               render: (l) => (
                 <>
                   {Number(l.quantity)}{' '}
@@ -459,7 +482,9 @@ function LevelsTab() {
             {
               header: 'Value',
               className: 'text-right',
-              headerRender: sortHeader('Value', 'value'),
+              headerRender: () => (
+                <LevelSortHeader label="Value" col="value" sort={sortKey} direction={sortDir} onSort={toggleSort} />
+              ),
               render: (l) => formatCurrency(l.total_value ?? 0),
             },
             {
