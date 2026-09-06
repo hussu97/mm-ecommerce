@@ -1455,3 +1455,16 @@ the application package. The dry-run failed before its transaction committed.
 **Rule:** standalone API scripts must add their API-root parent to `sys.path`
 before importing `app.*`, and be smoke-tested from a different working
 directory—the same form used by the production operator command.
+
+### Expected absence must not hide independent editor data (2026-09-06)
+
+The recipe editor fetched the owner recipe and the inventory catalogue in one
+`Promise.all`. A 404 is the normal state for an owner without a recipe, but it
+rejected the whole group and threw away the successfully available ingredient
+list. The UI then looked inert because the dropdown was empty and the save
+button correctly stayed disabled.
+
+**Rule:** separate optional-resource absence from required editor data. In
+operator UIs, show the next action, a clear loading/empty state, and move focus
+to any detail panel revealed by a table action—never require staff to infer that
+an editor appeared below a long list.

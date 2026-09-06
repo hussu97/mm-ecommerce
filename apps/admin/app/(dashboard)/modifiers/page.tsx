@@ -558,7 +558,7 @@ export default function ModifiersPage() {
 
                           {recipeOptionId && (() => {
                             const option = m.options.find((value) => value.id === recipeOptionId);
-                            return option ? <RecipeEditor ownerKind="modifier_option" ownerId={option.id} ownerLabel={`${m.name} — ${option.name}`} /> : null;
+                            return option ? <RecipeEditor ownerKind="modifier_option" ownerId={option.id} ownerLabel={`${m.name} — ${option.name}`} focusOnMount /> : null;
                           })()}
 
                           {/* Add option form */}

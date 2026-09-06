@@ -42,6 +42,14 @@ not the storefront API, owns all manager inventory calls.
 - [x] Make recipe import read only the editable workbook sheet, while preserving CSV compatibility and draft-only recipe staging.
 - [ ] Run focused backend/admin regression checks and deploy the operator workflow.
 
+## Recipe editor usability and inventory-table controls (2026-09-06)
+
+- [x] Reproduce why new recipe owners displayed no inventory ingredients: an expected recipe 404 rejected a combined promise and discarded the successfully fetched catalogue.
+- [x] Load ingredients independently; make a recipe-row action scroll to its revealed editor; add explicit build/validate/activate guidance, ingredient search, and actionable empty/error states.
+- [x] Add composable inventory category/kind/tracking/status filters and deterministic name/SKU/kind/category sorting before the existing pagination.
+- [x] Add a regression test for the new-owner (404) ingredient-catalogue path; type-check, lint, and run the focused admin test.
+- [ ] Commit, deploy, and smoke-test the repaired admin workflow in production before staging any recipes.
+
 ## Inventory catalogue audit and Foodics recipe seed (2026-09-06)
 
 - [x] Reconcile the live 100-item MM catalogue with the 98-item Foodics extraction and the product catalogue; identify produced, packaging, raw, and direct-resale families without changing stock or availability.

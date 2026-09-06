@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   branchesApi,
   inventoryApi,
@@ -62,11 +62,62 @@ export default function InventoryPage() {
 function ItemsTab() {
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [recipeItem, setRecipeItem] = useState<InventoryItem | null>(null);
+  const [categoryId, setCategoryId] = useState('');
+  const [kind, setKind] = useState('');
+  const [trackingMode, setTrackingMode] = useState('');
+  const [status, setStatus] = useState<'active' | 'inactive' | 'all'>('active');
+  const [sort, setSort] = useState('name-asc');
   useEffect(() => {
     void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
   }, []);
 
   const load = useCallback(() => inventoryApi.items(), []);
+  const categoryNames = useMemo(
+    () => new Map(categories.map((category) => [category.id, category.name])),
+    [categories],
+  );
+  const filterRows = useCallback((item: InventoryItem) => {
+    if (categoryId && item.category_id !== categoryId) return false;
+    if (kind && item.kind !== kind) return false;
+    if (trackingMode && item.tracking_mode !== trackingMode) return false;
+    const active = item.is_active && !item.deleted_at;
+    return status === 'all' || (status === 'active' ? active : !active);
+  }, [categoryId, kind, status, trackingMode]);
+  const sortRows = useCallback((rows: InventoryItem[]) => {
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    const compare = (left: InventoryItem, right: InventoryItem) => {
+      switch (sort) {
+        case 'sku-asc': return collator.compare(left.sku, right.sku);
+        case 'sku-desc': return collator.compare(right.sku, left.sku);
+        case 'kind-asc': return collator.compare(left.kind, right.kind) || collator.compare(left.name, right.name);
+        case 'category-asc': return collator.compare(categoryNames.get(left.category_id ?? '') ?? 'Uncategorised', categoryNames.get(right.category_id ?? '') ?? 'Uncategorised') || collator.compare(left.name, right.name);
+        case 'name-desc': return collator.compare(right.name, left.name);
+        default: return collator.compare(left.name, right.name);
+      }
+    };
+    return [...rows].sort(compare);
+  }, [categoryNames, sort]);
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <select aria-label="Filter inventory category" value={categoryId} onChange={(event) => setCategoryId(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
+        <option value="">All categories</option>
+        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+      </select>
+      <select aria-label="Filter inventory kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
+        <option value="">All kinds</option>
+        <option value="raw_material">Raw material</option><option value="packaging">Packaging</option><option value="semi_finished">Semi-finished</option><option value="produced_good">Produced good</option><option value="resale_good">Resale good</option>
+      </select>
+      <select aria-label="Filter inventory tracking" value={trackingMode} onChange={(event) => setTrackingMode(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
+        <option value="">All tracking</option><option value="stocked">Stocked</option><option value="phantom">Phantom</option>
+      </select>
+      <select aria-label="Filter inventory status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
+        <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option>
+      </select>
+      <select aria-label="Sort inventory items" value={sort} onChange={(event) => setSort(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
+        <option value="name-asc">Name: A–Z</option><option value="name-desc">Name: Z–A</option><option value="sku-asc">SKU: A–Z</option><option value="sku-desc">SKU: Z–A</option><option value="kind-asc">Kind</option><option value="category-asc">Category</option>
+      </select>
+    </div>
+  );
 
   return (
     <ResourcePage<InventoryItem>
@@ -81,8 +132,11 @@ function ItemsTab() {
       update={(id, d) => inventoryApi.updateItem(id, d)}
       remove={(id) => inventoryApi.removeItem(id)}
       searchKeys={['name', 'sku']}
+      toolbar={toolbar}
+      filterRows={filterRows}
+      sortRows={sortRows}
       rowActions={(item) => <button className="text-xs text-primary hover:underline" onClick={() => setRecipeItem(item)}>Recipe</button>}
-      belowTable={recipeItem && <div className="mt-6"><RecipeEditor ownerKind="inventory_item" ownerId={recipeItem.id} ownerLabel={recipeItem.name} /></div>}
+      belowTable={recipeItem && <div className="mt-6"><RecipeEditor ownerKind="inventory_item" ownerId={recipeItem.id} ownerLabel={recipeItem.name} focusOnMount /></div>}
       defaults={{
         storage_unit: 'kg',
         ingredient_unit: 'g',

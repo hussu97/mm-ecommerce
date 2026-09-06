@@ -71,6 +71,10 @@ export interface ResourcePageProps<T extends { id: string }> {
   rowActions?: (row: T, reload: () => void) => React.ReactNode;
   /** Contextual detail kept with a selected row (for example, that item's recipe). */
   belowTable?: React.ReactNode;
+  /** Page-specific client-side filters, composed with the standard text search. */
+  filterRows?: (row: T) => boolean;
+  /** Page-specific stable ordering applied after filters and before pagination. */
+  sortRows?: (rows: T[]) => T[];
   /**
    * Client-side pagination via the shared `Pagination` component (`load` still
    * fetches everything in one call). Off by default — most of these lists are
@@ -94,6 +98,8 @@ export function ResourcePage<T extends { id: string }>({
   toolbar,
   rowActions,
   belowTable,
+  filterRows,
+  sortRows,
   paginated = false,
 }: ResourcePageProps<T>) {
   const [rows, setRows] = useState<T[]>([]);
@@ -127,18 +133,21 @@ export function ResourcePage<T extends { id: string }>({
   }, [reload]);
 
   const visible = useMemo(() => {
-    if (!search.trim() || searchKeys.length === 0) return rows;
     const needle = search.trim().toLowerCase();
-    return rows.filter((row) =>
-      searchKeys.some((key) => String(row[key] ?? '').toLowerCase().includes(needle)),
-    );
-  }, [rows, search, searchKeys]);
+    const filtered = rows.filter((row) => {
+      const matchesSearch = !needle || searchKeys.length === 0 || searchKeys.some(
+        (key) => String(row[key] ?? '').toLowerCase().includes(needle),
+      );
+      return matchesSearch && (filterRows?.(row) ?? true);
+    });
+    return sortRows ? sortRows(filtered) : filtered;
+  }, [filterRows, rows, search, searchKeys, sortRows]);
 
   // A search that shrinks the result set below the current page would show an
   // empty table with rows still there — land back on the first page instead.
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [filterRows, search, sortRows]);
 
   const pages = Math.max(1, Math.ceil(visible.length / perPage));
   const pageRows = paginated ? visible.slice((page - 1) * perPage, page * perPage) : visible;
