@@ -79,6 +79,10 @@ class _FakeDB:
     async def refresh(self, _obj, _attrs=None):
         return None
 
+    async def scalar(self, _stmt):
+        # No priced lines to reconcile against in these header-money unit tests.
+        return None
+
 
 async def _no_drive(db, order, agg):
     """A `_drive_status` stand-in for the tests whose concern is elsewhere
@@ -114,6 +118,7 @@ async def test_refresh_order_backfills_missing_customer(monkeypatch):
 
     monkeypatch.setattr(promote.order_fees, "stamp", _noop)
     monkeypatch.setattr(promote, "_drive_status", _noop)
+    monkeypatch.setattr(promote, "_reconcile_total_to_lines", _noop)
 
     agg = _agg(customer_name="Aisha", customer_phone="+971500000000")
     order = SimpleNamespace(
@@ -137,6 +142,7 @@ async def test_refresh_order_never_overwrites_an_existing_customer(monkeypatch):
 
     monkeypatch.setattr(promote.order_fees, "stamp", _noop)
     monkeypatch.setattr(promote, "_drive_status", _noop)
+    monkeypatch.setattr(promote, "_reconcile_total_to_lines", _noop)
 
     agg = _agg(customer_name="Scraped Name")
     order = SimpleNamespace(
@@ -1209,3 +1215,45 @@ def test_every_channel_has_its_own_map_object():
     maps = promote._STATUS_MAPS
     assert set(maps) == {"careem", "deliveroo", "keeta", "noon", "talabat"}
     assert len({id(m) for m in maps.values()}) == len(maps)
+
+
+async def test_reconcile_total_to_lines_uses_the_line_sum_not_the_scrape_gross():
+    """A promotion-owned order's total is the sum of its priced lines (the menu),
+    not the scrape's low gross — so a re-promote cannot revert Careem to its
+    net-of-markup figure."""
+    order = SimpleNamespace(
+        total=Decimal("63.00"),
+        subtotal=Decimal("63.00"),
+        total_excl_vat=Decimal("60.00"),
+        vat_amount=Decimal("3.00"),
+        vat_rate=Decimal("0.05"),
+        id=uuid.uuid4(),
+    )
+
+    class _DB:
+        async def scalar(self, _stmt):
+            return Decimal("90.00")  # the priced line items sum to the menu price
+
+    await promote._reconcile_total_to_lines(_DB(), order)
+    assert order.total == Decimal("90.00")
+    assert order.subtotal == Decimal("90.00")
+
+
+async def test_reconcile_total_keeps_the_scrape_total_when_no_lines_are_priced():
+    """A Talabat statement carries the order total but no line prices; with a zero
+    line sum the header total must stand rather than collapse to 0."""
+    order = SimpleNamespace(
+        total=Decimal("140.00"),
+        subtotal=Decimal("140.00"),
+        total_excl_vat=Decimal("133.33"),
+        vat_amount=Decimal("6.67"),
+        vat_rate=Decimal("0.05"),
+        id=uuid.uuid4(),
+    )
+
+    class _DB:
+        async def scalar(self, _stmt):
+            return Decimal("0")
+
+    await promote._reconcile_total_to_lines(_DB(), order)
+    assert order.total == Decimal("140.00")  # untouched

@@ -466,6 +466,38 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
     return unmapped
 
 
+async def _reconcile_total_to_lines(db: AsyncSession, order: Order) -> None:
+    """Make the order total what was actually sold — the sum of its priced line
+    items — rather than the header figure the scrape reported.
+
+    A marketplace's scraped ``gross_sales`` is not always the customer price:
+    Careem's is net of its own menu markup, so trusting it undercounts the sale
+    (168889697 read 63 for a 90 menu order). The line items carry the real menu
+    price, so they are the truth. Fall back to the scrape total only when there are
+    no priced lines to trust — a Talabat statement gives the order total but zero
+    line prices, and there ``line_sum`` would wrongly be 0.
+
+    This runs after ``_money_fields`` on both the build and the refresh, so a
+    re-promote can no longer quietly revert the total to the scraped gross.
+    """
+    line_sum = money(
+        await db.scalar(
+            select(func.coalesce(func.sum(OrderItem.total_price), 0)).where(
+                OrderItem.order_id == order.id
+            )
+        )
+        or Decimal("0")
+    )
+    if line_sum <= 0 or line_sum == order.total:
+        return
+    excl, vat = pos_pricing.split_inclusive_tax(line_sum, VAT_RATE)
+    order.subtotal = line_sum
+    order.total = line_sum
+    order.total_excl_vat = excl
+    order.vat_amount = vat
+    order.vat_rate = VAT_RATE if vat > 0 else Decimal("0")
+
+
 async def _decrement_stock(db: AsyncSession, order_id) -> None:
     """Take the promoted sale off the shelf for its stock-tracked lines — the same
     rule the counter and GrubOps ingest use. Only `is_stock_product` products, only
@@ -607,6 +639,7 @@ async def _build_order(
             agg.external_order_id,
             unmapped,
         )
+    await _reconcile_total_to_lines(db, order)
     # Load the collection now: driving status to cancelled walks order.items in
     # `_move_stock`, and an async lazy-load there would be a MissingGreenlet.
     await db.refresh(order, ["items"])
@@ -693,6 +726,9 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     and status, in case the marketplace mutated the order after we first filed it."""
     for field, value in _money_fields(agg).items():
         setattr(order, field, value)
+    # The lines are the truth for the total (see helper); reapply after the scrape's
+    # header money so a re-promote cannot revert a Careem order to its low gross.
+    await _reconcile_total_to_lines(db, order)
     # Backfill the customer + rider the scraper captured onto an order first filed
     # without it — one promoted before its channel exposed the customer, or one this
     # pass converged onto by `(source, external_reference)`. Fill-only (see helper);
