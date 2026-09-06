@@ -45,7 +45,9 @@ const REPORT_TEMPLATE_GUIDANCE: Record<ReportTemplateKind, {
   },
   finished_goods: {
     defaultName: 'Finished goods closing count',
-    cadence: 'per_business_day',
+    // At till close (per_till) — the register prompts the cashier to count
+    // finished goods when they close the till.
+    cadence: 'per_till',
     required: true,
     kinds: ['semi_finished', 'produced_good'],
     requiredInput: 'physical_count',
@@ -774,7 +776,7 @@ function ShiftReportsTab() {
           { value: 'production', label: 'Production' }, { value: 'finished_goods', label: 'Finished goods' }, { value: 'raw_materials', label: 'Raw materials' }, { value: 'packaging', label: 'Packaging' }, { value: 'spot_check', label: 'Spot check' },
         ]} />
         <Select label="Cadence" value={cadence} onChange={(event) => setCadence(event.target.value)} options={[
-          { value: 'per_till', label: 'Per till' }, { value: 'per_business_day', label: 'Per business day' }, { value: 'ad_hoc', label: 'Ad hoc' },
+          { value: 'per_till', label: 'At till close (per till)' }, { value: 'per_business_day', label: 'At end of day (per business day)' }, { value: 'ad_hoc', label: 'Ad hoc (manual only)' },
         ]} />
         <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />Required (may be deferred/waived)</label>
       </div>
