@@ -216,6 +216,12 @@ class ReportLineSave(BaseModel):
     entered_quantity: Decimal | None = Field(None, ge=0)
     confirmed: bool = False
     override_reason: str | None = None
+    #: The entered movement columns the shop typed, keyed by the line field they
+    #: write (e.g. ``{"production_quantity": 82, "waste_quantity": 1}``). Only the
+    #: columns the report kind marks editable are accepted; each posts its own
+    #: ledger movement on submit. Values are magnitudes — the column's sign is the
+    #: server's job.
+    movements: dict[str, Decimal] = Field(default_factory=dict)
 
 
 class ReportSaveRequest(BaseModel):

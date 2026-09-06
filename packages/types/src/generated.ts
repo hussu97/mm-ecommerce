@@ -16725,6 +16725,10 @@ export interface components {
              * Format: uuid
              */
             item_id: string;
+            /** Movements */
+            movements?: {
+                [key: string]: number | string;
+            };
             /** Override Reason */
             override_reason?: string | null;
         };

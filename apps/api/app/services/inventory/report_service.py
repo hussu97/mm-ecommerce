@@ -37,9 +37,37 @@ from app.models.till import Till, TillStatusEnum
 from app.models.user import User
 from app.services.inventory import (
     inventory_service,
+    report_columns,
     source_event_service,
     transfer_service,
 )
+
+# The columns that add to a stock level and the ones that take from it, so the
+# closing figure is netted the same way in one place. Opening is the base, not a
+# movement; sales/production-consumption come from the ledger, the rest the shop
+# may type — but the arithmetic does not care who filled a column in.
+_NET_IN_COLUMNS = (
+    "purchasing_quantity",
+    "transfer_in_quantity",
+    "production_quantity",
+)
+_NET_OUT_COLUMNS = (
+    "sales_consumption_quantity",
+    "production_consumption_quantity",
+    "transfer_out_quantity",
+    "waste_quantity",
+    "internal_use_quantity",
+)
+
+
+def _net_quantity(line: ShiftInventoryReportLine) -> Decimal:
+    """Closing = Opening + Σ(in) − Σ(out), derived from the row's columns."""
+    total = Decimal(str(line.opening_quantity or 0))
+    for column in _NET_IN_COLUMNS:
+        total += Decimal(str(getattr(line, column) or 0))
+    for column in _NET_OUT_COLUMNS:
+        total -= Decimal(str(getattr(line, column) or 0))
+    return quantity(total)
 
 
 def latest_active_templates(
@@ -594,6 +622,8 @@ async def save_report(
     if unknown:
         raise BadRequestError("Report contains items outside its template")
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
+    report_type = report.template_snapshot.get("report_type", "")
+    editable_keys = {column.key for column in report_columns.editable_columns(report_type)}
     for line in report.lines:
         update = updates.get(line.item_id)
         if update is None:
@@ -601,6 +631,27 @@ async def save_report(
         line.entered_quantity = update.entered_quantity
         line.confirmed = update.confirmed
         line.override_reason = update.override_reason
+        # The shop types the movement columns this report kind marks editable; the
+        # ledger-filled columns (sales, production-consumption) and the derived
+        # ends are never accepted from the client.
+        for key, value in (update.movements or {}).items():
+            if key not in editable_keys:
+                raise BadRequestError(
+                    f"Column '{key}' is not editable on a {report_type} report"
+                )
+            setattr(line, key, quantity(Decimal(str(value))))
+        # Remember which columns the shop actually typed, so submit posts only
+        # those and never re-posts a value the ledger merely prefilled (a
+        # production figure already on the ledger must not be produced twice).
+        if update.movements:
+            already = set((line.source_summary or {}).get("entered_columns", []))
+            line.source_summary = {
+                **(line.source_summary or {}),
+                "entered_columns": sorted(already | set(update.movements.keys())),
+            }
+        # Closing is derived, not typed: recompute it from the row's columns so the
+        # variance below is measured against the same net the grid shows.
+        line.expected_quantity = _net_quantity(line)
         if update.entered_quantity is not None:
             required_input = (line.source_summary or {}).get(
                 "required_input", "physical_count"
@@ -847,6 +898,83 @@ async def post_report(
         report.approved_at = report.approved_at or utcnow()
         await db.flush()
         return report
+    first_transaction: InventoryTransaction | None = None
+
+    # The entered movement columns post first — each changes the level the physical
+    # count then trues up against. Production goes through produce() so it also
+    # draws down the raw materials its recipe names (which is what makes the next
+    # report's raw-material consumption appear); the rest are plain movements whose
+    # type carries the sign, so a positive magnitude is all the shop ever types.
+    branch: Branch | None = None
+    for column in report_columns.editable_columns(report_type):
+        # Only a column the shop actually typed posts; a value the ledger prefilled
+        # for context is already on the ledger and must not be posted again.
+        valued = [
+            (report_line, quantity(getattr(report_line, column.key) or 0))
+            for report_line in report.lines
+            if column.key in (report_line.source_summary or {}).get("entered_columns", [])
+            and quantity(getattr(report_line, column.key) or 0) != 0
+        ]
+        if not valued:
+            continue
+        if column.posts == InventoryTransactionTypeEnum.PRODUCTION.value:
+            branch = branch or await db.get(Branch, report.branch_id)
+            if branch is None:
+                raise NotFoundError("Branch not found")
+            for report_line, value in valued:
+                produced, _ = await transfer_service.produce(
+                    db,
+                    branch=branch,
+                    user=user,
+                    item_id=report_line.item_id,
+                    quantity=value,
+                    warehouse_id=warehouse.id,
+                    notes=f"Shift report {report.id} · {column.key}",
+                )
+                first_transaction = first_transaction or produced
+            continue
+        transaction = InventoryTransaction(
+            reference=await inventory_service.next_reference(db, column.posts),
+            type=column.posts,
+            status=TransactionStatusEnum.DRAFT.value,
+            branch_id=report.branch_id,
+            warehouse_id=warehouse.id,
+            business_date=report.business_date,
+            creator_id=user.id,
+            source_type="shift_inventory_report",
+            source_id=str(report.id),
+            idempotency_key=f"shift-report:{report.id}:{column.key}",
+            notes=report.notes,
+            items=[],
+        )
+        db.add(transaction)
+        await db.flush()
+        for report_line, value in valued:
+            item = await db.get(InventoryItem, report_line.item_id)
+            if item is None:
+                raise BadRequestError(f"Inventory item {report_line.item_id} not found")
+            level = await inventory_service.level_for(db, item.id, warehouse.id)
+            current_cost = unit_cost(level.average_cost)
+            if current_cost == 0:
+                current_cost = inventory_service.inventory_item_cost_for_unit(
+                    item, "ingredient"
+                )
+            transaction.items.append(
+                InventoryTransactionItem(
+                    item_id=item.id,
+                    quantity=value,
+                    unit="ingredient",
+                    conversion_factor=Decimal("1"),
+                    unit_cost=current_cost,
+                )
+            )
+        await db.flush()
+        await inventory_service.post_transaction(db, transaction=transaction, user=user)
+        first_transaction = first_transaction or transaction
+
+    # Then the physical count trues each row up to what was counted, per the input
+    # its template item declares (physical_count for a count; the movement inputs
+    # remain for any legacy template that drove a single column through the count).
     inputs_to_type = {
         "physical_count": (
             InventoryTransactionTypeEnum.OPENING_BALANCE.value
@@ -864,7 +992,6 @@ async def post_report(
         )
         grouped.setdefault(required_input, []).append(report_line)
 
-    first_transaction: InventoryTransaction | None = None
     for required_input, report_lines in grouped.items():
         movement_type = inputs_to_type.get(required_input)
         if movement_type is None:
