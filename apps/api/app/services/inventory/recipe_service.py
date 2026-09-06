@@ -11,7 +11,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -143,12 +143,20 @@ async def create_draft(
         recipe = Recipe(**kwargs)
         db.add(recipe)
         await db.flush()
+        # A newly flushed ORM object has no loaded relationship collection.
+        # Reading ``recipe.versions`` here would issue a lazy query, which is
+        # illegal from SQLAlchemy's async attribute accessor and raises
+        # MissingGreenlet.  There cannot be an existing version on a newly
+        # created recipe, so retain that fact instead of querying it.
+        recipe_versions: Sequence[RecipeVersion] = ()
+    else:
+        recipe_versions = recipe.versions
 
     if source_payload_hash:
         same_snapshot = next(
             (
                 version
-                for version in recipe.versions
+                for version in recipe_versions
                 if version.source == source
                 and version.source_payload_hash == source_payload_hash
             ),
@@ -163,7 +171,7 @@ async def create_draft(
     existing_draft = next(
         (
             version
-            for version in recipe.versions
+            for version in recipe_versions
             if version.status == RecipeVersionStatusEnum.DRAFT.value
         ),
         None,

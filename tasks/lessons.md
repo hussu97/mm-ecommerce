@@ -1431,3 +1431,16 @@ before/after cardinalities as well as exercising a throwaway database. If an
 old category is identifiable only by a NULL or legacy marker, a follow-up must
 target that marker and an explicit reviewed SKU set — never broaden the update
 to all future catalogue records.
+
+### New async ORM collections are not safe to inspect lazily (2026-09-06)
+
+The recipe service created and flushed a new `Recipe`, then read
+`recipe.versions` to search for a pre-existing draft. In an async SQLAlchemy
+session that relationship was not loaded, so the attribute access attempted IO
+outside greenlet context and raised `MissingGreenlet`. The first Foodics or
+catalogue seed was therefore the failure path even though editing an existing
+recipe worked.
+
+**Rule:** after creating an ORM aggregate, carry the known empty state forward
+instead of reading an unloaded relationship. Test first-creation as well as
+update/idempotency paths for every async importer.

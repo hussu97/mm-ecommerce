@@ -47,9 +47,10 @@ not the storefront API, owns all manager inventory calls.
 - [x] Reconcile the live 100-item MM catalogue with the 98-item Foodics extraction and the product catalogue; identify produced, packaging, raw, and direct-resale families without changing stock or availability.
 - [x] Add guarded categories and classifications: raw inputs, physical packaging, stocked produced goods, and Foodics-marked direct resale goods. Keep every currently countable item stocked; no phantom is inferred from a recipe.
 - [x] Correct the Foodics extractor to read detail `ingredients` payloads and the stager to normalize Foodics display units/yield percentages and retain product/option mappings.
-- [ ] Obtain a complete, Cloudflare-clear Foodics detail snapshot, then stage its exact recipes as Foodics drafts and review before activation. The extractor fails closed rather than staging an incomplete graph.
 - [x] Verify the migration on a fresh PostgreSQL database, including downgrade/re-upgrade and representative finished/resale/raw catalogue rows.
 - [x] Forward-correct the live legacy blank-reference categories after the first deploy; the correction is limited to the audited SKU families and preserves every stock/ledger/recipe value.
+- [x] Add an idempotent, dry-run-first direct-resale recipe stager: it permits only an exact product SKU/name → stocked resale-item SKU/name match and creates draft one-unit recipes.
+- [x] Fix first-draft creation in the shared async recipe service so new Foodics/direct recipes cannot raise a lazy-load `MissingGreenlet` error.
 - [ ] Obtain a complete Foodics detail snapshot, stage its exact recipes as drafts, and publish the audited staging report. No recipe is inferred or activated from names.
 
 ---
