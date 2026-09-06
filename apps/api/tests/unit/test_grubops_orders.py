@@ -847,3 +847,53 @@ def test_delivered_is_never_widened_into_a_cancellation():
     """Once we have real evidence the customer received it, a later cancellation is
     a refund or dispute question — not a status to quietly rewind."""
     assert OrderStatusEnum.DELIVERED not in g._CANCEL_EXTRA_FROM
+
+
+@pytest.mark.asyncio
+async def test_adopting_a_promotion_gapfill_applies_the_push_money():
+    """A Barsha/Sharjah order that promotion gap-filled from the low Careem scrape
+    (total 40 for a real 70 sale), or a Noon order missing its loyalty discount,
+    must take the GrubTech push money the moment GrubOps adopts it — the adopt used
+    to keep the scrape figures and the sale read low forever."""
+    import uuid
+
+    adopted = SimpleNamespace(
+        order_number="AGG-1",
+        total=Decimal("40.00"),
+        subtotal=Decimal("40.00"),
+        discount_amount=Decimal("0.00"),
+        total_excl_vat=Decimal("40.00"),
+        vat_amount=Decimal("0.00"),
+        vat_rate=Decimal("0.00"),
+        delivery_fee=Decimal("0.00"),
+        aggregator_delivery_fee=Decimal("0.00"),
+        low_order_fee=Decimal("0.00"),
+        items=[],
+    )
+    info = {
+        "orderHeader": {"totalPrice": 70, "discountAmount": 20, "externalId": "15815"},
+        "orderLines": [],
+        "customer": {},
+    }
+    order_map = SimpleNamespace(
+        location_id="L1",
+        external_id="15815",
+        grubops_order_id="G1",
+        source_channel="Careem",
+        last_push_error=None,
+    )
+    db = AsyncMock()
+    db.scalar = AsyncMock(return_value=adopted)  # the adopt lookup finds the gap-fill
+
+    with (
+        patch.object(g, "_resolve_branch", AsyncMock(return_value=uuid.uuid4())),
+        patch.object(g, "_reverse_maps", AsyncMock(return_value=({}, {}))),
+    ):
+        result = await g._create_order(db, info, order_map)
+
+    assert result is adopted
+    # The POS push total wins over the scrape's low 40, and the loyalty discount the
+    # scrape dropped is restored, so gross (subtotal) − discount = net (total).
+    assert adopted.total == Decimal("70.00")
+    assert adopted.discount_amount == Decimal("20.00")
+    assert adopted.subtotal == Decimal("90.00")

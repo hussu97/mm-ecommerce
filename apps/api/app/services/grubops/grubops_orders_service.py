@@ -790,6 +790,21 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
                 order_map.grubops_order_id,
                 adopted.order_number,
             )
+            # The GrubTech push is authoritative for a Barsha/Sharjah sale. Promotion
+            # gap-filled this order from the Careem/Noon statement scrape, whose header
+            # total can undercut the real sale (Careem's scraped gross is net of its
+            # own markup) and which drops the loyalty/promo discount the POS applied.
+            # Overwrite the money columns with the push figures so the order total and
+            # any discount are the POS's, not the scrape's — otherwise the sale reads
+            # low forever (adopt used to `return` here without touching the money).
+            # A no-op for an order already carrying the push figures.
+            push_money = money_fields_from_info(info)
+            # subtotal is the gross (pre-discount) the lines add up to; the payload
+            # often omits it, so derive it as net + discount rather than let it fall
+            # to 0 and hide the gross a discounted order is meant to show.
+            push_money["subtotal"] = push_money["total"] + push_money["discount_amount"]
+            for field, value in push_money.items():
+                setattr(adopted, field, value)
             return adopted
 
     order = Order(
