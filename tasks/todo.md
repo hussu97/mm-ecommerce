@@ -144,6 +144,14 @@ Three parallel audits. Real gaps found + FIXED:
 
 # Inventory v2 Production Audit (2026-09-05)
 
+## Sharjah report-template creation and staff workflow (2026-09-06)
+
+- [x] Capture the production failure and trace the template-create request through the API service and database constraint.
+- [x] Initialise all required report-template columns before the first database flush and preserve the existing update/versioning path.
+- [x] Add a focused regression test for first-time template creation.
+- [x] Make the admin builder explain the right Sharjah workflow, select relevant items safely, and show a recoverable save error.
+- [ ] Verify backend/admin checks, deploy, and confirm the production endpoint no longer produces a null `report_type` failure.
+
 ## Invariants and business-logic review
 
 - [x] Compare the implementation with the approved inventory plan and both repositories' `CLAUDE.md` rules.

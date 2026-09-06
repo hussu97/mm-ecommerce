@@ -1468,3 +1468,15 @@ button correctly stayed disabled.
 operator UIs, show the next action, a clear loading/empty state, and move focus
 to any detail panel revealed by a table action—never require staff to infer that
 an editor appeared below a long list.
+
+### Insert objects must be complete before an ID-allocation flush (2026-09-06)
+
+The shift-report template service added a new ORM object and flushed it to get
+its ID for child rows before assigning `report_type` and the remaining API
+fields. PostgreSQL correctly rejected the partial row because `report_type` is
+NOT NULL, producing a 500 for every first template creation.
+
+**Rule:** when an early flush is needed to allocate an aggregate ID, construct
+the object with every non-nullable request field first. Keep the creation and
+update field set in one shared definition, and test the object state observed at
+the first flush—not just its final in-memory state.

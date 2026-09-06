@@ -25,6 +25,58 @@ import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
 type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'suppliers' | 'categories' | 'integrity';
 
+type ReportTemplateKind = 'production' | 'finished_goods' | 'raw_materials' | 'packaging' | 'spot_check';
+
+const REPORT_TEMPLATE_GUIDANCE: Record<ReportTemplateKind, {
+  defaultName: string;
+  cadence: 'per_till' | 'per_business_day' | 'ad_hoc';
+  required: boolean;
+  kinds: InventoryItem['kind'][];
+  requiredInput: 'physical_count' | 'production';
+  staffInstruction: string;
+}> = {
+  production: {
+    defaultName: 'Production output',
+    cadence: 'per_business_day',
+    required: true,
+    kinds: ['semi_finished', 'produced_good'],
+    requiredInput: 'production',
+    staffInstruction: 'Enter finished units actually produced. The ledger consumes the captured item recipe and adds the finished stock.',
+  },
+  finished_goods: {
+    defaultName: 'Finished goods closing count',
+    cadence: 'per_business_day',
+    required: true,
+    kinds: ['semi_finished', 'produced_good'],
+    requiredInput: 'physical_count',
+    staffInstruction: 'Count each finished item at close. Opening, production, transfers and sales are calculated from the ledger; only the physical count and any variance reason are entered.',
+  },
+  raw_materials: {
+    defaultName: 'Raw materials closing count',
+    cadence: 'per_business_day',
+    required: true,
+    kinds: ['raw_material'],
+    requiredInput: 'physical_count',
+    staffInstruction: 'Count the actual raw material balance after production. Record receipts, internal use and waste as their own movements instead of typing a manual consumption total.',
+  },
+  packaging: {
+    defaultName: 'Packaging & dispatch closing count',
+    cadence: 'per_business_day',
+    required: true,
+    kinds: ['packaging'],
+    requiredInput: 'physical_count',
+    staffInstruction: 'Count bags, boxes and other packaging in their storage order. Expected use comes from the sales recipes, receipts and transfers already in the ledger.',
+  },
+  spot_check: {
+    defaultName: 'Inventory spot check',
+    cadence: 'ad_hoc',
+    required: false,
+    kinds: [],
+    requiredInput: 'physical_count',
+    staffInstruction: 'Use a small, ad-hoc physical check for an audit or investigation. It does not replace the daily closing templates.',
+  },
+};
+
 export default function InventoryPage() {
   const [tab, setTab] = useState<TabKey>('items');
 
@@ -582,11 +634,26 @@ function ShiftReportsTab() {
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [name, setName] = useState('Closing stock reconciliation');
-  const [reportType, setReportType] = useState('finished_goods');
+  const [reportType, setReportType] = useState<ReportTemplateKind>('finished_goods');
   const [cadence, setCadence] = useState('per_business_day');
-  const [required, setRequired] = useState(false);
+  const [required, setRequired] = useState(true);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [message, setMessage] = useState('');
+  const [itemSearch, setItemSearch] = useState('');
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
+  const guidance = REPORT_TEMPLATE_GUIDANCE[reportType];
+  const suggestedItems = useMemo(
+    () => items
+      .filter((item) => item.is_active && !item.deleted_at && guidance.kinds.includes(item.kind))
+      .sort((a, b) => a.count_order - b.count_order || a.name.localeCompare(b.name)),
+    [guidance.kinds, items],
+  );
+  const selectableItems = useMemo(() => {
+    const search = itemSearch.trim().toLocaleLowerCase();
+    const candidates = guidance.kinds.length > 0 ? suggestedItems : items.filter((item) => item.is_active && !item.deleted_at);
+    return candidates.filter((item) => !search || `${item.name} ${item.sku} ${item.storage_zone ?? ''}`.toLocaleLowerCase().includes(search));
+  }, [guidance.kinds.length, itemSearch, items, suggestedItems]);
 
   const reload = useCallback(async () => {
     const [reports, reportTemplates] = await Promise.all([
@@ -615,25 +682,41 @@ function ShiftReportsTab() {
 
   const createTemplate = async () => {
     if (!branchId || selectedItems.length === 0 || !name.trim()) return;
-    await inventoryApi.createReportTemplate({
-      branch_id: branchId,
-      name: name.trim(),
-      report_type: reportType as 'production' | 'finished_goods' | 'raw_materials' | 'packaging' | 'spot_check',
-      cadence: cadence as 'per_till' | 'per_business_day' | 'ad_hoc',
-      is_required: required,
-      is_active: true,
-      configuration: { visible_columns: ['opening', 'movements', 'expected', 'physical', 'variance', 'remark'] },
-      approval_cost_threshold: '100',
-      approval_variance_percent: '10',
-      items: selectedItems.map((itemId, index) => ({
-        item_id: itemId,
-        display_order: index,
-        required_input: reportType === 'production' ? 'production' : 'physical_count',
-      })),
-    });
-    setMessage('Template created. It will be resolved into the next matching till/business-day checklist.');
-    setSelectedItems([]);
-    await reload();
+    setSavingTemplate(true);
+    setMessage(null);
+    try {
+      await inventoryApi.createReportTemplate({
+        branch_id: branchId,
+        name: name.trim(),
+        report_type: reportType,
+        cadence: cadence as 'per_till' | 'per_business_day' | 'ad_hoc',
+        is_required: required,
+        is_active: true,
+        configuration: { visible_columns: ['opening', 'movements', 'expected', 'physical', 'variance', 'remark'] },
+        approval_cost_threshold: '100',
+        approval_variance_percent: '10',
+        items: selectedItems.map((itemId, index) => ({
+          item_id: itemId,
+          display_order: index,
+          required_input: guidance.requiredInput,
+        })),
+      });
+      setMessage({ text: 'Template created. It will appear in the next matching business-day checklist.', error: false });
+      setSelectedItems([]);
+      await reload();
+    } catch (error) {
+      setMessage({ text: error instanceof ApiError ? error.message : 'Could not create the template. Please try again.', error: true });
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const applySuggestion = () => {
+    setName(guidance.defaultName);
+    setCadence(guidance.cadence);
+    setRequired(guidance.required);
+    setSelectedItems(suggestedItems.map((item) => item.id));
+    setMessage(null);
   };
 
   return <div className="p-6 max-w-[1400px] space-y-5">
@@ -643,7 +726,7 @@ function ShiftReportsTab() {
       <div className="flex items-center justify-between"><h3 className="font-medium text-gray-800">Branch report templates</h3><Badge>{templates.length} active/versioned</Badge></div>
       <div className="grid gap-3 md:grid-cols-4">
         <Input label="Template name" value={name} onChange={(event) => setName(event.target.value)} />
-        <Select label="Type" value={reportType} onChange={(event) => setReportType(event.target.value)} options={[
+        <Select label="Type" value={reportType} onChange={(event) => { setReportType(event.target.value as ReportTemplateKind); setSelectedItems([]); setMessage(null); }} options={[
           { value: 'production', label: 'Production' }, { value: 'finished_goods', label: 'Finished goods' }, { value: 'raw_materials', label: 'Raw materials' }, { value: 'packaging', label: 'Packaging' }, { value: 'spot_check', label: 'Spot check' },
         ]} />
         <Select label="Cadence" value={cadence} onChange={(event) => setCadence(event.target.value)} options={[
@@ -651,12 +734,24 @@ function ShiftReportsTab() {
         ]} />
         <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />Required (may be deferred/waived)</label>
       </div>
-      <label className="block text-xs uppercase tracking-wider text-gray-500">Items in physical count order</label>
+      <div className="border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+        <p className="font-medium">What staff will do</p>
+        <p className="mt-1">{guidance.staffInstruction}</p>
+        <Button type="button" variant="outline" size="sm" className="mt-3 bg-white" onClick={applySuggestion} disabled={guidance.kinds.length === 0}>
+          Use suggested {guidance.kinds.length > 0 ? `${suggestedItems.length}-item set` : 'item set'}
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <label className="block flex-1 text-xs uppercase tracking-wider text-gray-500">Items in physical count order
+          <Input aria-label="Search report-template items" value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Search name, SKU or storage zone" className="mt-1" />
+        </label>
+        <span className="pb-2 text-xs text-gray-500">{selectedItems.length} selected · sorted by count order</span>
+      </div>
       <select multiple value={selectedItems} onChange={(event) => setSelectedItems(Array.from(event.target.selectedOptions, option => option.value))} className="min-h-44 w-full border border-gray-300 bg-white p-2 text-sm">
-        {items.slice().sort((a, b) => a.count_order - b.count_order || a.name.localeCompare(b.name)).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku} · {item.kind.replaceAll('_', ' ')}</option>)}
+        {selectableItems.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku} · {item.storage_zone ?? 'No zone'}</option>)}
       </select>
-      <div className="flex items-center justify-between"><span className="text-xs text-gray-500">Select multiple items with Shift/Cmd. Default approval is AED 100 or 10%.</span><Button onClick={() => void createTemplate()} disabled={!branchId || selectedItems.length === 0}>Create template</Button></div>
-      {message && <p className="bg-green-50 p-2 text-sm text-green-800">{message}</p>}
+      <div className="flex items-center justify-between"><span className="text-xs text-gray-500">Select multiple items with Shift/Cmd. Default approval is AED 100 or 10%.</span><Button onClick={() => void createTemplate()} loading={savingTemplate} disabled={!branchId || selectedItems.length === 0}>Create template</Button></div>
+      {message && <p className={`p-2 text-sm ${message.error ? 'bg-red-50 text-red-800' : 'bg-green-50 text-green-800'}`}>{message.text}</p>}
       {templates.length > 0 && <DataTable rows={templates} rowKey={(row) => row.id} columns={[
         { header: 'Template', priority: 'primary', render: (row) => row.name },
         { header: 'Type', render: (row) => row.report_type.replaceAll('_', ' ') },

@@ -101,24 +101,34 @@ async def upsert_template(
     is_new = template is None
     if await db.get(Branch, data.branch_id) is None:
         raise NotFoundError("Branch not found")
+
+    # PostgreSQL validates NOT NULL columns on ``flush()``, not when attributes
+    # are subsequently assigned below.  A new template needs its complete
+    # persisted shape before the flush that obtains its ID for template lines.
+    # Keep this list shared by both the creation and update paths so an API
+    # field cannot silently be initialised differently from later edits.
+    template_values = {
+        field: getattr(data, field)
+        for field in (
+            "name",
+            "report_type",
+            "cadence",
+            "is_required",
+            "is_active",
+            "configuration",
+            "approval_cost_threshold",
+            "approval_variance_percent",
+        )
+    }
     if template is None:
-        template = InventoryReportTemplate(branch_id=data.branch_id, name=data.name)
+        template = InventoryReportTemplate(branch_id=data.branch_id, **template_values)
         db.add(template)
         await db.flush()
     elif template.branch_id != data.branch_id:
         raise ConflictError("A report template cannot move between branches")
 
-    for field in (
-        "name",
-        "report_type",
-        "cadence",
-        "is_required",
-        "is_active",
-        "configuration",
-        "approval_cost_threshold",
-        "approval_variance_percent",
-    ):
-        setattr(template, field, getattr(data, field))
+    for field, value in template_values.items():
+        setattr(template, field, value)
     template.version_number = 1 if is_new else int(template.version_number or 1) + 1
     if not is_new:
         await db.execute(
