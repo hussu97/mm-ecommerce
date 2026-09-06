@@ -534,6 +534,56 @@ class TestSweepReleasesConnectionBeforeReauth:
         ), f"connection not released before the wait: {calls}"
 
 
+# ── the reauth poll must keep what the provider's prepare wrote ───────────────
+async def test_reauth_poll_commits_what_prepare_session_wrote(monkeypatch):
+    """`_session_for` runs the provider's `prepare_session`, and for a password
+    channel (Deliveroo) that can perform a real login and write the minted token.
+    Leaving the poll block without committing threw that write away, so the next
+    poll logged in again — four Deliveroo logins in eight seconds in the 2026-09-06
+    outage logs."""
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_REAUTH_WAIT_SECONDS", 360)
+    monkeypatch.setattr("app.core.config.settings.AGGREGATOR_REAUTH_POLL_SECONDS", 0.01)
+    commits: list[str] = []
+
+    class _Ctx:
+        async def __aenter__(self):
+            return SimpleNamespace(
+                commit=AsyncMock(side_effect=lambda: commits.append("commit")),
+                rollback=AsyncMock(),
+            )
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(ingest, "AsyncSessionFactory", lambda: _Ctx())
+    monkeypatch.setattr(
+        ingest.session_store,
+        "load",
+        AsyncMock(
+            return_value=LoadedSession(
+                channel="deliveroo",
+                account_ref="",
+                status="needs_bootstrap",
+                reauth_backoff_until=None,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        ingest.session_store, "session_unusable_reason", lambda s: "needs_bootstrap"
+    )
+    monkeypatch.setattr(ingest.session_store, "mark_needs_bootstrap", AsyncMock())
+
+    async def fake_session_for(db, ch, prov):
+        return object()
+
+    monkeypatch.setattr(ingest, "_session_for", fake_session_for)
+
+    out = await ingest._await_reauth("deliveroo", object())
+    assert out is not None
+    # One commit for the needs_bootstrap flag, one for the poll that ran prepare.
+    assert len(commits) >= 2
+
+
 # ── gap 2: _await_reauth honours the worker's published heal backoff ───────────
 class TestAwaitReauthBackoff:
     """When the worker publishes a heal backoff (via reauth_backoff_until), the

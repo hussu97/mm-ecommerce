@@ -1062,6 +1062,12 @@ async def _await_reauth(
         await asyncio.sleep(poll)
         async with AsyncSessionFactory() as poll_db:
             session = await _session_for(poll_db, channel, provider)
+            # `_session_for` runs the provider's `prepare_session`, and for a
+            # password channel (Deliveroo) that can perform a real login and write
+            # the minted token. Leaving the block without committing threw that
+            # write away, so the next poll logged in again — four Deliveroo logins
+            # in eight seconds in the 2026-09-06 logs. Commit what the prepare did.
+            await poll_db.commit()
         if session is not None:
             logger.info("aggregator %s: reauth completed — session live", channel)
             return session

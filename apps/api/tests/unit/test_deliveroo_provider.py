@@ -15,6 +15,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.aggregators.normalized import StandardOrder
 from app.services.aggregators.session_store import LoadedSession
@@ -710,3 +711,118 @@ def test_restaurant_records_from_login_extracts_drn_and_status():
     assert recs["693359"] == {"drn_id": "uuid-barsha", "status": "OPEN"}
     assert recs["693361"]["status"] == "READY_TO_OPEN"
     assert recs["693360"]["drn_id"] == "uuid-majaz"
+
+
+# ── The 2026-09-06 outage: a write through a session nobody owned ─────────────
+
+
+def test_the_client_keeps_no_database_session_on_itself():
+    """The provider is a module-level singleton, so any `AsyncSession` stashed on it
+    outlives the `async with AsyncSessionFactory()` block it came from. The re-mint
+    then wrote through that dead handle, opening a transaction in a scope that had
+    already exited — nobody left to commit or roll it back. One of those sat open
+    for three hours holding a row lock on `aggregator_session`; nine backends queued
+    behind it and the API started returning 503."""
+    client = DeliverooClient()
+    assert not hasattr(client, "_db")
+    assert not any(isinstance(v, AsyncSession) for v in vars(client).values()), (
+        "no AsyncSession may be stored on the client"
+    )
+
+
+@pytest.mark.asyncio
+async def test_remint_commits_on_its_own_session():
+    """The minted token must survive the caller: the old one is dead the moment
+    Deliveroo issues a replacement, so a caller's rollback would leave every
+    following call authenticating with a token that no longer works."""
+    client = DeliverooClient()
+    client._remint_attempted = False
+    session = _org_session()
+    fresh = _org_session()
+    fresh.tokens = {"access_token": "new-token"}
+    fresh.cookies = {"token": "new-token"}
+
+    committed: list[str] = []
+    used: list[object] = []
+
+    class _FakeSession:
+        async def commit(self):
+            committed.append("commit")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    fake_db = _FakeSession()
+
+    async def fake_login(self, db, prev):
+        used.append(db)
+        return fresh
+
+    async def fake_augment(self, db, s):
+        used.append(db)
+        return s
+
+    with (
+        patch(
+            "app.services.providers.deliveroo_provider.AsyncSessionFactory",
+            lambda: fake_db,
+        ),
+        patch.object(DeliverooClient, "_login", fake_login),
+        patch.object(DeliverooClient, "_augment_from_db", fake_augment),
+    ):
+        out = await client._remint_after_stale_token(session)
+
+    assert out is session
+    assert session.tokens["access_token"] == "new-token"
+    # Its own session, and committed — not the caller's, and not left open.
+    assert used == [fake_db, fake_db]
+    assert committed == ["commit"]
+
+
+@pytest.mark.asyncio
+async def test_remint_commits_even_when_the_augment_returns_nothing():
+    """`_login` already minted a real token and wrote it. Discarding that because a
+    follow-up lookup came back empty is what leaves the next call 401-ing — the four
+    logins in eight seconds in the outage logs."""
+    client = DeliverooClient()
+    client._remint_attempted = False
+    committed: list[str] = []
+
+    class _FakeSession:
+        async def commit(self):
+            committed.append("commit")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def fake_login(self, db, prev):
+        return _org_session()
+
+    async def fake_augment(self, db, s):
+        return None
+
+    with (
+        patch(
+            "app.services.providers.deliveroo_provider.AsyncSessionFactory",
+            lambda: _FakeSession(),
+        ),
+        patch.object(DeliverooClient, "_login", fake_login),
+        patch.object(DeliverooClient, "_augment_from_db", fake_augment),
+    ):
+        out = await client._remint_after_stale_token(_org_session())
+
+    assert out is None
+    assert committed == ["commit"]
+
+
+@pytest.mark.asyncio
+async def test_remint_runs_at_most_once_per_sweep():
+    client = DeliverooClient()
+    client._remint_attempted = True
+    assert await client._remint_after_stale_token(_org_session()) is None

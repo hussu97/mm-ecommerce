@@ -37,6 +37,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import AsyncSessionFactory
 from app.core.money import money_or_none
 from app.models.aggregator import (
     CHANNEL_DELIVEROO,
@@ -318,10 +319,16 @@ class DeliverooClient(BaseAggregatorClient):
 
     def __init__(self, *, timeout: float | None = None) -> None:
         super().__init__(timeout=timeout)
-        #: Stashed by `prepare_session` so a 401 on a still-unexpired JWT can
-        #: remint in-band. The singleton is leader-locked per sweep, so this is
-        #: one-caller-at-a-time, not shared mutable state across requests.
-        self._db: AsyncSession | None = None
+        #: Guards the in-band re-mint to one attempt per sweep. Note what is NOT
+        #: here any more: a stashed `AsyncSession`. `prepare_session` used to keep
+        #: the caller's session on `self` so a mid-sweep 401 could re-mint through
+        #: it, and the reasoning ("leader-locked, one caller at a time") was about
+        #: concurrency when the problem was LIFETIME. This is a module-level
+        #: singleton, so the handle outlived the `async with AsyncSessionFactory()`
+        #: block it came from, and the re-mint's write opened a transaction inside a
+        #: scope that had already exited — nobody left to commit or roll it back.
+        #: On 2026-09-06 one of those sat open for three hours holding a row lock on
+        #: `aggregator_session`; nine backends queued behind it and the API 503'd.
         self._remint_attempted = False
 
     def build_headers(
@@ -510,18 +517,31 @@ class DeliverooClient(BaseAggregatorClient):
 
         Overlays the minted cookies/tokens onto `session` so later calls in the
         same sweep (which hold the original object) send the new Bearer.
+
+        Runs on its OWN session, committed here — the dedicated-session rule for a
+        side-write that must survive the caller (canon rule 2, like
+        `webhook_log_service.Recorder`). It has to be its own for two reasons. The
+        old token is dead the moment Deliveroo mints a replacement, so losing this
+        write to a caller's rollback means every following call 401s again — which
+        is what produced the four logins in eight seconds in the 2026-09-06 logs.
+        And there is no caller transaction to join: this fires deep inside an
+        arbitrary request, and the handle it used to borrow was a stale one.
         """
-        if self._remint_attempted or self._db is None:
+        if self._remint_attempted:
             return None
         self._remint_attempted = True
         logger.info(
             "deliveroo: 401 with a still-unexpired token; reminting via _login "
             "(not /api/session/refresh)"
         )
-        fresh = await self._login(self._db, session)
-        if fresh is None:
-            return None
-        fresh = await self._augment_from_db(self._db, fresh)
+        async with AsyncSessionFactory() as db:
+            fresh = await self._login(db, session)
+            if fresh is not None:
+                fresh = await self._augment_from_db(db, fresh)
+            # Commit even when the augment came back None: `_login` already minted a
+            # real token and wrote it, and throwing that away is what leaves the next
+            # call authenticating against a token Deliveroo has already replaced.
+            await db.commit()
         if fresh is None:
             return None
         session.cookies = dict(fresh.cookies or {})
@@ -551,7 +571,6 @@ class DeliverooClient(BaseAggregatorClient):
         the DB (account `extras` + `aggregator_branch_map`) so the sweep never
         relies on the stale hard-coded fallbacks.
         """
-        self._db = db
         self._remint_attempted = False
         prepared = await self._resolve_session(db, session)
         return await self._augment_from_db(db, prepared)
