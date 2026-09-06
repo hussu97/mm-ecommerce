@@ -183,6 +183,7 @@ class ReportTemplateUpsert(BaseModel):
     cadence: Literal["per_till", "per_business_day", "ad_hoc"] = "per_till"
     is_required: bool = False
     is_active: bool = True
+    display_order: int = 0
     configuration: dict[str, Any] = Field(default_factory=dict)
     approval_cost_threshold: Decimal | None = Field(None, ge=0)
     approval_variance_percent: Decimal | None = Field(None, ge=0)
@@ -204,6 +205,7 @@ class ReportTemplateResponse(ORMModel):
     cadence: str
     is_required: bool
     is_active: bool
+    display_order: int
     version_number: int
     configuration: dict[str, Any]
     approval_cost_threshold: Decimal | None

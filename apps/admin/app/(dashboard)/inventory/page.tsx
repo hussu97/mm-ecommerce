@@ -79,6 +79,17 @@ const REPORT_TEMPLATE_GUIDANCE: Record<ReportTemplateKind, {
   },
 };
 
+// The order the register fills the reports in at close, low first. Production &
+// finished goods must post before raw materials so the raw-material consumption
+// appears — the order is load-bearing, not cosmetic.
+const REPORT_FILL_ORDER: Record<ReportTemplateKind, number> = {
+  production: 1,
+  finished_goods: 1,
+  raw_materials: 2,
+  packaging: 3,
+  spot_check: 9,
+};
+
 export default function InventoryPage() {
   const [tab, setTab] = useState<TabKey>('items');
 
@@ -737,6 +748,7 @@ function ShiftReportsTab() {
   const [name, setName] = useState('Closing stock reconciliation');
   const [reportType, setReportType] = useState<ReportTemplateKind>('finished_goods');
   const [cadence, setCadence] = useState('per_business_day');
+  const [displayOrder, setDisplayOrder] = useState<number>(REPORT_FILL_ORDER.finished_goods);
   const [required, setRequired] = useState(true);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [itemSearch, setItemSearch] = useState('');
@@ -807,6 +819,7 @@ function ShiftReportsTab() {
         cadence: cadence as 'per_till' | 'per_business_day' | 'ad_hoc',
         is_required: required,
         is_active: true,
+        display_order: displayOrder,
         configuration: { visible_columns: ['opening', 'movements', 'expected', 'physical', 'variance', 'remark'] },
         approval_cost_threshold: '100',
         approval_variance_percent: '10',
@@ -829,6 +842,7 @@ function ShiftReportsTab() {
   const applySuggestion = () => {
     setName(guidance.defaultName);
     setCadence(guidance.cadence);
+    setDisplayOrder(REPORT_FILL_ORDER[reportType]);
     setRequired(guidance.required);
     setSelectedItems(suggestedItems.map((item) => item.id));
     setMessage(null);
@@ -866,12 +880,13 @@ function ShiftReportsTab() {
       <div className="flex items-center justify-between"><h3 className="font-medium text-gray-800">Branch report templates</h3><Badge>{templates.length} active/versioned</Badge></div>
       <div className="grid gap-3 md:grid-cols-4">
         <Input label="Template name" value={name} onChange={(event) => setName(event.target.value)} />
-        <Select label="Type" value={reportType} onChange={(event) => { setReportType(event.target.value as ReportTemplateKind); setSelectedItems([]); setMessage(null); }} options={[
+        <Select label="Type" value={reportType} onChange={(event) => { const next = event.target.value as ReportTemplateKind; setReportType(next); setDisplayOrder(REPORT_FILL_ORDER[next]); setSelectedItems([]); setMessage(null); }} options={[
           { value: 'production', label: 'Production' }, { value: 'finished_goods', label: 'Finished goods' }, { value: 'raw_materials', label: 'Raw materials' }, { value: 'packaging', label: 'Packaging' }, { value: 'spot_check', label: 'Spot check' },
         ]} />
         <Select label="Cadence" value={cadence} onChange={(event) => setCadence(event.target.value)} options={[
           { value: 'per_till', label: 'At till close (per till)' }, { value: 'per_business_day', label: 'At end of day (per business day)' }, { value: 'ad_hoc', label: 'Ad hoc (manual only)' },
         ]} />
+        <Input label="Fill order (low first)" type="number" value={String(displayOrder)} onChange={(event) => setDisplayOrder(Number(event.target.value) || 0)} />
         <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />Required (may be deferred/waived)</label>
       </div>
       <div className="border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
@@ -897,6 +912,7 @@ function ShiftReportsTab() {
         { header: 'Template', priority: 'primary', render: (row) => row.name },
         { header: 'Type', render: (row) => row.report_type.replaceAll('_', ' ') },
         { header: 'Cadence', render: (row) => row.cadence.replaceAll('_', ' ') },
+        { header: 'Fill order', render: (row) => row.display_order },
         { header: 'Version', render: (row) => `v${row.version_number}` },
         { header: 'Items', render: (row) => row.items.length },
         { header: 'POS status', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },

@@ -387,6 +387,13 @@ class InventoryReportTemplate(Base, UUIDMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: The order the shop fills the reports at close, low first. It is not
+    #: cosmetic: the reports cascade through the ledger, so Production & Finished
+    #: Goods must post before Raw Materials for the raw-material consumption to
+    #: appear. The register presents outstanding reports in this order.
+    display_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
     version_number: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1"
     )

@@ -89,9 +89,15 @@ def latest_active_templates(
             str(current.id),
         ):
             newest[key] = template
+    # Ordered the way the shop fills them at close, low first — the cascade
+    # depends on it (production before raw materials). Name breaks a tie.
     return sorted(
         (template for template in newest.values() if template.is_active),
-        key=lambda template: (template.report_type, template.name),
+        key=lambda template: (
+            int(template.display_order or 0),
+            template.report_type,
+            template.name,
+        ),
     )
 
 
@@ -194,6 +200,7 @@ async def upsert_template(
             "cadence",
             "is_required",
             "is_active",
+            "display_order",
             "configuration",
             "approval_cost_threshold",
             "approval_variance_percent",

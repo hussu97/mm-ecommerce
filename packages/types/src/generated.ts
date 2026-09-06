@@ -16802,6 +16802,8 @@ export interface components {
             configuration: {
                 [key: string]: unknown;
             };
+            /** Display Order */
+            display_order: number;
             /**
              * Id
              * Format: uuid
@@ -16844,6 +16846,11 @@ export interface components {
             configuration?: {
                 [key: string]: unknown;
             };
+            /**
+             * Display Order
+             * @default 0
+             */
+            display_order: number;
             /**
              * Is Active
              * @default true

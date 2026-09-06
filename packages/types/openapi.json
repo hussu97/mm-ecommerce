@@ -25382,6 +25382,10 @@
             "title": "Configuration",
             "type": "object"
           },
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -25424,6 +25428,7 @@
           "cadence",
           "is_required",
           "is_active",
+          "display_order",
           "version_number",
           "configuration",
           "approval_cost_threshold",
@@ -25485,6 +25490,11 @@
             "additionalProperties": true,
             "title": "Configuration",
             "type": "object"
+          },
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
           },
           "is_active": {
             "default": true,
