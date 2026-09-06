@@ -7,7 +7,9 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from app.services.inventory.report_columns import columns_for
 
 
 class ORMModel(BaseModel):
@@ -267,6 +269,14 @@ class ShiftReportResponse(ORMModel):
     approved_at: datetime | None
     transaction_id: UUID | None
     lines: list[ShiftReportLineResponse] = []
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def columns(self) -> list[dict[str, Any]]:
+        """The grid the register draws for this report kind — the single BE-owned
+        contract for which movement columns are entered, inferred or derived."""
+        report_type = (self.template_snapshot or {}).get("report_type", "")
+        return [column.to_dict() for column in columns_for(report_type)]
 
 
 class OrderInventoryMovementLine(BaseModel):

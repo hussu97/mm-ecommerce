@@ -17269,6 +17269,14 @@ export interface components {
             branch_id: string;
             /** Business Date */
             business_date: string;
+            /**
+             * Columns
+             * @description The grid the register draws for this report kind — the single BE-owned
+             *     contract for which movement columns are entered, inferred or derived.
+             */
+            readonly columns: {
+                [key: string]: unknown;
+            }[];
             /** Deferred Reason */
             deferred_reason: string | null;
             /**

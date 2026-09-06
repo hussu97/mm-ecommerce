@@ -26692,6 +26692,16 @@
             "title": "Business Date",
             "type": "string"
           },
+          "columns": {
+            "description": "The grid the register draws for this report kind \u2014 the single BE-owned\ncontract for which movement columns are entered, inferred or derived.",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "readOnly": true,
+            "title": "Columns",
+            "type": "array"
+          },
           "deferred_reason": {
             "anyOf": [
               {
@@ -26810,7 +26820,8 @@
           "approved_by",
           "submitted_at",
           "approved_at",
-          "transaction_id"
+          "transaction_id",
+          "columns"
         ],
         "title": "ShiftReportResponse",
         "type": "object"
