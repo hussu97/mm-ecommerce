@@ -8,6 +8,7 @@ import type { Product } from '@/lib/types';
 import { ProductForm } from '@/components/products/ProductForm';
 import { Spinner } from '@/components/ui';
 import { BranchStockPanel } from '@/components/products/BranchStock';
+import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
 export default function EditProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
@@ -53,6 +54,7 @@ export default function EditProductPage({ params }: { params: Promise<{ slug: st
         </div>
       </div>
       <ProductForm product={product} />
+      <RecipeEditor ownerKind="product" ownerId={product.id} ownerLabel={product.name} />
 
       {/*
         Below the form rather than inside it, because it is not part of the

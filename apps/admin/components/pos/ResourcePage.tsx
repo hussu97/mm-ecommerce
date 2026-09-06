@@ -69,6 +69,8 @@ export interface ResourcePageProps<T extends { id: string }> {
   /** Extra controls rendered next to the "New" button. */
   toolbar?: React.ReactNode;
   rowActions?: (row: T, reload: () => void) => React.ReactNode;
+  /** Contextual detail kept with a selected row (for example, that item's recipe). */
+  belowTable?: React.ReactNode;
   /**
    * Client-side pagination via the shared `Pagination` component (`load` still
    * fetches everything in one call). Off by default — most of these lists are
@@ -91,6 +93,7 @@ export function ResourcePage<T extends { id: string }>({
   emptyMessage = 'Nothing here yet.',
   toolbar,
   rowActions,
+  belowTable,
   paginated = false,
 }: ResourcePageProps<T>) {
   const [rows, setRows] = useState<T[]>([]);
@@ -289,6 +292,8 @@ export function ResourcePage<T extends { id: string }>({
           label={title.toLowerCase()}
         />
       )}
+
+      {belowTable}
 
       {formOpen && (
         <Modal title={editing ? `Edit ${title.replace(/s$/, '')}` : `New ${title.replace(/s$/, '')}`} onClose={closeForm}>

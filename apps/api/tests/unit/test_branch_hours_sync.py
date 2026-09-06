@@ -19,6 +19,10 @@ import pytest
 
 from app.services import branch_hours_service, branch_hours_sync
 from app.services.aggregators import hours_writers
+from app.services.providers.aggregator_base import (
+    AggregatorAuthError,
+    AggregatorUnavailableError,
+)
 
 # 2026-09-06 is a Sunday (weekday 0 in branch_weekly_hours numbering).
 SUN = date(2026, 9, 6)
@@ -181,6 +185,54 @@ async def test_channel_failure_records_and_alerts_then_continues(monkeypatch):
     assert rows["noon"].status == "failed" and "dead session" in rows["noon"].error
     assert rows["careem"].status == "completed"  # the failure did not abort the loop
     assert issues and issues[0][1] == ["branch-hours-sync", "noon", "weekly-push"]
+
+
+@pytest.mark.asyncio
+async def test_transient_hour_write_retries_and_records_attempt_count(monkeypatch):
+    import app.core.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "CATALOG_SYNC_ENABLED", True)
+    monkeypatch.setattr(cfg.settings, "BRANCH_HOURS_SYNC_LIVE", True)
+    calls = 0
+
+    async def flaky_push(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise AggregatorUnavailableError("careem returned 503")
+        return {"op": "push_weekly_hours", "endpoint": "x", "weekly": {}}
+
+    monkeypatch.setattr(hours_writers, "push_weekly_hours", flaky_push)
+    monkeypatch.setattr(branch_hours_sync.asyncio, "sleep", AsyncMock())
+    db = _sync_db()
+    await branch_hours_sync._push_weekly_to_channel(db, _branch(), "careem", _SCHED)
+
+    assert calls == 2
+    row = _rows(db)[0]
+    assert row.status == "completed"
+    assert row.planned["attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_marks_session_for_headed_recovery(monkeypatch):
+    async def dead_session(*_args, **_kwargs):
+        raise AggregatorAuthError("careem returned 401")
+
+    marked = AsyncMock()
+    monkeypatch.setattr(hours_writers, "push_weekly_hours", dead_session)
+    monkeypatch.setattr(branch_hours_sync.session_store, "mark_needs_bootstrap", marked)
+    monkeypatch.setattr(
+        branch_hours_sync.alerting, "capture_issue", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        branch_hours_sync.alerting, "capture_exc", lambda *args, **kwargs: None
+    )
+
+    db = _sync_db()
+    await branch_hours_sync._push_weekly_to_channel(db, _branch(), "careem", _SCHED)
+
+    marked.assert_awaited_once_with(db, "careem", error="careem returned 401")
+    assert _rows(db)[0].status == "failed"
 
 
 @pytest.mark.asyncio

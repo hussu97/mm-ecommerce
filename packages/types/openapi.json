@@ -2990,6 +2990,20 @@
         "title": "Body_import_categories_api_v1_import_categories_post",
         "type": "object"
       },
+      "Body_import_inventory_items_api_v1_import_inventory_items_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_inventory_items_api_v1_import_inventory_items_post",
+        "type": "object"
+      },
       "Body_import_modifier_options_api_v1_import_modifier_options_post": {
         "properties": {
           "file": {
@@ -3044,6 +3058,20 @@
           "file"
         ],
         "title": "Body_import_products_api_v1_import_products_post",
+        "type": "object"
+      },
+      "Body_import_recipes_api_v1_import_recipes_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_recipes_api_v1_import_recipes_post",
         "type": "object"
       },
       "Body_preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post": {
@@ -43147,6 +43175,30 @@
         ]
       }
     },
+    "/api/v1/export/inventory-items": {
+      "get": {
+        "operationId": "export_inventory_items_api_v1_export_inventory_items_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Inventory Items",
+        "tags": [
+          "Export"
+        ]
+      }
+    },
     "/api/v1/export/modifier-options": {
       "get": {
         "operationId": "export_modifier_options_api_v1_export_modifier_options_get",
@@ -43324,6 +43376,30 @@
           }
         ],
         "summary": "Export Products",
+        "tags": [
+          "Export"
+        ]
+      }
+    },
+    "/api/v1/export/recipes": {
+      "get": {
+        "operationId": "export_recipes_api_v1_export_recipes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Recipes",
         "tags": [
           "Export"
         ]
@@ -43888,6 +43964,53 @@
         ]
       }
     },
+    "/api/v1/import/inventory-items": {
+      "post": {
+        "description": "Import the editable inventory catalogue exported by MM.",
+        "operationId": "import_inventory_items_api_v1_import_inventory_items_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_inventory_items_api_v1_import_inventory_items_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Import Inventory Items",
+        "tags": [
+          "Import"
+        ]
+      }
+    },
     "/api/v1/import/modifier-options": {
       "post": {
         "description": "Import modifier options from Foodics CSV export.",
@@ -44071,6 +44194,53 @@
           }
         ],
         "summary": "Import Products",
+        "tags": [
+          "Import"
+        ]
+      }
+    },
+    "/api/v1/import/recipes": {
+      "post": {
+        "description": "Stage recipe spreadsheet changes as drafts; this endpoint never activates them.",
+        "operationId": "import_recipes_api_v1_import_recipes_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_recipes_api_v1_import_recipes_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Import Recipes",
         "tags": [
           "Import"
         ]

@@ -6,14 +6,9 @@ import {
   inventoryApi,
   type BranchInventorySettings,
   type ReportTemplate,
-  type RecipeExpansion,
-  type RecipeVersion,
   type ShiftInventoryReport,
   type StockAuditPreview,
-  type VersionedRecipe,
 } from '@/lib/pos-api';
-import { modifiersApi, productsApi } from '@/lib/api';
-import type { Modifier, Product } from '@/lib/types';
 import type {
   Branch,
   InventoryCategory,
@@ -26,8 +21,9 @@ import { Badge, Button, Input, Select, Spinner, TabBar } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { formatCurrency } from '@/lib/utils';
+import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
-type TabKey = 'items' | 'levels' | 'recipes' | 'ledger' | 'counts' | 'shift-reports' | 'suppliers' | 'categories' | 'integrity';
+type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'suppliers' | 'categories' | 'integrity';
 
 export default function InventoryPage() {
   const [tab, setTab] = useState<TabKey>('items');
@@ -40,7 +36,6 @@ export default function InventoryPage() {
           tabs={[
             { key: 'items', label: 'Items' },
             { key: 'levels', label: 'On hand' },
-            { key: 'recipes', label: 'Recipes' },
             { key: 'ledger', label: 'Ledger' },
             { key: 'counts', label: 'Counts' },
             { key: 'shift-reports', label: 'Shift reports' },
@@ -54,7 +49,6 @@ export default function InventoryPage() {
       </div>
       {tab === 'items' && <ItemsTab />}
       {tab === 'levels' && <LevelsTab />}
-      {tab === 'recipes' && <RecipesTab />}
       {tab === 'ledger' && <LedgerTab />}
       {tab === 'counts' && <CountsTab />}
       {tab === 'shift-reports' && <ShiftReportsTab />}
@@ -67,6 +61,7 @@ export default function InventoryPage() {
 
 function ItemsTab() {
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
+  const [recipeItem, setRecipeItem] = useState<InventoryItem | null>(null);
   useEffect(() => {
     void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
   }, []);
@@ -86,6 +81,8 @@ function ItemsTab() {
       update={(id, d) => inventoryApi.updateItem(id, d)}
       remove={(id) => inventoryApi.removeItem(id)}
       searchKeys={['name', 'sku']}
+      rowActions={(item) => <button className="text-xs text-primary hover:underline" onClick={() => setRecipeItem(item)}>Recipe</button>}
+      belowTable={recipeItem && <div className="mt-6"><RecipeEditor ownerKind="inventory_item" ownerId={recipeItem.id} ownerLabel={recipeItem.name} /></div>}
       defaults={{
         storage_unit: 'kg',
         ingredient_unit: 'g',
@@ -361,128 +358,6 @@ function CategoriesTab() {
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />
-  );
-}
-
-function RecipesTab() {
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [modifiers, setModifiers] = useState<Modifier[]>([]);
-  const [ownerKind, setOwnerKind] = useState('product');
-  const [ownerId, setOwnerId] = useState('');
-  const [recipe, setRecipe] = useState<VersionedRecipe | null>(null);
-  const [draft, setDraft] = useState<RecipeVersion | null>(null);
-  const [preview, setPreview] = useState<RecipeExpansion | null>(null);
-  const [ingredientId, setIngredientId] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [message, setMessage] = useState('');
-
-  useEffect(() => {
-    void Promise.all([
-      inventoryApi.items(),
-      productsApi.list({ channel: 'all', per_page: 2000 }),
-      modifiersApi.list(true),
-    ])
-      .then(([inventoryItems, productPage, modifierRows]) => {
-        setItems(inventoryItems);
-        setProducts(productPage.items);
-        setModifiers(modifierRows);
-      })
-      .catch(() => setMessage('Could not load the recipe catalogue.'));
-  }, []);
-
-  const ownerOptions = ownerKind === 'product'
-    ? products.map((product) => ({
-        value: product.id,
-        label: `${product.name} · ${product.sku ?? 'no SKU'}`,
-      }))
-    : ownerKind === 'modifier_option'
-      ? modifiers.flatMap((modifier) => modifier.options.map((option) => ({
-          value: option.id,
-          label: `${modifier.name} — ${option.name} · ${option.sku || 'no SKU'}`,
-        })))
-      : items.map((item) => ({ value: item.id, label: `${item.name} · ${item.sku}` }));
-  const load = useCallback(async () => {
-    if (!ownerId) return;
-    try {
-      const value = await inventoryApi.versionedRecipe(ownerKind, ownerId);
-      setRecipe(value);
-      setDraft(value.versions.find((v) => v.status === 'draft') ?? value.versions.find((v) => v.status === 'active') ?? null);
-      setPreview(null);
-      setMessage('');
-    } catch (err) {
-      setRecipe(null);
-      setDraft(null);
-      setMessage(err instanceof ApiError && err.status === 404 ? 'No recipe yet. Add its first ingredient.' : 'Could not load recipe.');
-    }
-  }, [ownerId, ownerKind]);
-
-  const save = async () => {
-    if (!ownerId || !ingredientId || Number(quantity) <= 0) return;
-    const existing = draft?.lines ?? [];
-    const lines = [
-      ...existing.filter((line) => line.item_id !== ingredientId).map((line) => ({
-        item_id: line.item_id,
-        quantity: line.quantity,
-        yield_percentage: line.yield_percentage,
-        inactive_in_order_types: line.inactive_in_order_types,
-        display_order: line.display_order,
-        source_metadata: line.source_metadata,
-      })),
-      { item_id: ingredientId, quantity, yield_percentage: '1', inactive_in_order_types: [], display_order: existing.length, source_metadata: {} },
-    ];
-    const saved = await inventoryApi.saveRecipeDraft(ownerKind, ownerId, { ingredients: lines, source: 'mm', source_metadata: {} });
-    setDraft(saved);
-    setPreview(null);
-    setMessage(`Draft v${saved.version_number} saved. It will not affect sales until activated.`);
-    setIngredientId('');
-  };
-
-  return (
-    <div className="p-6 max-w-5xl space-y-5">
-      <div>
-        <h2 className="font-display text-lg text-primary">Versioned recipes</h2>
-        <p className="text-sm text-gray-500">Recipes contain only inventory items. Phantom items expand recursively; stocked items stop expansion.</p>
-      </div>
-      <div className="grid gap-3 md:grid-cols-[190px_1fr_auto] items-end">
-        <Select label="Owner type" value={ownerKind} onChange={(e) => {
-          setOwnerKind(e.target.value);
-          setOwnerId('');
-          setRecipe(null);
-          setDraft(null);
-          setPreview(null);
-          setMessage('');
-        }} options={[
-          { value: 'product', label: 'Product' }, { value: 'modifier_option', label: 'Modifier option' }, { value: 'inventory_item', label: 'Inventory item' },
-        ]} />
-        <Select label="Recipe owner" value={ownerId} onChange={(e) => setOwnerId(e.target.value)} placeholder={`Choose ${ownerKind.replaceAll('_', ' ')}`} options={ownerOptions} />
-        <Button variant="outline" onClick={() => void load()} disabled={!ownerId}>Load</Button>
-      </div>
-      {message && <p className="rounded-sm bg-amber-50 px-3 py-2 text-sm text-amber-800">{message}</p>}
-      <div className="border border-gray-200 p-4 space-y-3">
-        <h3 className="font-medium">Draft ingredients</h3>
-        {(draft?.lines ?? []).map((line) => {
-          const item = items.find((value) => value.id === line.item_id);
-          return <div key={line.item_id} className="flex justify-between border-b border-gray-100 py-2 text-sm"><span>{item?.name ?? line.item_id}</span><span>{line.quantity} {line.ingredient_unit}</span></div>;
-        })}
-        <div className="grid gap-3 md:grid-cols-[1fr_160px_auto] items-end">
-          <Select label="Inventory item" value={ingredientId} onChange={(e) => setIngredientId(e.target.value)} placeholder="Add ingredient" options={items.map((i) => ({ value: i.id, label: `${i.name} · ${i.ingredient_unit}` }))} />
-          <Input label="Quantity" type="number" min="0.0001" step="0.0001" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-          <Button onClick={() => void save()} disabled={!ownerId || !ingredientId}>Save draft</Button>
-        </div>
-      </div>
-      <div className="border border-gray-200 p-4">
-        <div className="flex items-center justify-between"><h3 className="font-medium">Version history</h3>{draft?.status === 'draft' && <div className="flex gap-2"><Button onClick={async () => { try { setPreview(await inventoryApi.previewRecipeVersion(draft.id)); setMessage('Draft is valid. Review its recursive stocked-item expansion below.'); } catch (err) { setPreview(null); setMessage(err instanceof ApiError ? err.message : 'Draft validation failed.'); } }} variant="outline">Validate & preview</Button><Button onClick={async () => { try { await inventoryApi.activateRecipe(draft.id); await load(); } catch (err) { setMessage(err instanceof ApiError ? err.message : 'Could not activate recipe.'); } }} variant="outline">Activate v{draft.version_number}</Button></div>}</div>
-        <div className="mt-3 space-y-2">{(recipe?.versions ?? []).map((version) => <div key={version.id} className="flex items-center gap-3 text-sm"><Badge variant={version.status === 'active' ? 'success' : version.status === 'draft' ? 'warning' : 'neutral'}>{version.status}</Badge><span>Version {version.version_number}</span><span className="text-gray-400">{version.lines.length} lines · {version.source}</span></div>)}</div>
-      </div>
-      {preview && <div className="border border-gray-200 p-4 space-y-3"><h3 className="font-medium">Recursive stocked-item expansion</h3><p className="text-xs text-gray-500">Phantom sub-recipes are expanded. Stocked sub-recipes stop here, so their raw ingredients will not be consumed twice.</p><DataTable rows={preview.lines} rowKey={(line) => line.item_id} columns={[
-        { header: 'Stocked item', priority: 'primary', render: (line) => items.find((item) => item.id === line.item_id)?.name ?? line.item_id },
-        { header: 'Quantity', className: 'text-right', render: (line) => line.quantity },
-        { header: 'Planned yield waste', className: 'text-right', render: (line) => line.planned_waste },
-        { header: 'Catalogue value', className: 'text-right', render: (line) => { const item = items.find((value) => value.id === line.item_id); return item ? formatCurrency(Number(line.quantity) * Number(item.cost) / Number(item.storage_to_ingredient_factor)) : '—'; } },
-        { header: 'Recipe path(s)', className: 'text-right', render: (line) => line.paths.length },
-      ]} /></div>}
-    </div>
   );
 }
 

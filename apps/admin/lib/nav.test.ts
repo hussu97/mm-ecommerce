@@ -29,22 +29,10 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/logs/audit')).toBe('/logs');
   });
 
-  it('lights Reconciliation for every inbound-marketplace tab without its own entry', () => {
-    // Reconciliation owns `/aggregators` via `match`, so its sibling tabs — runs,
-    // the branch/item mappings — light it rather than going dark. The tab itself
-    // is what distinguishes them; the rail just says "you are in Marketplaces".
-    expect(activeNavHref('/aggregators/reconciliation')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/runs')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/mappings')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/item-mappings')).toBe('/aggregators/reconciliation');
-  });
-
-  it('lets a more-specific marketplace entry override the owned area', () => {
-    // Logins, Invoices and Fees have their own sidebar entries, so their longer
-    // covering prefix wins over Reconciliation's `/aggregators` match.
-    expect(activeNavHref('/aggregators/logins')).toBe('/aggregators/logins');
-    expect(activeNavHref('/aggregators/invoices')).toBe('/aggregators/invoices');
-    expect(activeNavHref('/aggregators/fees')).toBe('/aggregators/fees');
+  it('keeps reconciliation routes out of the sidebar when they are lateral tabs', () => {
+    expect(activeNavHref('/aggregators/reconciliation')).toBeNull();
+    expect(activeNavHref('/aggregators/grubops')).toBeNull();
+    expect(activeNavHref('/aggregators/invoices')).toBeNull();
   });
 
   it('lights a section up from one of its detail pages', () => {

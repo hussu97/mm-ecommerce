@@ -3155,6 +3155,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/export/inventory-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Inventory Items */
+        get: operations["export_inventory_items_api_v1_export_inventory_items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/export/modifier-options": {
         parameters: {
             query?: never;
@@ -3232,6 +3249,23 @@ export interface paths {
         };
         /** Export Products */
         get: operations["export_products_api_v1_export_products_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/export/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Recipes */
+        get: operations["export_recipes_api_v1_export_recipes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3402,6 +3436,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import/inventory-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Inventory Items
+         * @description Import the editable inventory catalogue exported by MM.
+         */
+        post: operations["import_inventory_items_api_v1_import_inventory_items_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import/modifier-options": {
         parameters: {
             query?: never;
@@ -3476,6 +3530,26 @@ export interface paths {
          * @description Import products from Foodics CSV export.
          */
         post: operations["import_products_api_v1_import_products_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Recipes
+         * @description Stage recipe spreadsheet changes as drafts; this endpoint never activates them.
+         */
+        post: operations["import_recipes_api_v1_import_recipes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9334,6 +9408,11 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_import_inventory_items_api_v1_import_inventory_items_post */
+        Body_import_inventory_items_api_v1_import_inventory_items_post: {
+            /** File */
+            file: string;
+        };
         /** Body_import_modifier_options_api_v1_import_modifier_options_post */
         Body_import_modifier_options_api_v1_import_modifier_options_post: {
             /** File */
@@ -9351,6 +9430,11 @@ export interface components {
         };
         /** Body_import_products_api_v1_import_products_post */
         Body_import_products_api_v1_import_products_post: {
+            /** File */
+            file: string;
+        };
+        /** Body_import_recipes_api_v1_import_recipes_post */
+        Body_import_recipes_api_v1_import_recipes_post: {
             /** File */
             file: string;
         };
@@ -25083,6 +25167,26 @@ export interface operations {
             };
         };
     };
+    export_inventory_items_api_v1_export_inventory_items_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     export_modifier_options_api_v1_export_modifier_options_get: {
         parameters: {
             query?: never;
@@ -25177,6 +25281,26 @@ export interface operations {
         };
     };
     export_products_api_v1_export_products_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    export_recipes_api_v1_export_recipes_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -25528,6 +25652,39 @@ export interface operations {
             };
         };
     };
+    import_inventory_items_api_v1_import_inventory_items_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_inventory_items_api_v1_import_inventory_items_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     import_modifier_options_api_v1_import_modifier_options_post: {
         parameters: {
             query?: never;
@@ -25637,6 +25794,39 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_import_products_api_v1_import_products_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_recipes_api_v1_import_recipes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_recipes_api_v1_import_recipes_post"];
             };
         };
         responses: {

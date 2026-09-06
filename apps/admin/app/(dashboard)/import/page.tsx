@@ -135,35 +135,49 @@ export default function ImportPage() {
         exportKey: 'categories',
         title: '1. Categories',
         description: 'Import product categories from Foodics Categories Export.',
-        columns: ['id', 'name', catLang, 'reference', 'image'].filter(Boolean).join(', '),
+        columns: ['id', 'name', catLang, 'reference', 'image', 'display_order', 'is_active'].filter(Boolean).join(', '),
       },
       {
         key: 'products',
         exportKey: 'products',
         title: '2. Products',
         description: 'Import products. Categories must be imported first.',
-        columns: ['id', 'name', 'sku', 'category_reference', 'price', 'description', 'image', prodLang, 'is_active', 'is_stock_product', 'stock_quantity', 'calories', 'preparation_time'].filter(Boolean).join(', '),
+        columns: ['id', 'name', 'sku', 'category_reference', 'price', 'description', 'image', prodLang, 'is_active', 'is_stock_product', 'stock_quantity', 'calories', 'preparation_time', 'cost', 'barcode', 'display_order', 'is_featured', 'is_sold_by_weight', 'sync_to_aggregators'].filter(Boolean).join(', '),
       },
       {
         key: 'modifiers',
         exportKey: 'modifiers',
         title: '3. Modifiers',
         description: 'Import modifier groups (e.g. "Size", "Your Choice of Quantity").',
-        columns: ['id', 'reference', 'name', modLang].filter(Boolean).join(', '),
+        columns: ['id', 'reference', 'name', modLang, 'is_active'].filter(Boolean).join(', '),
       },
       {
         key: 'modifierOptions',
         exportKey: 'modifier-options',
         title: '4. Modifier Options',
         description: 'Import modifier options. Modifiers must be imported first.',
-        columns: ['id', 'modifier_reference', 'name', 'sku', 'price', optLang, 'is_active'].filter(Boolean).join(', '),
+        columns: ['id', 'modifier_reference', 'name', 'sku', 'price', 'cost', 'calories', optLang, 'is_active', 'display_order'].filter(Boolean).join(', '),
       },
       {
         key: 'productModifiers',
         exportKey: 'product-modifiers',
         title: '5. Product Modifiers',
         description: 'Link modifiers to products. Products and Modifiers must be imported first.',
-        columns: 'product_sku, modifier_reference, minimum_options, maximum_options, free_options, unique_options',
+        columns: 'product_sku, modifier_reference, minimum_options, maximum_options, free_options, unique_options, display_order',
+      },
+      {
+        key: 'inventoryItems',
+        exportKey: 'inventory-items',
+        title: '6. Inventory Items',
+        description: 'Bulk-edit real units, conversions, thresholds, cost, classifications and count route. Existing rows match only by MM ID/SKU, never by name.',
+        columns: 'id, sku, name, barcode, category_reference, kind, tracking_mode, storage_unit, ingredient_unit, storage_to_ingredient_factor, cost, costing_method, yield_percentage, minimum_level, par_level, maximum_level, is_product, storage_zone, count_order, is_active',
+      },
+      {
+        key: 'recipes',
+        exportKey: 'recipes',
+        title: '7. Recipes',
+        description: 'Bulk-edit recipe ingredients for products, modifier options and inventory items. Import creates or updates drafts only; review and activate from the owning item.',
+        columns: 'owner_kind, owner_id, owner_sku, owner_name, ingredient_item_id, ingredient_sku, ingredient_name, quantity, ingredient_unit, yield_percentage, inactive_in_order_types, display_order',
       },
     ];
   }, [languages]);
@@ -173,7 +187,7 @@ export default function ImportPage() {
       <div className="mb-6">
         <h1 className="font-display text-2xl text-gray-800">Import / Export</h1>
         <p className="text-xs text-gray-400 font-body mt-0.5">
-          Import product catalog from Foodics CSV exports. Import in order: Categories → Products → Modifiers → Modifier Options → Product Modifiers.
+          Download an MM template, edit it, then upload it here. Import in order: Categories → Products → Modifiers → Modifier Options → Product Modifiers → Inventory Items → Recipes. Recipe imports stage drafts and never alter active sales history.
         </p>
       </div>
 

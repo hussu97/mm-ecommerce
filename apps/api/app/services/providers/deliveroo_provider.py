@@ -467,6 +467,53 @@ class DeliverooClient(BaseAggregatorClient):
             json_body=hours,
         )
 
+    async def request_raw(
+        self,
+        session: LoadedSession,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+        json_body: Any | None = None,
+        data: Any | None = None,
+        files: Any | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Replay a raw Deliveroo call and remint once if it is rejected.
+
+        Hours writes return 204, so they deliberately bypass ``request_json``.
+        Keeping the stale-token recovery only in the JSON helper left that write
+        path as the one place a healthy browser bootstrap could not repair.
+        """
+        response = await super().request_raw(
+            session,
+            method,
+            url,
+            headers=headers,
+            params=params,
+            json_body=json_body,
+            data=data,
+            files=files,
+            timeout=timeout,
+        )
+        if not self._is_auth_failure(response):
+            return response
+        reminted = await self._remint_after_stale_token(session)
+        if reminted is None:
+            return response
+        return await super().request_raw(
+            reminted,
+            method,
+            url,
+            headers=headers,
+            params=params,
+            json_body=json_body,
+            data=data,
+            files=files,
+            timeout=timeout,
+        )
+
     async def request_json(
         self,
         session: LoadedSession,

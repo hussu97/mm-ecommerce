@@ -13,16 +13,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.category import Category
+from app.models.inventory import InventoryCategory, InventoryItem
+from app.models.inventory_v2 import RecipeOwnerKindEnum
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 from app.schemas.import_data import ImportError, ImportResult
+from app.services.inventory import recipe_service
 
 __all__ = [
     "import_categories",
     "import_modifier_options",
     "import_modifiers",
+    "import_inventory_items",
     "import_product_modifiers",
     "import_products",
+    "import_recipes",
 ]
 
 
@@ -50,6 +55,24 @@ def _parse_int(val: str, default: int = 0) -> int:
         return int(str(val).strip() or default)
     except (ValueError, TypeError):
         return default
+
+
+def _required_decimal(row: dict, field: str, row_number: int) -> Decimal:
+    raw = str(row.get(field) or "").strip()
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError(f"{field} must be a decimal") from exc
+    if value <= 0:
+        raise ValueError(f"{field} must be greater than zero")
+    return value
+
+
+def _uuid_or_error(value: object, field: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value or "").strip())
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a UUID from an MM export") from exc
 
 
 def _extract_translations(
@@ -97,6 +120,8 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
             foodics_id = (row.get("id") or "").strip()
             image_url = (row.get("image") or "").strip() or None
             translations = _extract_translations(row, ["name", "description"])
+            display_order = _parse_int(row.get("display_order", "0"))
+            is_active = _parse_bool(row.get("is_active", "true"))
 
             # Build slug from reference if available, else name
             slug_base = reference if reference else name
@@ -126,6 +151,10 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                         merged.setdefault(lang, {}).update(fields)
                     existing.translations = merged
                 existing.reference = reference or existing.reference
+                if "display_order" in row and str(row["display_order"] or "").strip():
+                    existing.display_order = display_order
+                if "is_active" in row and str(row["is_active"] or "").strip():
+                    existing.is_active = is_active
                 if image_url:
                     existing.image_url = image_url
                     result.image_urls.append(image_url)
@@ -157,6 +186,8 @@ async def import_categories(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     slug=slug,
                     reference=reference or None,
                     image_url=image_url,
+                    display_order=display_order,
+                    is_active=is_active,
                 )
                 db.add(cat)
                 if image_url:
@@ -207,6 +238,13 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 if row.get("preparation_time", "").strip()
                 else None
             )
+            cost = (
+                _parse_decimal(row.get("cost", "0"))
+                if str(row.get("cost") or "").strip()
+                else None
+            )
+            display_order = _parse_int(row.get("display_order", "0"))
+            barcode = (row.get("barcode") or "").strip() or None
 
             # Resolve category
             category_id = None
@@ -251,6 +289,19 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     existing.calories = calories
                 if prep_time is not None:
                     existing.preparation_time = prep_time
+                if "cost" in row and str(row["cost"] or "").strip():
+                    existing.cost = cost
+                if "barcode" in row:
+                    existing.barcode = barcode
+                if "display_order" in row and str(row["display_order"] or "").strip():
+                    existing.display_order = display_order
+                for field in (
+                    "is_featured",
+                    "is_sold_by_weight",
+                    "sync_to_aggregators",
+                ):
+                    if field in row and str(row[field] or "").strip():
+                        setattr(existing, field, _parse_bool(row[field]))
                 if image_url:
                     existing.image_urls = [image_url]
                     result.image_urls.append(image_url)
@@ -289,6 +340,16 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     stock_quantity=stock_quantity or 0,
                     calories=calories,
                     preparation_time=prep_time,
+                    cost=cost,
+                    barcode=barcode,
+                    display_order=display_order,
+                    is_featured=_parse_bool(row.get("is_featured", "false")),
+                    is_sold_by_weight=_parse_bool(
+                        row.get("is_sold_by_weight", "false")
+                    ),
+                    sync_to_aggregators=_parse_bool(
+                        row.get("sync_to_aggregators", "false")
+                    ),
                     image_urls=[image_url] if image_url else [],
                 )
                 db.add(product)
@@ -333,6 +394,8 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     for lang, fields in mod_translations.items():
                         merged.setdefault(lang, {}).update(fields)
                     existing.translations = merged
+                if "is_active" in row and str(row["is_active"] or "").strip():
+                    existing.is_active = _parse_bool(row["is_active"])
                 result.updated += 1
             else:
                 mod_id = None
@@ -347,6 +410,7 @@ async def import_modifiers(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     reference=reference,
                     name=name,
                     translations=mod_translations,
+                    is_active=_parse_bool(row.get("is_active", "true")),
                 )
                 db.add(modifier)
                 result.created += 1
@@ -392,7 +456,18 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
             foodics_id = (row.get("id") or "").strip()
             opt_translations = _extract_translations(row, ["name"])
             price = _parse_decimal(row.get("price", "0"))
+            cost = (
+                _parse_decimal(row.get("cost", "0"))
+                if str(row.get("cost") or "").strip()
+                else None
+            )
             is_active = _parse_bool(row.get("is_active", "1"))
+            display_order = _parse_int(row.get("display_order", "0"))
+            calories = (
+                _parse_int(row.get("calories", "0"))
+                if str(row.get("calories") or "").strip()
+                else None
+            )
 
             res = await db.execute(
                 select(ModifierOption).where(ModifierOption.sku == sku)
@@ -407,7 +482,13 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
                         merged.setdefault(lang, {}).update(fields)
                     existing.translations = merged
                 existing.price = price
+                if "cost" in row and str(row["cost"] or "").strip():
+                    existing.cost = cost
+                if "calories" in row and str(row["calories"] or "").strip():
+                    existing.calories = calories
                 existing.is_active = is_active
+                if "display_order" in row and str(row["display_order"] or "").strip():
+                    existing.display_order = display_order
                 existing.modifier_id = modifier.id
                 result.updated += 1
             else:
@@ -425,7 +506,10 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
                     translations=opt_translations,
                     sku=sku,
                     price=price,
+                    cost=cost,
+                    calories=calories,
                     is_active=is_active,
+                    display_order=display_order,
                 )
                 db.add(option)
                 result.created += 1
@@ -483,6 +567,7 @@ async def import_product_modifiers(db: AsyncSession, rows: list[dict]) -> Import
             max_opts = _parse_int(row.get("maximum_options", "1"))
             free_opts = _parse_int(row.get("free_options", "0"))
             unique_opts = _parse_bool(row.get("unique_options", "0"))
+            display_order = _parse_int(row.get("display_order", "0"))
 
             # Upsert by product_id + modifier_id
             res = await db.execute(
@@ -498,6 +583,8 @@ async def import_product_modifiers(db: AsyncSession, rows: list[dict]) -> Import
                 existing.maximum_options = max_opts
                 existing.free_options = free_opts
                 existing.unique_options = unique_opts
+                if "display_order" in row and str(row["display_order"] or "").strip():
+                    existing.display_order = display_order
                 result.updated += 1
             else:
                 pm = ProductModifier(
@@ -507,6 +594,7 @@ async def import_product_modifiers(db: AsyncSession, rows: list[dict]) -> Import
                     maximum_options=max_opts,
                     free_options=free_opts,
                     unique_options=unique_opts,
+                    display_order=display_order,
                 )
                 db.add(pm)
                 result.created += 1
@@ -514,6 +602,234 @@ async def import_product_modifiers(db: AsyncSession, rows: list[dict]) -> Import
         except Exception as e:
             result.errors.append(ImportError(row=i, message=str(e)))
             result.skipped += 1
+
+    await db.flush()
+    return result
+
+
+async def import_inventory_items(db: AsyncSession, rows: list[dict]) -> ImportResult:
+    """Upsert stock catalogue rows from MM's own export.
+
+    Inventory is operational data, so this deliberately resolves an existing row by
+    its immutable MM id or SKU only.  Names are included for people, never as a
+    matching key; two similarly named ingredients must remain independently safe to
+    edit in a spreadsheet.
+    """
+    result = ImportResult()
+    allowed_kinds = {
+        "raw_material",
+        "packaging",
+        "semi_finished",
+        "produced_good",
+        "resale_good",
+    }
+    allowed_tracking = {"stocked", "phantom"}
+
+    for row_number, row in enumerate(rows, start=1):
+        try:
+            item_id = _uuid_or_error(row.get("id"), "id") if row.get("id") else None
+            sku = str(row.get("sku") or "").strip()
+            name = str(row.get("name") or "").strip()
+            if not sku or not name:
+                raise ValueError("Missing sku or name")
+
+            by_id = await db.get(InventoryItem, item_id) if item_id else None
+            by_sku = await db.scalar(
+                select(InventoryItem).where(InventoryItem.sku == sku)
+            )
+            if by_id is not None and by_sku is not None and by_id.id != by_sku.id:
+                raise ValueError("id and sku identify different inventory items")
+            existing = by_id or by_sku
+
+            category_id = None
+            category_reference = str(row.get("category_reference") or "").strip()
+            if category_reference:
+                category_id = await db.scalar(
+                    select(InventoryCategory.id).where(
+                        InventoryCategory.reference == category_reference
+                    )
+                )
+                if category_id is None:
+                    raise ValueError(
+                        f"Inventory category reference '{category_reference}' was not found"
+                    )
+
+            kind = str(row.get("kind") or "raw_material").strip()
+            tracking_mode = str(row.get("tracking_mode") or "stocked").strip()
+            if kind not in allowed_kinds:
+                raise ValueError(f"Unknown kind '{kind}'")
+            if tracking_mode not in allowed_tracking:
+                raise ValueError(f"Unknown tracking_mode '{tracking_mode}'")
+            storage_unit = str(row.get("storage_unit") or "").strip()
+            ingredient_unit = str(row.get("ingredient_unit") or "").strip()
+            if not storage_unit or not ingredient_unit:
+                raise ValueError("storage_unit and ingredient_unit are required")
+            factor = _required_decimal(row, "storage_to_ingredient_factor", row_number)
+            cost = _parse_decimal(row.get("cost", "0"))
+            yield_percentage = _required_decimal(row, "yield_percentage", row_number)
+            if yield_percentage > 1:
+                raise ValueError("yield_percentage must not exceed 1")
+
+            values = {
+                "sku": sku,
+                "name": name,
+                "barcode": str(row.get("barcode") or "").strip() or None,
+                "category_id": category_id,
+                "kind": kind,
+                "tracking_mode": tracking_mode,
+                "storage_unit": storage_unit,
+                "ingredient_unit": ingredient_unit,
+                "storage_to_ingredient_factor": factor,
+                "minimum_level": _parse_decimal(row.get("minimum_level", "0")),
+                "maximum_level": _parse_decimal(row.get("maximum_level", "0")),
+                "par_level": _parse_decimal(row.get("par_level", "0")),
+                "cost": cost,
+                "costing_method": str(row.get("costing_method") or "fixed").strip(),
+                "yield_percentage": yield_percentage,
+                "is_product": _parse_bool(row.get("is_product", "false")),
+                "storage_zone": str(row.get("storage_zone") or "").strip() or None,
+                "count_order": _parse_int(row.get("count_order", "0")),
+                "is_active": _parse_bool(row.get("is_active", "true")),
+            }
+            if values["cost"] < 0:
+                raise ValueError("cost must not be negative")
+            if values["costing_method"] not in {"fixed", "from_ingredients"}:
+                raise ValueError("costing_method must be fixed or from_ingredients")
+
+            if existing is None:
+                db.add(InventoryItem(id=item_id or uuid.uuid4(), **values))
+                result.created += 1
+            else:
+                for field, value in values.items():
+                    setattr(existing, field, value)
+                result.updated += 1
+        except (ValueError, TypeError) as exc:
+            result.errors.append(ImportError(row=row_number, message=str(exc)))
+            result.skipped += 1
+
+    await db.flush()
+    return result
+
+
+async def import_recipes(db: AsyncSession, rows: list[dict]) -> ImportResult:
+    """Stage recipe spreadsheet edits as drafts, never as live recipe changes.
+
+    One owner occupies one contiguous or non-contiguous group in the CSV. Every
+    group is validated before any draft is rewritten, which makes an operator's
+    corrected export safe to retry after addressing a reported row error.
+    """
+    result = ImportResult()
+    groups: dict[tuple[str, uuid.UUID], list[tuple[int, dict]]] = {}
+    errors: list[ImportError] = []
+    allowed_kinds = {kind.value for kind in RecipeOwnerKindEnum}
+
+    for row_number, row in enumerate(rows, start=1):
+        try:
+            owner_kind = str(row.get("owner_kind") or "").strip()
+            if owner_kind not in allowed_kinds:
+                raise ValueError(
+                    "owner_kind must be product, modifier_option, or inventory_item"
+                )
+            owner_id = _uuid_or_error(row.get("owner_id"), "owner_id")
+            owner_model = {
+                RecipeOwnerKindEnum.PRODUCT.value: Product,
+                RecipeOwnerKindEnum.MODIFIER_OPTION.value: ModifierOption,
+                RecipeOwnerKindEnum.INVENTORY_ITEM.value: InventoryItem,
+            }[owner_kind]
+            if await db.get(owner_model, owner_id) is None:
+                raise ValueError("owner_id does not exist for owner_kind")
+            ingredient_id = _uuid_or_error(
+                row.get("ingredient_item_id"), "ingredient_item_id"
+            )
+            ingredient = await db.get(InventoryItem, ingredient_id)
+            if ingredient is None:
+                raise ValueError("ingredient_item_id does not exist")
+            _required_decimal(row, "quantity", row_number)
+            yield_percentage = _required_decimal(row, "yield_percentage", row_number)
+            if yield_percentage > 1:
+                raise ValueError("yield_percentage must not exceed 1")
+            groups.setdefault((owner_kind, owner_id), []).append((row_number, row))
+        except (ValueError, TypeError) as exc:
+            errors.append(ImportError(row=row_number, message=str(exc)))
+
+    # Do not apply half a spreadsheet. A duplicate line or a Foodics-review draft
+    # must be resolved before any owner draft is replaced.
+    for (owner_kind, owner_id), group in groups.items():
+        seen: set[uuid.UUID] = set()
+        for row_number, row in group:
+            ingredient_id = _uuid_or_error(
+                row.get("ingredient_item_id"), "ingredient_item_id"
+            )
+            if ingredient_id in seen:
+                errors.append(
+                    ImportError(
+                        row=row_number,
+                        message="duplicate ingredient_item_id in this recipe",
+                    )
+                )
+            seen.add(ingredient_id)
+        existing = await recipe_service.get_recipe(db, owner_kind, owner_id)
+        draft = next(
+            (
+                version
+                for version in (existing.versions if existing else [])
+                if version.status == "draft"
+            ),
+            None,
+        )
+        if draft is not None and draft.source != "mm":
+            errors.extend(
+                ImportError(
+                    row=group_row_number,
+                    message="recipe has a draft from another import or review batch",
+                )
+                for group_row_number, _ in group
+            )
+
+    if errors:
+        result.errors = errors
+        result.skipped = len(errors)
+        return result
+
+    for (owner_kind, owner_id), group in groups.items():
+        try:
+            lines = []
+            for row_number, row in group:
+                ingredient_id = _uuid_or_error(
+                    row.get("ingredient_item_id"), "ingredient_item_id"
+                )
+                inactive_types = [
+                    value.strip()
+                    for value in str(row.get("inactive_in_order_types") or "").split(
+                        "|"
+                    )
+                    if value.strip()
+                ]
+                lines.append(
+                    recipe_service.RecipeLineInput(
+                        item_id=ingredient_id,
+                        quantity=_required_decimal(row, "quantity", row_number),
+                        yield_percentage=_required_decimal(
+                            row, "yield_percentage", row_number
+                        ),
+                        inactive_in_order_types=inactive_types,
+                        display_order=_parse_int(row.get("display_order", "0")),
+                        source_metadata={"bulk_import_row": row_number},
+                    )
+                )
+            await recipe_service.create_draft(
+                db,
+                kind=owner_kind,
+                owner_id=owner_id,
+                lines=lines,
+                source="mm",
+                source_metadata={"import": "recipes.csv"},
+            )
+            result.updated += 1
+        except Exception as exc:  # noqa: BLE001 - turn a bad group into spreadsheet feedback
+            for row_number, _ in group:
+                result.errors.append(ImportError(row=row_number, message=str(exc)))
+                result.skipped += 1
 
     await db.flush()
     return result

@@ -36,7 +36,11 @@ from app.models.aggregator import BranchHoursSyncRun, FoodicsBranchMap
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.services import branch_hours_service
-from app.services.aggregators import hours_writers
+from app.services.aggregators import hours_writers, session_store
+from app.services.providers.aggregator_base import (
+    AggregatorAuthError,
+    AggregatorUnavailableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,8 @@ _ADVISORY_LOCK_KEY = 0x6D6D_4248_5253_0001
 #: Hourly. The work is idempotent and cheap; a shift changes at most at a weekday
 #: boundary, and an hour's lag stamping the new day's window is immaterial.
 _TICK_SECONDS = 3600
+_TRANSIENT_WRITE_ATTEMPTS = 3
+_TRANSIENT_WRITE_BACKOFF_SECONDS = (2, 5)
 
 
 def _dry_run() -> bool:
@@ -63,7 +69,15 @@ def _plan_summary(plan: dict[str, object]) -> dict[str, object]:
     """A JSON-safe digest of a writer plan for the run log (drops the session)."""
     return {
         k: plan.get(k)
-        for k in ("channel", "op", "endpoint", "weekly", "window", "dry_run")
+        for k in (
+            "channel",
+            "op",
+            "endpoint",
+            "weekly",
+            "window",
+            "dry_run",
+            "attempts",
+        )
         if k in plan
     }
 
@@ -106,13 +120,39 @@ async def _push_weekly_to_channel(
     dry = _dry_run()
     started = utcnow()
     try:
-        plan = await hours_writers.push_weekly_hours(
-            db, channel=channel, branch=branch, weekly=sched, dry_run=dry
-        )
+        # A weekly PUT is a full replacement and therefore idempotent. Retrying a
+        # transient network/5xx failure is safe; retrying an auth error is not — a
+        # dead portal session needs a new browser bootstrap, not a tight loop.
+        plan: dict[str, object] | None = None
+        for attempt in range(1, _TRANSIENT_WRITE_ATTEMPTS + 1):
+            try:
+                plan = await hours_writers.push_weekly_hours(
+                    db, channel=channel, branch=branch, weekly=sched, dry_run=dry
+                )
+                plan["attempts"] = attempt
+                break
+            except AggregatorUnavailableError:
+                if attempt == _TRANSIENT_WRITE_ATTEMPTS:
+                    raise
+                delay = _TRANSIENT_WRITE_BACKOFF_SECONDS[attempt - 1]
+                logger.info(
+                    "branch-hours transient failure for %s; retrying attempt %s/%s in %ss",
+                    channel,
+                    attempt + 1,
+                    _TRANSIENT_WRITE_ATTEMPTS,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        assert plan is not None
     except hours_writers.HoursWriteUnsupported as exc:
         logger.debug("branch-hours weekly push skipped for %s: %s", channel, exc)
         return
     except Exception as exc:  # noqa: BLE001 — a dead session/portal, not a bug
+        # Use the same durable recovery signal as sales ingest. Careem cannot
+        # safely refresh a dead console session server-side, so this wakes the
+        # headed-login worker instead of repeating an hourly 401 forever.
+        if isinstance(exc, AggregatorAuthError):
+            await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
         logger.warning("branch-hours weekly push failed for %s: %s", channel, exc)
         tags = {
             "channel": channel,

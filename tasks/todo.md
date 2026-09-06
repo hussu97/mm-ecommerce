@@ -1,5 +1,26 @@
 # Slider Prod Integration + Per-Area Polygon Rebuild
 
+---
+
+# Inventory bulk workflows, reconciliation navigation, and hour-sync hardening (2026-09-06)
+
+## Plan
+
+- [x] Audit current catalogue import/export templates, inventory/recipe models, recipe-owner screens, reconciliation tabs/sidebar, branch-map ordering, and provider hour-sync telemetry.
+- [x] Add versioned inventory-item and recipe bulk export/import APIs with deterministic templates, validation preview, branch-safe permissions, and generated contract coverage.
+- [x] Move recipe editing from the standalone inventory workspace into product, modifier-option, and inventory-item owners; add recursive dependency-tree previews in each owner surface.
+- [x] Seed missing raw-material catalogue entries and real storage units from the supplied Daily Consumption and Procurement Schedule without altering live availability or stock balances.
+- [x] Put GrubOps reconciliation beside the other reconciliation tabs; remove duplicate marketplace sidebar entries already represented by tabs; order branch mapping branch-first then aggregator.
+- [x] Expand every affected import/export template to cover the editable current model without silently changing unknown fields.
+- [x] Diagnose Deliveroo/Careem hour-sync failures from durable production records; add bounded retry, explicit failure state and observability where needed.
+- [x] Regenerate OpenAPI/types; run focused plus full backend/admin checks; validate a fresh migration cycle; commit with the required author.
+
+## Results / lessons (2026-09-06)
+
+- Production `branch_hours_sync_run` showed intermittent Deliveroo and Careem 401s after successful sweeps. Deliveroo’s 204 raw hours write bypassed its stale-token remint; it now uses the same single remint path. A persistent Careem 401 marks the encrypted session `needs_bootstrap` for headed recovery instead of hot-looping credentials.
+- The paper schedule provides units for the existing `RM001`–`RM028` raw-material SKUs. Migration `187_inventory_units_seed` changes only metadata and adds the two missing written inputs with deliberately generic units pending staff verification; it does not create stock, ledger, or availability changes.
+- Bulk recipe imports are all-or-nothing draft staging. They refuse name matching, duplicate ingredient lines, and foreign review drafts; an active recipe is never edited or activated by CSV import.
+
 Plan: /Users/hussainabbasi/.claude/plans/lets-plan-for-slider-crispy-wirth.md
 
 ## Phase 0 — Slider production cutover (remove pilot gate + pilot free delivery) ✅ DONE

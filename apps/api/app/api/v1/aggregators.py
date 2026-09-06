@@ -365,7 +365,14 @@ async def list_branch_map(
     )
     if channel:
         stmt = stmt.where(AggregatorBranchMap.channel == channel)
-    stmt = stmt.order_by(AggregatorBranchMap.channel)
+    # Count sheets and mapping audits are performed branch-by-branch. Keep an
+    # unmapped row visible at the end, then group mapped outlets under their
+    # branch before ordering the marketplace within that branch.
+    stmt = stmt.order_by(
+        Branch.display_order.nulls_last(),
+        Branch.name.nulls_last(),
+        AggregatorBranchMap.channel,
+    )
     rows = (await db.execute(stmt)).all()
     return [_branch_map_out(m, name) for m, name in rows]
 

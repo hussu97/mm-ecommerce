@@ -22,6 +22,7 @@ export const NAV: Array<
   { href: '/categories',    label: 'Categories',      icon: 'category' },
   { href: '/modifiers',     label: 'Modifiers',       icon: 'tune' },
   { href: '/menu-groups',   label: 'Menu Groups',     icon: 'account_tree' },
+  { href: '/catalog-sync',  label: 'Catalog Sync',    icon: 'sync_alt' },
 
   // The transaction heart — every channel's orders, and the levers around a
   // sale. Counter orders live on the one Orders screen (the channels have
@@ -36,24 +37,6 @@ export const NAV: Array<
   // top-visible group: it is the lever you reach for during a processor
   // incident, not the moment to go hunting three sections down.
   { href: '/payment-gateways', label: 'Payment Gateways', icon: 'credit_card' },
-
-  // The aggregator relationship. Two jobs, so two sidebar entries plus the
-  // session health we watch daily — everything else about the inbound side
-  // (the ingest run trail, the branch/item mappings we set once) is a tab of
-  // the Reconciliation area, reached laterally rather than cluttering the rail.
-  // This section had drifted to five entries that duplicated those tabs.
-  //   • GrubOps        — what we PUSH out: the menu/catalog sync.
-  //   • Reconciliation — what comes BACK: orders, the books, and (via its tabs)
-  //     runs, mappings and logins. `match` makes it the lit entry for every
-  //     `/aggregators/*` tab that has no more-specific entry of its own.
-  //   • Logins         — session liveness, checked often enough to keep on the rail.
-  { section: 'Marketplaces' },
-  { href: '/grubops',       label: 'GrubOps',         icon: 'restaurant_menu' },
-  { href: '/catalog-sync',  label: 'Catalog Sync',    icon: 'sync_alt' },
-  { href: '/aggregators/reconciliation', label: 'Reconciliation', icon: 'account_balance', match: '/aggregators' },
-  { href: '/aggregators/invoices', label: 'Invoices', icon: 'receipt_long' },
-  { href: '/aggregators/fees', label: 'Fees & VAT', icon: 'percent' },
-  { href: '/aggregators/logins', label: 'Logins', icon: 'login' },
 
   // The physical side: shops, tills, stock, and the config behind them.
   { section: 'Operations' },

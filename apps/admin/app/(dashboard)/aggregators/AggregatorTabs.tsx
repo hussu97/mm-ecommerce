@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 // in the drawer.
 const TABS = [
   { href: '/aggregators/reconciliation', label: 'Reconciliation' },
+  { href: '/aggregators/grubops', label: 'GrubOps Sync' },
   { href: '/aggregators/invoices', label: 'Invoices' },
   { href: '/aggregators/fees', label: 'Fees & VAT' },
   { href: '/aggregators/runs', label: 'Runs' },

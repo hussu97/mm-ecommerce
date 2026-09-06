@@ -361,6 +361,8 @@ export const importApi = {
   modifiers: (file: File) => uploadCsv('/import/modifiers', file),
   modifierOptions: (file: File) => uploadCsv('/import/modifier-options', file),
   productModifiers: (file: File) => uploadCsv('/import/product-modifiers', file),
+  inventoryItems: (file: File) => uploadCsv('/import/inventory-items', file),
+  recipes: (file: File) => uploadCsv('/import/recipes', file),
 };
 
 // ─── Orders ───────────────────────────────────────────────────────────────────

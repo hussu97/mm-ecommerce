@@ -98,3 +98,21 @@ async def export_product_modifiers(
 ):
     content = await export_service.export_product_modifiers(db)
     return _csv_response(content, "product_modifiers.csv")
+
+
+@router.get("/inventory-items")
+async def export_inventory_items(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("inventory.manage")),
+):
+    return _csv_response(
+        await export_service.export_inventory_items(db), "inventory_items.csv"
+    )
+
+
+@router.get("/recipes")
+async def export_recipes(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("catalogue.recipes.manage")),
+):
+    return _csv_response(await export_service.export_recipes(db), "recipes.csv")

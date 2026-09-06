@@ -82,3 +82,23 @@ async def import_product_modifiers(
     """Import product-modifier assignments from Foodics CSV export."""
     rows = await _parse_csv(file)
     return await import_service.import_product_modifiers(db, rows)
+
+
+@router.post("/inventory-items", response_model=ImportResult)
+async def import_inventory_items(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("inventory.manage")),
+):
+    """Import the editable inventory catalogue exported by MM."""
+    return await import_service.import_inventory_items(db, await _parse_csv(file))
+
+
+@router.post("/recipes", response_model=ImportResult)
+async def import_recipes(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("catalogue.recipes.manage")),
+):
+    """Stage recipe spreadsheet changes as drafts; this endpoint never activates them."""
+    return await import_service.import_recipes(db, await _parse_csv(file))
