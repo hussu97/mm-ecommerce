@@ -155,10 +155,17 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _PHYSICAL,
         _DIFFERENCE,
     ],
+    # Packaging is consumed by SALES (a box leaves with every order it wraps) and by
+    # PRODUCTION (boxing a produced good), both filled from the ledger — so its
+    # closing must subtract them the way raw materials does. Without the Sold /
+    # Used-in-production columns the report over-counted every packaging item by
+    # exactly what the shift sold, and read as a standing shortage at every close.
     "packaging": [
         _OPENING,
         _RECEIVED,
         _TRANSFER_IN,
+        _PRODUCTION_USE,
+        _SOLD,
         _INTERNAL,
         _TRANSFER_OUT,
         _NET,

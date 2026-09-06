@@ -73,6 +73,18 @@ def test_editable_columns_are_only_the_entered_movements_and_carry_a_posting() -
         assert column.role in (rc.ROLE_IN, rc.ROLE_OUT)
 
 
+def test_packaging_subtracts_the_consumption_it_actually_incurs() -> None:
+    # A box leaves with every order it wraps, so packaging is consumed by sales (and
+    # by boxing a produced good) — both ledger-filled OUT columns, so the closing
+    # figure subtracts them. Without these the report read as a standing shortage.
+    cols = _by_key("packaging")
+    assert cols["sales_consumption_quantity"].role == rc.ROLE_OUT
+    assert cols["sales_consumption_quantity"].source == rc.SOURCE_LEDGER
+    assert cols["sales_consumption_quantity"].editable is False
+    assert cols["production_consumption_quantity"].role == rc.ROLE_OUT
+    assert cols["production_consumption_quantity"].source == rc.SOURCE_LEDGER
+
+
 def test_serialisation_exposes_editable_flag_for_the_grid() -> None:
     payload = rc.columns_for("packaging")[0].to_dict()
     assert set(payload) >= {"key", "label", "role", "source", "posts", "editable"}
