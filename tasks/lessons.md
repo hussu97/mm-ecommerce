@@ -1417,3 +1417,17 @@ revision ID and run an upgrade on a clean PostgreSQL database before calling a
 migration ready; the database rejects an overlong ID only after the migration
 body has run, although the surrounding Alembic transaction safely rolls it
 back.
+
+### A guarded catalogue migration must test the live legacy state (2026-09-06)
+
+The first inventory-classification migration guarded its update with
+`category_id IS NULL`. The Foodics seed had already attached many items to old
+categories such as Dairy and Beverages, but those categories had no stable
+reference; the migration was therefore safe and incomplete. A schema upgrade
+can be green while its data predicate misses the live shape.
+
+**Rule:** for an audited data migration, capture and assert the production
+before/after cardinalities as well as exercising a throwaway database. If an
+old category is identifiable only by a NULL or legacy marker, a follow-up must
+target that marker and an explicit reviewed SKU set — never broaden the update
+to all future catalogue records.

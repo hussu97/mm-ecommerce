@@ -49,7 +49,8 @@ not the storefront API, owns all manager inventory calls.
 - [x] Correct the Foodics extractor to read detail `ingredients` payloads and the stager to normalize Foodics display units/yield percentages and retain product/option mappings.
 - [ ] Obtain a complete, Cloudflare-clear Foodics detail snapshot, then stage its exact recipes as Foodics drafts and review before activation. The extractor fails closed rather than staging an incomplete graph.
 - [x] Verify the migration on a fresh PostgreSQL database, including downgrade/re-upgrade and representative finished/resale/raw catalogue rows.
-- [ ] Run the remaining full checks, deploy, and publish the audited recipe staging report.
+- [x] Forward-correct the live legacy blank-reference categories after the first deploy; the correction is limited to the audited SKU families and preserves every stock/ledger/recipe value.
+- [ ] Obtain a complete Foodics detail snapshot, stage its exact recipes as drafts, and publish the audited staging report. No recipe is inferred or activated from names.
 
 ---
 
