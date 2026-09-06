@@ -54,6 +54,9 @@ describe('RecipeEditor', () => {
 
     expect(await screen.findByText(/No recipe yet/)).toBeInTheDocument();
     expect(await screen.findByRole('option', { name: 'Butter · RM001 · g' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create draft' })).toBeDisabled();
+    // Nothing chosen yet, so "Add row" is disabled; nothing changed yet, so the
+    // central Save reads "Saved" and is disabled.
+    expect(screen.getByRole('button', { name: 'Add row' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Saved' })).toBeDisabled();
   });
 });

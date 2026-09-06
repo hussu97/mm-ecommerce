@@ -200,8 +200,8 @@ function ItemsTab() {
       toolbar={toolbar}
       filterRows={filterRows}
       sortRows={sortRows}
-      rowActions={(item) => <button className="text-xs text-primary hover:underline" onClick={() => setRecipeItem(item)}>Recipe</button>}
-      belowTable={recipeItem && <div className="mt-6"><RecipeEditor ownerKind="inventory_item" ownerId={recipeItem.id} ownerLabel={recipeItem.name} focusOnMount /></div>}
+      rowActions={(item) => <button className="text-xs text-primary hover:underline" onClick={() => setRecipeItem((current) => (current?.id === item.id ? null : item))}>{recipeItem?.id === item.id ? 'Close recipe' : 'Recipe'}</button>}
+      expandedRow={(item) => (item.id === recipeItem?.id ? <div className="py-2"><RecipeEditor ownerKind="inventory_item" ownerId={item.id} ownerLabel={item.name} /></div> : null)}
       defaults={{
         storage_unit: 'kg',
         ingredient_unit: 'g',

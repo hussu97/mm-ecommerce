@@ -71,6 +71,13 @@ export interface ResourcePageProps<T extends { id: string }> {
   rowActions?: (row: T, reload: () => void) => React.ReactNode;
   /** Contextual detail kept with a selected row (for example, that item's recipe). */
   belowTable?: React.ReactNode;
+  /**
+   * Detail revealed directly beneath a specific row (its recipe, say). Return
+   * `null` for a row with nothing open. Preferred over `belowTable` when the
+   * detail belongs to one row: it opens where the eye already is, not at the
+   * bottom of a long list.
+   */
+  expandedRow?: (row: T, reload: () => void) => React.ReactNode;
   /** Page-specific client-side filters, composed with the standard text search. */
   filterRows?: (row: T) => boolean;
   /** Page-specific stable ordering applied after filters and before pagination. */
@@ -98,6 +105,7 @@ export function ResourcePage<T extends { id: string }>({
   toolbar,
   rowActions,
   belowTable,
+  expandedRow,
   filterRows,
   sortRows,
   paginated = false,
@@ -269,6 +277,7 @@ export function ResourcePage<T extends { id: string }>({
           columns={columns}
           rows={pageRows}
           rowKey={(row) => row.id}
+          expanded={expandedRow ? (row) => expandedRow(row, reload) : undefined}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">{emptyMessage}</p>
           }
