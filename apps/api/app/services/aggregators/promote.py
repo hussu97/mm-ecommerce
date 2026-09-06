@@ -113,8 +113,21 @@ _CANCEL_EXTRA_FROM = (
     OrderStatusEnum.OUT_FOR_DELIVERY,
 )
 
-#: English status words shared by Deliveroo, Talabat, and similar portals.
-_ENGLISH_AGGREGATOR_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
+# ── What each channel's own words mean ────────────────────────────────────────
+#
+# MM's status is no longer inferred from our own timers — an aggregator order
+# reaches `delivered` only when the channel says so — which puts the whole weight
+# on this vocabulary being right. So it is grounded rather than assumed: the
+# per-channel maps below list what prod has ACTUALLY recorded across 2,422
+# aggregator orders (2026-07-01 → 2026-09-05), and a word outside them is left
+# indeterminate (promoted no further than `confirmed`, and logged) rather than
+# guessed. `test_aggregator_promotion` pins the observed vocabulary, so a channel
+# that starts sending a new word fails a test instead of silently stranding orders.
+
+#: Words that mean the same thing on every portal. A channel's own map extends
+#: this; it is never used as a channel's map on its own, so a word one channel has
+#: never sent is not quietly accepted for it.
+_COMMON_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "delivered": OrderStatusEnum.DELIVERED,
     "completed": OrderStatusEnum.DELIVERED,
     # A rider holding the box is not a customer holding the box. This used to say
@@ -130,25 +143,45 @@ _ENGLISH_AGGREGATOR_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
     "declined": OrderStatusEnum.CANCELLED,
 }
 
-#: Keeta's order status. It historically arrived as a NUMERIC code (`40` settled,
-#: `50` cancelled) but the current parser decodes it to an English word
-#: ("completed"), so the map accepts BOTH — a promotion-owned Keeta order (DSO/Al
-#: Karama) whose status the map does not recognise stalls at `confirmed` and so
-#: never reaches the register or the reports, which is exactly what left 16 of a
-#: day's Keeta orders off the daily sales report. Anything still unknown is left
-#: indeterminate (promoted only as far as `confirmed` and logged), never guessed.
+#: Careem — observed: `delivered` (37 of 37). Its `driver_status` corroborates with
+#: `TRIP_ENDED` but carries no information the status does not already give, so it
+#: is deliberately not consulted: a second source that never disagrees is a second
+#: thing to keep right for nothing.
+_CAREEM_STATUS_TO_MM: dict[str, OrderStatusEnum] = {**_COMMON_STATUS_TO_MM}
+
+#: Deliveroo — observed: `delivered` (41), `cancelled` (1).
+_DELIVEROO_STATUS_TO_MM: dict[str, OrderStatusEnum] = {**_COMMON_STATUS_TO_MM}
+
+#: Talabat — observed: `Delivered` (374), `Cancelled` (6). Capitalised on the wire;
+#: `_target_status` lower-cases before the lookup.
+_TALABAT_STATUS_TO_MM: dict[str, OrderStatusEnum] = {**_COMMON_STATUS_TO_MM}
+
+#: Noon — observed: `delivered` (186), `canceled` (2, one "l").
+_NOON_STATUS_TO_MM: dict[str, OrderStatusEnum] = {**_COMMON_STATUS_TO_MM}
+
+#: Keeta — observed: `completed` (1,748), `50` (25), blank (2 of 1,775).
+#:
+#: The numeric codes are Meituan's, and `keeta_provider._decode_status` now turns
+#: them into words at the edge (`40` → completed, `50` → cancelled — the latter
+#: evidenced from prod: every status-50 order carries a `cancelCode` and none of
+#: the completed ones do). They stay here as well, because 25 rows are ALREADY
+#: STORED with the raw "50" and a re-promotion of one must still map: the decoder
+#: only shapes what arrives from now on. A promotion-owned Keeta order (DSO / Al
+#: Karama) whose status this map does not recognise stalls at `confirmed` and never
+#: reaches the register or the reports — which is exactly what once left 16 of a
+#: day's Keeta orders off the daily sales report.
 _KEETA_STATUS_TO_MM: dict[str, OrderStatusEnum] = {
-    **_ENGLISH_AGGREGATOR_STATUS_TO_MM,
+    **_COMMON_STATUS_TO_MM,
     "40": OrderStatusEnum.DELIVERED,
     "50": OrderStatusEnum.CANCELLED,
 }
 
-_STATUS_MAPS = {
+_STATUS_MAPS: dict[str, dict[str, OrderStatusEnum]] = {
+    "careem": _CAREEM_STATUS_TO_MM,
+    "deliveroo": _DELIVEROO_STATUS_TO_MM,
     "keeta": _KEETA_STATUS_TO_MM,
-    "deliveroo": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
-    "talabat": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
-    "noon": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
-    "careem": _ENGLISH_AGGREGATOR_STATUS_TO_MM,
+    "noon": _NOON_STATUS_TO_MM,
+    "talabat": _TALABAT_STATUS_TO_MM,
 }
 
 

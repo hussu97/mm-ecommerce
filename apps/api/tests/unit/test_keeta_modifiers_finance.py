@@ -974,3 +974,29 @@ async def test_ingest_keeta_bill_xlsx_upserts_statement_and_payouts():
     assert stmts == 1
     assert pays == 2
     assert mock_payout.call_count == 2
+
+
+# ── Keeta's numeric order status ──────────────────────────────────────────────
+
+
+def test_status_50_decodes_to_cancelled():
+    """`50` was left unmapped as an unevidenced "cancellation/refund code" and
+    leaked into the ingest as the raw string "50", which promote then had to guess
+    at. It is evidenced now, from prod: all 25 status-50 orders carry a
+    `merchantOrderTraces[].commonExt.cancelCode` and none of the 1,748 completed
+    ones do, with reasons like "Item unavailable" and one automatic
+    store-not-responding cancel. Decoding it here means a WORD reaches the diff."""
+    from app.services.providers.keeta_provider import _decode_status
+
+    assert _decode_status("50") == "cancelled"
+    assert _decode_status("40") == "completed"
+    assert _decode_status("10") == "submitted"
+
+
+def test_an_unevidenced_code_is_still_never_guessed():
+    """Leaving an unknown code as its raw digits is what made `50` findable in the
+    first place — a made-up name would have hidden it."""
+    from app.services.providers.keeta_provider import _decode_status
+
+    assert _decode_status("60") == "60"
+    assert _decode_status("999") == "999"

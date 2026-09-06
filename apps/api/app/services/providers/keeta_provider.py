@@ -617,14 +617,27 @@ def _normalize_status(value: str | None) -> str | None:
 # Justified from orders_sample.json: `merchantOrderTraces` records the lifecycle
 # 10 → 20 → 30 for a live order, with `unconfirmedStatusTime` stamping entry to
 # status 20 and `confirmedStatusTime` stamping entry to status 30; the settled
-# history rows all carry status 40. Codes not evidenced by the sample (a
-# cancellation/refund code among them) are intentionally left unmapped and fall
-# back to the raw numeric string rather than being guessed.
+# history rows all carry status 40.
+#
+# `50` was left unmapped as "a cancellation/refund code, not evidenced" and leaked
+# into the ingest as the raw string "50", which `promote` then had to GUESS at.
+# It is evidenced now, from prod: all 25 status-50 orders carry a
+# `merchantOrderTraces[].commonExt.cancelCode`, and NONE of the 1,748 completed
+# ones do. The reasons are ordinary cancellations — "Item unavailable", "[items]
+# are not available in this location", one customer complaint, and an automatic
+# one ("无心跳置休门店，系统自动取消未接订单" — store resting with no heartbeat, the
+# system cancelled an order nobody accepted). The trace lifecycle is 10 → 20 → 50.
+# So it is a cancellation, and saying so here means the word reaches the diff
+# instead of a number.
+#
+# Anything still unevidenced stays unmapped and falls back to the raw numeric
+# string rather than being guessed — that is what made this one findable.
 _STATUS_CODES = {
     "10": "submitted",
     "20": "pending",
     "30": "confirmed",
     "40": "completed",
+    "50": "cancelled",
 }
 
 

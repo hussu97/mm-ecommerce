@@ -1130,3 +1130,34 @@ def test_an_unknown_word_strands_the_order_rather_than_guessing():
     nothing downstream invents the rest."""
     assert promote._target_status("keeta", "") is None
     assert promote._target_status("talabat", "some new word") is None
+
+
+# ── each channel's vocabulary is its own ──────────────────────────────────────
+
+
+def test_the_numeric_codes_belong_to_keeta_alone():
+    """Meituan's codes are Keeta's, and a bare "40" arriving on another channel is
+    not a delivery. The maps used to be one shared English bag for four channels,
+    which made that distinction impossible to state."""
+    assert promote._target_status("keeta", "40") == OrderStatusEnum.DELIVERED
+    assert promote._target_status("keeta", "50") == OrderStatusEnum.CANCELLED
+    for channel in ("careem", "deliveroo", "noon", "talabat"):
+        assert promote._target_status(channel, "40") is None
+        assert promote._target_status(channel, "50") is None
+
+
+def test_stored_numeric_keeta_rows_still_map_after_the_decoder_learned_the_word():
+    """`keeta_provider._decode_status` turns `50` into "cancelled" from now on, but
+    25 rows are already stored with the raw "50" — re-promoting one must still
+    land, so the numeric entries stay in the map alongside the word."""
+    assert promote._target_status("keeta", "50") == OrderStatusEnum.CANCELLED
+    assert promote._target_status("keeta", "cancelled") == OrderStatusEnum.CANCELLED
+    assert promote._target_status("keeta", "completed") == OrderStatusEnum.DELIVERED
+
+
+def test_every_channel_has_its_own_map_object():
+    """Five names, so each channel's real vocabulary is visible and testable rather
+    than hidden behind a shared default."""
+    maps = promote._STATUS_MAPS
+    assert set(maps) == {"careem", "deliveroo", "keeta", "noon", "talabat"}
+    assert len({id(m) for m in maps.values()}) == len(maps)
