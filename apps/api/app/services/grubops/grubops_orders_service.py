@@ -33,7 +33,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, and_, cast, func, or_, select
+from sqlalchemy import Integer, and_, cast, delete, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.orm import selectinload
 
@@ -693,6 +693,77 @@ def money_fields_from_info(info: dict) -> dict[str, Decimal]:
     }
 
 
+def _write_order_lines(db, order, groups, products, options, money_fields) -> int:
+    """Write an order's line items (and its VAT row) from the GrubTech push groups,
+    returning the count of lines/modifiers that mapped to no MM product.
+
+    Shared by fresh creation and by adoption: when promotion gap-filled an order
+    from the marketplace scrape first, its lines are the scrape's — which for
+    Talabat carry no per-line price and split a box into mangled fragments — so
+    adoption rebuilds them here from the push's authoritative names and prices.
+    """
+    unmapped = 0
+    for g in groups:
+        item = g["item"]
+        recipe_id = item.get("recipeId")
+        product_id = products.get(recipe_id)
+        if product_id is None:
+            unmapped += 1
+        snapshot: list[dict] = []
+        options_price = Decimal("0")
+        for m in g["modifiers"]:
+            mid = m.get("modifierId")
+            opt = options.get(mid)
+            if opt is None:
+                unmapped += 1
+            price = _num(m.get("unitPrice"))
+            options_price += price
+            option_id = str(opt["modifier_option_id"]) if opt else None
+            snapshot.append(
+                {
+                    "option_name": m.get("name"),
+                    "option_price": float(price),
+                    "option_id": option_id,
+                    "modifier_option_id": option_id,
+                    "modifier_name": None,
+                    "modifier_id": mid,
+                    "quantity": int(_num(m.get("quantity"), "1")),
+                }
+            )
+        base_price = _num(item.get("unitPrice"))
+        quantity = int(_num(item.get("quantity"), "1"))
+        unit_price = base_price + options_price
+        db.add(
+            OrderItem(
+                order_id=order.id,
+                product_id=product_id,
+                product_name=item.get("name") or "Item",
+                product_sku=(recipe_id or "")[:100],
+                product_translations={},
+                quantity=quantity,
+                base_price=money(base_price),
+                options_price=money(options_price),
+                unit_price=money(unit_price),
+                total_price=money(unit_price * quantity),
+                selected_options_snapshot=snapshot,
+                tax_amount=money(_num(item.get("taxAmount"))),
+                kitchen_notes=(item.get("instructions") or None),
+            )
+        )
+    if money_fields["vat_amount"] > 0:
+        db.add(
+            OrderTax(
+                order_id=order.id,
+                tax_id=None,
+                name="VAT",
+                rate=money_fields["vat_rate"],
+                taxable_amount=money_fields["total_excl_vat"],
+                amount=money_fields["vat_amount"],
+            )
+        )
+    return unmapped
+
+
 async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | None:
     header = info.get("orderHeader") or {}
     customer = info.get("customer") or {}
@@ -726,7 +797,6 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     name, phone, phone_country, phone_type, phone_code, email = _customer_fields(
         customer
     )
-    unmapped = 0
 
     # The channel name for display: prefer the header's own `foodAggregatorName`
     # / `sourceDisplayName` (clean: "Talabat", "Keeta 2.0", "Noon"), falling back
@@ -805,6 +875,18 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             push_money["subtotal"] = push_money["total"] + push_money["discount_amount"]
             for field, value in push_money.items():
                 setattr(adopted, field, value)
+            # Rebuild the lines from the push too. The gap-fill's lines are the
+            # marketplace scrape's — for Talabat that means no per-line price and a
+            # box split into mangled fragments ("…Box of 3 [Tiramisu", "Brookie]").
+            # The push carries the real names and prices; adoption moves no stock, so
+            # this replacement is display/reporting only.
+            for existing_line in list(adopted.items):
+                await db.delete(existing_line)
+            await db.execute(delete(OrderTax).where(OrderTax.order_id == adopted.id))
+            await db.flush()
+            _write_order_lines(db, adopted, groups, products, options, push_money)
+            await db.flush()
+            await db.refresh(adopted, ["items"])
             return adopted
 
     order = Order(
@@ -876,89 +958,7 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         await db.flush()
         await push_service.notify_order_placed(db, order)
 
-    for g in groups:
-        item = g["item"]
-        recipe_id = item.get("recipeId")
-        product_id = products.get(recipe_id)
-        if product_id is None:
-            unmapped += 1
-        snapshot: list[dict] = []
-        options_price = Decimal("0")
-        for m in g["modifiers"]:
-            mid = m.get("modifierId")
-            opt = options.get(mid)
-            if opt is None:
-                unmapped += 1
-            price = _num(m.get("unitPrice"))
-            options_price += price
-            option_id = str(opt["modifier_option_id"]) if opt else None
-            # The canonical option-snapshot shape every reader expects — the
-            # admin's item table renders `option_name`/`option_price`, and the
-            # register reads `option_name`. Writing `name`/`price` (an older,
-            # different shape) left the admin showing "1×" with no name.
-            snapshot.append(
-                {
-                    "option_name": m.get("name"),
-                    "option_price": float(price),
-                    "option_id": option_id,
-                    #: Kept as an alias for the register, which reads either.
-                    "modifier_option_id": option_id,
-                    #: GrubOps has no per-line modifier-group name to give.
-                    "modifier_name": None,
-                    "modifier_id": mid,
-                    "quantity": int(_num(m.get("quantity"), "1")),
-                }
-            )
-        base_price = _num(item.get("unitPrice"))
-        quantity = int(_num(item.get("quantity"), "1"))
-        unit_price = base_price + options_price
-        db.add(
-            OrderItem(
-                order_id=order.id,
-                product_id=product_id,
-                product_name=item.get("name") or "Item",
-                product_sku=(recipe_id or "")[:100],
-                product_translations={},
-                quantity=quantity,
-                base_price=money(base_price),
-                options_price=money(options_price),
-                unit_price=money(unit_price),
-                # The line total is the per-unit price (base plus its modifiers)
-                # times quantity — the same figure the register and the website
-                # write. It was taken from GrubOps' own `totalPrice` with a
-                # fallback to `base_price`, and a product whose price lives
-                # entirely on a modifier (base 0, the "3 Pieces" charge on the
-                # brownie) has neither: GrubOps omitted `totalPrice` and the
-                # fallback wrote 0, so the line read 0.00 on an order whose
-                # subtotal — summed from the header, not these lines — was right.
-                total_price=money(unit_price * quantity),
-                selected_options_snapshot=snapshot,
-                tax_amount=money(_num(item.get("taxAmount"))),
-                # What the customer said about *this line*. GrubOps carries it
-                # per order line and we were dropping it on the floor: a
-                # "no nuts" against one cake in a basket of four arrived at the
-                # kitchen as nothing at all, while the same sentence typed on
-                # our own website printed in bold. Same column, so the docket
-                # renders both identically.
-                kitchen_notes=(item.get("instructions") or None),
-            )
-        )
-
-    # One VAT row, the same shape a website order writes, so the receipt and the
-    # admin show the tax breakdown rather than a blank line. GrubOps prices
-    # tax-inclusive at 5%; `total_excl_vat` is the taxable base. Figures already
-    # quantised by `money_fields_from_info`.
-    if money_fields["vat_amount"] > 0:
-        db.add(
-            OrderTax(
-                order_id=order.id,
-                tax_id=None,
-                name="VAT",
-                rate=money_fields["vat_rate"],
-                taxable_amount=money_fields["total_excl_vat"],
-                amount=money_fields["vat_amount"],
-            )
-        )
+    unmapped = _write_order_lines(db, order, groups, products, options, money_fields)
 
     await db.flush()  # the lines must exist before stock reads them back
 

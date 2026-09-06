@@ -858,6 +858,7 @@ async def test_adopting_a_promotion_gapfill_applies_the_push_money():
     import uuid
 
     adopted = SimpleNamespace(
+        id=uuid.uuid4(),
         order_number="AGG-1",
         total=Decimal("40.00"),
         subtotal=Decimal("40.00"),

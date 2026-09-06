@@ -53,6 +53,17 @@ def test_split_balanced_multiple_parens():
     assert result == ["1 A (x, y)", "2 B (p, q)", "3 C"]
 
 
+def test_split_balanced_keeps_square_bracket_commas():
+    # A Talabat box lists its picks in [ … ]; those commas must not split the line.
+    result = _split_balanced("Mix Brownies Box of 3 [Tiramisu, Raspberry, Brookie]")
+    assert result == ["Mix Brownies Box of 3 [Tiramisu, Raspberry, Brookie]"]
+
+
+def test_split_balanced_box_then_next_item():
+    result = _split_balanced("Mix Brownies Box of 3 [Tiramisu, Brookie], 1 Latte")
+    assert result == ["Mix Brownies Box of 3 [Tiramisu, Brookie]", "1 Latte"]
+
+
 # ── 2. _extract_item_modifiers ────────────────────────────────────────────────
 
 
@@ -86,6 +97,15 @@ def test_extract_item_modifiers_parenthetical_single():
     name, mods = _extract_item_modifiers("Fries (Large)")
     assert name == "Fries"
     assert mods == ["Large"]
+
+
+def test_extract_item_modifiers_square_bracket_box():
+    # The box's chosen items are in [ … ]; strip them to a clean, mappable name.
+    name, mods = _extract_item_modifiers(
+        "Mix Brownies Box of 3 [Tiramisu, Raspberry, Brookie]"
+    )
+    assert name == "Mix Brownies Box of 3"
+    assert mods == ["Tiramisu", "Raspberry", "Brookie"]
 
 
 def test_extract_item_modifiers_trailing_whitespace():

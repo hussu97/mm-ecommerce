@@ -385,18 +385,21 @@ def _date_str(value: Any) -> str | None:
 
 
 def _split_balanced(value: str) -> list[str]:
-    """Comma-split a string, keeping commas inside (…) as part of the same token.
+    """Comma-split a string, keeping commas inside (…) or […] in the same token.
 
     `"1 Burger (No pickle, Extra cheese), 2 Fries"` → two tokens, not three.
+    Talabat lists a box's chosen items in square brackets — `"Mix Brownies Box of 3
+    [Tiramisu, Raspberry, Brookie]"` — so those commas must be balanced too, or the
+    box shatters into "…Box of 3 [Tiramisu", "Raspberry", "Brookie]".
     """
     tokens: list[str] = []
     current: list[str] = []
     depth = 0
     for ch in value:
-        if ch == "(":
+        if ch in "([":
             depth += 1
             current.append(ch)
-        elif ch == ")":
+        elif ch in ")]":
             depth = max(0, depth - 1)
             current.append(ch)
         elif ch == "," and depth == 0:
@@ -423,12 +426,16 @@ def _extract_item_modifiers(name: str) -> tuple[str, list[str]]:
     - Both combined: parenthetical is extracted first, then any remaining `+` chains.
     """
     mods: list[str] = []
-    # Parenthetical group at end
-    paren = re.search(r"\(([^)]+)\)\s*$", name)
-    if paren:
-        inner = [s.strip() for s in paren.group(1).split(",") if s.strip()]
+    # Trailing group at end, in either bracket style. Talabat wraps a box's chosen
+    # items in square brackets ("Mix Brownies Box of 3 [Tiramisu, Raspberry,
+    # Brookie]"); the parenthetical form is the ordinary modifier list. Take
+    # whichever ends the name so the box keeps a clean, catalogue-mappable name and
+    # its picks become modifiers instead of separate mangled lines.
+    group = re.search(r"[([]([^)\]]+)[)\]]\s*$", name)
+    if group:
+        inner = [s.strip() for s in group.group(1).split(",") if s.strip()]
         mods.extend(inner)
-        name = name[: paren.start()].strip()
+        name = name[: group.start()].strip()
     # Plus-addon chain
     if " + " in name:
         parts = name.split(" + ")
