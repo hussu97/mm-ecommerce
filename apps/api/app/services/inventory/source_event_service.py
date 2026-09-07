@@ -109,11 +109,18 @@ async def accept_order(
     plan, warnings = await recipe_service.snapshot_order(db, order)
     if warnings:
         plan["warnings"] = warnings
-    # A missing recipe on ONE product or modifier must not suppress the rest of the
-    # order: the items that DO expand are frozen in ``plan["lines"]`` and posted
-    # now. The event stays PENDING (never the old dead-end EXCEPTION, which the
-    # sweeper skips) and carries ``missing_recipe`` so it stays recoverable — the
-    # sweeper and the retry endpoint re-snapshot it once the recipe is activated.
+    # A missing recipe on ONE product or modifier must no longer suppress the rest
+    # of the order (the old dead-end EXCEPTION posted nothing). Two cases:
+    #   * NOTHING expands (every line is missing a recipe): the event stays PENDING
+    #     and carries ``missing_recipe``, so the sweeper and the retry endpoint
+    #     re-snapshot it once the recipe is activated. This is the common single-
+    #     product case behind the current prod backlog.
+    #   * SOME lines expand: those are posted now and the event finalises POSTED
+    #     (one movement per event, guarded by the transaction idempotency key —
+    #     it cannot be re-posted). ``missing_recipe`` is kept on the row as a
+    #     breadcrumb, but the still-missing lines are not retried; activate the
+    #     recipe before such an order is placed. (Fuller partial-retry would need
+    #     more than one movement per event — deliberately out of scope here.)
     event = InventorySourceEvent(
         branch_id=order.branch_id,
         source_type="order",
