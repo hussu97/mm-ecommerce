@@ -24,11 +24,42 @@ restored, and a migration to remove the row that already exists.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json as _json
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core import advisory_lock
+from app.core.cache import cache_get, cache_set
 from app.models.language import Language, UiTranslation
+
+logger = logging.getLogger("mm.api")
+
+#: Leader election for the seed (WP5, F-OPS-16). "mmSEED\0\1". Both api slots run
+#: the seed in their lifespan; on a blue/green cutover BOTH were up and BOTH
+#: upserted ~3000 rows and dropped the Redis keys the live slot was serving — a
+#: cache stampede at the worst moment. Only the lock holder seeds now.
+_SEED_LOCK_KEY = 0x6D6D_5345_4544_0001
+
+#: Where the last-seeded content fingerprint lives, so an unchanged boot is a true
+#: no-op: no upsert, no invalidate, no stampede. In Redis (shared across slots,
+#: surviving a restart); when Redis is down `cache_get` returns None, the hash
+#: never matches, and the seed runs in full — the safe fallback.
+_SEED_HASH_KEY = "i18n:seed:content_hash"
+_SEED_HASH_TTL = 30 * 24 * 3600
+
+
+def _content_hash() -> str:
+    """A stable fingerprint of the canonical content this file would write."""
+    payload = _json.dumps(
+        {"languages": LANGUAGES, "translations": ALL_TRANSLATIONS},
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 
 LANGUAGES = [
     {
@@ -1549,54 +1580,95 @@ ALL_TRANSLATIONS = [("en", *row) for row in EN_TRANSLATIONS] + [
 ]
 
 
-async def seed(session: AsyncSession) -> None:
-    print("🌱 Seeding i18n data...")
+async def seed(session: AsyncSession, *, force: bool = False) -> None:
+    """Restore the canonical i18n content, idempotently and cheaply (WP5).
 
-    # Languages
-    for lang_data in LANGUAGES:
-        result = await session.execute(
-            select(Language).where(Language.code == lang_data["code"])
-        )
-        existing = result.scalar_one_or_none()
-        if not existing:
-            session.add(Language(**lang_data))
-            print(f"  ✅ Language: {lang_data['code']} ({lang_data['name']})")
+    Guarded three ways so it can run on every boot of both blue/green slots
+    without a cache stampede at cutover:
 
-    await session.flush()
+    * **Leader-elected.** Only the slot holding `_SEED_LOCK_KEY` seeds; the other
+      stands down. Before this both slots upserted ~3000 rows and dropped the
+      Redis keys the live slot was serving, at the same instant.
+    * **Hash-skipped.** When the canonical content is unchanged since the last
+      successful seed (the common case — every boot that did not ship a
+      translation edit), it does nothing at all: no upsert, no invalidate. Pass
+      `force=True` (the manual CLI does) to reseed regardless. A consequence of
+      the skip is that a Translations-console edit is no longer reverted on the
+      NEXT boot but on the next boot whose code content differs — a deliberate
+      trade for killing the per-boot stampede; run the CLI with `force` to revert
+      one immediately.
+    * **Invalidate only on a real change.** The Redis drop — the expensive,
+      stampede-causing step — happens only when a row was actually added or
+      updated, never on a no-op pass.
+    """
+    content_hash = _content_hash()
+    async with advisory_lock.held(_SEED_LOCK_KEY, name="i18n seed") as mine:
+        if not mine:
+            logger.info("i18n seed: another slot holds the seed lock — skipping")
+            return
+        if not force and await cache_get(_SEED_HASH_KEY) == content_hash:
+            logger.info("i18n seed: content unchanged — skipping (no upsert, no drop)")
+            return
 
-    # One SELECT for the table, then compare in memory. The previous loop did a
-    # round-trip per key (~1,500 queries on this file) and that is what made
-    # FastAPI's lifespan — and therefore /ping — take minutes on the e2-small,
-    # which is why compose --wait needed a 180s start_period.
-    result = await session.execute(select(UiTranslation))
-    existing_by_key = {
-        (row.locale, row.namespace, row.key): row for row in result.scalars()
-    }
-    added = 0
-    updated = 0
-    for locale, namespace, key, value in ALL_TRANSLATIONS:
-        existing = existing_by_key.get((locale, namespace, key))
-        if not existing:
-            session.add(
-                UiTranslation(locale=locale, namespace=namespace, key=key, value=value)
+        logger.info("Seeding i18n data...")
+        # Languages
+        for lang_data in LANGUAGES:
+            result = await session.execute(
+                select(Language).where(Language.code == lang_data["code"])
             )
-            added += 1
-        elif existing.value != value:
-            existing.value = value
-            updated += 1
+            existing = result.scalar_one_or_none()
+            if not existing:
+                session.add(Language(**lang_data))
+                logger.info(
+                    "i18n language: %s (%s)", lang_data["code"], lang_data["name"]
+                )
 
-    await session.commit()
-    # Redis outlives the restart this seed runs inside. Without this, a deploy
-    # that adds a key writes it to Postgres and then serves the pre-deploy copy
-    # until the TTL lapses — which the storefront renders as raw key names.
-    from app.services import i18n_service
+        await session.flush()
 
-    await i18n_service.invalidate_translations()
-    unchanged = len(ALL_TRANSLATIONS) - added - updated
-    print(
-        f"✨ i18n seed complete ({added} added, {updated} updated, "
-        f"{unchanged} unchanged)"
-    )
+        # One SELECT for the table, then compare in memory. The previous loop did a
+        # round-trip per key (~1,500 queries on this file) and that is what made
+        # FastAPI's lifespan — and therefore /ping — take minutes on the e2-small,
+        # which is why compose --wait needed a 180s start_period.
+        result = await session.execute(select(UiTranslation))
+        existing_by_key = {
+            (row.locale, row.namespace, row.key): row for row in result.scalars()
+        }
+        added = 0
+        updated = 0
+        for locale, namespace, key, value in ALL_TRANSLATIONS:
+            existing = existing_by_key.get((locale, namespace, key))
+            if not existing:
+                session.add(
+                    UiTranslation(
+                        locale=locale, namespace=namespace, key=key, value=value
+                    )
+                )
+                added += 1
+            elif existing.value != value:
+                existing.value = value
+                updated += 1
+
+        await session.commit()
+        # The cache drop is the stampede-causing step, so it runs ONLY when a row
+        # actually changed. Redis outlives the restart this seed runs inside;
+        # without this, a deploy that adds a key writes it to Postgres and then
+        # serves the pre-deploy copy until the TTL lapses — the storefront renders
+        # that as raw key names.
+        from app.services import i18n_service
+
+        if added + updated:
+            await i18n_service.invalidate_translations()
+        # Record the fingerprint only after a successful commit, so a crashed
+        # seed re-runs next boot rather than being skipped by a stamp for work
+        # that never landed.
+        await cache_set(_SEED_HASH_KEY, content_hash, ttl=_SEED_HASH_TTL)
+        unchanged = len(ALL_TRANSLATIONS) - added - updated
+        logger.info(
+            "i18n seed complete (%s added, %s updated, %s unchanged)",
+            added,
+            updated,
+            unchanged,
+        )
 
 
 async def main() -> None:
@@ -1608,7 +1680,9 @@ async def main() -> None:
     )
 
     async with async_session() as session:
-        await seed(session)
+        # The manual CLI always reseeds: an operator running this wants the
+        # canonical content restored now, not skipped because the hash matched.
+        await seed(session, force=True)
 
     await engine.dispose()
 
