@@ -57,6 +57,20 @@ def _parse_int(val: str, default: int = 0) -> int:
         return default
 
 
+def _has(row: dict, field: str) -> bool:
+    """Whether the CSV carried an actual value for ``field`` on this row.
+
+    A partial-column export (only ``sku,name,stock_quantity``, say) must never
+    overwrite the columns it omits — reactivating a soft-deleted row, zeroing a
+    price, or uncategorising a product because ``is_active`` / ``price`` /
+    ``category_reference`` were simply absent from the header. So an update only
+    touches a field the spreadsheet actually spoke to: the column is present in
+    the header *and* the cell is non-empty. Clearing a field is a deliberate act
+    done in the console, never a side effect of a column that was not exported.
+    """
+    return field in row and str(row.get(field) or "").strip() != ""
+
+
 def _required_decimal(row: dict, field: str, row_number: int) -> Decimal:
     raw = str(row.get(field) or "").strip()
     try:
@@ -273,16 +287,25 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
             if existing:
                 existing.name = name
                 existing.sku = sku or existing.sku
-                existing.description = description
+                if _has(row, "description"):
+                    existing.description = description
                 if prod_translations:
                     merged = dict(existing.translations or {})
                     for lang, fields in prod_translations.items():
                         merged.setdefault(lang, {}).update(fields)
                     existing.translations = merged
-                existing.base_price = base_price
-                existing.category_id = category_id
-                existing.is_active = is_active
-                existing.is_stock_product = is_stock_product
+                if _has(row, "price"):
+                    existing.base_price = base_price
+                # Only re-home the product when the export actually named a
+                # category; an absent column must not uncategorise it.
+                if _has(row, "category_reference"):
+                    existing.category_id = category_id
+                # Never implicitly reactivate a soft-deleted product: an absent
+                # or blank ``is_active`` column leaves the current state alone.
+                if _has(row, "is_active"):
+                    existing.is_active = is_active
+                if _has(row, "is_stock_product"):
+                    existing.is_stock_product = is_stock_product
                 if stock_quantity is not None:
                     existing.stock_quantity = stock_quantity
                 if calories is not None:
@@ -477,12 +500,16 @@ async def import_modifier_options(db: AsyncSession, rows: list[dict]) -> ImportR
                     for lang, fields in opt_translations.items():
                         merged.setdefault(lang, {}).update(fields)
                     existing.translations = merged
-                existing.price = price
+                if _has(row, "price"):
+                    existing.price = price
                 if "cost" in row and str(row["cost"] or "").strip():
                     existing.cost = cost
                 if "calories" in row and str(row["calories"] or "").strip():
                     existing.calories = calories
-                existing.is_active = is_active
+                # As with products, an absent/blank ``is_active`` must not
+                # silently reactivate a retired option.
+                if _has(row, "is_active"):
+                    existing.is_active = is_active
                 if "display_order" in row and str(row["display_order"] or "").strip():
                     existing.display_order = display_order
                 existing.modifier_id = modifier.id
