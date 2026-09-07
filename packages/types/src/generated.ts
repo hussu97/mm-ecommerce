@@ -2043,7 +2043,14 @@ export interface paths {
         put?: never;
         /**
          * Merge Cart
-         * @description Merge a guest session cart into the authenticated user's cart (call after login).
+         * @description Merge the caller's guest session cart into their account (call after login).
+         *
+         *     The guest session is read from the `X-Session-Id` header, like every other
+         *     cart route — not from an arbitrary `session_id` in the body. Taking it from
+         *     the body let a signed-in caller name *any* session and absorb-then-delete a
+         *     stranger's basket; the header carries the caller's own session, the same one
+         *     every add/update/remove on this cart already trusts, so there is one
+         *     identity mechanism and not a second, softer one beside it.
          */
         post: operations["merge_cart_api_v1_cart_merge_post"];
         delete?: never;
@@ -4991,6 +4998,10 @@ export interface paths {
          * @description Get an order by order number. Authenticated users can only view their own
          *     orders; unauthenticated callers must supply the order's email as proof
          *     (same scheme as /orders/track).
+         *
+         *     Rate limited like `/orders/track` — this returns the *whole* order to a
+         *     number-plus-email pair, so an unbounded lookup is a way to grind a guessed
+         *     number against many guessed addresses. Keyed on IP and order number.
          */
         get: operations["get_order_api_v1_orders__order_number__get"];
         put?: never;
@@ -10357,11 +10368,6 @@ export interface components {
         CartItemUpdate: {
             /** Quantity */
             quantity: number;
-        };
-        /** CartMergeRequest */
-        CartMergeRequest: {
-            /** Session Id */
-            session_id: string;
         };
         /**
          * CartPromoRequest
@@ -23093,15 +23099,13 @@ export interface operations {
     merge_cart_api_v1_cart_merge_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Session-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CartMergeRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

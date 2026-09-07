@@ -746,9 +746,15 @@ async def clear(
 
 
 async def merge(
-    db: AsyncSession, guest_session_id: str, user_id: uuid.UUID
+    db: AsyncSession, guest_session_id: str | None, user_id: uuid.UUID
 ) -> CartResponse:
-    """Merge guest session cart into user cart after login."""
+    """Merge guest session cart into user cart after login.
+
+    `guest_session_id` is `None` when the caller sent no `X-Session-Id` — a
+    sign-in with no guest basket to bring along. `cart_for_identity` matches
+    nothing on a null session (`identity_clause` returns `false()`), so this
+    falls straight through to returning the account's own cart.
+    """
     # Find guest cart
     guest_cart = await cart_for_identity(db, None, guest_session_id)
 

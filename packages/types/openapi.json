@@ -5888,19 +5888,6 @@
         "title": "CartItemUpdate",
         "type": "object"
       },
-      "CartMergeRequest": {
-        "properties": {
-          "session_id": {
-            "title": "Session Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id"
-        ],
-        "title": "CartMergeRequest",
-        "type": "object"
-      },
       "CartPromoRequest": {
         "description": "The code the basket has applied, or `null` to forget it.",
         "properties": {
@@ -39493,18 +39480,26 @@
     },
     "/api/v1/cart/merge": {
       "post": {
-        "description": "Merge a guest session cart into the authenticated user's cart (call after login).",
+        "description": "Merge the caller's guest session cart into their account (call after login).\n\nThe guest session is read from the `X-Session-Id` header, like every other\ncart route \u2014 not from an arbitrary `session_id` in the body. Taking it from\nthe body let a signed-in caller name *any* session and absorb-then-delete a\nstranger's basket; the header carries the caller's own session, the same one\nevery add/update/remove on this cart already trusts, so there is one\nidentity mechanism and not a second, softer one beside it.",
         "operationId": "merge_cart_api_v1_cart_merge_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CartMergeRequest"
-              }
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Session-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Session-Id"
             }
-          },
-          "required": true
-        },
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -50589,7 +50584,7 @@
     },
     "/api/v1/orders/{order_number}": {
       "get": {
-        "description": "Get an order by order number. Authenticated users can only view their own\norders; unauthenticated callers must supply the order's email as proof\n(same scheme as /orders/track).",
+        "description": "Get an order by order number. Authenticated users can only view their own\norders; unauthenticated callers must supply the order's email as proof\n(same scheme as /orders/track).\n\nRate limited like `/orders/track` \u2014 this returns the *whole* order to a\nnumber-plus-email pair, so an unbounded lookup is a way to grind a guessed\nnumber against many guessed addresses. Keyed on IP and order number.",
         "operationId": "get_order_api_v1_orders__order_number__get",
         "parameters": [
           {

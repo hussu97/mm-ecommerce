@@ -26,10 +26,6 @@ class CartPromoRequest(BaseModel):
     code: str | None = None
 
 
-class CartMergeRequest(BaseModel):
-    session_id: str
-
-
 def _resolve_identity(
     current_user: User | None,
     x_session_id: str | None,
@@ -155,13 +151,22 @@ async def set_cart_promo(
 
 @router.post("/merge", response_model=CartResponse)
 async def merge_cart(
-    data: CartMergeRequest,
+    x_session_id: str | None = Header(None, alias="X-Session-Id"),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
-    """Merge a guest session cart into the authenticated user's cart (call after login)."""
+    """
+    Merge the caller's guest session cart into their account (call after login).
+
+    The guest session is read from the `X-Session-Id` header, like every other
+    cart route — not from an arbitrary `session_id` in the body. Taking it from
+    the body let a signed-in caller name *any* session and absorb-then-delete a
+    stranger's basket; the header carries the caller's own session, the same one
+    every add/update/remove on this cart already trusts, so there is one
+    identity mechanism and not a second, softer one beside it.
+    """
     if not current_user:
         raise UnauthorizedError("Authentication required to merge cart")
     return await cart_service.merge(
-        db, guest_session_id=data.session_id, user_id=current_user.id
+        db, guest_session_id=x_session_id, user_id=current_user.id
     )
