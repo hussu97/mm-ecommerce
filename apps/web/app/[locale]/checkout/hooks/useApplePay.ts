@@ -49,8 +49,22 @@ export interface ApplePayHandlers {
   createOrder: () => Promise<Order>;
   /** The payment went through: go to the confirmation for this order. */
   onSuccess: (order: Order) => void;
-  /** Something was refused or failed. Empty message = the customer dismissed the sheet. */
-  onError: (message: string) => void;
+  /**
+   * Something was refused or failed. Empty message = the customer dismissed
+   * the sheet — not a failure, and `stage`/`orderNumber` are omitted then.
+   *
+   * Otherwise `stage` says which half broke, the same distinction
+   * `handleSubmit`'s card/COD path already reports: `create_order` is
+   * refused by our own API before any money moves, `create_session` is the
+   * gateway itself (creating the PaymentIntent, confirming the card, a 3-D
+   * Secure step-up). `orderNumber` is set once `createOrder` has resolved, so
+   * a `create_session` failure can still be tied to the order it belongs to.
+   */
+  onError: (
+    message: string,
+    stage?: 'create_order' | 'create_session',
+    orderNumber?: string,
+  ) => void;
 }
 
 interface UseApplePayInput {
@@ -123,11 +137,19 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
           return;
         }
         settledRef.current = false;
+        // Which half is running, for `onError` — the same distinction
+        // `handleSubmit`'s card/COD path reports, so an Apple Pay failure
+        // lands in `order_create_failed` or `payment_failed` rather than
+        // nowhere at all (see the note on `ApplePayHandlers.onError`).
+        let stage: 'create_order' | 'create_session' = 'create_order';
+        let orderNumber: string | undefined;
         try {
           // The order is written now, after the sheet is authorised, because
           // `show()` had to be called synchronously on the press to count as a
           // user gesture — there was no room to create it first.
           const order = await handlers.createOrder();
+          stage = 'create_session';
+          orderNumber = order.order_number;
           const intent = await paymentsApi.createApplePayIntent(order.order_number);
 
           const { error, paymentIntent } = await stripe.confirmCardPayment(
@@ -140,7 +162,7 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
             // Close the sheet on the failure so the customer is not left staring
             // at a spinner, then say what happened on the page behind it.
             ev.complete('fail');
-            handlers.onError(error.message ?? 'Payment failed. Please try again.');
+            handlers.onError(error.message ?? 'Payment failed. Please try again.', stage, orderNumber);
             return;
           }
 
@@ -152,7 +174,11 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
           if (paymentIntent && paymentIntent.status === 'requires_action') {
             const stepUp = await stripe.confirmCardPayment(intent.client_secret);
             if (stepUp.error) {
-              handlers.onError(stepUp.error.message ?? 'Payment could not be authorised.');
+              handlers.onError(
+                stepUp.error.message ?? 'Payment could not be authorised.',
+                stage,
+                orderNumber,
+              );
               return;
             }
           }
@@ -163,6 +189,8 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
           ev.complete('fail');
           handlers.onError(
             err instanceof Error ? err.message : 'Something went wrong taking your payment.',
+            stage,
+            orderNumber,
           );
         }
       });

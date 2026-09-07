@@ -698,26 +698,56 @@ function CheckoutContent() {
    * sheet now and writes the order inside its authorised callback. Only reached
    * when the gate is already `ready`, so the form is complete and
    * `createOrderFromForm` should not be refused by our own validation.
+   *
+   * `checkoutStepComplete` fires from `onSuccess`, not from here. It used to
+   * fire the instant the button was pressed — before the sheet had even
+   * opened, let alone been authorised — so a customer who cancelled the sheet
+   * or whose card was declined was counted as having completed the checkout
+   * step. `handleSubmit`'s card/COD path only ever fires it once a session or
+   * order is actually confirmed; this now matches it.
    */
   const handleApplePay = () => {
     setSubmitting(true);
     setPromoRefusal(null);
-    analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
     applePay.pay({
       total,
       createOrder: createOrderFromForm,
       onSuccess: (order) => {
+        analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
         const orderEmail =
           order.email ?? accountEmail ?? form.email.trim().toLowerCase();
         window.location.assign(
           `/${locale}/checkout/confirmation?order_number=${order.order_number}&email=${encodeURIComponent(orderEmail)}`,
         );
       },
-      onError: (message) => {
+      onError: (message, stage, orderNumber) => {
         setSubmitting(false);
-        // Empty message = the customer dismissed the sheet; nothing was refused,
-        // so nothing is said.
-        if (message) addToast(message, 'error');
+        // Empty message = the customer dismissed the sheet; nothing was
+        // refused, so nothing is said and nothing is tracked.
+        if (!message) return;
+
+        // Same split `handleSubmit` reports: refused before any money moved
+        // (our own API — a coupon, a sold-out line, the phone gate) versus the
+        // gateway itself (creating the PaymentIntent, confirming the card, a
+        // 3-D Secure step-up). Apple Pay failures reported neither before this.
+        if (stage === 'create_order') {
+          analytics.orderCreateFailed({
+            reason: failureReason(new Error(message)),
+            delivery_method: form.deliveryMethod,
+            total,
+            has_promo: form.promoDiscount > 0,
+          });
+        } else {
+          analytics.paymentFailed({
+            order_number: orderNumber ?? '',
+            error_message: message,
+            reason: failureReason(new Error(message)),
+            provider: 'apple_pay',
+            total,
+            stage: stage ?? 'create_session',
+          });
+        }
+        addToast(message, 'error');
       },
     });
   };
