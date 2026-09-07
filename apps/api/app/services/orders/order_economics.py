@@ -96,6 +96,11 @@ class OrderEconomics:
     #: aggregator order — a cost the shop bears, neither commission nor
     #: processing. Null on website orders and where none was charged.
     cancellation_fee: Decimal | None = None
+    #: A merchant-funded promotion the marketplace billed back to the shop —
+    #: Keeta's "Promotion funded by merchant". A real cost the shop bears,
+    #: neither commission nor processing, kept apart so `net` subtracts it too.
+    #: Null on own-channel orders and where none was charged.
+    marketing_fee: Decimal | None = None
     #: Whether this order should have had a cost of sale at all — somebody
     #: carried it, or a marketplace sold it. False for a counter sale, which is
     #: handed across a counter and rightly shows neither.
@@ -112,6 +117,7 @@ class OrderEconomics:
             - (self.courier_cost or _ZERO)
             - (self.aggregator_fee or _ZERO)
             - (self.cancellation_fee or _ZERO)
+            - (self.marketing_fee or _ZERO)
             - self.processing_fee
             - self.refunded
         )
@@ -315,6 +321,11 @@ async def for_order(db: AsyncSession, order: Order) -> OrderEconomics:
         cancellation_fee=(
             money(to_decimal(order.cancellation_fee))
             if order.cancellation_fee is not None
+            else None
+        ),
+        marketing_fee=(
+            money(to_decimal(order.marketing_fee))
+            if order.marketing_fee is not None
             else None
         ),
         # A marketplace sold it, or a courier carried it. Either way somebody

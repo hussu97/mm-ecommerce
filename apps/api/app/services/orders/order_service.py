@@ -1419,6 +1419,14 @@ def _net_value_expression(cost_of_sale):
         Order.total
         - known_cost
         - func.coalesce(Order.payment_fee, 0)
+        # The two aggregator charges `OrderEconomics.net` also subtracts — a
+        # cancellation/compensation fee and a merchant-funded promotion billed
+        # back. Omitting them here made this column overstate the net on exactly
+        # the orders that carry them, while the docstring promised the two
+        # answers were tested against each other (F-ORD-15). `coalesce`d to zero
+        # because absent means "nothing charged" for both.
+        - func.coalesce(Order.cancellation_fee, 0)
+        - func.coalesce(Order.marketing_fee, 0)
         - func.coalesce(Order.refunded_amount, 0)
     )
 
