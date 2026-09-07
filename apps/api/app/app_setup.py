@@ -217,6 +217,18 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
                 spawn_tracked(daily_sales_email.run_forever(), name="daily_sales_email")
             )
 
+            # The business-day sweeper. Same lifespan reasons as its neighbours —
+            # no cron here, an advisory lock so a second copy is harmless. Hourly
+            # it closes any trading day that rolled past its cut-off without an
+            # end-of-day, which `close_current` alone could never reach (F-POS-26).
+            from app.services.pos import business_day_service
+
+            background.append(
+                spawn_tracked(
+                    business_day_service.run_forever(), name="business_day_sweeper"
+                )
+            )
+
             # Branch hours sync. Same reasoning as its neighbours — no cron here,
             # an advisory lock so a second copy is harmless, storefront app only.
             # Hourly it mirrors each branch's weekly schedule (the source of truth)

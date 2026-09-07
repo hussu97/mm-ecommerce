@@ -9,6 +9,8 @@ record therefore carries a `business_date` derived from the branch's
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,6 +18,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import advisory_lock, heartbeat
+from app.core.database import SchedulerSessionFactory
 from app.core.exceptions import ConflictError
 from app.models.base import utcnow
 from app.models.branch import Branch, BranchBusinessDay
@@ -23,7 +27,16 @@ from app.models.business_settings import BusinessSettings
 from app.models.till import Till, TillStatusEnum
 from app.models.user import User
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_TIMEZONE = "Asia/Dubai"
+
+#: Same flat 64-bit namespace as every other advisory lock. "mmBATCH" + 6.
+_ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4806
+
+#: Hourly. A stranded day being closed an hour late costs nothing, and the sweep
+#: is a read plus a few writes, not worth running by the minute.
+_TICK_SECONDS = 3600
 
 __all__ = [
     "business_date_for",
@@ -31,7 +44,9 @@ __all__ = [
     "current_business_date",
     "get_or_open",
     "resolve_timezone",
+    "run_forever",
     "shop_today",
+    "sweep_stale_business_days",
 ]
 
 
@@ -172,13 +187,25 @@ async def get_or_open(
 
 
 async def close_current(
-    db: AsyncSession, branch: Branch, *, closed_by: User
+    db: AsyncSession,
+    branch: Branch,
+    *,
+    closed_by: User | None = None,
+    business_date: str | None = None,
 ) -> BranchBusinessDay:
     """
     End of day. Refuses to run while a till is still open, because the Z-report
     totals would be incomplete the moment the remaining cashier takes a payment.
+
+    Closes the branch's *current* trading day by default. Pass `business_date` to
+    close a specific earlier day: a day whose trading has already rolled over —
+    the register never reached "end of day" before the cut-off passed — could
+    otherwise never be closed, because this only ever looked at the day it is
+    right now (F-POS-26). The nightly `sweep_stale_business_days` uses this to
+    finish those stranded days, and `closed_by` is optional so a system close can
+    leave no cashier's name on it.
     """
-    business_date = await current_business_date(db, branch)
+    business_date = business_date or await current_business_date(db, branch)
     day = (
         await db.execute(
             select(BranchBusinessDay).where(
@@ -217,7 +244,7 @@ async def close_current(
     day.total_returns = totals["returns"]
     day.total_taxes = totals["taxes"]
     day.closed_at = utcnow()
-    day.closed_by_id = closed_by.id
+    day.closed_by_id = closed_by.id if closed_by is not None else None
     await db.flush()
     await db.refresh(day)
     return day
@@ -258,3 +285,98 @@ async def _day_totals(
         "returns": _sum("returns"),
         "taxes": _sum("taxes"),
     }
+
+
+async def sweep_stale_business_days(
+    db: AsyncSession, now: datetime | None = None
+) -> list[str]:
+    """
+    Close every trading day whose date has already rolled past.
+
+    A day is closed at "end of day" through `close_current`, which only ever
+    looks at the branch's *current* business date. So a day nobody closed before
+    the cut-off moved on — a busy Friday whose manager forgot, a register that
+    was down at 04:00 — became unreachable: the next call already named the new
+    day, and the old one stayed `open` forever, out of every Z-report and end-of-
+    day total (F-POS-26). This finishes those stranded days.
+
+    A day still holding an open till is left alone — its totals are not final
+    yet, and it is closed the ordinary way once the till is. Everything else with
+    a `business_date` earlier than today's is closed via `close_current`, with no
+    cashier's name on the close. Returns `"<branch_id>:<date>"` for each day it
+    closed; the caller commits.
+    """
+    tz = await resolve_timezone(db)
+    moment = now or utcnow()
+    branches = (
+        (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
+        .scalars()
+        .all()
+    )
+    closed: list[str] = []
+    for branch in branches:
+        current = business_date_for(branch, moment, tz)
+        stale = (
+            (
+                await db.execute(
+                    select(BranchBusinessDay)
+                    .where(
+                        BranchBusinessDay.branch_id == branch.id,
+                        BranchBusinessDay.closed_at.is_(None),
+                        BranchBusinessDay.business_date < current,
+                    )
+                    .order_by(BranchBusinessDay.business_date)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for day in stale:
+            try:
+                await close_current(db, branch, business_date=day.business_date)
+                closed.append(f"{branch.id}:{day.business_date}")
+            except ConflictError as exc:
+                # A still-open till, or a day already closed in the gap — neither
+                # is an error the sweep should raise on; leave it for the ordinary
+                # close and move on.
+                logger.info(
+                    "business day sweep: left %s %s open — %s",
+                    branch.reference,
+                    day.business_date,
+                    exc,
+                )
+    return closed
+
+
+async def run_forever() -> None:
+    """Hourly, close any trading day that rolled over without an end-of-day.
+
+    Leader-elected on an advisory lock and beating its heartbeat, the same shape
+    as the other lifespan loops — no cron in this stack, and one worker inside a
+    sweep at a time.
+    """
+    logger.info("Business day sweeper started (every %ss)", _TICK_SECONDS)
+    while True:
+        try:
+            # Sleeps first: boot is busy and nothing here is urgent.
+            await asyncio.sleep(_TICK_SECONDS)
+            await heartbeat.beat("business_day_sweeper")
+            async with advisory_lock.held(
+                _ADVISORY_LOCK_KEY, name="business day sweeper"
+            ) as mine:
+                if not mine:
+                    continue
+                async with SchedulerSessionFactory() as db:
+                    closed = await sweep_stale_business_days(db)
+                    await db.commit()
+                    if closed:
+                        logger.info(
+                            "Business day sweeper closed %s stranded day(s): %s",
+                            len(closed),
+                            closed,
+                        )
+        except asyncio.CancelledError:
+            logger.info("Business day sweeper stopping")
+            raise
+        except Exception:  # noqa: BLE001 — a bad tick must not kill the loop
+            logger.exception("Business day sweeper tick failed")

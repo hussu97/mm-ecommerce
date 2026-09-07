@@ -57,6 +57,10 @@ _LOOP_BEATS = {
         "inventory_source_event_sweeper",
     ),
     "app.services.pos.daily_sales_email": ("run_forever", "daily_sales_email"),
+    "app.services.pos.business_day_service": (
+        "run_forever",
+        "business_day_sweeper",
+    ),
     "app.services.branch_hours_sync": ("run_forever", "branch_hours_sync"),
     "app.services.grubops.grubops_reconcile": ("run_forever", "grubops_reconcile"),
     "app.services.grubops.grubops_orders": ("run_forever", "grubops_orders"),

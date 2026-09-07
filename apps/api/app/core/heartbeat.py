@@ -33,6 +33,7 @@ LOOP_NAMES = (
     "log_retention",
     "inventory_source_event_sweeper",
     "daily_sales_email",
+    "business_day_sweeper",
     "branch_hours_sync",
     "grubops_reconcile",
     "grubops_orders",
