@@ -34,15 +34,17 @@ import contextvars
 import logging
 from typing import Collection, Literal
 
-from sqlalchemy import event
+from sqlalchemy import event, func, or_
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import BadRequestError
+from app.models.base import utcnow
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, current_actor
 from app.models.pos_order import OrderSourceEnum, PosOrderStatusEnum
 from app.models.product import Product
+from app.models.promo_code import PromoCode
 
 __all__ = [
     "ADMIN_RECOVERABLE",
@@ -411,6 +413,38 @@ async def _move_stock(db: AsyncSession, order: Order, direction: int) -> None:
     order.stock_drawn = direction < 0
 
 
+async def _release_promo_use(db: AsyncSession, order: Order) -> None:
+    """
+    Hand this order's promo redemption back to the campaign, at most once.
+
+    `_persist_order` is the only path that increments `promo_codes.current_uses`,
+    and it does so for a website checkout — so the release mirrors it: an
+    `online` order carrying a code, whose redemption has not already been given
+    back. `promo_released_at` is the first-arrival guard, stamped here, so a
+    cancel → recover → cancel cycle releases the use once and not on every trip.
+
+    `GREATEST(current_uses - 1, 0)` because the count can never be pushed
+    negative — a hand-edited row, or an order whose increment was itself capped
+    at the campaign ceiling, must floor at zero rather than mint redemptions.
+    Matched on either spelling of the code, since `promo_code_used` holds the
+    English one but the row may be found under `code` or `code_ar`.
+    """
+    code = order.promo_code_used
+    if (
+        code is None
+        or order.source != OrderSourceEnum.ONLINE.value
+        or order.promo_released_at is not None
+    ):
+        return
+    await db.execute(
+        sql_update(PromoCode)
+        .where(or_(PromoCode.code == code, PromoCode.code_ar == code))
+        .values(current_uses=func.greatest(PromoCode.current_uses - 1, 0))
+        .execution_options(synchronize_session=False)
+    )
+    order.promo_released_at = utcnow()
+
+
 def _mm_owns_fulfilment(order: Order) -> bool:
     """Whether MM books the courier and holds the money for this order.
 
@@ -522,6 +556,12 @@ async def _consequences(
 
         # A cancelled order releases the stock it claimed at creation.
         await _move_stock(db, order, +1)
+
+        # …and the promo redemption it claimed at creation. `_persist_order`
+        # incremented `current_uses` when the order was written; a cancellation
+        # gives it back, so an abandoned or cancelled order stops holding one of a
+        # capped campaign's redemptions.
+        await _release_promo_use(db, order)
 
         # Recipe inventory has a separate immutable ledger. If consumption is
         # already posted, cancellation cannot guess whether physical goods came

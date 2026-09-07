@@ -249,6 +249,19 @@ class Order(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     promo_code_used: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: When this order handed its promo redemption back to the campaign.
+    #:
+    #: `_persist_order` increments `promo_codes.current_uses` when a website order
+    #: is written; `order_lifecycle._consequences` decrements it again when the
+    #: order is cancelled, so an abandoned or cancelled order stops holding one of
+    #: a capped campaign's redemptions. This is the first-arrival guard for that
+    #: release: it is stamped the first time the order reaches `cancelled`, and a
+    #: later re-cancellation (cancel → recover → cancel) finds it set and does not
+    #: release the same use twice. Null on everything that has not released one —
+    #: every live order, and every order that never carried a code.
+    promo_released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     shipping_address_snapshot: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     #: What the customer chose: `card` or `cod` (`PaymentMethodEnum`).
     #:
