@@ -116,6 +116,26 @@ def test_a_restored_column_brings_its_index_and_key_back():
     assert "ix_products_is_web_visible" in down_045
 
 
+def test_no_migration_commits_a_bcrypt_hash():
+    """
+    A migration must never carry a `$2b$` bcrypt literal (F-OPS-21).
+
+    `033_set_admin_initial_passwords` committed one and re-granted `is_admin` to
+    three named accounts on every upgrade, so any fresh database came up with
+    known-password admin logins and re-running it in production would reset those
+    accounts to a hash now in version control. It is a guarded no-op now, and this
+    keeps any migration — that one or a future one — from shipping a credential.
+    """
+    offenders = []
+    for path in VERSIONS.glob("*.py"):
+        if "$2b$" in path.read_text() or "$2a$" in path.read_text():
+            offenders.append(path.name)
+    assert not offenders, (
+        "these migrations contain a bcrypt hash literal — a credential must not "
+        f"live in the migration chain: {sorted(offenders)}"
+    )
+
+
 def test_an_if_not_exists_create_does_not_drop_what_it_did_not_make():
     """
     `024` created its indexes with `IF NOT EXISTS` — so on any database that
