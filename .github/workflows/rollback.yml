@@ -119,7 +119,7 @@ jobs:
           APNS_ORDER_SOUND=${{ secrets.APNS_ORDER_SOUND || 'new-order.caf' }}
           APNS_TIMEOUT_SECONDS=${{ secrets.APNS_TIMEOUT_SECONDS || '10' }}
           NOON_SEND_WEBHOOK_API_KEY=${{ secrets.NOON_SEND_WEBHOOK_API_KEY }}
-          NOON_SEND_ENFORCE_WEBHOOK_KEY=${{ secrets.NOON_SEND_ENFORCE_WEBHOOK_KEY || 'false' }}
+          NOON_SEND_ENFORCE_WEBHOOK_KEY=${{ secrets.NOON_SEND_ENFORCE_WEBHOOK_KEY || 'true' }}
           NOON_SEND_TIMEOUT_SECONDS=${{ secrets.NOON_SEND_TIMEOUT_SECONDS || '8' }}
           GRUBOPS_SYNC_ENABLED=${{ secrets.GRUBOPS_SYNC_ENABLED || 'false' }}
           GRUBOPS_USERNAME=${{ secrets.GRUBOPS_USERNAME }}

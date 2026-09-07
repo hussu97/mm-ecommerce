@@ -5,10 +5,10 @@ The Slider webhook endpoint.
 `delivered`. Slider does not sign requests — what they send is a **static token
 in a header we choose the name of** — so that token is the entire boundary
 between a genuine status update and anybody who guesses the URL, and unlike a
-signature there is nothing behind it. It is therefore **enforced**, which is the
-deliberate difference from the noon Send routes next door, where
-`NOON_SEND_ENFORCE_WEBHOOK_KEY` is false in production because enforcing it once
-dropped every status update for a live trial.
+signature there is nothing behind it. It is therefore **enforced** — as are the
+noon Send routes next door, where `NOON_SEND_ENFORCE_WEBHOOK_KEY` was left off
+in production until the fingerprints were verified to match (2026-09-07), after
+an early attempt to enforce it once dropped every status update for a live trial.
 
 It must answer 200 to everything. A webhook URL that fails is retried and then
 disabled, after which every later order silently loses its status; swallowing

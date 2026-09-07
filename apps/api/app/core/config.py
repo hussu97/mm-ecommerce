@@ -236,8 +236,10 @@ class Settings(BaseSettings):
     #: we hold (both are recorded on every `webhook_logs` row for exactly this
     #: comparison), refusing on a mismatch loses live deliveries.
     #:
-    #: Compare the two in `webhook_logs`, then set this to `true`.
-    NOON_SEND_ENFORCE_WEBHOOK_KEY: bool = False
+    #: Compare the two in `webhook_logs`, then set this to `true`. Verified
+    #: 2026-09-07: the fingerprint noon sends matches the key we hold
+    #: (len=43, ve-6…dwBA), so enforcement is now on by default.
+    NOON_SEND_ENFORCE_WEBHOOK_KEY: bool = True
     #: Sent on every call. `en-ae` or `en-sa`; only the UAE fleet concerns us.
     NOON_SEND_LOCALE: str = "en-ae"
     #: `noon_food` or `nownow` — which side of noon owns the pickup point.
@@ -611,8 +613,8 @@ class Settings(BaseSettings):
     #: The static token Slider presents on the production webhook, and the
     #: header they present it in. They do not sign requests, so this pair is the
     #: entire check — which is why it is enforced here rather than merely
-    #: recorded. (Contrast `NOON_SEND_ENFORCE_WEBHOOK_KEY`, which is false in
-    #: production and leaves that endpoint effectively open.)
+    #: recorded. (Like `NOON_SEND_ENFORCE_WEBHOOK_KEY`, now enforced in
+    #: production once the noon fingerprints were verified to match.)
     #:
     #: Both halves matter. A token with no header name may not be sent at all,
     #: or may arrive in a header nobody is reading.
