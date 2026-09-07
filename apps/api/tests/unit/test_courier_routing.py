@@ -562,6 +562,94 @@ async def test_a_booked_order_is_never_dispatched_twice(
     assert delivery.courier_order_id == f"{carrier.upper()}-BOOKED"
 
 
+# ── a dead booking must not block the fallback ─────────────────────────────────
+#
+# The already-booked guard reads `is_failed(provider, status)`, which speaks each
+# courier's own vocabulary. A row that flips courier keeps the *old* courier's
+# verbatim status until the flip clears it — and Slider's `cancelled` is not
+# Lalamove's `CANCELED`, so a dead Slider booking left on a row that fell back to
+# Lalamove reads as a live Lalamove booking and the fallback short-circuits.
+
+
+@pytest.mark.asyncio
+async def test_a_dead_slider_booking_does_not_short_circuit_the_lalamove_fallback(
+    slider_ready, monkeypatch
+):
+    """
+    F-COU-7. A Slider booking the courier already cancelled leaves
+    `courier_status='cancelled'` on the row — Slider's word, not Lalamove's
+    `CANCELED`. When an unconfigured-Slider zone falls back to Lalamove, that
+    foreign status must not survive: `lalamove_service.dispatch_order` reads it
+    against Lalamove's own vocabulary, in which `cancelled` is unknown and so
+    reads as a *live* booking, and short-circuits to a silent "success" —
+    clearing the retry ladder and stamping the order packed with no courier
+    booked. The provider flip archives and nulls the dead booking, so the real
+    Lalamove dispatch reaches `place_order` and a courier is actually booked.
+    """
+    monkeypatch.setattr(settings, "SLIDER_API_KEY", "")  # Slider unconfigured
+
+    booked: dict = {}
+
+    async def create_quotation(_stops, **_kw):
+        return {
+            "quotationId": "Q1",
+            "stops": [{"stopId": "s0"}, {"stopId": "s1"}],
+            "priceBreakdown": {"total": "21.00", "currency": "AED"},
+        }
+
+    async def place_order(**kwargs):
+        booked.update(kwargs)
+        return {
+            "orderId": "LALA-FRESH",
+            "status": "ASSIGNING_DRIVER",
+            "shareLink": "https://share.lalamove.com/x",
+            "priceBreakdown": {"total": "21.00", "currency": "AED"},
+        }
+
+    async def resolve_pickup(_db, _branch_id):
+        return lalamove_service.PickupPoint(
+            name="Melting Moments",
+            phone="+971501234567",
+            address="Al Majaz 3, Sharjah",
+            latitude=25.3304139,
+            longitude=55.3736131,
+            reference="K001",
+            emirate="Sharjah",
+        )
+
+    async def assign(_db, _delivery):
+        return "4820193"
+
+    async def noop(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(lalamove_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(lalamove_service.provider, "create_quotation", create_quotation)
+    monkeypatch.setattr(lalamove_service.provider, "place_order", place_order)
+    monkeypatch.setattr(lalamove_service, "resolve_pickup", resolve_pickup)
+    monkeypatch.setattr(lalamove_service.courier_reference, "assign", assign)
+    monkeypatch.setattr(lalamove_service.driver_assignment, "clear", noop)
+    monkeypatch.setattr(lalamove_service.driver_assignment, "record", noop)
+
+    class _CommitDb(_Db):
+        async def commit(self):
+            return None
+
+    delivery = _slider_delivery()  # Ajman ground → Lalamove fallback
+    delivery.courier_order_id = "SLD-DEAD"
+    delivery.courier_status = "cancelled"  # Slider's word for a cancelled booking
+
+    result = await courier_service.dispatch(_CommitDb(delivery), _order())
+
+    # `place_order` was actually reached — a courier was booked, not short-circuited.
+    assert booked, "Lalamove place_order was never called: the fallback short-circuited"
+    assert result.courier_order_id == "LALA-FRESH"
+    assert result.provider == "lalamove"
+    # The dead Slider booking was archived off the live columns, not left on them.
+    assert "SLD-DEAD" in (result.previous_courier_order_ids or [])
+    assert result.courier_status != "cancelled"
+
+
 # ── the decision as a primitive ───────────────────────────────────────────────
 #
 # `carrier_for`, the fare quote and the order-creation stamp are three callers of

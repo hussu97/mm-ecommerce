@@ -484,6 +484,89 @@ async def test_the_ack_from_create_task_is_not_stored_as_a_status(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_redispatch_of_a_dead_task_uses_a_fresh_idempotency_key(monkeypatch):
+    """
+    F-COU-5. The idempotency key counts how many bookings this order has already
+    outlived (`previous_courier_order_ids`), so a deliberate second task sends a
+    different key and noon makes a new task rather than returning the first one.
+    That only works if the outgoing `courier_order_id` is archived *before* the
+    key is built — it used to be archived one statement too late, so a
+    re-dispatch of a dead task reused the first key and re-adopted the cancelled
+    task instead of booking a live one.
+    """
+    order = SimpleNamespace(
+        id=uuid.uuid4(),
+        order_number="MM-1001",
+        branch_id=uuid.uuid4(),
+        status=OrderStatusEnum.PACKED,
+        total=Decimal("185.00"),
+        amount_paid=Decimal("185.00"),
+        payment_method="stripe",
+        notes=None,
+        shipping_address_snapshot={
+            "latitude": 25.3213,
+            "longitude": 55.3820,
+            "phone": "+971501234567",
+            "first_name": "Hussain",
+            "address_line_1": "Al Majaz Waterfront",
+            "city": "Sharjah",
+        },
+    )
+    # A fresh order: no booking yet, nothing superseded.
+    delivery = _delivery(
+        courier_order_id=None, courier_status=None, previous_courier_order_ids=[]
+    )
+
+    class _Db:
+        async def execute(self, _stmt):
+            return _FakeResult(order, scalar=Decimal("185.00"))
+
+        async def commit(self):
+            pass
+
+    keys: list[str] = []
+
+    async def get_delivery(*_args):
+        return delivery
+
+    async def resolve_pickup(*_args):
+        return PickupPoint(
+            name="Melting Moments Cakes",
+            phone="+971501234567",
+            address="Al Majaz 3, Sharjah",
+            latitude=25.3304139,
+            longitude=55.3736131,
+            reference="K001",
+            noon_send_outlet_code="PCKP_MLTNGM3W62",
+        )
+
+    async def create_task(**kwargs):
+        keys.append(kwargs["idempotency_key"])
+        return {"mp_task_nr": f"TASK-{len(keys)}", "status": "successful"}
+
+    async def estimate(*_args, **_kwargs):
+        return None, "not under test"
+
+    monkeypatch.setattr(noon_send_service, "get_delivery", get_delivery)
+    monkeypatch.setattr(noon_send_service, "resolve_pickup", resolve_pickup)
+    monkeypatch.setattr(noon_send_service.provider, "create_task", create_task)
+    monkeypatch.setattr(noon_send_service, "estimate_for_point", estimate)
+
+    # First dispatch books TASK-1.
+    await noon_send_service.dispatch_order(_Db(), order)
+    assert delivery.courier_order_id == "TASK-1"
+
+    # The task dies and the same order is dispatched again. The dead id must be
+    # archived and a *different* key sent, or noon returns TASK-1 all over again.
+    await noon_send_service.dispatch_order(_Db(), order)
+
+    assert keys == ["MM-1001", "MM-1001-1"]
+    assert keys[0] != keys[1]
+    assert "TASK-1" in (delivery.previous_courier_order_ids or [])
+    assert delivery.courier_order_id == "TASK-2"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "branch_code,expected", [("PCKP_BRANCH01", "PCKP_BRANCH01"), (None, "")]
 )

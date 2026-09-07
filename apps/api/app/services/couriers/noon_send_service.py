@@ -547,6 +547,22 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.last_error = reason
         return delivery
 
+    # Archive the outgoing booking *before* the idempotency key is built, not
+    # after. The key counts how many bookings this order has already outlived
+    # (`previous_courier_order_ids`), so a re-dispatch of a dead task must send a
+    # *different* key — otherwise noon returns the first, cancelled task instead
+    # of making a new one, leaving the row holding a task number nobody is
+    # working. Archiving here (it used to happen one statement past the key)
+    # makes the key see the supersession that has already happened. Deduped like
+    # `fulfilment_reassignment._release`, so two retries of one failed
+    # re-dispatch still count the same and share a key — the property a retry
+    # needs.
+    if delivery.courier_order_id:
+        previous = list(delivery.previous_courier_order_ids or [])
+        if delivery.courier_order_id not in previous:
+            previous.append(delivery.courier_order_id)
+        delivery.previous_courier_order_ids = previous
+
     try:
         created = await provider.create_task(
             order_reference=task.order_reference,
@@ -593,11 +609,8 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.last_error = "noon Send accepted the task but returned no task number"
         return delivery
 
-    if delivery.courier_order_id:
-        delivery.previous_courier_order_ids = [
-            *(delivery.previous_courier_order_ids or []),
-            delivery.courier_order_id,
-        ]
+    # The outgoing booking is archived above, before the idempotency key — see
+    # the note there.
 
     # From the branch this task was actually created against. Without the
     # `branch_id` this falls back to the globally configured pickup, so a second

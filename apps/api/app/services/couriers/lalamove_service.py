@@ -48,6 +48,7 @@ from app.models.order_delivery import (
     FAILED_COURIER_STATUSES,
     CourierStatusEnum,
     OrderDelivery,
+    is_failed,
 )
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.webhook_event import WebhookEvent
@@ -542,14 +543,16 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         return None
     if delivery.provider != FulfilmentProviderEnum.LALAMOVE.value:
         return delivery
-    if (
-        delivery.courier_order_id
-        and delivery.courier_status not in FAILED_COURIER_STATUSES
+    if delivery.courier_order_id and not is_failed(
+        delivery.provider, delivery.courier_status
     ):
         # Already out with someone. Re-booking would put two drivers on one cake.
         # Defence-in-depth: the central guard in `courier_service._dispatch_once`
         # now stops every courier here before this is reached, so on the ordinary
         # path this is redundant — kept for a direct caller of `dispatch_order`.
+        # `is_failed(provider, status)` rather than the Lalamove-word set, so the
+        # question is asked in the row's own vocabulary — the same helper every
+        # cross-courier caller uses (F-COU-7).
         return delivery
     if not is_enabled():
         delivery.last_error = "Courier is not configured; dispatch this order by hand"
@@ -912,7 +915,10 @@ async def cancel_delivery(db: AsyncSession, order: Order) -> OrderDelivery | Non
     delivery = await get_delivery(db, order.id)
     if delivery is None or not delivery.courier_order_id:
         return delivery
-    if delivery.courier_status in FAILED_COURIER_STATUSES:
+    # Asked in the row's own vocabulary via `is_failed` rather than the
+    # Lalamove-word set (F-COU-7): a booking the courier already ended has
+    # nothing left to call off.
+    if is_failed(delivery.provider, delivery.courier_status):
         return delivery
     if not is_enabled():
         delivery.last_error = "Courier is not configured; cancel this booking by hand"

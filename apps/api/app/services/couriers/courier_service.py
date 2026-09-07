@@ -376,6 +376,35 @@ def _note_auto_fallback(
     )
 
 
+def _flip_provider(delivery: OrderDelivery, new_provider: str) -> None:
+    """Move a row to a different courier, leaving no foreign booking on it.
+
+    A flip only ever happens after the already-booked guard in `_dispatch_once`
+    has let the row through, so any `courier_order_id` still on it is a *dead*
+    booking from the courier the zone named — terminal-and-failed, by that guard.
+    Left in place it is worse than useless (F-COU-7): the next courier's
+    `dispatch_order` reads the foreign `courier_status` against its own
+    vocabulary — Slider's `cancelled` is not Lalamove's `CANCELED`, so
+    `is_failed` reads it as a *live* booking — and short-circuits to a silent
+    "success", which `_record_outcome` then treats as a booking: it clears the
+    retry ladder and stamps the order packed with no courier actually engaged.
+
+    So the dead id is archived and the three courier-verbatim columns are nulled
+    before the provider changes, exactly as `fulfilment_reassignment._release`
+    does for a manual move. Deduped, so a flip that re-books the same courier a
+    second time does not list one id twice.
+    """
+    if delivery.courier_order_id:
+        previous = list(delivery.previous_courier_order_ids or [])
+        if delivery.courier_order_id not in previous:
+            previous.append(delivery.courier_order_id)
+        delivery.previous_courier_order_ids = previous
+        delivery.courier_order_id = None
+        delivery.courier_status = None
+        delivery.courier_previous_status = None
+    delivery.provider = new_provider
+
+
 async def _dispatch_once(
     db: AsyncSession, order: Order, delivery: OrderDelivery
 ) -> OrderDelivery | None:
@@ -444,7 +473,10 @@ async def _dispatch_once(
             carrier=carrier,
             reason=gated,
         )
-        delivery.provider = carrier
+        # Clears any dead booking the zone's own courier left on the row before
+        # the courier changes (F-COU-7) — otherwise the new courier's dispatch
+        # reads the foreign status as live and short-circuits.
+        _flip_provider(delivery, carrier)
 
     # The zone decides for the rest, and nothing else does. A `lalamove` zone is
     # never offered to noon Send — their fleet probably cannot reach it.
@@ -475,7 +507,9 @@ async def _dispatch_once(
     _note_auto_fallback(
         order, delivery, zone_provider=NOON_SEND, carrier=LALAMOVE, reason=reason
     )
-    delivery.provider = LALAMOVE
+    # Clears any dead noon Send booking off the row before the courier changes
+    # (F-COU-7), so Lalamove's dispatch does not read a foreign status as live.
+    _flip_provider(delivery, LALAMOVE)
     return await lalamove_service.dispatch_order(db, order)
 
 

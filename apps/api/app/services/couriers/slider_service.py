@@ -663,8 +663,11 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         created = await provider.create_delivery(
             # Ours, and the whole of their idempotency: there is no idempotency
             # header in their reference, so a retry after a timeout is the same
-            # delivery to them only because this field repeats.
-            order_id=reference,
+            # delivery to them only because this field repeats. Suffixed with the
+            # booking generation so a *deliberate* rebook after a cancel is a
+            # different key — without it Slider would hand back the cancelled
+            # delivery, since the reference itself is stable across a re-dispatch.
+            order_id=courier_reference.for_booking(reference, delivery),
             # What the rider is shown.
             display_order_id=order.order_number,
             vehicle=vehicle,

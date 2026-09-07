@@ -36,7 +36,7 @@ from app.models.order_delivery import OrderDelivery
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["assign", "generate"]
+__all__ = ["assign", "for_booking", "generate"]
 
 #: 1000000–9999999. Seven digits every time — no leading zero to be lost by a
 #: spreadsheet, a phone keypad or a courier's own integer column.
@@ -93,6 +93,29 @@ async def assign(db: AsyncSession, delivery: OrderDelivery) -> str | None:
         delivery.id,
     )
     return None
+
+
+def for_booking(reference: str, delivery: OrderDelivery) -> str:
+    """
+    The reference as an idempotency token for *this* booking generation.
+
+    The seven-digit reference identifies the *order* and is deliberately stable
+    across a re-dispatch — a rider quoting it after a second attempt still
+    reaches the right cake. But a courier whose only idempotency *is* this
+    reference (Slider: no idempotency header, the reference field is the whole
+    of it) would then read a deliberate rebook after a cancel as a retry of the
+    booking that failed, and hand back the cancelled delivery instead of making
+    a new one.
+
+    Suffixing with the booking generation — how many bookings this delivery has
+    already outlived (`previous_courier_order_ids`) — distinguishes them: bare
+    for the first, so every key already in flight keeps meaning what it meant,
+    and `{reference}-{n}` from there on. Two retries of one failed booking see
+    the same count and so share a key, which is the property a retry needs; only
+    a booking that was actually superseded grows the count.
+    """
+    superseded = len(delivery.previous_courier_order_ids or [])
+    return reference if not superseded else f"{reference}-{superseded}"
 
 
 async def _taken(db: AsyncSession, candidate: str) -> bool:

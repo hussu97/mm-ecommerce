@@ -667,6 +667,34 @@ async def test_a_drop_inside_sharjah_is_quoted_and_booked_on_the_bike(booked):
     assert db.delivery.cost_total == Decimal("18.50")
 
 
+@pytest.mark.asyncio
+async def test_a_rebook_after_a_cancel_carries_a_distinct_idempotency(booked):
+    """
+    F-COU-6. Slider's only idempotency is the `order_id` we send, and the
+    reference in it is deliberately stable across a re-dispatch — a rider quoting
+    it after a second attempt still reaches the right cake. So a deliberate
+    rebook after a cancel would look identical to a retry of the failed booking,
+    and Slider would hand back the cancelled delivery instead of making a new
+    one. The booking generation — how many bookings this delivery has already
+    outlived — distinguishes them: bare for the first, suffixed from there on.
+    """
+    order = _order()
+
+    # A first booking on a clean row sends the bare reference.
+    first = _row()
+    await slider_service.dispatch_order(_Db(first), order)
+    assert booked["order_id"] == "4820193"
+
+    # The same delivery, one booking already superseded (a cancel then a rebook,
+    # the shape `fulfilment_reassignment._release` leaves behind): the id is
+    # nulled and the old one archived. The rebook must send a different key.
+    rebooked = _row()
+    rebooked.courier_order_id = None
+    rebooked.previous_courier_order_ids = ["4820193"]
+    await slider_service.dispatch_order(_Db(rebooked), order)
+    assert booked["order_id"] == "4820193-1"
+
+
 @pytest.mark.parametrize(
     "provider, vehicle",
     [
