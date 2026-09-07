@@ -289,6 +289,17 @@ class Order(Base, UUIDMixin, TimestampMixin):
     total_excl_vat: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")
     )
+    #: Whether this order is currently holding stock it drew down from the shelf, so
+    #: a cancellation returns exactly what was taken and no more. Set true by the
+    #: draw paths (website checkout, and the aggregator promote / GrubOps ingest
+    #: `_decrement_stock`); `order_lifecycle._move_stock` returns early on a restore
+    #: when this is false, so an aggregator order promoted OUTSIDE the stock window
+    #: (a weeks-old backfill filed for linkage only, which never drew) cannot restock
+    #: inventory it never took. Only website and aggregator orders ever draw; a
+    #: counter sale depletes recipe ingredients at close, not this.
+    stock_drawn: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Whoever else's number this order is also known by — an aggregator's or a

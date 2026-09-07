@@ -804,6 +804,12 @@ async def _persist_order(
         vat_amount=totals.vat_amount,
         total_excl_vat=totals.total_excl_vat,
         status=OrderStatusEnum.CREATED,
+        # Checkout claims stock for every stock-tracked line as this order is
+        # written (`_decrement_stock`), so it is holding drawn stock from creation:
+        # a cancellation returns it through `order_lifecycle._move_stock`, which is
+        # gated on this flag (F-AGG-4). Harmless for an all-non-stock basket — the
+        # restore is `is_stock_product`-filtered.
+        stock_drawn=True,
         # Which channel rang this up, stamped at creation and not later.
         # `attach_online_order` used to be the only thing that set it, which
         # meant an order in a zone with no branch — or a pickup outside every

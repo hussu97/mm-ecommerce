@@ -49,7 +49,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, and_, cast, func, or_, select
+from sqlalchemy import Integer, and_, cast, delete, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,7 +66,12 @@ from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
-from app.services.aggregators import aggregator_fulfilment, reconcile
+from app.services.aggregators import (
+    _isolation,
+    aggregator_fulfilment,
+    policy,
+    reconcile,
+)
 from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
 from app.services.orders import order_fees, order_lifecycle
@@ -277,7 +282,15 @@ def _money_fields(agg: AggregatorOrder) -> dict:
     # book a real sale VAT-free, leaving the shop owing 5% it never recorded.
     excl, vat = pos_pricing.split_inclusive_tax(total, VAT_RATE)
     return {
-        "subtotal": excl,
+        # `subtotal` is VAT-INCLUSIVE, matching every other order writer (the
+        # counter, the website and the GrubOps ingest all put the gross line sum
+        # here) — so a report summing `subtotal` never mixes an inclusive base with
+        # an exclusive one. Before F-AGG-6 promotion alone wrote the ex-VAT figure
+        # here, and `sum(subtotal)` over a channel silently understated it by 5%.
+        # For a genuinely discounted order (Noon) `_reconcile_total_to_lines` later
+        # raises `subtotal` to the gross line sum, keeping `subtotal − discount =
+        # total`; for every other channel `subtotal == total`.
+        "subtotal": total,
         "discount_amount": Decimal("0"),
         "delivery_fee": Decimal("0"),
         "aggregator_delivery_fee": money(agg.delivery_fee or Decimal("0")),
@@ -466,20 +479,58 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
     return unmapped
 
 
-async def _reconcile_total_to_lines(db: AsyncSession, order: Order) -> None:
-    """Make the order total what was actually sold — the sum of its priced line
-    items — rather than the header figure the scrape reported.
+async def _all_line_amounts_known(db: AsyncSession, agg: AggregatorOrder) -> bool:
+    """True when EVERY line-grain aggregator item carries a known amount.
 
-    A marketplace's scraped ``gross_sales`` is not always the customer price:
-    Careem's is net of its own menu markup, so trusting it undercounts the sale
-    (168889697 read 63 for a 90 menu order). The line items carry the real menu
-    price, so they are the truth. Fall back to the scrape total only when there are
-    no priced lines to trust — a Talabat statement gives the order total but zero
-    line prices, and there ``line_sum`` would wrongly be 0.
-
-    This runs after ``_money_fields`` on both the build and the refresh, so a
-    re-promote can no longer quietly revert the total to the scraped gross.
+    A single unpriced line (``amount_is_known`` False — a Talabat box the statement
+    splits without per-line money, a Careem line the scrape dropped the price on)
+    makes the summed ``order_items.total_price`` a PARTIAL undercount, because
+    ``_add_lines`` writes ``total_price = 0`` for a null-priced line. Reconciling the
+    header to that partial sum silently lowers a good total, so the line sum may only
+    be trusted when nothing is unknown.
     """
+    unknown = await db.scalar(
+        select(func.count())
+        .select_from(AggregatorOrderItem)
+        .where(
+            AggregatorOrderItem.aggregator_order_id == agg.id,
+            AggregatorOrderItem.grain == GRAIN_LINE,
+            AggregatorOrderItem.amount_is_known.is_(False),
+        )
+    )
+    return not unknown
+
+
+async def _reconcile_total_to_lines(
+    db: AsyncSession, order: Order, agg: AggregatorOrder
+) -> None:
+    """Reconcile a promoted order's money against the sum of its priced line items,
+    per the channel's gross basis — the rule migration 198 encodes, made durable so
+    a re-promote can never revert it.
+
+    The scraped ``gross_sales`` promotion books as ``order.total`` means a different
+    thing per channel, so this is NOT a channel-agnostic rewrite:
+
+    * **Careem &c** (``gross_basis`` net-of-markup / plain customer total): the line
+      items carry the true menu price the customer paid, and the scraped gross can
+      undercut it (Careem's is net of its own markup — 168889697 read 63 for a 90
+      menu order). RAISE the header to the line sum.
+    * **Noon** (``gross_is_discounted_net``): the customer paid the lower net that
+      ``gross_sales`` already gave us; the line sum is the pre-discount gross. KEEP
+      the net total, set ``subtotal`` to the gross, and record ``gross − net`` as the
+      discount — so ``subtotal − discount = total`` holds and a re-promote cannot
+      re-inflate a genuinely discounted order.
+
+    Two guards make this safe on partial data:
+
+    * it does nothing unless EVERY line amount is known (``_all_line_amounts_known``)
+      — otherwise the line sum is a partial undercount (F-AGG-1);
+    * it NEVER LOWERS the header total — it acts only when ``line_sum > total`` — so a
+      Talabat order whose lines carry no price (line sum 0), or any order already at
+      or above its line sum, is left exactly as the scrape reported it.
+    """
+    if not await _all_line_amounts_known(db, agg):
+        return
     line_sum = money(
         await db.scalar(
             select(func.coalesce(func.sum(OrderItem.total_price), 0)).where(
@@ -488,14 +539,56 @@ async def _reconcile_total_to_lines(db: AsyncSession, order: Order) -> None:
         )
         or Decimal("0")
     )
-    if line_sum <= 0 or line_sum == order.total:
+    # Only ever raise: never lower a header total to a (possibly partial) line sum.
+    if line_sum <= 0 or line_sum <= order.total:
         return
+
+    if policy.policy_for(agg.channel).gross_is_discounted_net:
+        # Noon: keep the discounted net the customer paid; the gap is the discount.
+        order.subtotal = line_sum
+        order.discount_amount = line_sum - order.total
+        return
+
+    # Careem &c: the line sum is the menu price the customer paid — raise to it.
     excl, vat = pos_pricing.split_inclusive_tax(line_sum, VAT_RATE)
     order.subtotal = line_sum
     order.total = line_sum
     order.total_excl_vat = excl
     order.vat_amount = vat
     order.vat_rate = VAT_RATE if vat > 0 else Decimal("0")
+
+
+async def _stamp_vat_row(db: AsyncSession, order: Order) -> None:
+    """(Re)state the order's single output-VAT row from its FINAL money.
+
+    The VAT report sums ``order_taxes.amount``; the console and the P&L read
+    ``orders.vat_amount``. They must agree. The row used to be written once, inline
+    in the build, from the SCRAPED gross's VAT — computed before
+    ``_reconcile_total_to_lines`` may have raised the header (Careem) — and the
+    refresh path never restated it at all, so a reconciled or re-promoted order left
+    ``order_taxes`` disagreeing with ``orders.vat_amount``. Writing it HERE, from the
+    order's own reconciled ``vat_amount`` / ``total_excl_vat`` / ``vat_rate``, and
+    calling it from BOTH the build and the refresh, keeps the two in lockstep.
+
+    Idempotent: it clears the promotion-owned VAT row (``tax_id`` null, as both this
+    path and the GrubOps ingest write it) before rewriting, so a re-promote never
+    stacks a second row.
+    """
+    await db.execute(
+        delete(OrderTax).where(OrderTax.order_id == order.id, OrderTax.tax_id.is_(None))
+    )
+    if order.vat_amount and order.vat_amount > 0:
+        db.add(
+            OrderTax(
+                order_id=order.id,
+                tax_id=None,
+                name="VAT",
+                rate=order.vat_rate,
+                taxable_amount=order.total_excl_vat,
+                amount=order.vat_amount,
+            )
+        )
+    await db.flush()
 
 
 async def _decrement_stock(db: AsyncSession, order_id) -> None:
@@ -639,7 +732,7 @@ async def _build_order(
             agg.external_order_id,
             unmapped,
         )
-    await _reconcile_total_to_lines(db, order)
+    await _reconcile_total_to_lines(db, order, agg)
     # Load the collection now: driving status to cancelled walks order.items in
     # `_move_stock`, and an async lazy-load there would be a MissingGreenlet.
     await db.refresh(order, ["items"])
@@ -652,22 +745,15 @@ async def _build_order(
     # the lifecycle (net zero for an order that arrives already cancelled).
     if draw_stock:
         await _decrement_stock(db, order.id)
-    # The VAT row is written whenever the DERIVED output VAT is non-zero (i.e. any
-    # sale with a total), not only when the provider itemised tax — same reasoning
-    # as `_money_fields`: the shop owes the 5% regardless of what the payload said.
-    fields = _money_fields(agg)
-    if fields["vat_amount"] > 0:
-        db.add(
-            OrderTax(
-                order_id=order.id,
-                tax_id=None,
-                name="VAT",
-                rate=fields["vat_rate"],
-                taxable_amount=fields["total_excl_vat"],
-                amount=fields["vat_amount"],
-            )
-        )
-        await db.flush()
+        # Record that this order is holding drawn-down stock, so a later
+        # cancellation returns it and — the F-AGG-4 fix — an order filed WITHOUT a
+        # draw (a weeks-old backfill, `draw_stock` False) never restocks inventory
+        # it did not take. The `is_stock_product` guard on both stock directions
+        # makes this harmless for an order with no stock-tracked lines.
+        order.stock_drawn = True
+    # The output-VAT row is (re)stated from the order's FINAL reconciled money — see
+    # `_stamp_vat_row` — so `order_taxes` always agrees with `orders.vat_amount`.
+    await _stamp_vat_row(db, order)
     await order_fees.stamp(db, order, **_actual_fee_overrides(agg))
     await _drive_status(db, order, agg)
     return order
@@ -727,8 +813,9 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     for field, value in _money_fields(agg).items():
         setattr(order, field, value)
     # The lines are the truth for the total (see helper); reapply after the scrape's
-    # header money so a re-promote cannot revert a Careem order to its low gross.
-    await _reconcile_total_to_lines(db, order)
+    # header money so a re-promote cannot revert a Careem order to its low gross or
+    # re-inflate a discounted Noon order.
+    await _reconcile_total_to_lines(db, order, agg)
     # Backfill the customer + rider the scraper captured onto an order first filed
     # without it — one promoted before its channel exposed the customer, or one this
     # pass converged onto by `(source, external_reference)`. Fill-only (see helper);
@@ -747,6 +834,10 @@ async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -
     if agg.placed_at is not None and order.created_at != agg.placed_at:
         order.created_at = agg.placed_at
     await db.flush()
+    # Restate the VAT row from the refreshed, reconciled money too — the build path
+    # is not the only one that moves the total (a late statement, a Careem raise, a
+    # Noon discount can all land on a re-promote), and the VAT report must follow.
+    await _stamp_vat_row(db, order)
     await order_fees.stamp(db, order, **_actual_fee_overrides(agg))
     await _drive_status(db, order, agg)
 
@@ -886,6 +977,28 @@ async def promote_order(
             await db.flush()
             await _record_fulfilment(db, grubops_order)
             return grubops_order
+        # No MM order found — but does GrubOps have this order at all? A map row
+        # whose `_create_order` FAILED carries `mm_order_id` NULL, so `_find_mm_order`
+        # (which requires it non-null) misses it and the order looks un-ingested. It
+        # is not: the map row means GrubOps owns the order, and filing a standalone
+        # now duplicates it the moment the create starts succeeding. Defer to GrubOps
+        # and surface the push error (a missing branch map, say) for a human to fix —
+        # rather than heal a duplicate later (F-AGG-10).
+        gmap = await reconcile._find_grubops_map(
+            db, agg.channel, agg.external_order_id, agg.display_ref
+        )
+        if gmap is not None:
+            logger.warning(
+                "promote %s %s: GrubOps owns this order (map row %s) but has no MM "
+                "order yet (last_push_error=%r) — deferring rather than filing a "
+                "duplicate",
+                agg.channel,
+                agg.external_order_id,
+                gmap.grubops_order_id,
+                gmap.last_push_error,
+            )
+            return None
+
         # No GrubOps order found on a GrubOps branch. GrubOps is the source of
         # truth here, so filing a standalone now is how the same order gets filed
         # twice — promotion racing ahead of the GrubOps ingest, or ahead of the
@@ -990,23 +1103,35 @@ async def promote_channel(db: AsyncSession, channel: str) -> int:
     stock_cutoff = (
         today - timedelta(days=max(settings.AGGREGATOR_LOOKBACK_DAYS, 0))
     ).isoformat()
-    orders = await db.scalars(
-        select(AggregatorOrder).where(
-            AggregatorOrder.channel == channel,
-            AggregatorOrder.branch_id.is_not(None),
-            AggregatorOrder.business_date >= cutoff,
-            or_(
-                AggregatorOrder.promoted_at.is_(None),
-                AggregatorOrder.updated_at > AggregatorOrder.promoted_at,
-            ),
+    orders = (
+        await db.scalars(
+            select(AggregatorOrder).where(
+                AggregatorOrder.channel == channel,
+                AggregatorOrder.branch_id.is_not(None),
+                AggregatorOrder.business_date >= cutoff,
+                or_(
+                    AggregatorOrder.promoted_at.is_(None),
+                    AggregatorOrder.updated_at > AggregatorOrder.promoted_at,
+                ),
+            )
         )
-    )
+    ).all()
     count = 0
     for agg in orders:
+        # A SAVEPOINT per order, so one order's failure rolls back just its own
+        # writes and leaves the transaction usable for the rest — a bare try/except
+        # cannot, because asyncpg aborts the WHOLE transaction on the first error and
+        # every later order then fails "current transaction is aborted" (F-AGG-5).
+        # A systemic error (dead connection, schema mismatch) is re-raised so the
+        # run fails honestly rather than silently promoting nothing.
         try:
-            draw_stock = (agg.business_date or "") >= stock_cutoff
-            if await promote_order(db, agg, draw_stock=draw_stock) is not None:
+            async with db.begin_nested():
+                draw_stock = (agg.business_date or "") >= stock_cutoff
+                promoted = await promote_order(db, agg, draw_stock=draw_stock)
+            if promoted is not None:
                 count += 1
+        except _isolation._SYSTEMIC_DB_ERRORS:
+            raise
         except Exception:  # noqa: BLE001 — one order must not stop the pass
             logger.exception(
                 "promote %s order %s failed", channel, agg.external_order_id

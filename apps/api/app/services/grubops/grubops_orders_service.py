@@ -979,6 +979,9 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     await order_fees.stamp(db, order)
 
     await _decrement_stock(db, order.id)
+    # This order is now holding the stock it drew, so a later cancellation returns
+    # exactly that through `order_lifecycle._move_stock` (gated on the flag).
+    order.stock_drawn = True
     if unmapped:
         logger.warning(
             "GrubOps order %s ingested with %d unmapped line(s)",

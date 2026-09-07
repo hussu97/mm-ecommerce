@@ -36,12 +36,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import String, and_, case, cast, func, not_, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import (
-    InterfaceError,
-    InternalError,
-    OperationalError,
-    ProgrammingError,
-)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, alerting, heartbeat
@@ -71,7 +65,13 @@ from app.models.aggregator import (
     AggregatorSyncRun,
 )
 from app.models.base import utcnow
-from app.services.aggregators import crypto, policy, reconcile, session_store
+from app.services.aggregators import (
+    _isolation,
+    crypto,
+    policy,
+    reconcile,
+    session_store,
+)
 from app.services.aggregators.modifiers import modifiers_to_json
 from app.services.aggregators.normalized import (
     FinanceResult,
@@ -900,17 +900,11 @@ def _sweep_window(
     return since, until
 
 
-# DB errors that mean the connection/schema is wrong for every row, so a per-order
-# savepoint must NOT swallow them (that would silently write 0 and mark the run
-# completed). Everything else — IntegrityError, DataError, a parse ValueError —
-# is per-order and isolated. Kept narrow on purpose: only "the whole write path is
-# broken" classes belong here.
-_SYSTEMIC_DB_ERRORS = (
-    OperationalError,  # connection lost, pool timeout, server shutting down
-    InterfaceError,  # connection already closed / protocol error
-    InternalError,  # "current transaction is aborted" and peers
-    ProgrammingError,  # undefined column/table, bad SQL — a schema mismatch
-)
+# The systemic-vs-per-order DB error split now lives in `_isolation`, shared with
+# the promote and reconcile sweeps so all three agree on what a savepoint may
+# swallow. Re-exported under the local name so this module's `_fetch_and_persist`
+# reads unchanged.
+_SYSTEMIC_DB_ERRORS = _isolation._SYSTEMIC_DB_ERRORS
 
 
 async def _fetch_and_persist(

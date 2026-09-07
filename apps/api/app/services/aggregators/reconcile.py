@@ -44,6 +44,7 @@ from app.models.base import utcnow
 from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem
+from app.services.aggregators import _isolation, policy
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,46 @@ async def _find_mm_order(
     )
 
 
+async def _find_grubops_map(
+    db: AsyncSession,
+    channel: str,
+    external_order_id: str,
+    display_ref: str | None = None,
+):
+    """A `grubops_order_map` row for this aggregator order, if GrubOps has one AT
+    ALL — whether or not its `_create_order` has produced an MM order yet.
+
+    `_find_mm_order` requires ``mm_order_id IS NOT NULL``, so a GrubOps order whose
+    create FAILED (a missing branch map for the location, say — it sets
+    ``last_push_error`` and leaves ``mm_order_id`` null) looked to promotion like
+    "GrubOps never had it": past the adopt grace, promotion filed a standalone that
+    GrubOps then produced a SECOND time once its create started succeeding.
+    Existence of a map row means GrubOps owns the order, so promotion defers to it
+    and surfaces the push error instead of duplicating it (F-AGG-10).
+
+    Matched on channel (every GrubTech spelling) and either id the two sides carry —
+    the long ``external_order_id`` or the short ``display_ref`` — with the same
+    zero-strip as `_find_mm_order`. Deliberately UNSCOPED by branch/day: a
+    failed-create row has no MM order to scope against, and the map's own
+    ``(source_channel, external_id)`` is specific enough to answer "does GrubOps
+    hold this order".
+    """
+    labels = grubops_channel_names(channel)
+    refs = [r for r in (external_order_id, display_ref) if r]
+    stripped = [s for r in refs if (s := leading_zero_stripped(r)) is not None]
+    id_match = GrubOpsOrderMap.external_id.in_(refs)
+    if stripped:
+        id_match = or_(
+            id_match, func.ltrim(GrubOpsOrderMap.external_id, "0").in_(stripped)
+        )
+    return await db.scalar(
+        select(GrubOpsOrderMap).where(
+            GrubOpsOrderMap.source_channel.in_(labels),
+            id_match,
+        )
+    )
+
+
 async def _agg_items(db: AsyncSession, agg_order_id) -> list[AggregatorOrderItem]:
     rows = await db.scalars(
         select(AggregatorOrderItem).where(
@@ -316,7 +357,21 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
     # A matched order whose totals disagree beyond tolerance is a real
     # discrepancy — flag it, so it both highlights in the dashboard and survives
     # the "flagged only" filter (which keys off `flags`), like commission/refund.
-    if amount_variance is not None and abs(amount_variance) > _TOL:
+    #
+    # …UNLESS the channel's gross is structurally below the MM total by design. On a
+    # GrubOps-adopted Careem order the MM `total` is the authoritative push menu
+    # price (migration 197) while the scraped `gross_sales` is net of Careem's own
+    # menu markup, so the two ALWAYS differ — flagging it painted a permanent false
+    # discrepancy on every Careem order (F-AGG-11). REPORT the gap on
+    # `amount_variance` (still stored below), but do not raise the flag.
+    structural_gap = (
+        policy.policy_for(agg.channel).gross_basis == policy.GROSS_BASIS_NET_OF_MARKUP
+    )
+    if (
+        amount_variance is not None
+        and abs(amount_variance) > _TOL
+        and not structural_gap
+    ):
         flags.append("amount_variance")
     rate_base = total_agg or total_mm
     rate_effective = None
@@ -438,11 +493,20 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
             ),
         )
     )
+    orders = list(orders)
     count = 0
     for agg in orders:
+        # A SAVEPOINT per order isolates a poison row: asyncpg aborts the WHOLE
+        # transaction on the first failure, so a bare try/except would let every
+        # later order fail "current transaction is aborted" and the whole pass roll
+        # back (F-AGG-5). A systemic error (dead connection, schema mismatch) is
+        # re-raised so the run fails honestly rather than reconciling nothing.
         try:
-            await reconcile_order(db, agg, run_id=run_id)
+            async with db.begin_nested():
+                await reconcile_order(db, agg, run_id=run_id)
             count += 1
+        except _isolation._SYSTEMIC_DB_ERRORS:
+            raise
         except Exception:  # noqa: BLE001 — one order must not stop the pass
             logger.exception(
                 "reconcile %s order %s failed", channel, agg.external_order_id

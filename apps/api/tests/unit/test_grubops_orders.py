@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -404,6 +404,9 @@ def _aggregator_order():
         items=[],
         refunded_amount=0,
         order_number="AGG-1",
+        # This order drew its stock at ingest, so a cancellation's `_move_stock(+1)`
+        # is allowed to return it (gated on `stock_drawn` since F-AGG-4).
+        stock_drawn=True,
     )
 
 
@@ -898,3 +901,75 @@ async def test_adopting_a_promotion_gapfill_applies_the_push_money():
     assert adopted.total == Decimal("70.00")
     assert adopted.discount_amount == Decimal("20.00")
     assert adopted.subtotal == Decimal("90.00")
+
+
+@pytest.mark.asyncio
+async def test_adopting_a_promotion_gapfill_rebuilds_the_lines_from_the_push():
+    """F-AGG-19: the adopt must REBUILD the order's lines from the authoritative
+    GrubTech push. The gap-fill's lines are the marketplace scrape's — for Talabat
+    that means no per-line price and a box split into mangled fragments — so a stale
+    line is deleted and the push's real named/priced line replaces it."""
+    import uuid
+
+    from app.models.order import OrderItem
+    from app.models.pos_order import OrderTax
+
+    stale_line = SimpleNamespace(id=uuid.uuid4(), product_name="…Box of 3 [Tiramisu")
+    adopted = SimpleNamespace(
+        id=uuid.uuid4(),
+        order_number="AGG-2",
+        total=Decimal("40.00"),
+        subtotal=Decimal("40.00"),
+        discount_amount=Decimal("0.00"),
+        total_excl_vat=Decimal("40.00"),
+        vat_amount=Decimal("0.00"),
+        vat_rate=Decimal("0.00"),
+        delivery_fee=Decimal("0.00"),
+        aggregator_delivery_fee=Decimal("0.00"),
+        low_order_fee=Decimal("0.00"),
+        items=[stale_line],
+    )
+    info = {
+        "orderHeader": {"totalPrice": 70, "externalId": "15816"},
+        "orderLines": [
+            {
+                "type": "ITEM",
+                "name": "Box of 3 Brookies",
+                "recipeId": "R1",
+                "unitPrice": 70,
+                "quantity": 1,
+            }
+        ],
+        "customer": {},
+    }
+    order_map = SimpleNamespace(
+        location_id="L1",
+        external_id="15816",
+        grubops_order_id="G2",
+        source_channel="Talabat",
+        last_push_error=None,
+    )
+    db = AsyncMock()
+    db.add = MagicMock()  # _write_order_lines adds synchronously
+    db.delete = AsyncMock()
+    db.scalar = AsyncMock(return_value=adopted)
+
+    with (
+        patch.object(g, "_resolve_branch", AsyncMock(return_value=uuid.uuid4())),
+        patch.object(g, "_reverse_maps", AsyncMock(return_value=({}, {}))),
+    ):
+        result = await g._create_order(db, info, order_map)
+
+    assert result is adopted
+    # The stale scrape line was deleted…
+    db.delete.assert_awaited_once_with(stale_line)
+    # …and the push's authoritative line was written in its place.
+    added_items = [
+        c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], OrderItem)
+    ]
+    assert [it.product_name for it in added_items] == ["Box of 3 Brookies"]
+    # The VAT row is rebuilt too (derived from the 70 inclusive push total).
+    added_taxes = [
+        c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], OrderTax)
+    ]
+    assert len(added_taxes) == 1

@@ -389,6 +389,13 @@ async def _move_stock(db: AsyncSession, order: Order, direction: int) -> None:
         OrderSourceEnum.AGGREGATOR.value,
     ):
         return
+    # Never hand back stock this order never took. An aggregator order promoted
+    # OUTSIDE the sales window is filed for linkage only and draws no stock
+    # (`promote.promote_order(draw_stock=False)`), so `stock_drawn` stays false; a
+    # later cancellation restoring it would invent inventory (F-AGG-4). The draw
+    # paths set `stock_drawn` true, so a restore is gated on it.
+    if direction > 0 and not order.stock_drawn:
+        return
     for item in order.items:
         if not item.product_id:
             continue
@@ -398,6 +405,10 @@ async def _move_stock(db: AsyncSession, order: Order, direction: int) -> None:
             .values(stock_quantity=Product.stock_quantity + direction * item.quantity)
             .execution_options(synchronize_session=False)
         )
+    # The order now holds drawn stock iff we just took it (-1); a restore (+1) hands
+    # it back. Keeping the flag in step keeps cancel→uncancel symmetric and stops a
+    # second cancellation from restoring the same stock twice.
+    order.stock_drawn = direction < 0
 
 
 def _mm_owns_fulfilment(order: Order) -> bool:

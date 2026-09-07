@@ -222,6 +222,7 @@ async def test_a_website_packed_order_may_be_cancelled_via_extra_from(
         source=OrderSourceEnum.ONLINE.value,
         pos_status=PosOrderStatusEnum.ACTIVE.value,
         items=[OrderItem(product_id=uuid.uuid4(), quantity=2)],
+        stock_drawn=True,  # checkout claimed it at creation, so a cancel returns it
     )
     moved = await order_lifecycle.transition(
         db,
@@ -318,6 +319,7 @@ async def test_cancelling_a_website_order_releases_its_stock(quiet_consequences)
     order = _order(
         OrderStatusEnum.CONFIRMED,
         items=[OrderItem(product_id=uuid.uuid4(), quantity=2)],
+        stock_drawn=True,  # checkout claimed it at creation
     )
     await order_lifecycle.transition(db, order, OrderStatusEnum.CANCELLED)
     assert len(db.executed) == 1

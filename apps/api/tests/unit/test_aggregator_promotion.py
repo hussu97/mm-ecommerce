@@ -119,6 +119,7 @@ async def test_refresh_order_backfills_missing_customer(monkeypatch):
     monkeypatch.setattr(promote.order_fees, "stamp", _noop)
     monkeypatch.setattr(promote, "_drive_status", _noop)
     monkeypatch.setattr(promote, "_reconcile_total_to_lines", _noop)
+    monkeypatch.setattr(promote, "_stamp_vat_row", _noop)
 
     agg = _agg(customer_name="Aisha", customer_phone="+971500000000")
     order = SimpleNamespace(
@@ -143,6 +144,7 @@ async def test_refresh_order_never_overwrites_an_existing_customer(monkeypatch):
     monkeypatch.setattr(promote.order_fees, "stamp", _noop)
     monkeypatch.setattr(promote, "_drive_status", _noop)
     monkeypatch.setattr(promote, "_reconcile_total_to_lines", _noop)
+    monkeypatch.setattr(promote, "_stamp_vat_row", _noop)
 
     agg = _agg(customer_name="Scraped Name")
     order = SimpleNamespace(
@@ -209,7 +211,9 @@ def test_money_fields_derives_inclusive_vat_from_total():
     )
     assert fields["total"] == Decimal("42.00")
     assert fields["vat_amount"] == Decimal("2.00")
-    assert fields["subtotal"] == Decimal("40.00")
+    # `subtotal` is VAT-INCLUSIVE (== total), like every other order writer — the
+    # F-AGG-6 fix. It was the ex-VAT 40.00 before, which made `sum(subtotal)` mix bases.
+    assert fields["subtotal"] == Decimal("42.00")
     assert fields["total_excl_vat"] == Decimal("40.00")
     assert fields["vat_rate"] == Decimal("0.05")
     # MM books no delivery fee or discount for a promoted order.
@@ -606,6 +610,43 @@ async def test_grubops_branch_defers_within_grace(monkeypatch):
     assert out is None  # deferred
     assert build_calls["n"] == 0  # nothing filed — no duplicate
     assert agg.promoted_at is None  # cursor stays open so it retries
+
+
+async def test_grubops_branch_defers_when_a_map_row_exists_even_past_grace(monkeypatch):
+    """F-AGG-10: a GrubOps order whose `_create_order` FAILED has a map row with a
+    null `mm_order_id`, so `_find_mm_order` misses it. Existence of the map row means
+    GrubOps owns the order — promotion must DEFER (surface the push error) rather
+    than file a standalone that duplicates it once the create succeeds, even past the
+    adopt grace."""
+    build_calls = {"n": 0}
+
+    async def fake_has_grubops(db, branch_id):
+        return True
+
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
+        return None  # no MM order yet (the create failed)
+
+    async def fake_find_map(db, channel, ext, display_ref=None):
+        return SimpleNamespace(
+            grubops_order_id="G9", last_push_error="no branch map for location"
+        )
+
+    async def fake_build(db, agg, label, *, draw_stock=True):
+        build_calls["n"] += 1
+        return SimpleNamespace(id=uuid.uuid4())
+
+    monkeypatch.setattr(promote.reconcile, "_branch_has_grubops", fake_has_grubops)
+    monkeypatch.setattr(promote.reconcile, "_find_mm_order", fake_find_mm)
+    monkeypatch.setattr(promote.reconcile, "_find_grubops_map", fake_find_map)
+    monkeypatch.setattr(promote, "_build_order", fake_build)
+
+    # Placed two days ago — well past the adopt grace, so the ONLY thing stopping a
+    # standalone is the map-row-existence check.
+    agg = _agg(placed_at=datetime.now(timezone.utc) - timedelta(days=2))
+    out = await promote.promote_order(_FakeDB(), agg)
+    assert out is None  # deferred to GrubOps
+    assert build_calls["n"] == 0  # no duplicate standalone filed
+    assert agg.promoted_at is None  # cursor stays open
 
 
 async def test_grubops_branch_gap_is_filled_past_grace(monkeypatch):
@@ -1247,26 +1288,39 @@ def test_every_channel_has_its_own_map_object():
     assert len({id(m) for m in maps.values()}) == len(maps)
 
 
+class _OrderedScalarDB:
+    """A fake DB that answers `_reconcile_total_to_lines`'s two scalar queries in
+    order: first the count of unknown-amount lines, then the priced line sum."""
+
+    def __init__(self, *, unknown_count, line_sum):
+        self._answers = [unknown_count, line_sum]
+        self.calls = 0
+
+    async def scalar(self, _stmt):
+        answer = self._answers[self.calls] if self.calls < len(self._answers) else None
+        self.calls += 1
+        return answer
+
+
 async def test_reconcile_total_to_lines_uses_the_line_sum_not_the_scrape_gross():
-    """A promotion-owned order's total is the sum of its priced lines (the menu),
-    not the scrape's low gross — so a re-promote cannot revert Careem to its
-    net-of-markup figure."""
+    """A Careem order's total is the sum of its priced lines (the menu), not the
+    scrape's low net-of-markup gross — so a re-promote cannot revert it. All line
+    amounts are known here, so the line sum is trusted."""
     order = SimpleNamespace(
         total=Decimal("63.00"),
         subtotal=Decimal("63.00"),
         total_excl_vat=Decimal("60.00"),
         vat_amount=Decimal("3.00"),
         vat_rate=Decimal("0.05"),
+        discount_amount=Decimal("0"),
         id=uuid.uuid4(),
     )
+    agg = _agg(channel="careem")
 
-    class _DB:
-        async def scalar(self, _stmt):
-            return Decimal("90.00")  # the priced line items sum to the menu price
-
-    await promote._reconcile_total_to_lines(_DB(), order)
+    db = _OrderedScalarDB(unknown_count=0, line_sum=Decimal("90.00"))
+    await promote._reconcile_total_to_lines(db, order, agg)
     assert order.total == Decimal("90.00")
-    assert order.subtotal == Decimal("90.00")
+    assert order.subtotal == Decimal("90.00")  # VAT-inclusive == total for Careem
 
 
 async def test_reconcile_total_keeps_the_scrape_total_when_no_lines_are_priced():
@@ -1278,12 +1332,77 @@ async def test_reconcile_total_keeps_the_scrape_total_when_no_lines_are_priced()
         total_excl_vat=Decimal("133.33"),
         vat_amount=Decimal("6.67"),
         vat_rate=Decimal("0.05"),
+        discount_amount=Decimal("0"),
         id=uuid.uuid4(),
     )
+    agg = _agg(channel="talabat")
 
-    class _DB:
-        async def scalar(self, _stmt):
-            return Decimal("0")
-
-    await promote._reconcile_total_to_lines(_DB(), order)
+    db = _OrderedScalarDB(unknown_count=0, line_sum=Decimal("0"))
+    await promote._reconcile_total_to_lines(db, order, agg)
     assert order.total == Decimal("140.00")  # untouched
+
+
+async def test_reconcile_total_skips_when_any_line_amount_is_unknown():
+    """F-AGG-1: a single unpriced line makes the summed line total a PARTIAL
+    undercount, so the header total must be left as the scrape reported it and never
+    lowered to that partial sum. Here two of three lines are priced (line sum 60),
+    below the real 90 total — the total must stand."""
+    order = SimpleNamespace(
+        total=Decimal("90.00"),
+        subtotal=Decimal("90.00"),
+        total_excl_vat=Decimal("85.71"),
+        vat_amount=Decimal("4.29"),
+        vat_rate=Decimal("0.05"),
+        discount_amount=Decimal("0"),
+        id=uuid.uuid4(),
+    )
+    agg = _agg(channel="careem")
+
+    # unknown_count > 0 → the guard returns before the line-sum query is even read.
+    db = _OrderedScalarDB(unknown_count=1, line_sum=Decimal("60.00"))
+    await promote._reconcile_total_to_lines(db, order, agg)
+    assert order.total == Decimal("90.00")  # untouched — partial sum not trusted
+
+
+async def test_reconcile_never_lowers_a_header_total():
+    """Even with all amounts known, a line sum BELOW the header must not lower it —
+    the header is only ever raised."""
+    order = SimpleNamespace(
+        total=Decimal("90.00"),
+        subtotal=Decimal("90.00"),
+        total_excl_vat=Decimal("85.71"),
+        vat_amount=Decimal("4.29"),
+        vat_rate=Decimal("0.05"),
+        discount_amount=Decimal("0"),
+        id=uuid.uuid4(),
+    )
+    agg = _agg(channel="careem")
+
+    db = _OrderedScalarDB(unknown_count=0, line_sum=Decimal("80.00"))
+    await promote._reconcile_total_to_lines(db, order, agg)
+    assert order.total == Decimal("90.00")  # not lowered
+
+
+async def test_reconcile_noon_keeps_net_and_records_the_discount():
+    """F-AGG-2: Noon genuinely discounts. The customer paid the net (70) the scrape
+    gave us; the line items carry the pre-discount gross (90). Keep the net total,
+    set subtotal to the gross, and book gross − net (20) as the discount — never
+    re-inflate the total to the line sum."""
+    order = SimpleNamespace(
+        total=Decimal("70.00"),  # the discounted net gross_sales gave us
+        subtotal=Decimal("70.00"),
+        total_excl_vat=Decimal("66.67"),
+        vat_amount=Decimal("3.33"),
+        vat_rate=Decimal("0.05"),
+        discount_amount=Decimal("0"),
+        id=uuid.uuid4(),
+    )
+    agg = _agg(channel="noon")
+
+    db = _OrderedScalarDB(unknown_count=0, line_sum=Decimal("90.00"))
+    await promote._reconcile_total_to_lines(db, order, agg)
+    assert order.total == Decimal("70.00")  # net kept, NOT raised to 90
+    assert order.subtotal == Decimal("90.00")  # the gross
+    assert order.discount_amount == Decimal("20.00")  # gross − net
+    # subtotal − discount == total (the invariant migration 198 encodes)
+    assert order.subtotal - order.discount_amount == order.total

@@ -49,6 +49,22 @@ TOKEN_JWT_COOKIE = "jwt_cookie"  # talabat: accessToken JWT cookie
 TOKEN_SESSION_STORAGE = "session_storage"  # keeta: cookies + sessionStorage, no replay
 TOKEN_BEARER_AND_COOKIE = "bearer_and_cookie"  # deliveroo: token cookie + Bearer
 
+# ── Gross basis — WHAT a scraped `gross_sales` represents vs the customer total ──
+# The number a marketplace calls the order's gross is not the same fact on every
+# portal, and two of the differences are money-load-bearing:
+#
+# * `GROSS_BASIS_CUSTOMER_TOTAL` — the scraped gross IS what the customer paid, so
+#   it should equal the MM order total; a gap beyond tolerance is a real
+#   discrepancy the maker-checker flags.
+# * `GROSS_BASIS_NET_OF_MARKUP` — Careem's scraped gross is net of its own menu
+#   markup, structurally BELOW the menu price the customer actually paid (and below
+#   the authoritative GrubTech push total the MM order carries after migration 197).
+#   The gap is a pricing-model artefact, not an error: reconciliation REPORTS it on
+#   `amount_variance` but must NOT raise the `amount_variance` flag, or every
+#   Careem order shows a permanent false discrepancy.
+GROSS_BASIS_CUSTOMER_TOTAL = "customer_total"
+GROSS_BASIS_NET_OF_MARKUP = "net_of_markup"
+
 
 @dataclass(frozen=True)
 class ChannelPolicy:
@@ -90,6 +106,22 @@ class ChannelPolicy:
     #: The anti-bot edge in front of the portal, for operator context.
     anti_bot: str = ""
 
+    #: When True the scraped ``gross_sales`` (which promotion books as the MM order
+    #: ``total``) is the DISCOUNTED NET the customer actually paid, while the order's
+    #: line items carry the pre-discount menu (gross) price. Promotion must then keep
+    #: the net total and record ``line_sum − net`` as the discount, so
+    #: ``gross − discount = net`` holds — NOT raise the total to the line sum. Noon's
+    #: loyalty/promo orders are the case (migration 198). A channel-agnostic rewrite
+    #: that always raised the total to the line sum re-inflated these genuinely
+    #: discounted orders on every re-promote.
+    gross_is_discounted_net: bool = False
+
+    #: What a scraped ``gross_sales`` represents relative to the MM order total, so
+    #: the maker-checker can tell a real discrepancy from a pricing-model artefact.
+    #: See ``GROSS_BASIS_*``. Careem is ``net_of_markup``; every other channel's
+    #: gross is the customer total.
+    gross_basis: str = GROSS_BASIS_CUSTOMER_TOTAL
+
     @property
     def server_refreshable(self) -> bool:
         """True when the API can renew the session itself (no headed worker)."""
@@ -106,6 +138,9 @@ POLICIES: dict[str, ChannelPolicy] = {
         refresh_strategy=REFRESH_HEADED_ONLY,
         token_shape=TOKEN_AKAMAI_COOKIE,
         anti_bot="Akamai",
+        # Noon genuinely discounts (loyalty/promo): the scraped gross is the lower
+        # net the customer paid; the line items carry the pre-discount menu price.
+        gross_is_discounted_net=True,
     ),
     CHANNEL_TALABAT: ChannelPolicy(
         cookie_expiry_advisory=True,
@@ -119,6 +154,11 @@ POLICIES: dict[str, ChannelPolicy] = {
         refresh_strategy=REFRESH_HEADED_ONLY,
         token_shape=TOKEN_BEARER_HEADER,
         anti_bot="reCAPTCHA-v3",
+        # Careem's scraped gross is net of its own menu markup — structurally below
+        # the menu price the customer paid. The line items carry the true menu
+        # price, so promotion raises the total to the line sum; and the maker-checker
+        # reports the gross↔total gap without flagging it as a discrepancy.
+        gross_basis=GROSS_BASIS_NET_OF_MARKUP,
     ),
     CHANNEL_DELIVEROO: ChannelPolicy(
         login_method=LOGIN_EMAIL_PASSWORD,

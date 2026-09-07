@@ -100,3 +100,28 @@ def test_next_backoff_with_jitter_stays_within_zero_and_the_cap():
         for _ in range(50):
             v = policy.next_backoff(i, base=5, cap=60)
             assert 0.0 <= v <= 60.0
+
+
+# ── per-channel money rules (WP7) ─────────────────────────────────────────────
+def test_only_noon_treats_its_gross_as_a_discounted_net():
+    """Noon genuinely discounts, so its scraped gross is the net the customer paid
+    and promotion must record the gap as a discount (F-AGG-2). No other channel
+    does — a channel-agnostic rewrite that always raised the total to the line sum
+    re-inflated Noon's discounted orders."""
+    assert policy.policy_for(CHANNEL_NOON).gross_is_discounted_net is True
+    for ch in (CHANNEL_CAREEM, CHANNEL_DELIVEROO, CHANNEL_KEETA, CHANNEL_TALABAT):
+        assert policy.policy_for(ch).gross_is_discounted_net is False, ch
+
+
+def test_only_careem_gross_is_net_of_marketplace_markup():
+    """Careem's scraped gross is net of its own menu markup, structurally below the
+    MM total — the maker-checker reports that gap without flagging it (F-AGG-11).
+    Every other channel's gross is the customer total."""
+    assert (
+        policy.policy_for(CHANNEL_CAREEM).gross_basis
+        == policy.GROSS_BASIS_NET_OF_MARKUP
+    )
+    for ch in (CHANNEL_NOON, CHANNEL_DELIVEROO, CHANNEL_KEETA, CHANNEL_TALABAT):
+        assert policy.policy_for(ch).gross_basis == policy.GROSS_BASIS_CUSTOMER_TOTAL, (
+            ch
+        )
