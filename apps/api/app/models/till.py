@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -51,6 +51,24 @@ class Till(Base, UUIDMixin, TimestampMixin):
         status_vocabulary("tills", "status", TillStatusEnum),
         # Migration 100.
         business_date_format("tills"),
+        # Migration 202: one open till per cashier, and one per device. A till is
+        # opened read-then-insert, so two terminals (or one retried request)
+        # could each read "no open till" and both insert — splitting a cashier's
+        # takings across two reconciliations. These partial unique indexes make
+        # the second insert fail; `till_service.open_till` catches that and hands
+        # back the winner, so an open is idempotent instead of a duplicate.
+        Index(
+            "uq_tills_open_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+        Index(
+            "uq_tills_open_per_device",
+            "device_id",
+            unique=True,
+            postgresql_where=text("status = 'open' AND device_id IS NOT NULL"),
+        ),
     )
 
     branch_id: Mapped[uuid.UUID] = mapped_column(

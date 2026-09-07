@@ -17,6 +17,7 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, NotFoundError
@@ -174,8 +175,22 @@ async def open_till(
         variance=ZERO,
         notes=notes,
     )
-    db.add(till)
-    await db.flush()
+    # Read-then-insert is a race: two terminals (or one retried request) both
+    # clear the checks above and both insert. The partial unique indexes
+    # (migration 202) catch the loser here; take the insert in a savepoint so the
+    # violation aborts only this write, then hand back the till the winner opened
+    # — an idempotent open rather than a 500.
+    try:
+        async with db.begin_nested():
+            db.add(till)
+            await db.flush()
+    except IntegrityError:
+        winner = await get_open_till(db, user_id=user.id) or await open_till_on_device(
+            db, device_id
+        )
+        if winner is None:
+            raise
+        return winner
     await db.refresh(till)
     return till
 
