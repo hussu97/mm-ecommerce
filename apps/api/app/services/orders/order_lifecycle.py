@@ -429,12 +429,13 @@ async def _release_promo_use(db: AsyncSession, order: Order) -> None:
     Matched on either spelling of the code, since `promo_code_used` holds the
     English one but the row may be found under `code` or `code_ar`.
     """
+    # Source first: only a website checkout ever incremented `current_uses`, so
+    # an aggregator or counter order has no redemption to give back and is not
+    # asked about `promo_code_used` at all.
+    if order.source != OrderSourceEnum.ONLINE.value:
+        return
     code = order.promo_code_used
-    if (
-        code is None
-        or order.source != OrderSourceEnum.ONLINE.value
-        or order.promo_released_at is not None
-    ):
+    if code is None or order.promo_released_at is not None:
         return
     await db.execute(
         sql_update(PromoCode)

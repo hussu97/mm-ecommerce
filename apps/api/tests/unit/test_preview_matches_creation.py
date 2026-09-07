@@ -207,7 +207,12 @@ def priced_world():
             "app.services.orders.order_service.promo_code_service.get_promo",
             new=AsyncMock(
                 return_value=SimpleNamespace(
-                    id=uuid.uuid4(), code="FIRST15", max_uses=None
+                    id=uuid.uuid4(),
+                    code="FIRST15",
+                    code_ar=None,
+                    max_uses=None,
+                    first_orders_limit=None,
+                    max_uses_per_user=None,
                 )
             ),
         ),
