@@ -11,6 +11,7 @@ import { toDraft } from '../components/AddressModal';
 // ─── Session persistence ──────────────────────────────────────────────────────
 
 const SESSION_KEY = 'mm_checkout';
+const CLIENT_REQUEST_ID_KEY = 'mm_checkout_crid';
 
 function saveToSession(data: object) {
   try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch { /* noop */ }
@@ -20,6 +21,41 @@ function loadFromSession(): Record<string, unknown> | null {
 }
 export function clearCheckoutSession() {
   try { sessionStorage.removeItem(SESSION_KEY); } catch { /* noop */ }
+}
+
+// ─── Idempotency key (F-WEB-5) ──────────────────────────────────────────────────
+
+/** A UUID, from the platform crypto where present and a plain fallback where not
+ * (older Safari, an insecure origin). A weaker id here only weakens idempotency
+ * in that rare browser, so the fallback is acceptable rather than a hard fail. */
+function randomId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  } catch { /* fall through */ }
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+}
+
+/**
+ * The idempotency key for the current checkout attempt.
+ *
+ * Persisted so it is *stable across retries of the same attempt* — the whole
+ * point (F-WEB-5): a `POST /orders` that times out is retried, sometimes across
+ * the trip out to the payment gateway, and the replay must carry the same key
+ * for the API to return the order the first try already wrote rather than a
+ * duplicate. It is rotated only once an order is actually placed, so the next,
+ * genuinely different order gets its own key and is never deduped against the
+ * last.
+ */
+function loadClientRequestId(): string {
+  try {
+    const existing = sessionStorage.getItem(CLIENT_REQUEST_ID_KEY);
+    if (existing) return existing;
+    const minted = randomId();
+    sessionStorage.setItem(CLIENT_REQUEST_ID_KEY, minted);
+    return minted;
+  } catch {
+    return randomId();
+  }
 }
 
 // ─── Form state ───────────────────────────────────────────────────────────────
@@ -87,6 +123,20 @@ export const INITIAL_FORM: CheckoutForm = {
 export function useCheckoutForm(user: User | null) {
   const [form, setForm] = useState<CheckoutForm>(INITIAL_FORM);
   const [savedAddresses, setSavedAddresses] = useState<Address[]>([]);
+  // Minted lazily on the client only (SSR has no `sessionStorage`), so it stays
+  // empty on the server render and the first client render, then fills in.
+  const [clientRequestId, setClientRequestId] = useState<string>('');
+  useEffect(() => {
+    setClientRequestId(loadClientRequestId());
+  }, []);
+
+  /** Rotate the key once an order is placed, so the next order gets a fresh one
+   * and is never deduped against the one just created (F-WEB-5). */
+  const resetClientRequestId = useCallback(() => {
+    const minted = randomId();
+    try { sessionStorage.setItem(CLIENT_REQUEST_ID_KEY, minted); } catch { /* noop */ }
+    setClientRequestId(minted);
+  }, []);
 
   // Restore whatever the last visit left behind. `INITIAL_FORM` is spread in
   // the middle so a field added since the stored copy was written gets its
@@ -146,5 +196,13 @@ export function useCheckoutForm(user: User | null) {
     });
   }, []);
 
-  return { form, setForm, onChange, savedAddresses, setSavedAddresses };
+  return {
+    form,
+    setForm,
+    onChange,
+    savedAddresses,
+    setSavedAddresses,
+    clientRequestId,
+    resetClientRequestId,
+  };
 }

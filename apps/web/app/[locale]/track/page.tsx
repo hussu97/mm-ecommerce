@@ -98,6 +98,14 @@ export default function TrackPage() {
       return;
     }
     deeplinkAttempted.current = true;
+    // Scrub the query string from the address bar before doing anything else.
+    // Order-status emails link here with `?order_number=&email=`, and that email
+    // would otherwise sit in the URL — copied into history, into any share, and
+    // into the analytics beacon's page URL (F-WEB-2). The values are already in
+    // component state, so replacing the URL loses nothing the page still needs.
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
     void lookupOrder(deeplinkForm.order_number, deeplinkForm.email);
   }, [lookupOrder]);
 

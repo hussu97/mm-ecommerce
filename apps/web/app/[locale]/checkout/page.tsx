@@ -31,6 +31,7 @@ import { ChoiceRow, Section } from './components/Section';
 import { UnserviceableNotice } from './components/UnserviceableNotice';
 import { PromoCodeStep } from './components/PromoCodeStep';
 import { clearCheckoutSession, useCheckoutForm } from './hooks/useCheckoutForm';
+import { stashOrderHandoff } from '@/lib/order-handoff';
 import { useApplePay } from './hooks/useApplePay';
 import { useOrderPreview } from './hooks/useOrderPreview';
 import { usePhoneVerification } from './hooks/usePhoneVerification';
@@ -186,7 +187,7 @@ function CheckoutContent() {
   const { t, locale } = useTranslation();
   const { user } = useAuth();
 
-  const { form, onChange, savedAddresses, setSavedAddresses } = useCheckoutForm(user);
+  const { form, onChange, savedAddresses, setSavedAddresses, clientRequestId, resetClientRequestId } = useCheckoutForm(user);
   const { retryOrder, setRetryOrder, restoring: restoringOrder } = useRetryOrder(addToast, t);
   const { verifiedPhone, setVerifiedPhone } = usePhoneVerification(form.phone);
 
@@ -668,6 +669,10 @@ function CheckoutContent() {
     payment_method: toWireMethod(paymentMethod),
     notes: form.notes || undefined,
     session_id: getSessionId() ?? undefined,
+    // Idempotency key for this attempt (F-WEB-5). Undefined only in the brief
+    // window before the client-side effect mints one, or in a browser with no
+    // usable storage — the create then behaves as it did before this shipped.
+    client_request_id: clientRequestId || undefined,
   });
 
   /**
@@ -685,6 +690,8 @@ function CheckoutContent() {
     }
     const order = await ordersApi.create(buildOrderCreate());
     clearCheckoutSession();
+    // The order is placed; the next one must not be deduped against it.
+    resetClientRequestId();
     await refreshCart();
     return order;
   };
@@ -716,8 +723,12 @@ function CheckoutContent() {
         analytics.checkoutStepComplete({ step: 1, delivery_method: form.deliveryMethod });
         const orderEmail =
           order.email ?? accountEmail ?? form.email.trim().toLowerCase();
+        // Hand the email to the confirmation page through sessionStorage, not the
+        // URL (F-WEB-2): the confirmation lookup still has its ownership proof,
+        // but the address never enters history or the analytics beacon.
+        stashOrderHandoff({ order_number: order.order_number, email: orderEmail });
         window.location.assign(
-          `/${locale}/checkout/confirmation?order_number=${order.order_number}&email=${encodeURIComponent(orderEmail)}`,
+          `/${locale}/checkout/confirmation?order_number=${order.order_number}`,
         );
       },
       onError: (message, stage, orderNumber) => {
@@ -882,11 +893,32 @@ function CheckoutContent() {
           return;
         }
 
-        const order = await ordersApi.create(buildOrderCreate());
+        const emailForLookup =
+          accountEmail ?? (form.email.trim() ? form.email.trim().toLowerCase() : undefined);
+        let order: import('@/lib/types').Order;
+        try {
+          order = await ordersApi.create(buildOrderCreate());
+        } catch (createErr) {
+          // A timed-out or dropped create leaves us unable to tell a lost request
+          // from a lost response — the double-order trap (F-WEB-5). Before
+          // surfacing an error and re-enabling the button, ask whether this
+          // attempt already produced an order (by its idempotency key) and adopt
+          // it if so. Only worth asking when we actually sent a key.
+          const recovered = clientRequestId
+            ? await ordersApi
+                .findByClientRequestId(clientRequestId, emailForLookup)
+                .catch(() => null)
+            : null;
+          if (!recovered) throw createErr;
+          order = recovered;
+        }
         createdOrder = order;
         orderNumber = order.order_number;
 
         clearCheckoutSession();
+        // The order is placed; rotate the key so a later, different order is not
+        // deduped against this one.
+        resetClientRequestId();
         await refreshCart();
       }
 
@@ -904,11 +936,14 @@ function CheckoutContent() {
       if (session.confirmed) {
         const orderEmail =
           createdOrder?.email ?? retryOrder?.email ?? accountEmail ?? form.email.trim().toLowerCase();
+        // Email to the confirmation page via sessionStorage, not the URL
+        // (F-WEB-2) — the ownership proof still travels, the address does not.
+        stashOrderHandoff({ order_number: orderNumber, email: orderEmail });
         // `assign` rather than writing `location.href`. Same navigation; the
         // assignment reads as mutating a value from outside the component,
         // which the React Compiler refuses in a function it is compiling.
         window.location.assign(
-          `/${locale}/checkout/confirmation?order_number=${orderNumber}&email=${encodeURIComponent(orderEmail)}`,
+          `/${locale}/checkout/confirmation?order_number=${orderNumber}`,
         );
         return;
       }

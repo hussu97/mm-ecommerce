@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { ordersApi } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
 import { reportedOrders } from '@/lib/reported-orders';
+import { readOrderHandoff } from '@/lib/order-handoff';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -51,9 +52,13 @@ function addressFromOrder(order: Order): import('@/lib/types').AddressCreate | n
 function ConfirmationContent() {
   const searchParams = useSearchParams();
   const orderNumber = searchParams.get('order_number');
-  // Proof of ownership for guests without a session cookie — the API refuses
-  // to return a full order to an unauthenticated caller without it.
-  const email = searchParams.get('email');
+  // Proof of ownership for a guest with no session cookie. The gateway return
+  // URL carries a signed `token` the API minted (F-ORD-20); the in-page finishes
+  // stash the email in `sessionStorage` and arrive with a bare order number
+  // (F-WEB-2). The email is read from the URL only as a fallback for a
+  // confirmation link from before this shipped — no page writes it there now.
+  const tokenFromUrl = searchParams.get('token');
+  const emailFromUrl = searchParams.get('email');
   const { t, locale } = useTranslation();
   const { user } = useAuth();
 
@@ -63,7 +68,10 @@ function ConfirmationContent() {
 
   useEffect(() => {
     if (!orderNumber) { setLoading(false); setError(true); return; }
-    ordersApi.get(orderNumber, email ?? undefined)
+    const handoff = readOrderHandoff(orderNumber);
+    const token = tokenFromUrl ?? handoff?.token ?? undefined;
+    const email = handoff?.email ?? emailFromUrl ?? undefined;
+    ordersApi.get(orderNumber, { token, email })
       .then(order => {
         setOrder(order);
         // The effect re-runs every time this URL is opened — a refresh, the

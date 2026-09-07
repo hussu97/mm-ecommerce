@@ -81,17 +81,37 @@ function getClientIp(headers: Headers): string | null {
 }
 
 /**
- * The visitor's address, written into the event body.
+ * Drop the query string from a page URL before it leaves us.
+ *
+ * The checkout, confirmation and track pages once carried the customer's email
+ * (and order number) in the query string, and the tracker copies `window.location`
+ * verbatim into `payload.url` — so the address was posted to Umami in plaintext
+ * (F-WEB-2). The pages no longer put it there, but this is the backstop that
+ * holds regardless of what any page does: analytics only ever needs the path, so
+ * everything after `?` or `#` is cut here for every event. A value we cannot
+ * parse is left exactly as it was — losing a path is better than losing the event.
+ */
+function stripQuery(value: unknown): unknown {
+  if (typeof value !== 'string' || !value) return value;
+  return value.split(/[?#]/, 1)[0];
+}
+
+/**
+ * The event body as we forward it: the visitor's address written in, and any
+ * query string cut off the page URL and referrer.
  *
  * A body we cannot parse is forwarded exactly as it arrived. Losing the country
- * on one malformed event is a great deal better than losing the event.
+ * or a scrubbed path on one malformed event is a great deal better than losing
+ * the event.
  */
-function withClientIp(body: string, ip: string): string {
+function sanitiseBody(body: string, ip: string | null): string {
   try {
     const parsed = JSON.parse(body);
     if (!parsed?.payload || typeof parsed.payload !== 'object') return body;
 
-    parsed.payload.ip = ip;
+    if (ip) parsed.payload.ip = ip;
+    parsed.payload.url = stripQuery(parsed.payload.url);
+    parsed.payload.referrer = stripQuery(parsed.payload.referrer);
     return JSON.stringify(parsed);
   } catch {
     return body;
@@ -120,7 +140,9 @@ export async function POST(request: Request) {
     const response = await fetch(UMAMI_SEND_URL, {
       method: 'POST',
       headers,
-      body: ip ? withClientIp(body, ip) : body,
+      // Always sanitised — the query string is stripped even when there is no IP
+      // to write, because the email leak (F-WEB-2) is the point, not the country.
+      body: sanitiseBody(body, ip),
     });
 
     return new Response(await response.text(), {

@@ -465,6 +465,14 @@ export interface OrderCreate {
   payment_method: string;
   notes?: string;
   session_id?: string;
+  /**
+   * Idempotency key for this checkout attempt — a UUID minted client-side and
+   * kept stable across retries of the same attempt. A `POST /orders` that times
+   * out is replayed with the same value, and the API returns the existing order
+   * instead of writing a second one (F-WEB-5), so a flaky connection cannot
+   * double-order.
+   */
+  client_request_id?: string;
 }
 
 /** What the public track lookup returns for an order number + email. */

@@ -482,8 +482,32 @@ export const ordersApi = {
   }) => api.post<OrderPreview>('/orders/preview', data),
   list: (page = 1) =>
     api.get<{ items: Order[]; total: number; page: number; pages: number }>(`/orders?page=${page}`),
-  get: (orderNumber: string, email?: string) =>
-    api.get<Order>(`/orders/${orderNumber}${email ? `?email=${encodeURIComponent(email)}` : ''}`),
+  get: (orderNumber: string, proof?: { email?: string; token?: string }) => {
+    // Ownership proof for a guest without a session cookie: the order's email,
+    // or the signed receipt token the checkout issued (F-ORD-20) — the token is
+    // what keeps the email out of the confirmation URL. Either may be given.
+    const params = new URLSearchParams();
+    if (proof?.token) params.set('token', proof.token);
+    if (proof?.email) params.set('email', proof.email);
+    const query = params.toString();
+    return api.get<Order>(`/orders/${orderNumber}${query ? `?${query}` : ''}`);
+  },
+  /**
+   * The order a checkout attempt created, looked up by its idempotency key — the
+   * recovery path after a `POST /orders` timed out and the browser cannot tell a
+   * lost request from a lost response (F-WEB-5). Owner-scoped: a guest proves
+   * ownership with the order's `email`. Returns the order, or null if none was
+   * ever written.
+   */
+  findByClientRequestId: async (
+    clientRequestId: string,
+    email?: string,
+  ): Promise<Order | null> => {
+    const params = new URLSearchParams({ client_request_id: clientRequestId });
+    if (email) params.set('email', email);
+    const page = await api.get<{ items: Order[] }>(`/orders?${params.toString()}`);
+    return page.items[0] ?? null;
+  },
 };
 
 export const branchesApi = {

@@ -147,3 +147,45 @@ describe('the event survives', () => {
     await expect(POST(request(VISITOR))).resolves.toMatchObject({ status: 204 });
   });
 });
+
+describe('the query string never leaves us (F-WEB-2)', () => {
+  it("cuts an email out of the page url before it reaches Umami", async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: {
+          website: 'w-1',
+          url: '/checkout/confirmation?order_number=MM-1&email=jane@example.com',
+        },
+      }),
+    );
+
+    expect(sent().body.payload.url).toBe('/checkout/confirmation');
+    // The whole point: the address never reaches the analytics vendor, in the
+    // body or anywhere in the request we send.
+    expect(sent().raw).not.toContain('jane@example.com');
+  });
+
+  it('cuts the query off the referrer too', async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: { website: 'w-1', url: '/x', referrer: '/track?email=jane@example.com' },
+      }),
+    );
+
+    expect(sent().body.payload.referrer).toBe('/track');
+    expect(sent().raw).not.toContain('jane@example.com');
+  });
+
+  it('drops a hash fragment as well', async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: { website: 'w-1', url: '/faq#email=secret' },
+      }),
+    );
+
+    expect(sent().body.payload.url).toBe('/faq');
+  });
+});
