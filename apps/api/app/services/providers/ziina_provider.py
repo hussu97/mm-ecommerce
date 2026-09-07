@@ -295,6 +295,9 @@ class ZiinaProvider(PaymentGatewayProvider):
             session_id=data.get("id") if raw_event != "refund.status.updated" else None,
             payment_id=payment_id,
             amount_refunded=amount_refunded,
+            # Ziina reports each refund's own amount, never a running total, so
+            # the order accumulates these rather than overwriting (F-ORD-13).
+            cumulative=raw_event != "refund.status.updated",
             error_code=error.get("code"),
             error_message=error.get("message"),
             # No normalised reason, deliberately. Ziina's `latest_error.code` is

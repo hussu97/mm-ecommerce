@@ -17,12 +17,15 @@ import hmac
 import json
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from app.core.config import settings
 from app.core.exceptions import BadRequestError
+from app.models.order import OrderStatusEnum
+from app.services.payments import payment_service
 from app.services.providers import ziina_provider as zp
 from app.services.providers.base import GatewayUnavailableError, PaymentEventType
 
@@ -371,3 +374,76 @@ class TestCreateSession:
         await zp.provider.create_session(self._order(), test_mode=True)
 
         assert captured["test"] is True
+
+
+# ── per-refund amounts accumulate on the order (F-ORD-13) ─────────────────────
+
+
+class TestRefundsAccumulate:
+    """
+    Ziina reports each refund's own amount, not a running total. Two partials of
+    AED 50 must leave the order showing AED 100 refunded, not AED 50 — the code
+    used to overwrite `refunded_amount` and lose the first.
+    """
+
+    @staticmethod
+    def _refund_payload(refund_id: str, amount: int) -> dict:
+        return {
+            "event": "refund.status.updated",
+            "data": {
+                "id": refund_id,
+                "payment_intent_id": "pi_ziina_1",
+                "status": "completed",
+                "amount": amount,
+            },
+        }
+
+    @staticmethod
+    def _order() -> SimpleNamespace:
+        return SimpleNamespace(
+            id="order-uuid",
+            order_number="MM-20260808-001",
+            total=Decimal("125.00"),
+            status=OrderStatusEnum.CONFIRMED,
+            payment_provider="ziina",
+            payment_method="card",
+            payment_id="pi_ziina_1",
+            payment_transactions=[],
+            refunded_amount=Decimal("0"),
+            refunded_at=None,
+        )
+
+    async def test_two_partial_refunds_sum_on_the_order(self, monkeypatch):
+        order = self._order()
+        monkeypatch.setattr(
+            payment_service,
+            "_load_order_by_handle",
+            AsyncMock(return_value=order),
+        )
+        monkeypatch.setattr(
+            payment_service.order_service,
+            "to_response",
+            AsyncMock(return_value=object()),
+        )
+        monkeypatch.setattr(
+            payment_service.email_service, "send_refund_notification", AsyncMock()
+        )
+        monkeypatch.setattr(
+            payment_service.payment_gateway_router, "PROVIDERS", {"ziina": zp.provider}
+        )
+
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+        db.flush = AsyncMock()
+
+        first, headers1 = _signed(self._refund_payload("rf_1", 5000))
+        await payment_service.handle_webhook(db, "ziina", first, headers1)
+        assert order.refunded_amount == Decimal("50.00")
+
+        second, headers2 = _signed(self._refund_payload("rf_2", 5000))
+        await payment_service.handle_webhook(db, "ziina", second, headers2)
+
+        assert order.refunded_amount == Decimal("100.00")
+        # Both were partial against a 125 order, so the order is never marked
+        # REFUNDED off a slice.
+        assert order.status == OrderStatusEnum.CONFIRMED

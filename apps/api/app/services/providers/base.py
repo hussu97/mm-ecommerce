@@ -135,6 +135,14 @@ class GatewayEvent:
     amount_captured: int | None = None
     fully_refunded: bool | None = None
 
+    #: Whether `amount_refunded` is the *running total* refunded on the charge
+    #: (Stripe: `charge.amount_refunded` accumulates on their side) or this one
+    #: refund's own slice (Ziina: their refund object carries only its amount).
+    #: The distinction is the whole of F-ORD-13 — a cumulative figure is *set*
+    #: onto `order.refunded_amount`, a per-refund figure is *added*, and getting
+    #: it wrong either double-counts or loses every refund but the last.
+    cumulative: bool = True
+
     #: Why it failed, when it failed and the gateway said why. `error_code` and
     #: `error_message` are the gateway's own raw words, kept for reconciliation;
     #: `failure_reason` is those words normalised into the small set the customer

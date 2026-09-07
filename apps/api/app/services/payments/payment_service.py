@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.money import money, to_decimal
 from app.models.base import utcnow
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
@@ -589,7 +590,7 @@ async def _apply_event(db: AsyncSession, gateway: str, event: GatewayEvent) -> d
         note=event.raw_type,
     ):
         if event.event_type is PaymentEventType.SUCCEEDED:
-            await _handle_payment_succeeded(db, order, event)
+            await _handle_payment_succeeded(db, gateway, order, event)
         elif event.event_type is PaymentEventType.FAILED:
             await _handle_payment_failed(db, order, event)
         elif event.event_type is PaymentEventType.CANCELLED:
@@ -671,38 +672,82 @@ def _record_transaction(order: Order, gateway: str, event: GatewayEvent) -> None
     if not handles:
         return
 
-    status = _TRANSACTION_STATUSES.get(event.event_type)
+    status = _status_for_attempt(order, event)
     for transaction in order.payment_transactions:
         if transaction.gateway != gateway:
             continue
         if not ({transaction.payment_id, transaction.session_id} & handles):
             continue
-        # Stripe's Payment Intent does not exist until the customer pays, so
-        # this is where a Stripe attempt learns its own payment handle.
-        if event.payment_id and not transaction.payment_id:
-            transaction.payment_id = event.payment_id
-        # A cancel or a failure arriving after a success is a late duplicate,
-        # not a reversal — gateways reorder deliveries and Ziina emits a status
-        # per transition with no ordering guarantee at all. Only a refund or a
-        # dispute may move an attempt off `succeeded`, because only those two
-        # actually undo it.
-        if status is not None and not (
-            transaction.is_settled
-            and status
-            not in (
-                PaymentTransactionStatusEnum.REFUNDED,
-                PaymentTransactionStatusEnum.DISPUTED,
-            )
-        ):
-            transaction.status = status.value
-        transaction.raw_status = event.raw_type[:60]
-        if event.error_code:
-            transaction.error_code = event.error_code[:80]
-        if event.error_message:
-            transaction.error_message = event.error_message[:2000]
-        if event.failure_reason is not None:
-            transaction.failure_reason = event.failure_reason.value
+        _apply_to_attempt(transaction, event, status)
         return
+
+    # Nothing on file matched the handles this event carries. When the order was
+    # resolved from its own number — metadata we put there and trust — and the
+    # gateway has only now minted the payment handle, this is the Stripe
+    # hosted-Checkout case: the attempt row still carries the `cs_…` session and
+    # a null `payment_id`, and `payment_intent.succeeded` arrives quoting only
+    # the `pi_…`, which intersects nothing. Left unadopted the attempt stays
+    # `pending`, `_settled_attempt` finds it not, and a later refund silently
+    # returns zero (F-ORD-1). Adopt the id onto the single pending attempt for
+    # this gateway — and only when there is exactly one, so two live checkouts
+    # are never guessed between.
+    if event.order_number and event.payment_id:
+        pending = [
+            transaction
+            for transaction in order.payment_transactions
+            if transaction.gateway == gateway
+            and transaction.status == PaymentTransactionStatusEnum.PENDING.value
+        ]
+        if len(pending) == 1:
+            _apply_to_attempt(pending[0], event, status)
+
+
+def _status_for_attempt(order: Order, event: GatewayEvent):
+    """
+    The status this event moves the *attempt* to, or None to leave it as it is.
+
+    A partial refund is the one place the event's own status must not be
+    applied. Marking a settled attempt `refunded` for a partial drops it out of
+    `SETTLED_STATUSES`, so the next `refund_order` finds no settled attempt and
+    returns zero, and Ziina's `_is_paid` flips false and a fresh checkout mints
+    a second intent against a paid order (F-ORD-7). Only a *full* refund unsettles.
+    """
+    status = _TRANSACTION_STATUSES.get(event.event_type)
+    if status is PaymentTransactionStatusEnum.REFUNDED and not _is_full_refund(
+        order, event
+    ):
+        return None
+    return status
+
+
+def _apply_to_attempt(
+    transaction: PaymentTransaction, event: GatewayEvent, status
+) -> None:
+    """Bring one attempt row in step with *event*, given its resolved *status*."""
+    # Stripe's Payment Intent does not exist until the customer pays, so this is
+    # where a Stripe attempt learns its own payment handle.
+    if event.payment_id and not transaction.payment_id:
+        transaction.payment_id = event.payment_id
+    # A cancel or a failure arriving after a success is a late duplicate, not a
+    # reversal — gateways reorder deliveries and Ziina emits a status per
+    # transition with no ordering guarantee at all. Only a refund or a dispute
+    # may move an attempt off `succeeded`, because only those two actually undo it.
+    if status is not None and not (
+        transaction.is_settled
+        and status
+        not in (
+            PaymentTransactionStatusEnum.REFUNDED,
+            PaymentTransactionStatusEnum.DISPUTED,
+        )
+    ):
+        transaction.status = status.value
+    transaction.raw_status = event.raw_type[:60]
+    if event.error_code:
+        transaction.error_code = event.error_code[:80]
+    if event.error_message:
+        transaction.error_message = event.error_message[:2000]
+    if event.failure_reason is not None:
+        transaction.failure_reason = event.failure_reason.value
 
 
 #: What each outcome means for the attempt's own row. `UNHANDLED` never gets
@@ -739,7 +784,7 @@ _ALREADY_PAID_FOR = frozenset(
 
 
 async def _handle_payment_succeeded(
-    db: AsyncSession, order: Order, event: GatewayEvent
+    db: AsyncSession, gateway: str, order: Order, event: GatewayEvent
 ) -> None:
     payment_id = event.payment_id or event.session_id
 
@@ -752,6 +797,18 @@ async def _handle_payment_succeeded(
     # fulfilled, for the entirely ordinary event of a webhook being delivered
     # twice.
     if order.status in _ALREADY_PAID_FOR:
+        settled_ids = {
+            t.payment_id
+            for t in order.payment_transactions
+            if t.is_settled and t.payment_id
+        }
+        # A *distinct* successful charge on an order we already have settled
+        # money for is not a redelivery — those quote a `payment_id` we settled
+        # — it is a second charge, real money taken twice (F-ORD-11). Shout,
+        # record it so it shows in admin, and give the duplicate back.
+        if event.payment_id and settled_ids and event.payment_id not in settled_ids:
+            await _record_and_refund_duplicate(db, gateway, order, event)
+            return
         if payment_id:
             order.payment_id = payment_id
         logger.info(
@@ -782,6 +839,25 @@ async def _handle_payment_succeeded(
         )
         return
 
+    # The gateway is the authority on what actually landed. If it captured less
+    # than the order costs — a tampered amount, a currency mix-up, a capture
+    # short of the authorisation — confirming would ship goods that were not
+    # paid for. Refuse, loudly, and leave the order for a human (F-ORD-19).
+    if event.amount_captured is not None:
+        owed_minor = int(money(order.total) * 100)
+        if event.amount_captured < owed_minor:
+            logger.critical(
+                "Payment for order %s captured %s of %s minor units — refusing "
+                "to confirm an underpaid order (gateway=%s payment=%s). Manual "
+                "review required.",
+                order.order_number,
+                event.amount_captured,
+                owed_minor,
+                order.payment_provider,
+                payment_id,
+            )
+            return
+
     if payment_id:
         order.payment_id = payment_id
     # The money has landed, so now the order becomes work: `transition` schedules
@@ -809,6 +885,88 @@ async def _handle_payment_succeeded(
             order.order_number,
             exc,
         )
+
+
+async def _record_and_refund_duplicate(
+    db: AsyncSession, gateway: str, order: Order, event: GatewayEvent
+) -> None:
+    """
+    A second, distinct successful charge on an already-paid order (F-ORD-11).
+
+    The customer paid once and the order is already moving, so this money must
+    go straight back. It is recorded as its own `payment_transactions` row first
+    — so the second charge is visible in admin and not conjured out of a log
+    line — then refunded in full through the gateway that took it. The refund
+    key names the duplicate's own payment id, so a retried delivery of this same
+    duplicate dedupes into one refund rather than chasing the money twice.
+
+    Never raises: a gateway that cannot be reached leaves the row marked settled
+    and the CRITICAL log standing, which is what the reconciliation list reads —
+    exactly like `refund_order`, and for the same reason.
+    """
+    captured = (
+        money(Decimal(event.amount_captured) / 100)
+        if event.amount_captured is not None
+        else money(order.total)
+    )
+    logger.critical(
+        "DOUBLE PAYMENT on order %s: already paid, but %s reports a second "
+        "successful charge %s for %s %s — recording and auto-refunding it.",
+        order.order_number,
+        gateway,
+        event.payment_id,
+        captured,
+        order.currency or "AED",
+    )
+
+    duplicate = PaymentTransaction(
+        order_id=order.id,
+        gateway=gateway,
+        status=PaymentTransactionStatusEnum.SUCCEEDED.value,
+        session_id=event.session_id,
+        payment_id=event.payment_id,
+        amount=captured,
+        currency=order.currency or "AED",
+        raw_status=event.raw_type[:60],
+    )
+    order.payment_transactions.append(duplicate)
+    db.add(duplicate)
+    await db.flush()
+
+    provider = payment_gateway_router.PROVIDERS.get(gateway)
+    if provider is None or not event.payment_id:
+        logger.critical(
+            "Duplicate charge on order %s cannot be auto-refunded here "
+            "(gateway=%s payment=%s) — refund it by hand.",
+            order.order_number,
+            gateway,
+            event.payment_id,
+        )
+        return
+
+    try:
+        result = await provider.refund(
+            payment_id=event.payment_id,
+            amount=captured,
+            idempotency_key=f"dup-refund-{order.order_number}-{event.payment_id}",
+        )
+    except Exception:  # noqa: BLE001 — a failed refund must not 500 the webhook
+        logger.exception(
+            "Could not auto-refund the duplicate charge on order %s; it needs a person",
+            order.order_number,
+        )
+        return
+
+    duplicate.refund_id = result.refund_id
+    duplicate.status = PaymentTransactionStatusEnum.REFUNDED.value
+    duplicate.raw_status = result.raw_status or duplicate.raw_status
+    logger.info(
+        "Auto-refunded duplicate charge %s for order %s (%s, %s)",
+        result.amount,
+        order.order_number,
+        result.refund_id,
+        result.status,
+    )
 
 
 async def _handle_checkout_expired(db: AsyncSession, order: Order) -> bool:
@@ -994,7 +1152,16 @@ async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) ->
     # what stops `refund_order` sending a second refund on top of a dashboard
     # one — `refundable_amount` subtracts it.
     if event.amount_refunded is not None:
-        order.refunded_amount = Decimal(event.amount_refunded) / 100
+        incoming = money(Decimal(event.amount_refunded) / 100)
+        if event.cumulative:
+            # Stripe's `charge.amount_refunded` is the running total on their
+            # side, so it is what the order should read.
+            order.refunded_amount = incoming
+        else:
+            # Ziina reports each refund's own slice, so the running total is
+            # ours to keep — overwriting here lost every refund but the last
+            # (F-ORD-13).
+            order.refunded_amount = money(to_decimal(order.refunded_amount) + incoming)
         order.refunded_at = order.refunded_at or utcnow()
 
     is_full = _is_full_refund(order, event)

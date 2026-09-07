@@ -16,8 +16,40 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+from app.models.payment_transaction import PaymentTransactionStatusEnum
 from app.services.payments import payment_service
+from app.services.providers.base import GatewayEvent, GatewayRefund, PaymentEventType
+
+
+class _Attempt:
+    """A settled attempt whose `is_settled` follows its status."""
+
+    def __init__(self, **kw):
+        self.gateway = "stripe"
+        self.session_id = "cs_1"
+        self.payment_id = "pi_1"
+        self.status = PaymentTransactionStatusEnum.SUCCEEDED.value
+        self.raw_status = None
+        self.error_code = None
+        self.error_message = None
+        self.failure_reason = None
+        self.refund_id = None
+        self.__dict__.update(kw)
+
+    @property
+    def is_settled(self) -> bool:
+        return self.status == PaymentTransactionStatusEnum.SUCCEEDED.value
+
+
+class _RefundingGateway:
+    def __init__(self, amount: Decimal):
+        self.refund = AsyncMock(
+            return_value=GatewayRefund(
+                refund_id="re_1", amount=amount, status="completed"
+            )
+        )
 
 
 class _AttemptsDb:
@@ -62,6 +94,7 @@ def _order(
         delivery_fee=Decimal(delivery_fee),
         low_order_fee=Decimal(low_order_fee),
         refunded_amount=Decimal(refunded),
+        refunded_at=None,
         payment_method=payment_method,
         currency="AED",
         payment_transactions=[],
@@ -194,6 +227,102 @@ async def test_a_gateway_this_build_cannot_refund_does_not_raise():
         )
     ]
     assert await payment_service.refund_order(_AttemptsDb(order), order) == Decimal("0")
+
+
+# ── the goods actually come back (F-ORD-1) ────────────────────────────────────
+
+
+async def test_cancelling_a_stripe_paid_order_refunds_the_goods(monkeypatch):
+    """
+    The whole point of F-ORD-1: a Stripe hosted-Checkout payment that settled its
+    attempt is refundable, so cancelling it calls the gateway with a NON-ZERO
+    amount instead of the silent zero the un-settled row used to produce.
+    """
+    order = _order()
+    order.payment_transactions = [_Attempt()]
+    gateway = _RefundingGateway(Decimal("85.00"))
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": gateway}
+    )
+
+    refunded = await payment_service.refund_order(_AttemptsDb(order), order)
+
+    assert refunded == Decimal("85.00")
+    gateway.refund.assert_awaited_once()
+    assert gateway.refund.await_args.kwargs["amount"] == Decimal("85.00")
+    assert gateway.refund.await_args.kwargs["amount"] > 0
+
+
+async def test_a_partial_refund_does_not_block_the_cancellation_refund(monkeypatch):
+    """
+    F-ORD-7. A partial refund must not un-settle the attempt: if it did, the row
+    drops out of SETTLED_STATUSES, `_settled_attempt` finds nothing, and the
+    cancellation refund silently returns zero — leaving the customer charged for
+    the goods on an order the shop is unwinding.
+
+    Driven through `_record_transaction` (the code that keeps the row in step)
+    with a genuine partial-refund event, then cancelled.
+    """
+    order = _order()
+    attempt = _Attempt(refund_id=None)
+    order.payment_transactions = [attempt]
+
+    partial = GatewayEvent(
+        event_id="evt_partial",
+        event_type=PaymentEventType.REFUNDED,
+        raw_type="charge.refunded",
+        order_number=order.order_number,
+        payment_id="pi_1",
+        amount_refunded=500,
+        amount_captured=int(Decimal(str(order.total)) * 100),
+        fully_refunded=False,
+    )
+    payment_service._record_transaction(order, "stripe", partial)
+
+    # Still settled — a partial refund does not undo the charge.
+    assert attempt.status == PaymentTransactionStatusEnum.SUCCEEDED.value
+    assert attempt.is_settled
+
+    gateway = _RefundingGateway(Decimal("85.00"))
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": gateway}
+    )
+
+    refunded = await payment_service.refund_order(_AttemptsDb(order), order)
+
+    assert refunded == Decimal("85.00")
+    gateway.refund.assert_awaited_once()
+
+
+def test_a_partial_refund_event_keeps_ziina_reading_as_paid():
+    """
+    The other half of F-ORD-7. If a partial refund flipped the attempt to
+    `refunded`, `_is_paid` — which reads `SETTLED_STATUSES` — would go false and
+    a fresh checkout could mint a second Ziina intent against a paid order.
+    """
+    from app.models.payment_transaction import PaymentTransaction
+
+    attempt = _Attempt(gateway="ziina", session_id="pi_z1", payment_id="pi_z1")
+    order = SimpleNamespace(
+        total=Decimal("125.00"),
+        payment_provider="ziina",
+        payment_id="pi_z1",
+        payment_transactions=[attempt],
+    )
+    partial = GatewayEvent(
+        event_id="evt_partial_z",
+        event_type=PaymentEventType.REFUNDED,
+        raw_type="refund.status.updated:completed",
+        payment_id="pi_z1",
+        amount_refunded=500,
+        cumulative=False,
+    )
+    payment_service._record_transaction(order, "ziina", partial)
+
+    assert attempt.is_settled
+    assert payment_service._is_paid(order) is True
+    # `PaymentTransaction` is imported only to anchor the SETTLED_STATUSES source.
+    assert PaymentTransaction is not None
 
 
 def test_a_refund_never_reads_the_relationship_off_the_order():

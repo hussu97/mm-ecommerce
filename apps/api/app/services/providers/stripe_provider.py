@@ -457,6 +457,12 @@ class StripeProvider(PaymentGatewayProvider):
         if raw_type.startswith("payment_intent."):
             payment_id = obj.get("id")
             order_number = metadata.get("order_number")
+            # What actually landed, in minor units. Stripe's PaymentIntent puts
+            # the captured figure in `amount_received` (`amount` is what was
+            # requested), so the two can differ when a charge captures less than
+            # it authorised. `_handle_payment_succeeded` refuses to confirm an
+            # order for less than its total off this (F-ORD-19).
+            amount_captured = obj.get("amount_received")
             last_error = obj.get("last_payment_error") or {}
             # `decline_code` is the reason the *bank* gave and the only field
             # granular enough to tell a customer anything useful — `code` on a
@@ -617,6 +623,15 @@ _EVENT_TYPES: dict[str, PaymentEventType] = {
     "payment_intent.succeeded": PaymentEventType.SUCCEEDED,
     "payment_intent.payment_failed": PaymentEventType.FAILED,
     "payment_intent.canceled": PaymentEventType.CANCELLED,
+    # The confirmation of a hosted Checkout. It carries BOTH the `cs_…` session
+    # and the `pi_…` payment intent, which is the whole reason it is mapped:
+    # `payment_intent.succeeded` alone carries only the `pi_…`, and the attempt
+    # row was booked under the `cs_…`, so this is the event that stitches the two
+    # together against the row it already matches by session. Treated as a
+    # success because a completed Checkout Session for a `mode=payment` card
+    # order is a paid one; a duplicate with `payment_intent.succeeded` lands in
+    # the already-paid branch and is a no-op (F-ORD-1).
+    "checkout.session.completed": PaymentEventType.SUCCEEDED,
     # Stripe gives a Checkout Session 24 hours and then says this, once, with
     # our `order_number` in its metadata. Until it was mapped, an abandoned
     # checkout sat at `created` forever: MM-20260820-001 was a customer who

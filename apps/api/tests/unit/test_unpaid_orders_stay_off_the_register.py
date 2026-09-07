@@ -275,7 +275,7 @@ async def test_a_settled_payment_schedules_the_order_onto_the_kitchen(monkeypatc
     )
 
     await payment_service._handle_payment_succeeded(
-        AsyncMock(), order, _gateway_event(PaymentEventType.SUCCEEDED)
+        AsyncMock(), "stripe", order, _gateway_event(PaymentEventType.SUCCEEDED)
     )
 
     assert order.status == OrderStatusEnum.CONFIRMED

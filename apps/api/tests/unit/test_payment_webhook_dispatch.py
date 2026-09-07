@@ -339,39 +339,12 @@ async def test_an_unplaceable_success_is_logged_not_raised(
 # ── the transaction row keeps up ──────────────────────────────────────────────
 
 
-async def test_a_stripe_attempt_learns_its_payment_handle_on_confirmation(
-    db, order, wired, monkeypatch
-):
-    """
-    Stripe's Payment Intent does not exist until the customer pays, so the
-    session row is written with `payment_id` null and fills it in here.
-    """
-    attempt = SimpleNamespace(
-        gateway="stripe",
-        session_id="cs_1",
-        payment_id=None,
-        status=PaymentTransactionStatusEnum.PENDING.value,
-        raw_status=None,
-        error_code=None,
-        error_message=None,
-        is_settled=False,
-    )
-    order.payment_transactions = [attempt]
-    _register(
-        monkeypatch,
-        "stripe",
-        _event(
-            PaymentEventType.SUCCEEDED,
-            order_number="MM-20260808-001",
-            session_id="cs_1",
-            payment_id="pi_1",
-        ),
-    )
-
-    await payment_service.handle_webhook(db, "stripe", b"{}", {})
-
-    assert attempt.payment_id == "pi_1"
-    assert attempt.status == PaymentTransactionStatusEnum.SUCCEEDED.value
+# A Stripe attempt learning its `pi_…` on confirmation is now covered end to
+# end in `test_stripe_attempt_settles.py`, driven from the real
+# `StripeProvider.parse_webhook` — the old fixture here fabricated a `SUCCEEDED`
+# event carrying both a `session_id` and a differing `payment_id`, a shape no
+# `payment_intent.succeeded` emits, and that impossible fixture is exactly what
+# hid F-ORD-1. It is not reconstructed with a stub.
 
 
 async def test_a_late_cancel_does_not_unsettle_a_paid_attempt(
