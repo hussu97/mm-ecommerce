@@ -4,6 +4,43 @@ import type { Language } from "@/lib/types";
 import { RSC_API_BASE } from "@/lib/api-server";
 import { CACHE_TAGS, CONTENT_TTL, HAS_REMOTE_API, LANGUAGES_TTL } from "@/lib/cache-policy";
 import { interpolate } from "./interpolate";
+import enSeed from "./seed/en.json";
+import arSeed from "./seed/ar.json";
+
+/**
+ * True only for the one build step that has to fail rather than ship broken
+ * data: `next build`'s prerender pass. Every other moment this process is
+ * alive — `next dev`, ISR revalidation, an on-demand render — is runtime, and
+ * a runtime fault must degrade instead of blanking the page. See
+ * `getTranslations` and `getCategories` below.
+ */
+const IS_BUILD_PHASE = process.env.NEXT_PHASE === "phase-production-build";
+
+/**
+ * The repo-committed floor under `getTranslations`.
+ *
+ * Extracted from `apps/api/scripts/seed_i18n.py` (the actual source of truth
+ * for every UI string) at the time this file was written, so it is real copy
+ * rather than placeholder text — a customer who lands on it during an outage
+ * reads the site, not raw translation keys. It only has to be *roughly*
+ * current: `lastKnownGood` below overwrites it with the real thing the moment
+ * one successful fetch lands in this isolate, so this file is what a cold
+ * instance falls back to in the gap before that first fetch, and what every
+ * instance falls back to if the API never answers at all.
+ */
+const SEED_TRANSLATIONS: Record<string, Record<string, string>> = {
+  en: enSeed as Record<string, string>,
+  ar: arSeed as Record<string, string>,
+};
+
+/**
+ * Last-known-good, per locale, held across requests in this isolate.
+ *
+ * Seeded from the committed files above and overwritten on every successful
+ * fetch, so a later blip serves the most recent real copy rather than falling
+ * straight back to whatever shipped in the seed.
+ */
+const lastKnownGood: Record<string, Record<string, string>> = { ...SEED_TRANSLATIONS };
 
 /**
  * Every UI string for one language.
@@ -29,22 +66,37 @@ import { interpolate } from "./interpolate";
  * collapses the metadata pass, the layout and the page into one call within a
  * single render, which the data cache does not do for a cache miss.
  *
- * **It throws rather than falling back to `{}`, and that is the important
- * part.** An empty map is not a degraded page, it is a page of raw keys —
- * `nav.all` where the word "All" should be — and once caching exists, a
- * swallowed failure is a *cached* page of raw keys. This was not hypothetical:
- * a build run against the live API came back rate-limited, this returned `{}`,
- * and every prerendered route baked in the key names.
+ * **It throws during a build, and only during a build.** An empty map is not
+ * a degraded page, it is a page of raw keys — `nav.all` where the word "All"
+ * should be — and a swallowed failure baked into a static page by `next
+ * build` stays wrong until the next deploy. That was not hypothetical: a
+ * build run against the live API once came back rate-limited, this returned
+ * `{}`, and every prerendered route baked in the key names.
  *
- * Throwing is what makes every layer behave:
+ * A *runtime* fault is a different problem with a different fix. This same
+ * throw, live during a 2026-09 outage, is why `app/[locale]/layout.tsx`
+ * rejected on every request for three hours: `global-error.tsx` was supposed
+ * to catch that and could not even render itself (see the note there), so
+ * visitors got nothing branded at all. Throwing was the wrong move for a page
+ * already being served to somebody — the right one is `lastKnownGood`, which
+ * a request in this state serves without blocking on anything.
  *
- *   - during `next build`, the build fails instead of shipping the damage;
- *   - during an ISR revalidation, Next keeps serving the last good page;
- *   - a non-2xx is never written to the data cache in the first place.
+ * So the rule is `IS_BUILD_PHASE`, not `HAS_REMOTE_API`:
  *
- * A 200 carrying `{}` is a different thing — that is the API's answer, and it
- * is honoured. So is a failure where `HAS_REMOTE_API` is false: CI builds with
- * no API on the runner, and a compile check has nothing to protect.
+ *   - during `next build`'s prerender pass, this still throws — the build
+ *     fails instead of shipping the damage, exactly as before;
+ *   - at runtime (`next dev`, ISR revalidation, an on-demand render), a fault
+ *     serves the last translations that actually loaded in this isolate, or
+ *     the repo-committed seed if none ever did;
+ *   - a non-2xx is still never written to the data cache;
+ *   - `HAS_REMOTE_API` false (CI, no API on the runner) still returns `{}`,
+ *     same as always — there is nothing to protect there and no seed to reach
+ *     for.
+ *
+ * A 200 carrying `{}` is a different thing again — that is the API's answer,
+ * and it is honoured (and also becomes the new `lastKnownGood`, empty as it
+ * is; an admin genuinely clearing every string is not a fault this should
+ * paper over).
  */
 export const getTranslations = cache(
   async (locale: string): Promise<Record<string, string>> => {
@@ -56,10 +108,13 @@ export const getTranslations = cache(
       if (!res.ok) {
         throw new Error(`translations ${locale}: HTTP ${res.status}`);
       }
-      return await res.json();
+      const data = (await res.json()) as Record<string, string>;
+      lastKnownGood[locale] = data;
+      return data;
     } catch (err) {
-      if (HAS_REMOTE_API) throw err;
-      return {};
+      if (!HAS_REMOTE_API) return {};
+      if (IS_BUILD_PHASE) throw err;
+      return lastKnownGood[locale] ?? SEED_TRANSLATIONS.en;
     }
   },
 );
