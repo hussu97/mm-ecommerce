@@ -15740,13 +15740,8 @@
             "type": "string"
           },
           "source": {
+            "const": "cashier",
             "default": "cashier",
-            "enum": [
-              "cashier",
-              "online",
-              "api",
-              "call_center"
-            ],
             "title": "Source",
             "type": "string"
           },
@@ -19422,6 +19417,18 @@
             "pattern": "^\\d{4,8}$",
             "title": "Pin",
             "type": "string"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
           }
         },
         "required": [
@@ -61090,22 +61097,19 @@
     },
     "/health": {
       "get": {
+        "description": "Readiness with a hard budget, so it answers even under saturation.\n\nThe old `/health` resolved `Depends(get_db)` BEFORE the handler ran, so\nunder pool exhaustion it queued for the full `pool_timeout` and then\n500ed \u2014 a health probe that hangs exactly when a human most needs it to\nanswer. This opens its OWN session inside an `asyncio.timeout(2)`: DB\ntrouble (a full pool, a slow server) is reported as `db: \"unavailable\"`\nwith a 503 in at most two seconds, not a hang. It also surfaces both\npools' checkout stats and each background loop's heartbeat age, so a\nwedged sweep or a saturating pool is visible here rather than only in a\npost-mortem. `/ping` stays the trivial, dependency-free liveness probe\nthe container healthcheck polls; this is for a human and for alerting.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Health Get",
-                  "type": "object"
-                }
+                "schema": {}
               }
             },
             "description": "Successful Response"
           }
         },
-        "summary": "Health check \u2014 verifies DB connectivity",
+        "summary": "Health check \u2014 DB connectivity, pool stats, loop heartbeats",
         "tags": [
           "System"
         ]

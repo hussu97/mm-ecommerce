@@ -8234,7 +8234,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health check — verifies DB connectivity */
+        /**
+         * Health check — DB connectivity, pool stats, loop heartbeats
+         * @description Readiness with a hard budget, so it answers even under saturation.
+         *
+         *     The old `/health` resolved `Depends(get_db)` BEFORE the handler ran, so
+         *     under pool exhaustion it queued for the full `pool_timeout` and then
+         *     500ed — a health probe that hangs exactly when a human most needs it to
+         *     answer. This opens its OWN session inside an `asyncio.timeout(2)`: DB
+         *     trouble (a full pool, a slow server) is reported as `db: "unavailable"`
+         *     with a 503 in at most two seconds, not a hang. It also surfaces both
+         *     pools' checkout stats and each background loop's heartbeat age, so a
+         *     wedged sweep or a saturating pool is visible here rather than only in a
+         *     post-mortem. `/ping` stays the trivial, dependency-free liveness probe
+         *     the container healthcheck polls; this is for a human and for alerting.
+         */
         get: operations["health_health_get"];
         put?: never;
         post?: never;
@@ -13696,9 +13710,9 @@ export interface components {
             /**
              * Source
              * @default cashier
-             * @enum {string}
+             * @constant
              */
-            source: "cashier" | "online" | "api" | "call_center";
+            source: "cashier";
             /** Table Id */
             table_id?: string | null;
             /** Till Id */
@@ -14897,6 +14911,8 @@ export interface components {
             device_token?: string | null;
             /** Pin */
             pin: string;
+            /** User Id */
+            user_id?: string | null;
         };
         /** PinLoginResponse */
         PinLoginResponse: {
@@ -35449,9 +35465,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": unknown;
                 };
             };
         };
