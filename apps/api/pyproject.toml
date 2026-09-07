@@ -65,6 +65,12 @@ dev = [
     # widened the default ruleset turned CI red across the whole package without
     # a single line of source changing. Bump this deliberately, not by accident.
     "ruff>=0.15.13,<0.16",
+    # F-TST-2: `tests/unit/test_per_area_map.py` (145 tests) re-derives the
+    # committed delivery-area geometry with `scripts.build_delivery_areas` —
+    # the same `geo`-extra dependency the generator needs — and skips itself
+    # when shapely is missing. It was missing from `dev`, so a routine `pip
+    # install -e ".[dev]"` silently skipped all 145 rather than running them.
+    "shapely>=2.0",
 ]
 
 #: Only `scripts/build_delivery_zones.py` needs these, and only when the
