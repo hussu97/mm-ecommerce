@@ -243,18 +243,29 @@ async def sweep(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[str]:
     scheduler tick.
     """
     landed: list[str] = []
-    for order in await due(db, limit=limit):
+    # Snapshot (id, number, reason) for the whole locked batch up front. The
+    # per-order commit/rollback below expires every ORM object in the session,
+    # so a later bare attribute read — `_why` reads `order.arrives_at` — would
+    # try to lazy-reload outside the async greenlet and raise MissingGreenlet.
+    # Reason and number are captured here while the rows are fresh; the order is
+    # re-fetched inside the loop for the write, the same shape as
+    # `courier_service.retry_failed_dispatches`.
+    plan = [(o.id, o.order_number, _why(o)) for o in await due(db, limit=limit)]
+    for order_id, order_number, reason in plan:
+        order = await db.get(Order, order_id)
+        if order is None:  # pragma: no cover — vanished between snapshot and land
+            continue
         try:
-            moved = await land(db, order, because=_why(order))
+            moved = await land(db, order, because=reason)
             # Commit this arrival before touching the next order: it is work the
             # kitchen has been told about and a later failure must not undo it.
             # This is a background sweep with no request transaction to defer to
             # (see `delivery_scheduler.sweep_once`), so the commit lives here.
             await db.commit()
             if moved:
-                landed.append(order.order_number)
+                landed.append(order_number)
         except Exception:  # noqa: BLE001 — one bad order must not hold the rest
-            logger.exception("Could not land %s on the register", order.order_number)
+            logger.exception("Could not land %s on the register", order_number)
             await db.rollback()
     return landed
 
