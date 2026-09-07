@@ -20,10 +20,14 @@ DEPLOY_SH = ROOT / "scripts" / "deploy.sh"
 DECOMMISSION = ROOT / "scripts" / "decommission-legacy-aggregator.sh"
 DEPLOY_YML = ROOT / ".github" / "workflows" / "deploy.yml"
 ROLLBACK_YML = ROOT / ".github" / "workflows" / "rollback.yml"
+BACKUP_DB = ROOT / "scripts" / "backup-db.sh"
+RESTORE_DB = ROOT / "scripts" / "restore-db.sh"
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="bash not available")
-@pytest.mark.parametrize("script", [CUTOVER, DEPLOY_SH, DECOMMISSION])
+@pytest.mark.parametrize(
+    "script", [CUTOVER, DEPLOY_SH, DECOMMISSION, BACKUP_DB, RESTORE_DB]
+)
 def test_deploy_scripts_parse(script: Path):
     result = subprocess.run(
         ["bash", "-n", str(script)], capture_output=True, text=True, check=False
@@ -231,4 +235,60 @@ def test_cutover_pair_cuts_pos_api_before_the_storefront():
     assert api_at != -1, "cutover() never cuts over api"
     assert pos_at < api_at, (
         "pos-api must be cut over before the storefront api (F-OPS-14/15)"
+    )
+
+
+def test_restore_db_stops_every_writer_before_dropping_the_database():
+    """
+    F-OPS-8: the old restore-db.sh stopped only `api`. `pos-api`, either green
+    slot (mid-cutover) and the aggregator-worker daemon can all still hold a
+    connection and keep writing right up to `DROP DATABASE`, which either
+    fails outright or races the drop.
+    """
+    text = RESTORE_DB.read_text()
+    assert "WRITERS=(api pos-api api-green pos-api-green aggregator-worker)" in text
+    stop_at = text.find('_compose stop "${WRITERS[@]}"')
+    drop_at = text.find("DROP DATABASE IF EXISTS")
+    assert stop_at != -1, "restore-db.sh never stops the writer services"
+    assert drop_at != -1
+    assert stop_at < drop_at, "writers must be stopped before the database is dropped"
+
+
+def test_restore_db_terminates_backends_and_fails_closed_on_a_bad_dump():
+    text = RESTORE_DB.read_text()
+    assert "pg_terminate_backend" in text, (
+        "DROP DATABASE refuses while any session is still connected; a "
+        "lingering connection (a healthcheck, a stray psql) must be "
+        "terminated explicitly, not just asked to stop"
+    )
+    assert "ON_ERROR_STOP=1" in text, (
+        "without this, psql keeps going past a failed statement in the dump "
+        "and a truncated restore looks like a clean success"
+    )
+    assert "alembic_version" in text, (
+        "a dump that restores cleanly but is not actually an mm_ecommerce "
+        "database (wrong file, an empty dump) has to be caught after the "
+        "fact, since ON_ERROR_STOP alone would not see anything wrong with it"
+    )
+    # A bad restore must leave services stopped, not restart on top of it.
+    assert re.search(
+        r'if \[ -z "\$ALEMBIC_VERSION" \]; then\n(?:.*\n){0,6}?\s*exit 1', text
+    ), "an empty alembic_version must abort before the restart step"
+
+
+def test_backup_db_gcs_upload_failure_is_loud():
+    """
+    F-OPS-8: a failed offsite upload used to be a plain log line ("WARNING:
+    GCS upload failed") — easy to miss in a deploy log nobody is tailing.
+    `::error::` is a GitHub Actions annotation; this script runs over SSH from
+    deploy.yml/rollback.yml, and Actions parses the annotation out of the
+    step's own stdout regardless of which host produced it, so a failed
+    offsite backup now surfaces as a red annotation on the run instead of
+    text buried in the log. Still non-fatal, deliberately — the local dump is
+    what protects the migration this run is about to make.
+    """
+    text = BACKUP_DB.read_text()
+    assert "::error::backup-db.sh: GCS upload" in text
+    assert text.count("::error::backup-db.sh") >= 2, (
+        "both the cp-failed and no-CLI-available cases should be loud"
     )

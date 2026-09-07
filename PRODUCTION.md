@@ -363,6 +363,35 @@ gunzip -c /tmp/t.sql.gz | docker exec -i melting-moments-cakes-postgres-1 psql -
 docker exec melting-moments-cakes-postgres-1 psql -U mm_user -d postgres -c "DROP DATABASE restore_test;"
 ```
 
+### Monthly scratch-restore drill (F-OPS-8)
+
+The block above is not a once-off — a bucket full of dumps nobody has ever
+restored is exactly the state this section used to leave things in, and the
+only way to know a backup is actually restorable is to restore it. **On the
+first working day of every month**, whoever is on call:
+
+1. Picks the newest file under `gs://melting-moments-cakes-backups/backups/`.
+2. Runs the four commands above against `restore_test` — a scratch database
+   alongside the live one, never `mm_ecommerce` itself. This is deliberately
+   NOT `scripts/restore-db.sh`: that script (rewritten under F-OPS-8) drops
+   and recreates `${POSTGRES_DB}` and stops every writer service first — the
+   right tool for an actual emergency, and much too destructive to run every
+   month as a drill against production.
+3. Spot-checks the restored `restore_test`: `SELECT count(*) FROM orders;`
+   against the live database's count (should be close — the backup is at
+   most a day old), and `SELECT version_num FROM alembic_version;` (should
+   match `alembic current` on the live database at the time the backup was
+   taken).
+4. Drops `restore_test` and records the date + row counts somewhere the next
+   person doing this drill will see it — there is no dashboard for this, so
+   the record IS the evidence it happened.
+
+There is nothing in this stack that runs this on a schedule — no cron
+triggers it, no CI job checks it ran. It is a **human process**, not
+automation, and belongs on whoever owns on-call's calendar as a recurring
+monthly reminder, the same way the crontab install above needed a human to
+actually do it once `crontab -l` was found empty.
+
 ---
 
 ## Step 10: Vercel — Web Storefront

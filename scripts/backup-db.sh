@@ -90,17 +90,26 @@ export PATH
 if [ -n "${BACKUP_GCS_BUCKET:-}" ]; then
   GCS_TARGET="gs://${BACKUP_GCS_BUCKET}/backups/$(basename "$BACKUP_FILE")"
   echo "==> Uploading to GCS: $GCS_TARGET"
+  # F-OPS-8: loud, not just logged. This stays non-fatal on purpose — the
+  # local dump is what protects the migration this run is about to do, and
+  # failing the deploy over an offsite copy would be the wrong trade — but a
+  # failed offsite copy is exactly the kind of thing that stayed broken for
+  # weeks previously (see the gsutil/gcloud-on-PATH history above) because a
+  # plain log line nobody was tailing is not a page. `::error::` is a GitHub
+  # Actions workflow-annotation prefix: this script runs over SSH from
+  # deploy.yml/rollback.yml, and Actions parses it out of the step's own
+  # stdout regardless of which host produced it, so it surfaces as a red
+  # annotation on the run instead of a line buried in a log nobody reads.
   if command -v gcloud >/dev/null 2>&1; then
     gcloud storage cp "$BACKUP_FILE" "$GCS_TARGET" \
       && echo "    GCS upload complete." \
-      || echo "    WARNING: GCS upload failed. The local backup is still in $BACKUP_DIR."
+      || echo "::error::backup-db.sh: GCS upload of $BACKUP_FILE failed — the local backup is still in $BACKUP_DIR, but there is NO current offsite copy."
   elif command -v gsutil >/dev/null 2>&1; then
     gsutil cp "$BACKUP_FILE" "$GCS_TARGET" \
       && echo "    GCS upload complete." \
-      || echo "    WARNING: GCS upload failed. The local backup is still in $BACKUP_DIR."
+      || echo "::error::backup-db.sh: GCS upload of $BACKUP_FILE failed — the local backup is still in $BACKUP_DIR, but there is NO current offsite copy."
   else
-    echo "    WARNING: BACKUP_GCS_BUCKET is set but neither gcloud nor gsutil is"
-    echo "             installed on this host, so backups are LOCAL ONLY."
+    echo "::error::backup-db.sh: BACKUP_GCS_BUCKET is set but neither gcloud nor gsutil is installed on this host, so backups are LOCAL ONLY."
   fi
 
   # Offsite retention now matches local: keep only the newest KEEP_BACKUPS in GCS
