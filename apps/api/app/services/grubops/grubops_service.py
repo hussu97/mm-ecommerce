@@ -205,26 +205,30 @@ def needs_push(state: GrubOpsSyncState | None, desired: Desired) -> bool:
     return state.last_pushed_available != desired.available
 
 
-async def push_deltas(
-    db: AsyncSession,
+async def send_deltas(
     *,
     location: GrubOpsLocationMap,
     deltas: list[Desired],
-) -> int:
+) -> None:
     """
-    Send one location's changes and record what was sent.
+    Send one location's changes to GrubOps. NO DB — the caller records the result
+    on a session of its own.
 
     Batched into at most two calls — everything going off, everything coming
     back — because GrubOps takes a list and one round trip per item would be
     both slower and ruder.
 
+    Split out of `push_deltas` for per-tick session discipline (WP5, F-OPS-5):
+    the reconcile sweep computes the deltas on one session, closes it, calls this
+    with NO session held across the GrubOps round-trip, then reopens a session to
+    `record_pushed`. Only `location.grubops_partner_id`/`grubops_location_id` are
+    read — plain columns a caller can carry across the close — so this needs no
+    live session even though `push_deltas` still hands it a mapped object.
+
     Raises `GrubOpsError` on failure, deliberately: the caller decides whether
     that is worth a retry (the loop) or a shrug (the immediate push). Nothing is
     recorded as pushed unless the call that pushed it returned.
     """
-    if not deltas:
-        return 0
-
     partner_id = location.grubops_partner_id
     location_id = location.grubops_location_id
     source = settings.GRUBOPS_SOURCE
@@ -262,6 +266,24 @@ async def push_deltas(
                 location_id,
             )
 
+
+async def push_deltas(
+    db: AsyncSession,
+    *,
+    location: GrubOpsLocationMap,
+    deltas: list[Desired],
+) -> int:
+    """
+    Send one location's changes and record what was sent, on one session.
+
+    The immediate-push path (`_push_many`, off a background session of its own).
+    The per-tick reconcile sweep does NOT use this — it drives `send_deltas` and
+    `record_pushed` on separate sessions so a scheduler connection is never held
+    across the GrubOps round-trip (WP5, F-OPS-5).
+    """
+    if not deltas:
+        return 0
+    await send_deltas(location=location, deltas=deltas)
     await record_pushed(db, branch_id=location.branch_id, deltas=deltas)
     return len(deltas)
 

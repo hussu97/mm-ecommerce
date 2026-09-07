@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select
@@ -53,6 +54,21 @@ from app.services.grubops.grubops_service import Desired
 from app.services.providers.grubops_provider import GrubOpsError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _LocationRef:
+    """The plain fields one branch's reconcile needs, snapshotted off the mapped
+    row so the read session can be closed before any GrubOps round-trip. Carries
+    exactly what `grubops_service.send_deltas` and the record helpers read —
+    `grubops_partner_id`/`grubops_location_id` for the push, `branch_id` for the
+    record — and nothing that would lazy-load off a detached ORM object."""
+
+    branch_id: uuid.UUID
+    branch_name: str
+    grubops_partner_id: str
+    grubops_location_id: str
+
 
 #: "mmBATCH" + 3. The flat 64-bit namespace `delivery_scheduler` (…4801) and
 #: `log_retention` (…4802) live in; a new loop needs a number nobody else has,
@@ -155,46 +171,76 @@ async def desired_state(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]
     return desired
 
 
-async def _reconcile_branch(db: AsyncSession, location: GrubOpsLocationMap) -> int:
-    """One branch: compute, diff, push. Returns how many changes went."""
-    desired = await desired_state(db, location.branch_id)
+async def _deltas_for(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]:
+    """What has drifted for one branch: desired vs. last-pushed, on one session.
+
+    All of the reconcile's reads live here so the caller can close the session
+    before the GrubOps push. `Desired` is plain data (ids, a bool, a return
+    time), so the returned list survives that close; the `GrubOpsSyncState` rows
+    are consulted only to compute the diff and never leave this function.
+    """
+    desired = await desired_state(db, branch_id)
     if not desired:
-        return 0
+        return []
 
     states = {
         row.external_item_map_id: row
         for row in (
             await db.execute(
-                select(GrubOpsSyncState).where(
-                    GrubOpsSyncState.branch_id == location.branch_id
-                )
+                select(GrubOpsSyncState).where(GrubOpsSyncState.branch_id == branch_id)
             )
         )
         .scalars()
         .all()
     }
-
-    deltas = [
+    return [
         d for d in desired if grubops_service.needs_push(states.get(d.item_map_id), d)
     ]
+
+
+async def _reconcile_branch(ref: _LocationRef) -> int:
+    """One branch: compute, diff, push. Returns how many changes went.
+
+    Per-tick session discipline (WP5, F-OPS-5): the diff is computed on a short
+    session that is closed BEFORE the GrubOps round-trip; the push holds no
+    session; and the outcome — pushed or failed — is recorded on a fresh session
+    of its own. Nothing is held across the third-party call.
+    """
+    # Phase 1 — compute the diff, then release the connection.
+    async with SchedulerSessionFactory() as db:
+        deltas = await _deltas_for(db, ref.branch_id)
     if not deltas:
         return 0
 
+    # Phase 2 — push to GrubOps with NO session held.
     try:
-        return await grubops_service.push_deltas(db, location=location, deltas=deltas)
+        await grubops_service.send_deltas(location=ref, deltas=deltas)
     except GrubOpsError as exc:
         # Recorded, not raised: the next tick recomputes and tries again, and
         # `last_pushed_*` is deliberately left stale so it will.
         logger.warning(
             "GrubOps: %s changes failed for branch %s (%s)",
             len(deltas),
-            location.branch_id,
+            ref.branch_id,
             exc,
         )
-        await grubops_service.record_failure(
-            db, branch_id=location.branch_id, deltas=deltas, error=str(exc)
-        )
+        async with SchedulerSessionFactory() as db:
+            await grubops_service.record_failure(
+                db, branch_id=ref.branch_id, deltas=deltas, error=str(exc)
+            )
+            # This worker owns the session and has no request dependency to
+            # commit it.
+            await db.commit()
         return 0
+
+    # Phase 3 — record what we told GrubOps, durable on its own session.
+    async with SchedulerSessionFactory() as db:
+        await grubops_service.record_pushed(db, branch_id=ref.branch_id, deltas=deltas)
+        # This worker owns the session and has no request dependency to commit
+        # it; committing here makes this branch's pushed state durable before the
+        # next branch opens a session of its own.
+        await db.commit()
+    return len(deltas)
 
 
 async def sweep_once() -> dict[str, int]:
@@ -211,6 +257,9 @@ async def sweep_once() -> dict[str, int]:
         if not mine:
             return {}
 
+        # Read the active locations on a short session and snapshot the plain
+        # fields each branch's reconcile needs, then release the connection
+        # before any GrubOps round-trip.
         async with SchedulerSessionFactory() as db:
             rows = (
                 await db.execute(
@@ -219,23 +268,32 @@ async def sweep_once() -> dict[str, int]:
                     .where(GrubOpsLocationMap.is_active.is_(True))
                 )
             ).all()
+            refs = [
+                _LocationRef(
+                    branch_id=location.branch_id,
+                    branch_name=branch.name,
+                    grubops_partner_id=location.grubops_partner_id,
+                    grubops_location_id=location.grubops_location_id,
+                )
+                for location, branch in rows
+            ]
 
-            pushed: dict[str, int] = {}
-            for location, branch in rows:
-                # Per branch, so Sharjah's outage does not cost Barsha Heights
-                # its sync — the sub-sweep posture `delivery_scheduler` uses.
-                try:
-                    count = await _reconcile_branch(db, location)
-                except Exception:  # noqa: BLE001 — one branch must not end the pass
-                    logger.exception(
-                        "GrubOps: reconcile failed for branch %s", branch.name
-                    )
-                    continue
-                if count:
-                    pushed[branch.name] = count
+        pushed: dict[str, int] = {}
+        for ref in refs:
+            # Per branch, so Sharjah's outage does not cost Barsha Heights its
+            # sync — the sub-sweep posture `delivery_scheduler` uses. Each branch
+            # opens and closes its own sessions inside `_reconcile_branch`.
+            try:
+                count = await _reconcile_branch(ref)
+            except Exception:  # noqa: BLE001 — one branch must not end the pass
+                logger.exception(
+                    "GrubOps: reconcile failed for branch %s", ref.branch_name
+                )
+                continue
+            if count:
+                pushed[ref.branch_name] = count
 
-            await db.commit()
-            return pushed
+        return pushed
 
 
 async def run_forever() -> None:
