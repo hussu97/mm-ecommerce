@@ -30,8 +30,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "206_order_promo_released"
-down_revision: Union[str, None] = "205_orders_email_lowercase"
+revision: str = "208_order_promo_released"
+down_revision: Union[str, None] = "207_orders_email_lowercase"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

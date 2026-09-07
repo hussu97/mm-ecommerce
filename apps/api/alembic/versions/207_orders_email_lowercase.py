@@ -28,8 +28,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "205_orders_email_lowercase"
-down_revision: Union[str, None] = "204_agg_subtotal_inclusive"
+revision: str = "207_orders_email_lowercase"
+down_revision: Union[str, None] = "206_daily_sales_sends"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
