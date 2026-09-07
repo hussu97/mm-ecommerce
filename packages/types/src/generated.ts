@@ -2622,9 +2622,9 @@ export interface paths {
          *     only changes by cloning a version — so the "a new version for a new shape"
          *     rule holds without a guard here.
          *
-         *     The active version's parsed zones are cached in-process, so an edit to the
-         *     live map invalidates that cache below and the next quote prices against the
-         *     new value.
+         *     The active version's parsed zones are cached in-process, so an edit bumps the
+         *     version's `revision` below (in the same transaction) and every worker's next
+         *     quote misses its stale entry and prices against the new value.
          */
         put: operations["update_polygon_api_v1_delivery_zones_polygons__polygon_id__put"];
         post?: never;

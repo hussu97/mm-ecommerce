@@ -41585,7 +41585,7 @@
     },
     "/api/v1/delivery-zones/polygons/{polygon_id}": {
       "put": {
-        "description": "Change a zone's fee, courier, threshold or precedence \u2014 in place.\n\nThese are the *attributes* of a zone, not its shape, and they are editable on\nthe live map directly: a new map version is for a change of geometry, not for\ncorrecting a fee or re-pointing a courier. Geometry has no edit route \u2014 it\nonly changes by cloning a version \u2014 so the \"a new version for a new shape\"\nrule holds without a guard here.\n\nThe active version's parsed zones are cached in-process, so an edit to the\nlive map invalidates that cache below and the next quote prices against the\nnew value.",
+        "description": "Change a zone's fee, courier, threshold or precedence \u2014 in place.\n\nThese are the *attributes* of a zone, not its shape, and they are editable on\nthe live map directly: a new map version is for a change of geometry, not for\ncorrecting a fee or re-pointing a courier. Geometry has no edit route \u2014 it\nonly changes by cloning a version \u2014 so the \"a new version for a new shape\"\nrule holds without a guard here.\n\nThe active version's parsed zones are cached in-process, so an edit bumps the\nversion's `revision` below (in the same transaction) and every worker's next\nquote misses its stale entry and prices against the new value.",
         "operationId": "update_polygon_api_v1_delivery_zones_polygons__polygon_id__put",
         "parameters": [
           {
