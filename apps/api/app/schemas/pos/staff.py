@@ -101,6 +101,13 @@ class PinLoginRequest(BaseModel):
     branch_id: UUID
     pin: str = Field(pattern=r"^\d{4,8}$")
     device_token: str | None = None
+    #: Which staff member is signing in, when the terminal knows (it lists them
+    #: through `/staff/for-device`). Given it, the server verifies only that one
+    #: PIN hash rather than scanning the branch's staff — O(1) bcrypt, and no
+    #: chance of signing the wrong person in on a PIN collision. Optional: the
+    #: scan is kept as a fallback, and PINs are now unique per branch at write
+    #: time so the scan can no longer match two people.
+    user_id: UUID | None = None
 
 
 class PinLoginResponse(BaseModel):

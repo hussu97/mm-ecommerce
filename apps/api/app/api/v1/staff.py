@@ -267,6 +267,42 @@ async def _staff_response(db: AsyncSession, user: User) -> StaffResponse:
     return payload
 
 
+async def _assert_pin_unique(
+    db: AsyncSession,
+    *,
+    pin: str | None,
+    branch_ids: list[uuid.UUID],
+    exclude_id: uuid.UUID | None = None,
+) -> None:
+    """
+    Refuse a PIN already in use by another staff member at any shared branch.
+
+    PIN sign-in is scoped to one branch and, without this, matched the *first*
+    staff member whose hash verified — so two people sharing a PIN at one shop
+    would sign each other in, a cashier potentially landing on a manager's
+    permissions. Enforced at write time so the login scan is guaranteed to have
+    at most one match. bcrypt is salted, so uniqueness cannot be a column
+    constraint or a hash comparison: the candidate set (one or two shops' staff)
+    is verified against directly, which is cheap on the rare write path.
+    """
+    if not pin or not branch_ids:
+        return
+    stmt = (
+        select(User)
+        .join(UserBranch, UserBranch.user_id == User.id)
+        .where(UserBranch.branch_id.in_(branch_ids), User.pin_hash.isnot(None))
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(User.id != exclude_id)
+    others = list((await db.execute(stmt)).scalars().unique().all())
+    for other in others:
+        if other.pin_hash and verify_password(pin, other.pin_hash):
+            raise ConflictError(
+                "That PIN is already used by another staff member at one of "
+                "these branches. Choose a different PIN."
+            )
+
+
 async def _sync_branches(
     db: AsyncSession, user: User, branch_ids: list[uuid.UUID]
 ) -> None:
@@ -320,6 +356,7 @@ async def create_staff(
     if data.role_id is not None:
         await crud_service.get_or_404(db, Role, data.role_id)
     await _assignable(db, admin, role_id=data.role_id, is_admin=data.is_admin)
+    await _assert_pin_unique(db, pin=data.pin, branch_ids=data.branch_ids)
 
     user = User(
         email=email,
@@ -430,6 +467,17 @@ async def update_staff(
     await _assignable(
         db, admin, role_id=data.role_id, is_admin=getattr(data, "is_admin", None)
     )
+    if data.pin:
+        # Check against the branches this update leaves the user assigned to —
+        # the incoming set if it names one, else the branches they already have.
+        target_branches = (
+            data.branch_ids
+            if data.branch_ids is not None
+            else await _branch_ids(db, user.id)
+        )
+        await _assert_pin_unique(
+            db, pin=data.pin, branch_ids=target_branches, exclude_id=user.id
+        )
 
     payload = data.model_dump(
         exclude={"password", "pin", "branch_ids"}, exclude_unset=True
@@ -496,6 +544,26 @@ async def deactivate_staff(
 # ─── Terminal PIN sign-in ─────────────────────────────────────────────────────
 
 
+def _match_pin(
+    candidates: list[User], pin: str, user_id: uuid.UUID | None
+) -> User | None:
+    """
+    The one staff member a PIN signs in, out of a branch's candidates.
+
+    When the terminal names who is signing in (`user_id`, from
+    `/staff/for-device`), only that person's hash is verified — O(1) bcrypt, and
+    no way to land on someone else through a PIN collision. Absent an id the scan
+    is the fallback; PINs are unique per branch at write time now, so it can
+    match at most one person either way. Returns the matched user or `None`.
+    """
+    if user_id is not None:
+        candidates = [c for c in candidates if c.id == user_id]
+    for candidate in candidates:
+        if candidate.pin_hash and verify_password(pin, candidate.pin_hash):
+            return candidate
+    return None
+
+
 @router.post("/pin-login", response_model=PinLoginResponse)
 @limiter.limit("10/minute")
 async def pin_login(
@@ -529,11 +597,7 @@ async def pin_login(
     )
     candidates = list((await db.execute(stmt)).scalars().unique().all())
 
-    matched: User | None = None
-    for candidate in candidates:
-        if candidate.pin_hash and verify_password(data.pin, candidate.pin_hash):
-            matched = candidate
-            break
+    matched = _match_pin(candidates, data.pin, data.user_id)
 
     if matched is None:
         raise UnauthorizedError("Incorrect PIN for this branch")
