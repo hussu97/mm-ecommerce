@@ -110,11 +110,15 @@ async def _agg_order(db, *, channel, branch_id, **over) -> AggregatorOrder:
 
 
 # ── F-AGG-7: reap stale 'running' runs, spare the fresh ones ───────────────────
-async def test_reap_stale_runs_fails_only_the_orphaned_rows(engine):
-    # reap_stale_runs runs on its OWN committed session (the scheduler pool), so this
-    # test seeds committed rows on that same pool, reaps, asserts, and cleans up by id
-    # — never through the rolled-back `db` fixture, which reap could not see.
+async def test_reap_stale_runs_fails_only_the_orphaned_rows(engine, monkeypatch):
+    # reap_stale_runs opens its OWN committed session via the module factory. Point
+    # that factory at THIS test's engine so reap runs on the test's event loop and
+    # the test DB — not the app scheduler pool, whose connection is bound to
+    # whichever earlier test's loop first used it ("attached to a different loop"),
+    # and whose URL is the app default, not the test DB. Seed + assert + clean up
+    # on the same engine, never through the rolled-back `db` fixture reap can't see.
     Session = async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(ingest, "AsyncSessionFactory", Session)
     ids: dict[str, uuid.UUID] = {}
     async with Session() as s:
         stale = AggregatorSyncRun(
