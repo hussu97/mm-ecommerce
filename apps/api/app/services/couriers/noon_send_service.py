@@ -731,9 +731,20 @@ def _event_id(payload: dict[str, Any]) -> str:
 
 
 async def _delivery_for(
-    db: AsyncSession, payload: dict[str, Any]
+    db: AsyncSession, payload: dict[str, Any], *, trusted: bool
 ) -> OrderDelivery | None:
-    """The delivery this push is about, by task number or by our own reference."""
+    """The delivery this push is about, by task number or by our own reference.
+
+    The `order_nr -> courier_order_id` match is the task id we dispatched under
+    and never publish, so it is the one key an *unvalidated* push may move an
+    order by. The `order_reference` fallbacks below match on values that leave
+    our system — the short courier reference and, worse, the human
+    `MM-YYYYMMDD-NNN` order number — both of which are guessable. When the
+    webhook key did not validate (`trusted` is False) those fallbacks are
+    withheld, so a caller who guesses an order number moves nothing (F-COU-2).
+    A push whose key matched keeps the full lookup, since an early push can
+    arrive with no task number and only the reference to go on.
+    """
     task_nr = payload.get("order_nr")
     if task_nr:
         found = (
@@ -750,6 +761,11 @@ async def _delivery_for(
         )
         if found is not None:
             return found
+
+    if not trusted:
+        # Defence in depth behind the route's key check: an unauthenticated push
+        # may only ever move the task we dispatched, never a guessable reference.
+        return None
 
     # The task number can be missing on an early push, and whatever we sent as
     # `order_reference` comes back on every one, so it is a reliable second key.
@@ -791,8 +807,16 @@ async def _delivery_for(
     )
 
 
-async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> dict[str, Any]:
-    """Deduplicate and apply one status push from noon Send."""
+async def handle_webhook(
+    db: AsyncSession, payload: dict[str, Any], *, trusted: bool = False
+) -> dict[str, Any]:
+    """Deduplicate and apply one status push from noon Send.
+
+    `trusted` says whether the request's webhook key validated. It is passed
+    through to `_delivery_for`, which will only reach for a guessable
+    `order_reference` when it did (F-COU-2). Defaults to False so a caller that
+    forgets to say gets the safe, task-id-only lookup.
+    """
     status_code = str(payload.get("status_code") or "").strip().lower()
     if not payload.get("order_nr") and not payload.get("order_reference"):
         raise NoonSendError("Webhook names no task")
@@ -811,7 +835,7 @@ async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> dict[str,
         logger.info("Duplicate noon Send webhook skipped: %s", _event_id(payload))
         return {"received": True, "duplicate": True}
 
-    delivery = await _delivery_for(db, payload)
+    delivery = await _delivery_for(db, payload, trusted=trusted)
     if delivery is None:
         # A task we have no record of. Acknowledged and left alone rather than
         # retried at us forever.
@@ -992,7 +1016,7 @@ async def _announce_rider(db: AsyncSession, delivery: OrderDelivery) -> None:
 
 
 async def handle_tracking_webhook(
-    db: AsyncSession, payload: dict[str, Any]
+    db: AsyncSession, payload: dict[str, Any], *, trusted: bool = False
 ) -> dict[str, Any]:
     """
     Apply one rider position push.
@@ -1000,8 +1024,12 @@ async def handle_tracking_webhook(
     Not deduplicated and not journalled: these arrive every 15-30 seconds per
     active task, and a row per ping would bury the status events in the same
     table. The last position simply overwrites the one before it.
+
+    `trusted` (whether the webhook key validated) is passed to `_delivery_for`
+    so an unauthenticated ping cannot attach a rider position to an order it
+    only named by reference (F-COU-2).
     """
-    delivery = await _delivery_for(db, payload)
+    delivery = await _delivery_for(db, payload, trusted=trusted)
     if delivery is None:
         return {"received": True, "matched": False}
     await apply_tracking(db, delivery, payload)

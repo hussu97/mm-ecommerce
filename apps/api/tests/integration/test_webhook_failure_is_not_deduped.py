@@ -265,7 +265,7 @@ class TestTheDedupRowDoesNotSurviveAFailedApply:
         monkeypatch.setattr(
             noon_send_service,
             "_delivery_for",
-            lambda db, payload: _async(object()),
+            lambda db, payload, **_kw: _async(object()),
         )
 
         try:
