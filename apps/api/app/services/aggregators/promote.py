@@ -256,7 +256,7 @@ async def _find_convergence_order(
                 Order.branch_id == agg.branch_id,
                 created_dubai_day == agg.business_date,
                 Order.aggregator_channel.in_(
-                    reconcile.grubops_channel_names(agg.channel)
+                    reconcile.aggregator_channel_match_values(agg.channel)
                 ),
             )
         )
@@ -921,7 +921,12 @@ async def promote_order(
     if agg.branch_id is None:
         return None  # cannot file an order without a branch
 
-    label = reconcile.CHANNEL_GRUBOPS_LABEL.get(agg.channel, agg.channel)
+    # The one canonical spelling stored on `orders.aggregator_channel` — the
+    # courier-catalog code — so this promotion writer and the GrubOps ingest agree
+    # on the `(source, aggregator_channel, external_reference)` unique key and never
+    # file the same sale twice (F-AGG-9). Was the GrubOps DISPLAY label, which
+    # GrubTech could spell differently from the ingest ("Noon" vs "Noon Food").
+    label = reconcile.canonical_channel_code(agg.channel) or agg.channel
 
     # Barsha/Sharjah: GrubOps/Foodics owns the order when it exists. Link to it so
     # the association is recorded, and never create it or touch its items/status

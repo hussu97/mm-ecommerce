@@ -194,7 +194,16 @@ def _channel_line(order: Order) -> str:
     word rather than the enum value.
     """
     if order.source == OrderSourceEnum.AGGREGATOR.value:
-        channel = order.aggregator_channel or "Aggregator"
+        # `aggregator_channel` now holds the canonical code ("noon_food") not a
+        # display label (F-AGG-9), so resolve the human name for the notification —
+        # falling back to the stored value (handles a pre-backfill label or an
+        # unknown channel) then to "Aggregator".
+        from app.services.couriers import courier_catalog
+
+        code = courier_catalog.code_for_channel(order.aggregator_channel)
+        channel = (
+            courier_catalog.COURIER_NAMES.get(code) if code else None
+        ) or order.aggregator_channel or "Aggregator"
         if order.aggregator_driver_name:
             return f"{channel} · {order.aggregator_driver_name}"
         return channel

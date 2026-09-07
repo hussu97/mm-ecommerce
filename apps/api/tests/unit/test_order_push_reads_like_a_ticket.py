@@ -39,17 +39,20 @@ def test_website_order_channel_line_says_website():
 
 
 def test_aggregator_order_names_the_marketplace_not_the_word_aggregator():
-    order = _order(source="aggregator", aggregator_channel="Talabat")
+    # aggregator_channel now stores the canonical code (F-AGG-9); the ticket resolves
+    # it to the marketplace's display name.
+    order = _order(source="aggregator", aggregator_channel="talabat")
     assert push_service._channel_line(order) == "Talabat"
 
 
 def test_aggregator_channel_carries_the_rider_once_assigned():
+    # "noon_food" is the stored code; a legacy raw label ("Noon") resolves the same.
     order = _order(
         source="aggregator",
-        aggregator_channel="Noon",
+        aggregator_channel="noon_food",
         aggregator_driver_name="Ahmed",
     )
-    assert push_service._channel_line(order) == "Noon · Ahmed"
+    assert push_service._channel_line(order) == "Noon Food · Ahmed"
 
 
 def test_a_missing_channel_falls_back_rather_than_showing_nothing():

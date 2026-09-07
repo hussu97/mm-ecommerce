@@ -834,7 +834,10 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         # both carry "6600" collapsed into one MM order. The relaxed
         # `uq_orders_source_external_reference` (now keyed on aggregator_channel too,
         # migration 183) lets the two coexist once the adopt no longer merges them.
-        channel_names = reconcile.grubops_channel_names_including(channel)
+        # Match the MM order's aggregator_channel on the CANONICAL code both writers
+        # now store PLUS the historical display labels (F-AGG-9), so the adopt finds a
+        # promotion gap-fill whichever spelling it carries.
+        channel_names = reconcile.aggregator_channel_match_values_for_name(channel)
         # BOTH the external_reference and the display-code match must be scoped to
         # this branch and placed day. The short externalId ("6227") is a
         # per-branch-per-DAY sequence Noon reuses, and GrubOps stores it on
@@ -920,7 +923,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
         **money_fields,
         status=OrderStatusEnum.CREATED,
         source=OrderSourceEnum.AGGREGATOR.value,
-        aggregator_channel=channel,
+        # The CANONICAL code, not GrubTech's raw display name — so this GrubOps
+        # writer and the promotion writer agree on the
+        # `(source, aggregator_channel, external_reference)` unique key and one sale
+        # is never filed twice (F-AGG-9). The raw word is preserved on
+        # `grubops_order_map.source_channel`; `_driver_code` and the adopt lookup
+        # still receive the raw `channel`.
+        aggregator_channel=reconcile.canonical_channel_code(channel) or channel,
         aggregator_display_code=_driver_code(
             header, order_map.external_id, info, channel=channel
         ),

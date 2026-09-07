@@ -45,6 +45,7 @@ from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem
 from app.services.aggregators import _isolation, policy
+from app.services.couriers import courier_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,49 @@ def grubops_channel_names(channel: str) -> list[str]:
         )
         if name
     ]
+
+
+def canonical_channel_code(channel: str | None) -> str | None:
+    """The ONE spelling both order writers store on `orders.aggregator_channel`
+    (F-AGG-9): the courier-catalog code (`code_for_channel` — "deliveroo",
+    "noon_food", "careem", "talabat", "keeta"), or the raw word when unrecognised.
+
+    Migration 183 widened the orders unique key to
+    `(source, aggregator_channel, external_reference)`, so the promotion writer and
+    the GrubOps ingest MUST agree on this string or the same sale is filed twice —
+    they spelled it differently before (promotion's display label "Noon Food" vs
+    GrubTech's "Noon", "Careem" vs "Careem Now"). Canonicalising both to the code
+    collapses every spelling to one value. `code_for_channel` already accepts the
+    aggregator channel constants ("noon" → "noon_food") and every GrubTech alias.
+    """
+    return courier_catalog.code_for_channel(channel) or channel
+
+
+def aggregator_channel_match_values(channel: str) -> list[str]:
+    """Every spelling an MM order's `aggregator_channel` might carry for a channel —
+    the canonical code both writers now store PLUS the historical display labels for
+    rows written before F-AGG-9. The 211 backfill canonicalises the old rows, but
+    matching both means a convergence lookup never misses one mid-migration, and a
+    wider set is safe here: it only helps a promote/GrubOps pass FIND the existing MM
+    order to update instead of filing a duplicate, and every value is channel-scoped
+    so it cannot collide across channels. Used by the two convergence lookups
+    (`promote._find_convergence_order`, `grubops_orders_service` adopt)."""
+    values = list(grubops_channel_names(channel))
+    code = canonical_channel_code(channel)
+    if code and code not in values:
+        values.append(code)
+    return values
+
+
+def aggregator_channel_match_values_for_name(name: str | None) -> list[str]:
+    """`aggregator_channel_match_values` keyed by any GrubTech spelling of a channel
+    (the GrubOps ingest knows the raw `foodAggregatorName`, not our channel code).
+    Returns the channel's display labels/aliases plus the canonical code."""
+    values = list(grubops_channel_names_including(name))
+    code = canonical_channel_code(name)
+    if code and code not in values:
+        values.append(code)
+    return values
 
 
 def grubops_channel_names_including(name: str | None) -> list[str]:
