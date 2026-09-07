@@ -133,6 +133,13 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
     nobody making it. A null stamp reads as *overdue*, because an order nobody
     can date is one nobody is baking.
 
+    **Claimed under `FOR UPDATE SKIP LOCKED`**, the second guard the scheduler's
+    docstring promises: the advisory lock keeps one worker in the sweep in the
+    ordinary case, and this makes a bypass harmless — two schedulers on blue and
+    green each lock the rows they take and skip the other's, so no arrival is
+    claimed twice. `selectinload` issues its own follow-up selects, so only the
+    `orders` rows themselves are locked, which is all this needs.
+
     **Bounded by age, which that generosity makes necessary.** An order
     confirmed months ago and never published is abandoned, not waiting — a
     checkout that half-failed, a test order, a gateway event nobody finished
@@ -159,6 +166,7 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
                 .options(selectinload(Order.items), selectinload(Order.delivery))
                 .order_by(Order.arrives_at.nulls_first(), Order.created_at)
                 .limit(limit)
+                .with_for_update(skip_locked=True)
             )
         )
         .scalars()
@@ -224,11 +232,26 @@ async def sweep(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[str]:
     its queue one at a time: each arrival prints, and a window emptying into a
     kitchen should reach the bench in the order the orders were placed rather
     than in the order the network settled.
+
+    **One order, one transaction — committed before the next is attempted, and
+    reported landed only once its own commit holds.** An arrival is real work
+    the kitchen has already been told about; the batch used to ride a single
+    transaction the scheduler committed at the end, so one order raising rolled
+    back every arrival taken before it — announced to the register, then undone
+    (F-COU-12). Per-order commits scope the blast radius of a bad order to
+    itself, exactly as `courier_service.retry_failed_dispatches` does in the same
+    scheduler tick.
     """
     landed: list[str] = []
     for order in await due(db, limit=limit):
         try:
-            if await land(db, order, because=_why(order)):
+            moved = await land(db, order, because=_why(order))
+            # Commit this arrival before touching the next order: it is work the
+            # kitchen has been told about and a later failure must not undo it.
+            # This is a background sweep with no request transaction to defer to
+            # (see `delivery_scheduler.sweep_once`), so the commit lives here.
+            await db.commit()
+            if moved:
                 landed.append(order.order_number)
         except Exception:  # noqa: BLE001 — one bad order must not hold the rest
             logger.exception("Could not land %s on the register", order.order_number)
