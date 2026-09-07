@@ -353,6 +353,36 @@ class TestStatusEventsFromOms:
         o = _CLIENT._order_from_oms(order)
         assert o.status_events == []
 
+    def test_cancelled_order_drops_completion_etas_and_ends_cancelled(self):
+        """A cancel keeps the full `estimated*` completion ETAs; they must not
+        show as ready/picked_up/delivered. Trace stops before completion and
+        closes on a single `cancelled` event (order FG96NNWXZT6J5DA)."""
+        order = {**_OMS_ORDER_ENRICHED, "orderNr": "FG4LNNCANCEL1A"}
+        order["orderStatusCode"] = "canceled"
+        order["outletStatusCode"] = "canceled"
+        order["logisticsStatusCode"] = "canceled"
+        o = _CLIENT._order_from_oms(order)
+        statuses = [(e.status, e.sequence) for e in o.status_events]
+        assert statuses == [
+            ("placed", 1),
+            ("accepted", 2),
+            ("driver_assigned", 3),
+            ("driver_at_restaurant", 4),
+            ("cancelled", 5),
+        ]
+        words = {e.status for e in o.status_events}
+        assert not (words & {"ready", "picked_up", "delivered"})
+
+    def test_in_flight_order_never_shows_delivered_from_eta(self):
+        """An order still on the way carries `estimatedDeliveryAt` (an ETA), but a
+        `delivered` step must not appear until the order is really delivered."""
+        order = {**_OMS_ORDER_ENRICHED, "orderNr": "FG4LNNINFLT01A"}
+        order["orderStatusCode"] = "picked_up"
+        o = _CLIENT._order_from_oms(order)
+        words = {e.status for e in o.status_events}
+        assert "delivered" not in words
+        assert "picked_up" in words
+
 
 class TestEnrichmentSurvivesMerge:
     def test_merge_carries_oms_address_driver_and_events(self):

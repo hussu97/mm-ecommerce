@@ -837,6 +837,24 @@ class NoonClient(BaseAggregatorClient):
         ("estimatedDeliveryAt", "delivered"),
     )
 
+    #: Steps a cancelled order must never show: noon keeps the `estimated*`
+    #: completion ETAs on a cancel, so emitting these fabricated a delivery/pickup
+    #: that never happened.
+    _COMPLETION_STEPS: frozenset[str] = frozenset({"ready", "picked_up", "delivered"})
+
+    #: Marketplace words that mean the order was terminated without delivery.
+    _CANCELLED_WORDS: frozenset[str] = frozenset(
+        {"canceled", "cancelled", "rejected", "failed", "declined"}
+    )
+
+    def _current_status(self, order: dict[str, Any]) -> str:
+        """The order's real current status word, normalised (order > logistics > outlet)."""
+        for field in ("orderStatusCode", "logisticsStatusCode", "outletStatusCode"):
+            value = _str_or_none(order.get(field))
+            if value:
+                return value.strip().lower().replace(" ", "_")
+        return ""
+
     def _status_events_from(self, order: dict[str, Any]) -> list[StandardStatusEvent]:
         """The order's marketplace timeline as StandardStatusEvents.
 
@@ -847,12 +865,28 @@ class NoonClient(BaseAggregatorClient):
         timestamp is present, and each status word appears at most once (first
         present timestamp wins), so a missing field simply omits that step rather
         than shifting the sequence.
+
+        The ETA fields are present even for a step the order never reached — noon
+        sets `estimatedDeliveryAt` at order time and keeps it after a cancel — so
+        a step is emitted only when the order's real status justifies it: the
+        `delivered` step only once the order is actually `delivered`, and none of
+        the completion steps on a cancel, which instead ends on a `cancelled`
+        event. Without this a cancelled order showed a fabricated `delivered` in
+        its trace (order FG96NNWXZT6J5DA, 2026-09-06).
         """
+        real = self._current_status(order)
+        cancelled = real in self._CANCELLED_WORDS
+        delivered = real == "delivered"
+
         events: list[StandardStatusEvent] = []
         seen: set[str] = set()
         sequence = 0
         for field_name, status in self._OMS_STATUS_STEPS:
             if status in seen:
+                continue
+            if cancelled and status in self._COMPLETION_STEPS:
+                continue
+            if status == "delivered" and not delivered:
                 continue
             at = _parse_datetime(order.get(field_name))
             if at is None:
@@ -860,6 +894,19 @@ class NoonClient(BaseAggregatorClient):
             seen.add(status)
             sequence += 1
             events.append(StandardStatusEvent(status=status, at=at, sequence=sequence))
+        if cancelled:
+            # No per-status audit trail exposes when the cancel landed; place it
+            # after the last real step (or at placement) so it sorts last.
+            cancel_at = (
+                events[-1].at if events else _parse_datetime(order.get("createdAt"))
+            )
+            if cancel_at is not None:
+                sequence += 1
+                events.append(
+                    StandardStatusEvent(
+                        status="cancelled", at=cancel_at, sequence=sequence
+                    )
+                )
         return events
 
     def _items_from_oms(self, order: dict[str, Any]) -> list[StandardOrderItem]:
