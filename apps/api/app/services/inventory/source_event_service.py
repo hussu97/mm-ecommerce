@@ -719,23 +719,55 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
     for event in events:
         if event.source_type != "order":
             continue
-        order = await db.get(Order, uuid.UUID(event.source_id))
-        if order is None:
-            event.status = InventorySourceEventStatusEnum.EXCEPTION.value
-            event.error_code = "order_not_found"
-            event.error_detail = "Order no longer exists"
-            event.processed_at = utcnow()
-            continue
-        if event.error_code == "missing_recipe":
-            # Re-snapshot: a recipe may have been activated since this order was
-            # accepted, and the frozen plan does not grow on its own.
-            await retry_event(
-                db, event=event, order=order, user=None, already_locked=True
+        # Per-event isolation (F-INV-4). Expected domain failures already become
+        # sequenced no-movement exceptions inside `_post_or_record_exception`'s
+        # own savepoint. This wraps the rest — a corrupt frozen plan, a bad
+        # source_id, a DB error while re-snapshotting — so ONE poison event
+        # cannot abort the whole branch's transaction and replay forever every
+        # tick, blocking every other pending event behind it. A savepoint keeps
+        # the failure local; the poison is quarantined as an exception and the
+        # remaining events in the branch still post and commit.
+        try:
+            async with db.begin_nested():
+                order = await db.get(Order, uuid.UUID(event.source_id))
+                if order is None:
+                    event.status = InventorySourceEventStatusEnum.EXCEPTION.value
+                    event.error_code = "order_not_found"
+                    event.error_detail = "Order no longer exists"
+                    event.processed_at = utcnow()
+                elif event.error_code == "missing_recipe":
+                    # Re-snapshot: a recipe may have been activated since this
+                    # order was accepted, and the frozen plan does not grow on
+                    # its own.
+                    await retry_event(
+                        db, event=event, order=order, user=None, already_locked=True
+                    )
+                else:
+                    await _post_or_record_exception(
+                        db, event=event, order=order, user=None, already_locked=True
+                    )
+        except Exception as exc:  # noqa: BLE001 — quarantine one poison event
+            logger.exception(
+                "Inventory source-event sweep poisoned by event %s (branch %s)",
+                event.id,
+                branch_id,
             )
-        else:
-            await _post_or_record_exception(
-                db, event=event, order=order, user=None, already_locked=True
-            )
+            # The savepoint rolled back this event's mutations and recovered the
+            # connection; record the quarantine in a fresh savepoint so it sticks
+            # and the event stops re-poisoning the branch on the next tick. It
+            # stays recoverable by hand via the retry endpoint.
+            try:
+                async with db.begin_nested():
+                    event.status = InventorySourceEventStatusEnum.EXCEPTION.value
+                    event.error_code = "sweep_failed"
+                    event.error_detail = str(exc)[:500]
+                    event.processed_at = utcnow()
+            except Exception:  # noqa: BLE001 — never let quarantine bookkeeping win
+                logger.exception(
+                    "Could not quarantine poison event %s (branch %s)",
+                    event.id,
+                    branch_id,
+                )
         processed += 1
     return processed
 
