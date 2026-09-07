@@ -162,6 +162,19 @@ class DeliveryPolygonVersion(Base, UUIDMixin):
     activated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: Bumped every time a zone in this map is edited in place.
+    #:
+    #: The active map's parsed zones are cached in-process, per worker, keyed by
+    #: `(version id, revision)`. An in-place fee or courier edit does not change
+    #: the version id, so without this the cache key never moved and only the
+    #: worker that served the edit saw it — every other worker kept quoting the
+    #: old value until it restarted (F-COU-9). Editing a zone increments this in
+    #: the same transaction as the edit, so once that commits every worker's
+    #: next read computes a new key, misses, and re-reads the new map. No
+    #: cross-worker cache-busting message is needed; the stamp carries it.
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
     polygons: Mapped[list[DeliveryPolygon]] = relationship(
         "DeliveryPolygon",

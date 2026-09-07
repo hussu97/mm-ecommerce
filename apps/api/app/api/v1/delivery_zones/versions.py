@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -391,9 +391,9 @@ async def update_polygon(
     only changes by cloning a version — so the "a new version for a new shape"
     rule holds without a guard here.
 
-    The active version's parsed zones are cached in-process, so an edit to the
-    live map invalidates that cache below and the next quote prices against the
-    new value.
+    The active version's parsed zones are cached in-process, so an edit bumps the
+    version's `revision` below (in the same transaction) and every worker's next
+    quote misses its stale entry and prices against the new value.
     """
     result = await db.execute(
         select(DeliveryPolygon)
@@ -436,8 +436,16 @@ async def update_polygon(
             polygon.delivery_fee = Decimal("0.00")
     if data.free_delivery_eligible is not None:
         polygon.free_delivery_eligible = data.free_delivery_eligible
-    if "free_delivery_threshold" in data.model_fields_set:
-        # Null clears the override; the zone goes back to the national number.
+    if data.free_delivery_threshold is not None:
+        # `null` is no longer an instruction here. It once meant "clear this
+        # zone's override and fall back to the national threshold" — but that
+        # fallback is gone (the column is NOT NULL since 088; every zone answers
+        # for itself), so there is nothing left to clear back to. Treated like
+        # every other field on this handler: an omitted key *or* an explicit
+        # `null` leaves the existing value untouched. Writing the `null` through
+        # instead flushed NULL into a NOT NULL column and 500'd — and even short
+        # of the flush, `float(polygon.free_delivery_threshold)` in the audit
+        # payload below is `float(None)`, a second 500 (F-COU-10).
         polygon.free_delivery_threshold = data.free_delivery_threshold
     if data.fulfilment_provider is not None:
         allowed = {p.value for p in FulfilmentProviderEnum}
@@ -503,10 +511,20 @@ async def update_polygon(
         },
         request=request,
     )
-    if polygon.version.is_active:
-        # The active version's zones are parsed and cached in-process; an in-place
-        # edit has to clear it or the next quote prices against the stale value.
-        delivery_zone_service.invalidate_cache()
+    # The active map's parsed zones are cached in-process, per worker, keyed by
+    # `(version id, revision)`. Bumping the revision in the same transaction as
+    # the edit is what makes the change visible to every worker on its next read
+    # (F-COU-9): the old code cleared only the one worker that served the request,
+    # and did it before the commit. An atomic `revision + 1` (rather than reading
+    # the value and writing it back) so two edits racing on one map still land on
+    # distinct revisions and neither is missed. Bumped for any version, not just
+    # the active one — a draft edited now and published later must not be served
+    # from a stale entry a worker cached while it was briefly active before.
+    await db.execute(
+        update(DeliveryPolygonVersion)
+        .where(DeliveryPolygonVersion.id == polygon.version_id)
+        .values(revision=DeliveryPolygonVersion.revision + 1)
+    )
     return PolygonResponse.of(polygon)
 
 
@@ -541,7 +559,10 @@ async def activate_version(
     version.is_active = True
     version.activated_at = datetime.now(timezone.utc)
     await db.flush()
-    delivery_zone_service.invalidate_cache()
+    # No cache bust here: publishing a different map moves the active version id,
+    # which is part of the cache key, so every worker's next read misses its old
+    # entry and picks the new map up on its own. The previous `invalidate_cache()`
+    # cleared only this worker, and ran before the commit — see F-COU-9.
 
     await audit_service.log_action(
         db,

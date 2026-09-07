@@ -138,10 +138,12 @@ class PolygonUpdate(BaseModel):
     delivery_fee: Decimal | None = Field(None, ge=0)
     pricing_mode: str | None = None
     free_delivery_eligible: bool | None = None
-    #: Null is a real instruction here — "clear this zone's own threshold and go
-    #: back to the national one" — so unlike every other field on this model,
-    #: omitted and null are not the same. The handler reads `model_fields_set`
-    #: to tell them apart rather than testing `is not None`.
+    #: Like every other field here, `null` (or an omitted key) means "leave this
+    #: untouched". It used to mean "clear this zone's override and fall back to
+    #: the national threshold", but that fallback is gone — the column is NOT
+    #: NULL and every zone answers for itself — so there is nothing to clear back
+    #: to, and writing the `null` through only 500'd on a NOT NULL column
+    #: (F-COU-10). The handler tests `is not None`, not `model_fields_set`.
     free_delivery_threshold: Decimal | None = Field(None, ge=0)
     fulfilment_provider: str | None = None
     #: The couriers this zone's orders may be moved to. Replaces the list

@@ -137,12 +137,29 @@ def point_in_geometry(lat: float, lng: float, geometry: dict[str, Any]) -> bool:
 
 
 # The active map changes only when someone publishes one, so it is held in
-# process rather than re-read and re-parsed on every quote. Keyed by version id
-# so a rollback swaps the entry instead of serving a stale map.
-_cache: dict[uuid.UUID, tuple[Zone, ...]] = {}
+# process rather than re-read and re-parsed on every quote.
+#
+# One entry per version id, holding the version's `revision` alongside its zones.
+# A quote re-reads only when the cached revision no longer matches the one on the
+# active version row — which the edit path bumps in the same transaction as the
+# change (F-COU-9). So an in-place fee or courier edit, which keeps the version
+# id, is still picked up by every worker on its next read: the id matches but the
+# revision does not. Publishing a different map moves the id instead, which also
+# misses. Storing one entry per id (rather than one per (id, revision)) keeps the
+# map bounded — a superseded revision is overwritten, not left to accumulate.
+_cache: dict[uuid.UUID, tuple[int, tuple[Zone, ...]]] = {}
 
 
 def invalidate_cache() -> None:
+    """Drop the in-process zone cache.
+
+    No longer on the request path: the `revision` stamp in the cache key makes an
+    edit visible to every worker on its next read without a cross-worker message,
+    so the edit and publish handlers do not call this (calling it there only ever
+    cleared the one worker that served the request, and it ran before the commit).
+    Kept as a manual reset — for a test isolating the global, or an operator
+    flushing the cache by hand.
+    """
     _cache.clear()
 
 
@@ -159,8 +176,8 @@ async def get_active_zones(db: AsyncSession) -> tuple[Zone, ...]:
         return ()
 
     cached = _cache.get(version.id)
-    if cached is not None:
-        return cached
+    if cached is not None and cached[0] == version.revision:
+        return cached[1]
 
     result = await db.execute(
         select(DeliveryPolygon)
@@ -168,7 +185,7 @@ async def get_active_zones(db: AsyncSession) -> tuple[Zone, ...]:
         .order_by(DeliveryPolygon.display_order)
     )
     zones = tuple(_to_zone(p) for p in result.scalars().all())
-    _cache[version.id] = zones
+    _cache[version.id] = (version.revision, zones)
     return zones
 
 
