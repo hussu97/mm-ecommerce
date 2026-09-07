@@ -305,6 +305,19 @@ def test_both_services_agree_on_courier_configuration():
     )
 
 
+#: F-OPS-14/15 (2026-09-07): the ONLY settings a green slot is allowed to
+#: disagree with its blue counterpart on — it boots lean while it briefly
+#: overlaps the live colour during cutover (see the anchor notes in
+#: docker-compose.prod.yml and test_compose_wiring.py's
+#: test_green_slots_boot_lean_for_cutover). Anything else differing is still
+#: the silent-inert-after-cutover bug this test exists to catch.
+_LEAN_BOOT_OVERRIDES = {
+    "DATABASE_POOL_SIZE",
+    "DATABASE_MAX_OVERFLOW",
+    "STOREFRONT_SCHEDULER_ENABLED",
+}
+
+
 def test_green_slots_copy_their_blue_environment():
     """
     api-green is a second process of the storefront, not a third configuration.
@@ -312,13 +325,26 @@ def test_green_slots_copy_their_blue_environment():
     outage again, this time only after the first cutover.
     """
     compose = _load_compose()
-    assert (
-        compose["services"]["api"]["environment"]
-        == compose["services"]["api-green"]["environment"]
+
+    api_env = compose["services"]["api"]["environment"]
+    api_green_env = compose["services"]["api-green"]["environment"]
+    assert set(api_env) == set(api_green_env), (
+        "api and api-green must name exactly the same settings"
     )
-    assert (
-        compose["services"]["pos-api"]["environment"]
-        == compose["services"]["pos-api-green"]["environment"]
+    diff = {k for k in api_env if api_env[k] != api_green_env[k]}
+    assert diff <= _LEAN_BOOT_OVERRIDES, (
+        f"api-green disagrees with api on unexpected keys: {diff - _LEAN_BOOT_OVERRIDES}"
+    )
+
+    pos_env = compose["services"]["pos-api"]["environment"]
+    pos_green_env = compose["services"]["pos-api-green"]["environment"]
+    assert set(pos_env) == set(pos_green_env), (
+        "pos-api and pos-api-green must name exactly the same settings"
+    )
+    pos_diff = {k for k in pos_env if pos_env[k] != pos_green_env[k]}
+    assert pos_diff <= _LEAN_BOOT_OVERRIDES, (
+        "pos-api-green disagrees with pos-api on unexpected keys: "
+        f"{pos_diff - _LEAN_BOOT_OVERRIDES}"
     )
 
 
