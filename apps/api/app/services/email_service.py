@@ -624,6 +624,50 @@ def _send(
         return {"status": "failed", "resend_id": None, "error": error_msg}
 
 
+#: Hard ceiling on one Resend call. The SDK sets no client-side timeout, so a
+#: hung TCP connect could park the calling coroutine — and, for an inline-awaited
+#: send, the request's open transaction and its pooled connection — for as long
+#: as the socket stayed open. This is the WP5 (F-OPS-6) bound.
+_SEND_TIMEOUT_SECONDS = 10
+
+
+async def _send_async(
+    to: str, subject: str, html: str, attachments: list[dict] | None = None
+) -> dict:
+    """`_send` off the event loop with a hard timeout. Never raises.
+
+    Runs the blocking Resend call in a worker thread and bounds it with
+    `asyncio.wait_for`: a stuck send becomes a logged, journalled failure in at
+    most ten seconds rather than a coroutine (and connection) pinned for the life
+    of the socket. A timeout is returned as an ordinary `failed` result, so the
+    funnel's "never raises" contract and the `email_logs` journal are unchanged.
+    """
+    # Keep the call shape the callers had: three positional args when there is no
+    # attachment, four when there is. `_send` defaults `attachments=None`, but a
+    # test double for it need not, so passing a trailing None unconditionally
+    # would break a three-argument stub.
+    args = (
+        (to, subject, html) if attachments is None else (to, subject, html, attachments)
+    )
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_send, *args),
+            _SEND_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.error(
+            "Email send timed out after %ss to=%s subject=%s",
+            _SEND_TIMEOUT_SECONDS,
+            to,
+            subject,
+        )
+        return {
+            "status": "failed",
+            "resend_id": None,
+            "error": f"send timed out after {_SEND_TIMEOUT_SECONDS}s",
+        }
+
+
 async def _log(
     template: str,
     recipient: str,
@@ -684,7 +728,7 @@ async def _send_order_email(
             **_order_context(order, locale=locale),
             **extra,
         )
-        result = await asyncio.to_thread(_send, order.email, subject, html)
+        result = await _send_async(order.email, subject, html)
     except Exception as exc:
         logger.error(
             "%s render/send failed for %s: %s",
@@ -776,7 +820,7 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
                 maps_url=maps_url(snapshot),
                 **context,
             )
-            result = await asyncio.to_thread(_send, recipient, subject, html)
+            result = await _send_async(recipient, subject, html)
         except Exception as exc:
             logger.error(
                 "owner_order_notification render/send failed for %s to %s: %s",
@@ -1150,7 +1194,7 @@ async def _send_user_email(
     """
     try:
         html = _render(template, recipient_email=email, locale=locale, **context)
-        result = await asyncio.to_thread(_send, email, subject, html)
+        result = await _send_async(email, subject, html)
     except Exception as exc:
         logger.error(
             "%s render/send failed for %s: %s", template, email, exc, exc_info=True
@@ -1179,16 +1223,9 @@ async def send_with_attachment(
     import base64
 
     encoded = base64.b64encode(content).decode("ascii")
-    try:
-        result = await asyncio.to_thread(
-            _send,
-            recipient,
-            subject,
-            html,
-            [{"filename": filename, "content": encoded}],
-        )
-    except Exception as exc:  # noqa: BLE001 — sending must never raise upward
-        result = {"status": "failed", "resend_id": None, "error": str(exc)}
+    result = await _send_async(
+        recipient, subject, html, [{"filename": filename, "content": encoded}]
+    )
     await _log(template, recipient, subject, result)
     return result
 
