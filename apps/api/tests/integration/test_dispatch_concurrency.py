@@ -58,7 +58,11 @@ async def order(engine):
     """
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
-        branch = Branch(name=f"{MARKER} branch", reference=f"{MARKER}-{uuid.uuid4()}")
+        # `branches.reference` is VARCHAR(50); MARKER (27) + a full uuid (36)
+        # overruns it, so trim the suffix like `order_number` does below.
+        branch = Branch(
+            name=f"{MARKER} branch", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}"
+        )
         db.add(branch)
         await db.flush()
 
