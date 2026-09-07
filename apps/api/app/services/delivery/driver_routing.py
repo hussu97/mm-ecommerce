@@ -23,6 +23,7 @@ instead of "6 min · 4.2 km away" has lost precision. That is the whole cost.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -31,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.database import SchedulerSessionFactory
 from app.models.branch import Branch
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
@@ -41,8 +43,19 @@ logger = logging.getLogger(__name__)
 __all__ = ["refresh_routes", "route_now"]
 
 
+@dataclass(frozen=True)
+class _RouteJob:
+    """The plain coordinates one Mapbox call needs, carried across the HTTP with
+    no ORM object and no session attached (F-OPS-5)."""
+
+    delivery_id: object
+    from_latitude: float
+    from_longitude: float
+    to_latitude: float
+    to_longitude: float
+
+
 async def refresh_routes(
-    db: AsyncSession,
     *,
     limit: int = 25,
     now: datetime | None = None,
@@ -57,6 +70,14 @@ async def refresh_routes(
     Both couriers, one query. The two differ entirely in how a position *arrives*
     — noon Send pushes, Lalamove has to be asked — and not at all in what the
     counter wants done with it once it is on the row.
+
+    **Per-tick session discipline (WP5, F-OPS-5).** Mapbox is a third party, and
+    the scheduler pool is small. So the connection is never held across a route
+    call: one short session reads every due row and the coordinates each call
+    needs and is closed BEFORE any HTTP; the Mapbox calls run with no session
+    held; and each answer is persisted on a fresh session of its own. This owns
+    its sessions rather than taking one from the scheduler — the reference shape
+    `inventory.source_event_service.sweep_pending_once` set for a background sweep.
     """
     if not mapbox_provider.is_configured():
         return 0
@@ -64,42 +85,80 @@ async def refresh_routes(
     moment = now or datetime.now(timezone.utc)
     stale = moment - timedelta(seconds=settings.MAPBOX_MIN_ROUTE_INTERVAL_S)
 
-    rows = (
-        (
-            await db.execute(
-                select(OrderDelivery)
-                .join(Order, Order.id == OrderDelivery.order_id)
-                .options(selectinload(OrderDelivery.order).selectinload(Order.branch))
-                .where(
-                    OrderDelivery.driver_latitude.is_not(None),
-                    OrderDelivery.driver_longitude.is_not(None),
-                    OrderDelivery.driver_location_at.is_not(None),
-                    Order.branch_id.is_not(None),
-                    or_(
-                        OrderDelivery.driver_route_at.is_(None),
-                        OrderDelivery.driver_route_at < stale,
-                    ),
+    # Phase 1 — read the due deliveries and the plain coordinates each route call
+    # needs, then hand the connection back before the first Mapbox round-trip.
+    async with SchedulerSessionFactory() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(OrderDelivery)
+                    .join(Order, Order.id == OrderDelivery.order_id)
+                    .options(
+                        selectinload(OrderDelivery.order).selectinload(Order.branch)
+                    )
+                    .where(
+                        OrderDelivery.driver_latitude.is_not(None),
+                        OrderDelivery.driver_longitude.is_not(None),
+                        OrderDelivery.driver_location_at.is_not(None),
+                        Order.branch_id.is_not(None),
+                        or_(
+                            OrderDelivery.driver_route_at.is_(None),
+                            OrderDelivery.driver_route_at < stale,
+                        ),
+                    )
+                    .order_by(OrderDelivery.driver_route_at.asc().nullsfirst())
+                    .limit(limit)
                 )
-                .order_by(OrderDelivery.driver_route_at.asc().nullsfirst())
-                .limit(limit)
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
+        jobs: list[_RouteJob] = []
+        for delivery in rows:
+            # The cheap test last, because it reads a relationship: most rows the
+            # query returns are live, and the ones that are not are excluded here
+            # rather than in SQL where the vocabulary is per-courier.
+            if not delivery.is_driver_on_the_way_here:
+                continue
+            branch = delivery.order.branch if delivery.order else None
+            if branch is None or branch.latitude is None or branch.longitude is None:
+                continue
+            jobs.append(
+                _RouteJob(
+                    delivery_id=delivery.id,
+                    from_latitude=float(delivery.driver_latitude),
+                    from_longitude=float(delivery.driver_longitude),
+                    to_latitude=float(branch.latitude),
+                    to_longitude=float(branch.longitude),
+                )
+            )
 
     routed = 0
-    for delivery in rows:
-        # The cheap test last, because it reads a relationship: most rows the
-        # query returns are live, and the ones that are not are excluded here
-        # rather than in SQL where the vocabulary is per-courier.
-        if not delivery.is_driver_on_the_way_here:
+    for job in jobs:
+        # Phase 2 — the Mapbox call, with NO session held.
+        leg = await mapbox_provider.route(
+            from_latitude=job.from_latitude,
+            from_longitude=job.from_longitude,
+            to_latitude=job.to_latitude,
+            to_longitude=job.to_longitude,
+        )
+        if leg is None:
+            # Deliberately not stamping `driver_route_at` on a failure — see
+            # `_route_one`. Nothing is written, so no session is even reopened.
             continue
-        branch = delivery.order.branch if delivery.order else None
-        if branch is None or branch.latitude is None or branch.longitude is None:
-            continue
-        if await _route_one(db, delivery, branch, at=moment):
-            routed += 1
+        # Phase 3 — reopen a fresh session to persist just this row's answer.
+        async with SchedulerSessionFactory() as db:
+            delivery = await db.get(OrderDelivery, job.delivery_id)
+            if delivery is None:
+                # Vanished between the read and now; nothing to route.
+                continue
+            delivery.driver_route_km = Decimal(str(leg.distance_km))
+            delivery.driver_route_minutes = Decimal(str(leg.minutes))
+            delivery.driver_route_at = moment
+            # This worker owns the session and has no request dependency to commit
+            # it; one commit per row makes that row's route durable.
+            await db.commit()
+        routed += 1
     return routed
 
 

@@ -609,7 +609,14 @@ async def test_the_sweep_builds_its_query_when_lalamove_is_configured(monkeypatc
 
 @pytest.mark.asyncio
 async def test_the_routing_sweep_builds_its_query_too(monkeypatch):
-    """The same hole, on the sibling sweep. Same reason, same cheap assertion."""
+    """The same hole, on the sibling sweep. Same reason, same cheap assertion.
+
+    `refresh_routes` now owns its sessions (WP5, F-OPS-5): it reads the due rows
+    on a short `SchedulerSessionFactory` session and hands the connection back
+    before any Mapbox call, so the fake factory stands in for that read session.
+    An empty read means no route call and no reopen — exactly the path this
+    asserts reaches the SELECT.
+    """
     from app.services.delivery import driver_routing
     from app.services.providers import mapbox_provider
 
@@ -624,7 +631,16 @@ async def test_the_routing_sweep_builds_its_query_too(monkeypatch):
                 scalars=lambda: SimpleNamespace(all=lambda: [], first=lambda: None)
             )
 
-    routed = await driver_routing.refresh_routes(_QueryingDb(), now=NOW)
+    class _Session:
+        async def __aenter__(self):
+            return _QueryingDb()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(driver_routing, "SchedulerSessionFactory", lambda: _Session())
+
+    routed = await driver_routing.refresh_routes(now=NOW)
 
     assert routed == 0
     assert executed, "the sweep returned before it ever asked the database"

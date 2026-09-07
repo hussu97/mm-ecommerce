@@ -105,12 +105,6 @@ async def sweep_once() -> bool:
                 await session.commit()
                 if tracked:
                     logger.info("Refreshed %s live driver(s)", tracked)
-                # After the positions, never before: a route computed from last
-                # minute's pin is a minute out of date before anybody reads it.
-                routed = await driver_routing.refresh_routes(session)
-                await session.commit()
-                if routed:
-                    logger.info("Re-routed %s inbound driver(s)", routed)
             except Exception:  # noqa: BLE001
                 logger.exception("Driver sweep failed")
                 await session.rollback()
@@ -130,7 +124,21 @@ async def sweep_once() -> bool:
             except Exception:  # noqa: BLE001
                 logger.exception("Checkout sweep failed")
                 await session.rollback()
-            return True
+
+        # Routes are recomputed OUTSIDE the sweep session, on their own per-item
+        # sessions (WP5, F-OPS-5): Mapbox is a third party, and holding this
+        # connection across a batch of route calls would pin one of the small
+        # scheduler pool's connections for the whole round-trip. Still after the
+        # position sweep, never before — a route computed from last minute's pin
+        # is a minute out of date before anybody reads it — but the positions
+        # have already been committed and the session handed back by now.
+        try:
+            routed = await driver_routing.refresh_routes()
+            if routed:
+                logger.info("Re-routed %s inbound driver(s)", routed)
+        except Exception:  # noqa: BLE001
+            logger.exception("Route sweep failed")
+        return True
 
 
 async def run_forever() -> None:
