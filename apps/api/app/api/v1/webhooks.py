@@ -12,6 +12,7 @@ from app.api.v1.payments import process_gateway_webhook
 from app.core.alerting import capture_issue
 from app.core.config import settings
 from app.core.deps import get_db
+from app.core.limiter import limiter
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
 from app.services.providers.lalamove_provider import LalamoveError
 from app.services.providers.noon_send_provider import NoonSendError
@@ -104,6 +105,26 @@ def _log_noon_send_push(
     )
 
 
+def _noon_send_key_matches(presented: str | None) -> bool:
+    """
+    Whether the presented key is byte-for-byte the configured one.
+
+    Independent of `NOON_SEND_ENFORCE_WEBHOOK_KEY`: this is the raw fact of
+    whether the push authenticated, and it is what decides how far a lookup may
+    reach. `_noon_send_key_is_valid` below layers the enforce-flag policy on top
+    for the accept/reject decision, but the service is told this unvarnished
+    answer so that — even while enforcement is off and every push is being
+    acted on — an unauthenticated one can still only move the task it names by
+    the id we dispatched, never by a guessable order number (F-COU-2).
+
+    Constant-time, so a mismatch cannot be found a character at a time.
+    """
+    expected = (settings.NOON_SEND_WEBHOOK_API_KEY or "").strip()
+    if not expected:
+        return False
+    return bool(presented) and hmac.compare_digest(presented, expected)
+
+
 def _noon_send_key_is_valid(presented: str | None) -> bool:
     """
     Whether this push should be acted on.
@@ -137,7 +158,7 @@ def _noon_send_key_is_valid(presented: str | None) -> bool:
             "accepting the push rather than dropping live deliveries"
         )
         return True
-    return bool(presented) and hmac.compare_digest(presented, expected)
+    return _noon_send_key_matches(presented)
 
 
 def _noon_send_recorder(endpoint: str, request: Request, key: str | None) -> Recorder:
@@ -229,6 +250,7 @@ async def lalamove_webhook(request: Request, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/noon-send", status_code=status.HTTP_200_OK)
+@limiter.limit("120/minute")
 async def noon_send_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -267,7 +289,9 @@ async def noon_send_webhook(
             return {"received": True, "error": "unauthorised"}
 
         try:
-            result = await noon_send_service.handle_webhook(db, payload)
+            result = await noon_send_service.handle_webhook(
+                db, payload, trusted=_noon_send_key_matches(x_api_key)
+            )
             logger.info(
                 "noon Send status webhook for %s → %s",
                 payload.get("order_nr") or payload.get("order_reference") or "?",
@@ -406,6 +430,7 @@ async def slider_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/noon-send/tracking", status_code=status.HTTP_200_OK)
+@limiter.limit("120/minute")
 async def noon_send_tracking_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -450,7 +475,9 @@ async def noon_send_tracking_webhook(
             return {"received": True, "error": "unauthorised"}
 
         try:
-            result = await noon_send_service.handle_tracking_webhook(db, payload)
+            result = await noon_send_service.handle_tracking_webhook(
+                db, payload, trusted=_noon_send_key_matches(x_api_key)
+            )
             logger.info(
                 "noon Send tracking webhook for %s → %s · rider at %s",
                 payload.get("order_nr") or "?",
