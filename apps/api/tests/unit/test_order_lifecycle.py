@@ -78,7 +78,7 @@ def quiet_consequences(monkeypatch):
         calls["schedule"].append(order)
         return None
 
-    async def dispatch(db, order):
+    async def dispatch(db, order, *, lock=True):
         calls["dispatch"].append(order)
 
     async def get_delivery(db, order_id):

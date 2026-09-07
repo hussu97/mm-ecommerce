@@ -483,7 +483,14 @@ async def _consequences(
         if _mm_owns_fulfilment(order):
             from app.services.couriers import courier_service
 
-            await courier_service.dispatch(db, order)
+            # `lock=False`: the delivery row is already loaded on this session —
+            # a successful booking stamps `packed` itself, so the common path
+            # here is the re-entry from that booking, where a `FOR UPDATE`
+            # refresh would fight the in-memory writes `_record_outcome` just
+            # made. `dispatch` returns untouched on anything already booked, so
+            # on that path this is free; the genuine backstop (an admin marking
+            # an unbooked order packed) still books.
+            await courier_service.dispatch(db, order, lock=False)
 
     elif new_status == OrderStatusEnum.CANCELLED:
         if _mm_owns_fulfilment(order):

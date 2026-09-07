@@ -48,9 +48,10 @@ class _FakeDb:
     with itself for the wrong reason.
     """
 
-    def __init__(self, order, drivers=None):
+    def __init__(self, order, drivers=None, delivery=None):
         self.order = order
         self.drivers = list(drivers or [])
+        self.delivery = delivery
         self.pending = []
 
     def add(self, row):
@@ -63,11 +64,16 @@ class _FakeDb:
         self.pending.clear()
 
     async def execute(self, stmt):
-        if any(
-            description.get("entity") is OrderDriver
+        entities = {
+            description.get("entity")
             for description in getattr(stmt, "column_descriptions", [])
-        ):
+        }
+        if OrderDriver in entities:
             return _FakeResult(next((d for d in self.drivers if d.is_active), None))
+        # `courier_service.dispatch` reads the delivery row (now `FOR UPDATE`)
+        # before booking; hand it back when the test supplied one.
+        if OrderDelivery in entities:
+            return _FakeResult(self.delivery)
         return _FakeResult(self.order)
 
     async def get(self, _model, _pk):
@@ -490,7 +496,9 @@ async def test_dispatch_records_by_hand_when_no_courier_is_configured():
     lalamove_service.dispatch_order = _dispatch  # type: ignore[assignment]
     lalamove_service.is_enabled = lambda: False  # type: ignore[assignment]
     try:
-        result = await courier_service.dispatch(_FakeDb(order), order)
+        result = await courier_service.dispatch(
+            _FakeDb(order, delivery=delivery), order
+        )
     finally:
         lalamove_service.get_delivery = original_get  # type: ignore[assignment]
         lalamove_service.dispatch_order = original_dispatch  # type: ignore[assignment]

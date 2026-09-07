@@ -457,6 +457,111 @@ async def test_a_lalamove_zone_is_never_offered_to_slider(slider_ready, slider_s
     assert slider_spies == ["lalamove"]
 
 
+# ── never twice ───────────────────────────────────────────────────────────────
+#
+# A successful booking stamps the order `packed`, and the `packed` consequence
+# re-enters `courier_service.dispatch`. So the happy path reaches the dispatcher
+# a *second* time on a row that already has a courier — and until the guard moved
+# into `_dispatch_once`, only Lalamove had a check for it, so every noon Send and
+# Slider order booked a second driver for one cake. These start from CONFIRMED,
+# because the fixtures above start at PACKED and so stop at `stamp_packed`'s
+# transition guard before the re-entry ever happens.
+
+
+@pytest.fixture
+def all_couriers_ready(monkeypatch):
+    """noon Send and Slider both configured and willing, so routing reaches a
+    booking rather than a fallback for every provider under test."""
+    monkeypatch.setattr(settings, "NOON_SEND_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "SLIDER_API_KEY", "test-key")
+
+    async def yes(db, order):
+        return True, None
+
+    monkeypatch.setattr(courier_service.noon_send_service, "may_serve", yes)
+    monkeypatch.setattr(courier_service.slider_service, "may_serve", yes)
+
+
+@pytest.fixture
+def booking_calls(monkeypatch, all_couriers_ready):
+    """Every booking any courier makes, in order. One entry is the whole point."""
+    calls: list[str] = []
+
+    def books(name):
+        async def _dispatch_order(db, order):
+            calls.append(name)
+            db.delivery.courier_order_id = f"{name.upper()}-BOOKED"
+            # A booking that worked clears the last attempt's complaint, exactly
+            # as the real dispatchers do — and leaves `courier_status` None, which
+            # `is_failed` reads as "not failed", so the guard holds.
+            db.delivery.last_error = None
+            return db.delivery
+
+        return _dispatch_order
+
+    monkeypatch.setattr(
+        courier_service.lalamove_service, "dispatch_order", books("lalamove")
+    )
+    monkeypatch.setattr(
+        courier_service.noon_send_service, "dispatch_order", books("noon_send")
+    )
+    monkeypatch.setattr(
+        courier_service.slider_service, "dispatch_order", books("slider")
+    )
+    return calls
+
+
+@pytest.fixture
+def lifecycle_recursion(monkeypatch, booking_calls):
+    """
+    Stand in for the chain a booking really triggers, without a database.
+
+    The production sequence is dispatch → `stamp_packed` → `transition(PACKED)` →
+    `_consequences(PACKED)` → `dispatch` again. `stamp_packed` and the transition
+    machinery want a real session; the part that matters to the guard is only
+    that a successful booking re-enters `courier_service.dispatch`, and that the
+    re-entry stops once the order is packed (the real transition guard rejects
+    `packed → packed`). This fake reproduces exactly that seam.
+    """
+    from app.services.orders import order_service
+
+    async def stamp_packed(db, order, *, note):
+        if order.status == OrderStatusEnum.CONFIRMED:
+            order.status = OrderStatusEnum.PACKED
+            await courier_service.dispatch(db, order)  # the packed consequence
+            return True
+        return False
+
+    monkeypatch.setattr(order_service, "stamp_packed", stamp_packed)
+    return booking_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider, zone_name, carrier",
+    [
+        ("lalamove", "Dubai Marina", "lalamove"),
+        ("noon_send", "Sharjah Central", "noon_send"),
+        ("slider_bike", "Ajman City", "slider"),
+        ("slider_car", "Dubai Media City", "slider"),
+    ],
+)
+async def test_a_booked_order_is_never_dispatched_twice(
+    lifecycle_recursion, provider, zone_name, carrier
+):
+    """One booking, on every courier — the guard that used to exist only for
+    Lalamove now holds for noon Send and both Slider tiers too."""
+    delivery = _delivery(provider)
+    delivery.zone_name = zone_name
+
+    await courier_service.dispatch(
+        _Db(delivery), _order(status=OrderStatusEnum.CONFIRMED)
+    )
+
+    assert lifecycle_recursion == [carrier]
+    assert delivery.courier_order_id == f"{carrier.upper()}-BOOKED"
+
+
 # ── the decision as a primitive ───────────────────────────────────────────────
 #
 # `carrier_for`, the fare quote and the order-creation stamp are three callers of
