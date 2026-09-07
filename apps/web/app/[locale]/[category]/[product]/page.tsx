@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { Breadcrumb } from '@/components/ui';
@@ -77,12 +78,17 @@ export async function generateStaticParams() {
   }
 }
 
-async function getProduct(slug: string): Promise<Product | null> {
+/**
+ * `React.cache`d so `generateMetadata` and the page component — two separate
+ * calls with the same `slug` — collapse into one fetch per request instead of
+ * paying for the product twice on every render.
+ */
+const getProduct = cache(async (slug: string): Promise<Product | null> => {
   return fetchJsonOrNull<Product>(`${RSC_API_BASE}/products/${slug}`, {
     next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
     signal: AbortSignal.timeout(8000),
   });
-}
+});
 
 const FALLBACK_DELIVERY_FEE = 50;
 
@@ -116,7 +122,17 @@ export async function generateMetadata({
   params: Promise<{ locale: string; category: string; product: string }>;
 }): Promise<Metadata> {
   const { locale, category: categorySlug, product: slug } = await params;
-  const product = await getProduct(slug);
+  // `getProduct` throws on a 5xx/timeout by design (see `fetchJsonOrNull`), so
+  // that a broken API never gets ISR-cached as "not found". Metadata resolution
+  // runs before the page itself gets a chance to render or hit an error
+  // boundary, so a throw here is a bare SSR crash instead of a 500 page — worth
+  // losing the tags for a render, never worth losing the page.
+  let product: Product | null;
+  try {
+    product = await getProduct(slug);
+  } catch {
+    return {};
+  }
   if (!product) return {};
 
   const localizedName = localizedField(product, 'name', product.name, locale);

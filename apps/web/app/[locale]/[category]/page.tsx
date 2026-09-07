@@ -102,7 +102,18 @@ export async function generateMetadata({
   params: Promise<{ locale: string; category: string }>;
 }): Promise<Metadata> {
   const { locale, category: slug } = await params;
-  const category = await getCategoryMeta(slug);
+  // `getCategoryMeta` throws on a 5xx/timeout by design (see
+  // `fetchJsonOrNull`), so a broken API never gets ISR-cached as "not found".
+  // Metadata resolution runs before the page itself gets a chance to render or
+  // hit an error boundary, so a throw here is a bare SSR crash instead of a
+  // 500 page — worth losing the tags for a render, never worth losing the
+  // page.
+  let category: Category | null;
+  try {
+    category = await getCategoryMeta(slug);
+  } catch {
+    return {};
+  }
   if (!category) return {};
 
   const localizedName = localizedField(category, 'name', category.name, locale);
