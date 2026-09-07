@@ -31,9 +31,13 @@ class Settings(BaseSettings):
     #: before this was a setting (5). Compose sets the register lower (2) so
     #: the till does not sit on the same idle pool as the storefront.
     DATABASE_POOL_SIZE: int = 5
-    #: Burst connections above the pool. Defaults match production (8).
-    #: Compose sets the register to 3.
-    DATABASE_MAX_OVERFLOW: int = 8
+    #: Burst connections above the pool. 5 in production since the 2026-09-07
+    #: reallocation (was 8): 3 overflow slots moved to the scheduler pool, which
+    #: carries the real load (the aggregator/background loops), leaving the
+    #: storefront request path at 5+5=10 — see the connection-budget note in
+    #: database.py. Compose sets the register to 3. Secret-tunable (raise
+    #: DATABASE_MAX_OVERFLOW) if the storefront ever needs the slots back.
+    DATABASE_MAX_OVERFLOW: int = 5
 
     # ── Security ─────────────────────────────────────────────────────────────
     SECRET_KEY: str = _DEV_SECRET_KEY

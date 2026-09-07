@@ -50,10 +50,27 @@ __all__ = [
 #     ITS pool and go quiet, but can no longer touch the request pool.
 #
 # Connection budget (Postgres max_connections=30, 3 reserved for a superuser, so
-# 27 usable): api request 5+8=13, scheduler 2+1=3, pos-api request 2+3=5, the
+# 27 usable): api request 5+5=10, scheduler 5+1=6, pos-api request 2+3=5, the
 # green slot's steady overlap during a cutover ~2, a migration ~1 → 24 ≤ 27. The
 # arithmetic is asserted by `tests/unit/test_pool_budget.py` so a pool change
 # that would overrun `max_connections` fails CI rather than the VM.
+#
+# 2026-09-07 reallocation: the real load is the background/aggregator loops, not
+# the storefront or the register. Both the request `engine` and the scheduler
+# `scheduler_engine` live in the SAME storefront `api` process, so capacity moved
+# from one to the other leaves that container's footprint (and the whole cutover
+# budget) unchanged. The scheduler was doubled (2+1=3 → 5+1=6) to clear the
+# QueuePool timeouts flooding from the inventory source-event sweep, the
+# delivery/batch scheduler, grubops, branch-hours and aggregator ingest — several
+# of which still hold a connection across a third-party HTTP call each tick (the
+# F-OPS-5 per-tick restructure is only partly landed), so 3 slots starved. The 3
+# slots came off the storefront request overflow (8 → 5, max 10): a customer
+# request path that has never needed 10 concurrent connections since the loops
+# moved to their own engine (the two outages this file guards against were the
+# loops sharing the request pool — that is fixed), and it stays a
+# secret-tunable knob (DATABASE_MAX_OVERFLOW) that can be raised back in one
+# redeploy if the storefront ever needs it. The durable fix for the loops is
+# finishing the per-tick session discipline, not growing this pool.
 #
 # The scheduler pool is HARDCODED (not from Settings) on purpose: only the
 # storefront `api` slot runs the loops, its size must not track the request
@@ -99,7 +116,7 @@ def _connect_args(url: str) -> dict[str, object]:
 #: connection only briefly (a sweep) or exactly once (a leader lock). See the
 #: budget note above; kept a module constant, not a Setting, so it cannot be
 #: enlarged by the same secret that raises the request pool.
-_SCHEDULER_POOL_SIZE = 2
+_SCHEDULER_POOL_SIZE = 5
 _SCHEDULER_MAX_OVERFLOW = 1
 
 engine = create_async_engine(

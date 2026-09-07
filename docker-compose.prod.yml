@@ -8,7 +8,7 @@ x-api-environment: &api-environment
   # secret can raise the storefront pool; the register's values are hardcoded
   # on the pos-environment anchor so that cannot enlarge the till's idle pool.
   DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
-  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-8}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-5}
   REDIS_URL: redis://redis:6379/0
   APP_ENV: ${APP_ENV:-production}
   SECRET_KEY: ${SECRET_KEY}

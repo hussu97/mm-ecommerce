@@ -244,7 +244,9 @@ def test_register_idle_postgres_pool_is_smaller_than_the_storefront():
     api = _environment("api")
     pos = _environment("pos-api")
     assert api["DATABASE_POOL_SIZE"] == "${DATABASE_POOL_SIZE:-5}"
-    assert api["DATABASE_MAX_OVERFLOW"] == "${DATABASE_MAX_OVERFLOW:-8}"
+    # 5 since the 2026-09-07 reallocation (was 8): 3 overflow slots moved to the
+    # scheduler pool. Storefront 5+5=10 still dwarfs the register's 2+3=5.
+    assert api["DATABASE_MAX_OVERFLOW"] == "${DATABASE_MAX_OVERFLOW:-5}"
     assert str(pos["DATABASE_POOL_SIZE"]) == "2"
     assert str(pos["DATABASE_MAX_OVERFLOW"]) == "3"
     green_pos = _environment("pos-api-green")
@@ -287,13 +289,14 @@ def test_cutover_overlap_connection_budget_stays_under_max_connections():
     Postgres has (max_connections=30, 3 reserved — see the postgres
     `command:` comment in docker-compose.prod.yml).
 
-        api (live, full)        5 pool + 8 overflow = 13
+        api (live, full)        5 pool + 5 overflow = 10
         api-green (lean, up     2 pool + 0 overflow =  2
           briefly during cutover)
-        scheduler headroom                            3   (the five
-          delivery/log-retention/inventory-sweep/daily-email/business-day
-          loops borrow from the live api's own pool; reserved so a sweep
-          tick cannot starve request handling)
+        scheduler headroom                            6   (the
+          delivery/log-retention/inventory-sweep/daily-email/business-day/
+          aggregator-ingest loops run on the live api's own scheduler engine;
+          raised 3→6 on 2026-09-07 by moving 3 slots off the request overflow
+          above — same api process, so the total is unchanged. See database.py.)
         pos-api (live)           2 pool + 3 overflow =  5
         pos-api-green (lean)     2 pool + 0 overflow =  2
         migration (`compose run --rm api alembic upgrade head`)         1
@@ -328,10 +331,10 @@ def test_cutover_overlap_connection_budget_stays_under_max_connections():
     pos_green_max = _default(pos_green["DATABASE_POOL_SIZE"]) + _default(
         pos_green["DATABASE_MAX_OVERFLOW"]
     )
-    scheduler_reserve = 3
+    scheduler_reserve = 6
     migration_reserve = 1
 
-    assert api_max == 13
+    assert api_max == 10
     assert api_green_max == 2
     assert pos_max == 5
     assert pos_green_max == 2

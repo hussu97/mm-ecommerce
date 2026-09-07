@@ -6,13 +6,17 @@ CAUSED the two multi-hour outages this package exists to prevent. Postgres on th
 e2-small runs `max_connections=30` and reserves 3 for a superuser, so 27 are
 available to the app. The budget the audit fixed:
 
-    api request pool     5 + 8 = 13   (this process's `engine`)
-    scheduler pool       2 + 1 =  3   (this process's `scheduler_engine`)
+    api request pool     5 + 5 = 10   (this process's `engine`)
+    scheduler pool       5 + 1 =  6   (this process's `scheduler_engine`)
     pos-api request pool 2 + 3 =  5   (the register, from compose)
     green slot overlap        ~  2    (steady during a blue/green cutover)
     a migration               ~  1
     ────────────────────────────────
     total                       24  ≤ 27
+
+    2026-09-07: 3 slots moved from the storefront request overflow (8→5) to the
+    scheduler pool (2+1=3 → 5+1=6). Both engines live in the same api process, so
+    the total is unchanged — the loops, not the request path, are the real load.
 
 The request/scheduler numbers are read from the live engines so a code change to
 either pool is caught here; pos-api's pool and `max_connections` are read from
@@ -44,20 +48,21 @@ def _engine_max(engine) -> int:
     return int(pool.size()) + int(pool._max_overflow)
 
 
-def test_the_request_pool_is_five_plus_eight():
-    # Defaults match production; a GitHub secret can raise them, but the code's
-    # default is the audited 13.
+def test_the_request_pool_is_five_plus_five():
+    # 5+5=10 since the 2026-09-07 reallocation (was 5+8): 3 overflow slots went
+    # to the scheduler pool, which carries the real load. A GitHub secret can
+    # raise DATABASE_MAX_OVERFLOW back if the storefront ever needs them.
     assert database.engine.pool.size() == 5
-    assert database.engine.pool._max_overflow == 8
-    assert _engine_max(database.engine) == 13
+    assert database.engine.pool._max_overflow == 5
+    assert _engine_max(database.engine) == 10
 
 
-def test_the_scheduler_pool_is_two_plus_one_and_hardcoded():
-    assert database.scheduler_engine.pool.size() == 2
+def test_the_scheduler_pool_is_five_plus_one_and_hardcoded():
+    assert database.scheduler_engine.pool.size() == 5
     assert database.scheduler_engine.pool._max_overflow == 1
-    assert _engine_max(database.scheduler_engine) == 3
+    assert _engine_max(database.scheduler_engine) == 6
     # Hardcoded, not tracking the request-pool settings a secret can raise.
-    assert database._SCHEDULER_POOL_SIZE == 2
+    assert database._SCHEDULER_POOL_SIZE == 5
     assert database._SCHEDULER_MAX_OVERFLOW == 1
 
 
@@ -94,8 +99,8 @@ def test_the_register_pool_from_compose_is_five():
 
 
 def test_the_total_budget_fits_under_max_connections():
-    request = _engine_max(database.engine)  # 13
-    scheduler = _engine_max(database.scheduler_engine)  # 3
+    request = _engine_max(database.engine)  # 10
+    scheduler = _engine_max(database.scheduler_engine)  # 6
     pos = _pos_pool_max()  # 5
     total = request + scheduler + pos + _CUTOVER_AND_MIGRATION_RESERVE
     available = _max_connections() - _SUPERUSER_RESERVED
