@@ -1697,7 +1697,11 @@ async def _run_range_channel(
             async with advisory_lock.held(
                 _PROMOTE_LOCK_KEY, name="aggregator promote (range)", wait=True
             ):
-                await promote_mod.promote_channel(db, channel)
+                # A ranged backfill promotes the whole range it just re-pulled, even
+                # dates older than the rolling 30-day promote clip (F-AGG-8) — pass
+                # its own start as the floor so nothing in the range is left
+                # unpromotable.
+                await promote_mod.promote_channel(db, channel, since=from_date)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"promote: {exc}")
             logger.exception("aggregator %s range promote failed", channel)
@@ -2502,6 +2506,38 @@ async def _run_daily_with_retry() -> None:
     )
 
 
+async def _unpromotable_backlog() -> dict[str, int]:
+    """Per-channel count of orders that will never promote under the rolling clip:
+    `mm_order_id IS NULL AND business_date < cutoff`, with a branch to file onto
+    (F-AGG-8). The daily promote clips to `AGGREGATOR_PROMOTE_LOOKBACK_DAYS`, so an
+    order that fell below it before it promoted is stranded forever unless a ranged
+    backfill (`promote_channel(since=…)`) reaches back for it — 831 Keeta orders sat
+    exactly here. Reported so the backlog is visible rather than silent; never raises."""
+    today = _start_of_today_dubai(utcnow()).date()
+    cutoff = (
+        today - timedelta(days=max(settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS, 0))
+    ).isoformat()
+    try:
+        async with AsyncSessionFactory() as db:
+            rows = (
+                await db.execute(
+                    select(
+                        AggregatorOrder.channel, func.count().label("n")
+                    )
+                    .where(
+                        AggregatorOrder.mm_order_id.is_(None),
+                        AggregatorOrder.branch_id.is_not(None),
+                        AggregatorOrder.business_date < cutoff,
+                    )
+                    .group_by(AggregatorOrder.channel)
+                )
+            ).all()
+    except Exception:  # noqa: BLE001 — health reporting must not fail a run
+        logger.exception("aggregator unpromotable-backlog check failed")
+        return {}
+    return {channel: int(n) for channel, n in rows if n}
+
+
 async def _log_health() -> None:
     """Log one health line per pass — a WARNING naming any channel that is not live
     or has gone stale, so the VM's log-based alerting has a single signal to watch
@@ -2548,6 +2584,27 @@ async def _log_health() -> None:
         )
     else:
         logger.info("aggregator health: all sessions live")
+
+    # The unpromotable backlog is a SEPARATE health signal from session liveness: a
+    # channel can be perfectly live yet carry orders the rolling promote clip will
+    # never reach (F-AGG-8). Surface it so a human runs the ranged backfill; never
+    # let its own failure break the liveness report above.
+    backlog = await _unpromotable_backlog()
+    if backlog:
+        detail = ", ".join(f"{ch}={n}" for ch, n in sorted(backlog.items()))
+        total = sum(backlog.values())
+        logger.warning(
+            "aggregator health: %d order(s) below the promote window remain "
+            "unpromoted (%s) — needs a ranged backfill (promote since=)",
+            total,
+            detail,
+        )
+        alerting.capture_issue(
+            f"aggregator health: {total} unpromotable order(s) ({detail})",
+            level="warning",
+            fingerprint=["aggregator", "unpromotable_backlog"],
+            tags={"aggregator_issue": "unpromotable_backlog"},
+        )
 
 
 async def run_scheduler_forever() -> None:

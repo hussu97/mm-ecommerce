@@ -44,7 +44,7 @@ convention nothing here commits — the caller's sweep does.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -1077,7 +1077,9 @@ async def _record_fulfilment(db: AsyncSession, order: Order) -> None:
         )
 
 
-async def promote_channel(db: AsyncSession, channel: str) -> int:
+async def promote_channel(
+    db: AsyncSession, channel: str, *, since: date | None = None
+) -> int:
     """Promote the channel's recent new-or-changed orders. Returns MM orders touched.
 
     Windowed by business date to `AGGREGATOR_PROMOTE_LOOKBACK_DAYS`, which is
@@ -1093,11 +1095,18 @@ async def promote_channel(db: AsyncSession, channel: str) -> int:
     yet or its `updated_at` has advanced past it. Idempotent and safe to re-run —
     the convergence key means a re-run updates rather than duplicates. A single
     order's failure is logged and does not stop the pass.
+
+    `since` (a Dubai business date) OVERRIDES the rolling lookback clip for a ranged
+    backfill: `run_range` passes its own `from_date` so orders older than the
+    30-day promote window still promote (F-AGG-8 — 831 Keeta orders sat permanently
+    unpromotable because the daily clip never reached them). Stock is still gated to
+    the tight sales window regardless, so an old backfill never moves inventory.
     """
     today = datetime.now(_TZ).date()
-    cutoff = (
+    default_cutoff = (
         today - timedelta(days=max(settings.AGGREGATOR_PROMOTE_LOOKBACK_DAYS, 0))
     ).isoformat()
+    cutoff = since.isoformat() if since is not None else default_cutoff
     #: Orders on or after this date still move stock; older promoted orders are
     #: linkage-only backfill.
     stock_cutoff = (
