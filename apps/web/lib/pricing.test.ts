@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeFromPrice, isModifierPriced } from './pricing';
+import { computeFromPrice, isModifierPriced, offerPrice } from './pricing';
 import type { Product } from './types';
 
 function option(id: string, price: number, is_active = true, display_order = 0) {
@@ -50,6 +50,47 @@ describe('computeFromPrice', () => {
 
   it('stays at 0 when there is genuinely nothing priced', () => {
     expect(computeFromPrice(product(0, []))).toBe(0);
+  });
+
+  it('takes the global minimum across every group, not the first group with a price', () => {
+    // A product whose first modifier group happens to be the pricier one used
+    // to quote that group's cheapest option as "From" — the API's
+    // `_from_price()` (which this must mirror) has always taken the true
+    // minimum across every group.
+    const p = product(0, [
+      { min: 0, max: 1, options: [option('a', 50)] },
+      { min: 0, max: 1, options: [option('b', 10)] },
+    ]);
+    expect(computeFromPrice(p)).toBe(10);
+  });
+
+  it('ignores inactive options and empty groups when taking the global minimum', () => {
+    const p = product(0, [
+      { min: 0, max: 1, options: [option('cheap-but-off', 5, false)] },
+      { min: 0, max: 1, options: [] },
+      { min: 0, max: 1, options: [option('real', 45)] },
+    ]);
+    expect(computeFromPrice(p)).toBe(45);
+  });
+});
+
+describe('offerPrice', () => {
+  it('matches computeFromPrice for a priced product', () => {
+    const p = product(0, [{ min: 1, max: 1, options: [option('3pc', 40), option('6pc', 80)] }]);
+    expect(offerPrice(p)).toBe(40);
+  });
+
+  it('is null rather than 0 when there is genuinely nothing to price', () => {
+    // A JSON-LD Offer.price of "0.00" reads as "this is free" to Google
+    // Merchant Center and to anything quoting it — omitting the offer is the
+    // smaller wrong.
+    expect(offerPrice(product(0, []))).toBeNull();
+  });
+
+  it('is never Infinity, even for a modifier group with no options left', () => {
+    const p = product(0, [{ min: 1, max: 1, options: [] }]);
+    expect(offerPrice(p)).toBe(null);
+    expect(Number.isFinite(computeFromPrice(p))).toBe(true);
   });
 });
 

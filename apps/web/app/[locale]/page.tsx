@@ -20,6 +20,7 @@ import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-se
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
 import { fetchJson } from '@/lib/fetch-json';
 import { getFeaturedPromo, isAdvertisable, offerHeadline, offerSentence } from '@/lib/offer';
+import { offerPrice } from '@/lib/pricing';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 
@@ -73,7 +74,7 @@ export function buildOffer(promo: AdvertisedPromo | null, locale: 'en' | 'ar' = 
   };
 }
 
-function buildJsonLd(
+export function buildJsonLd(
   categories: Category[],
   featuredProducts: Product[],
   promo: AdvertisedPromo | null,
@@ -140,17 +141,30 @@ function buildJsonLd(
           .map(c => ({
             '@type': 'MenuSection',
             name: c.name,
-            hasMenuItem: c.products.map(p => ({
-              '@type': 'MenuItem',
-              name: p.name,
-              description: p.description ?? undefined,
-              offers: {
-                '@type': 'Offer',
-                price: Number(p.base_price).toFixed(2),
-                priceCurrency: 'AED',
-              },
-              url: `${SITE_URL}/en/${c.slug}/${p.slug}`,
-            })),
+            hasMenuItem: c.products.map(p => {
+              // `computeFromPrice` (via `offerPrice`) is the one place this
+              // number is computed — `base_price` alone is 0 for every
+              // modifier-priced product, which is most of the catalogue, and
+              // published "From 0.00 AED" to every crawler reading this menu.
+              const price = offerPrice(p);
+              return {
+                '@type': 'MenuItem',
+                name: p.name,
+                description: p.description ?? undefined,
+                // Omitted rather than stated as free when there is genuinely
+                // nothing to price — see `offerPrice`.
+                ...(price !== null
+                  ? {
+                      offers: {
+                        '@type': 'Offer',
+                        price: price.toFixed(2),
+                        priceCurrency: 'AED',
+                      },
+                    }
+                  : {}),
+                url: `${SITE_URL}/en/${c.slug}/${p.slug}`,
+              };
+            }),
           })),
       },
       // Last, and only when a campaign is actually running. The whole node

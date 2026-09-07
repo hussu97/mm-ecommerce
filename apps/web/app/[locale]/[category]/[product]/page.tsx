@@ -5,11 +5,12 @@ import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
 import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProducts';
-import type { Product, ProductListResponse, ProductModifier } from '@/lib/types';
+import type { Product, ProductListResponse } from '@/lib/types';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api-server';
 import { CACHE_TAGS, CONTENT_TTL, FEED_TTL } from '@/lib/cache-policy';
+import { offerPrice } from '@/lib/pricing';
 import {
   BRAND,
   PRODUCT_BRAND,
@@ -168,6 +169,61 @@ export async function generateMetadata({
   };
 }
 
+/**
+ * The `Offer` for a product's JSON-LD, or `undefined` when there is nothing
+ * honest to price.
+ *
+ * Pulled out of the page component and exported so the bug it replaces has
+ * something a test can call directly. That bug: `hasModifierPrices` checked
+ * every option for `price > 0` with no `is_active` filter, and `minExtra`
+ * took `Math.min()` of a group's options with no guard for an empty array —
+ * `Math.min()` of nothing is `Infinity`, which a modifier group left with no
+ * active options (or none at all) published straight into `Offer.price`.
+ *
+ * Goes through `offerPrice` — built on the single `computeFromPrice` in
+ * `lib/pricing.ts`, the same function the product card and the homepage's
+ * Menu schema use — so this is one of three callers of one calculation
+ * rather than a fourth reimplementation of it.
+ */
+export function buildProductOffer(
+  product: Product,
+  opts: { offerUrl: string; defaultDeliveryFee: number },
+): Record<string, unknown> | undefined {
+  const price = offerPrice(product);
+  if (price === null) return undefined;
+
+  const availability = product.is_active
+    ? 'https://schema.org/InStock'
+    : 'https://schema.org/OutOfStock';
+
+  return {
+    '@type': 'Offer',
+    price: price.toFixed(2),
+    priceCurrency: 'AED',
+    availability,
+    url: opts.offerUrl,
+    seller: BRAND,
+    itemCondition: 'https://schema.org/NewCondition',
+    // Search Console asks for `validFrom`; the offer has stood since the
+    // product was created, and that date does not churn on every edit the way
+    // updated_at would — which would re-date the markup for a typo fix.
+    validFrom: product.created_at.slice(0, 10),
+    priceValidUntil: '2100-01-01',
+    // Every band, plus the fallback rate for an address outside all of them.
+    // One `shippingRate` cannot describe a shop that is free in Sharjah and 80
+    // in Abu Dhabi; listing the regions lets a shopping surface tell somebody
+    // in Ajman something true rather than something averaged.
+    shippingDetails: [
+      ...SHIPPING_BY_REGION,
+      buildShippingDetails(opts.defaultDeliveryFee),
+    ],
+    // Declared separately because it is not a delivery charge: it does not
+    // vary with distance and free delivery does not waive it.
+    priceSpecification: LOW_ORDER_FEE_SPEC,
+    hasMerchantReturnPolicy: RETURN_POLICY,
+  };
+}
+
 export default async function ProductDetailPage({
   params,
 }: {
@@ -219,54 +275,8 @@ export default async function ProductDetailPage({
   const productDescription = localizedField(product, 'description', product.description ?? '', locale);
   const galleryImages = product.image_urls ?? [];
 
-  // Compute price range from modifier options
-  const basePrice = Number(product.base_price);
-  const hasModifierPrices = product.product_modifiers?.some(
-    (pm: ProductModifier) => pm.modifier.options.some(o => o.price > 0),
-  );
-
   const offerUrl = `${SITE_URL}/${locale}/${categorySlug}/${productSlug}`;
-  const availability = product.is_active
-    ? 'https://schema.org/InStock'
-    : 'https://schema.org/OutOfStock';
-
-  // Google Merchant Center requires `price` on Offer — AggregateOffer has no
-  // `price` attribute — so a modifier-priced item publishes the lowest price
-  // actually reachable: base plus the cheapest option of every required group.
-  const minExtra = hasModifierPrices
-    ? product.product_modifiers.reduce((sum: number, pm: ProductModifier) => {
-        if (pm.minimum_options === 0) return sum;
-        const minOptionPrice = Math.min(...pm.modifier.options.map(o => o.price));
-        return sum + Math.max(0, minOptionPrice);
-      }, 0)
-    : 0;
-
-  const offers: Record<string, unknown> = {
-    '@type': 'Offer',
-    price: (basePrice + minExtra).toFixed(2),
-    priceCurrency: 'AED',
-    availability,
-    url: offerUrl,
-    seller: BRAND,
-    itemCondition: 'https://schema.org/NewCondition',
-    // Search Console asks for `validFrom`; the offer has stood since the
-    // product was created, and that date does not churn on every edit the way
-    // updated_at would — which would re-date the markup for a typo fix.
-    validFrom: product.created_at.slice(0, 10),
-    priceValidUntil: '2100-01-01',
-    // Every band, plus the fallback rate for an address outside all of them.
-    // One `shippingRate` cannot describe a shop that is free in Sharjah and 80
-    // in Abu Dhabi; listing the regions lets a shopping surface tell somebody
-    // in Ajman something true rather than something averaged.
-    shippingDetails: [
-      ...SHIPPING_BY_REGION,
-      buildShippingDetails(defaultDeliveryFee),
-    ],
-    // Declared separately because it is not a delivery charge: it does not vary
-    // with distance and free delivery does not waive it.
-    priceSpecification: LOW_ORDER_FEE_SPEC,
-    hasMerchantReturnPolicy: RETURN_POLICY,
-  };
+  const offers = buildProductOffer(product, { offerUrl, defaultDeliveryFee });
 
   const productSchema: Record<string, unknown> = {
     '@type': 'Product',
@@ -277,7 +287,7 @@ export default async function ProductDetailPage({
     url: offerUrl,
     brand: PRODUCT_BRAND,
     category: localizedCategoryName,
-    offers,
+    ...(offers ? { offers } : {}),
   };
   if (product.sku) {
     productSchema.sku = product.sku;
