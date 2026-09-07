@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from urllib.parse import urlparse
 
@@ -61,7 +62,12 @@ async def upload_image(
     # photo is several thousand pixels wide and the storefront never renders one
     # above ~960; storing the original just makes every cold image transform
     # slower for the first visitor who lands on that product.
-    contents, content_type = optimize_image(contents, content_type)
+    # Pillow's decode/resize/encode is pure CPU work — run it off the event
+    # loop so one admin's batch upload doesn't stall every other request this
+    # single uvicorn worker is serving.
+    contents, content_type = await asyncio.to_thread(
+        optimize_image, contents, content_type
+    )
 
     # Generate unique key. The extension has to follow the *re-encoded* type —
     # a PNG that came back out as JPEG must not be stored under `.png`, or GCS
@@ -70,7 +76,10 @@ async def upload_image(
     key = f"{folder}/{uuid.uuid4()}{ext}"
 
     try:
-        object_storage.upload_object(
+        # `upload_object` is a blocking GCS call (network I/O); keep it off the
+        # event loop the same way.
+        await asyncio.to_thread(
+            object_storage.upload_object,
             bucket=settings.GCS_IMAGE_BUCKET,
             key=key,
             body=contents,
@@ -109,6 +118,11 @@ async def delete_image(
         object_key = key
 
     try:
-        object_storage.delete_object(bucket=settings.GCS_IMAGE_BUCKET, key=object_key)
+        # Blocking GCS call — see the note in `upload_image`.
+        await asyncio.to_thread(
+            object_storage.delete_object,
+            bucket=settings.GCS_IMAGE_BUCKET,
+            key=object_key,
+        )
     except Exception as e:
         raise BadGatewayError(f"Failed to delete image: {str(e)}")
