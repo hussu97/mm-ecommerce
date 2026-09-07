@@ -118,12 +118,38 @@ async def sales_summary(
 
     order_count = int(orders or 0)
     net_sales = money(total)
+
+    # ── The funnel convention, stated once (F-POS-16) ──────────────────────────
+    #
+    # ONE convention, so the funnel reconciles instead of subtracting returns
+    # twice. `Order.subtotal` is stored POST-return (the pricing engine sums the
+    # gross of BILLABLE units — `quantity − returned_quantity`), so a report that
+    # both read `subtotal` as gross AND subtracted a returns line removed the
+    # returned units twice.
+    #
+    #   * `gross_sales` is stated PRE-return: the full retail value of every unit
+    #     rung up, before discounts and before any return. It is exactly
+    #     `subtotal + returns` — the post-return gross plus the retail value of
+    #     what came back — so no second query is needed.
+    #   * `returns` is that retail value of the returned units, at the gross unit
+    #     price. The line discount is NOT folded into it: the engine recomputes an
+    #     order's discount on its billable units when a return is booked, so the
+    #     stored `discounts` already belongs to the units that were KEPT, and the
+    #     returned units carry no discount to net off. Reporting returns gross and
+    #     discounts on the kept units is what keeps the two from overlapping.
+    #
+    # The identity `test_sales_summary_reconciles` pins:
+    #     net_sales == gross_sales − returns − discounts + charges + rounding
+    # holds exactly, because `subtotal − discounts + charges + rounding == total`
+    # by construction in `calculate_order` and `gross_sales − returns == subtotal`.
+    returns_at_retail = money(returns)
+    gross_sales = money(subtotal + returns_at_retail)
     return {
         "orders_count": order_count,
-        "gross_sales": money(subtotal),
+        "gross_sales": gross_sales,
         "discounts": money(discounts),
         "charges": money(charges),
-        "returns": money(returns),
+        "returns": returns_at_retail,
         "taxes": money(vat),
         "net_sales_excl_tax": money(net_excl),
         "rounding": money(rounding),
@@ -482,7 +508,17 @@ async def _sales_by_modifier_option(
     price = func.coalesce(
         func.cast(func.nullif(option.column.op("->>")("price"), ""), Numeric), 0
     )
-    quantity = OrderItem.quantity - OrderItem.returned_quantity
+    # The option's OWN quantity within the line — a mixed box of six that carries
+    # two oat-milk and four full-fat records `quantity: 2` on the oat option. Left
+    # out, every option counted once per line, so a box under-reported its
+    # contents (F-POS-20). Defaults to 1 for a snapshot that never wrote it (the
+    # single-choice options that predate mixed boxes).
+    option_quantity = func.coalesce(
+        func.cast(func.nullif(option.column.op("->>")("quantity"), ""), Numeric), 1
+    )
+    line_quantity = OrderItem.quantity - OrderItem.returned_quantity
+    # Units of THIS option sold = its per-line count × the line's billable count.
+    quantity = option_quantity * line_quantity
 
     stmt = (
         _scope(

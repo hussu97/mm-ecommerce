@@ -134,6 +134,13 @@ class LineTotals:
     tax: Decimal
     tax_exclusive: Decimal
     unit_tax_exclusive: Decimal
+    #: The amount each of the line's own discounts actually took, in the order of
+    #: `LineInput.discounts`. `discount` is their sum. Two discounts stack (each
+    #: applies to what the previous one left), so they are NOT equal shares —
+    #: stamping every discount row with the line's whole `discount` double-counts
+    #: it in "Discounts by name" (F-POS-25). The persistence layer writes these
+    #: per-discount figures back instead.
+    discount_breakdown: list[Decimal] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -158,8 +165,10 @@ def _line_totals(line: LineInput) -> LineTotals:
 
     discount = ZERO
     remaining = gross
+    breakdown: list[Decimal] = []
     for d in line.discounts:
         applied = d.amount_on(remaining)
+        breakdown.append(applied)
         discount += applied
         remaining -= applied
     discount = money(discount)
@@ -167,7 +176,9 @@ def _line_totals(line: LineInput) -> LineTotals:
 
     if line.is_non_revenue:
         # Staff meals and comps carry no tax and no revenue.
-        return LineTotals(gross, discount, net_of_discount, ZERO, net_of_discount, ZERO)
+        return LineTotals(
+            gross, discount, net_of_discount, ZERO, net_of_discount, ZERO, breakdown
+        )
 
     if line.tax_is_inclusive:
         tax_exclusive, tax = split_inclusive_tax(net_of_discount, line.tax_rate)
@@ -180,7 +191,9 @@ def _line_totals(line: LineInput) -> LineTotals:
         if line.billable_quantity
         else ZERO
     )
-    return LineTotals(gross, discount, net_of_discount, tax, tax_exclusive, unit_excl)
+    return LineTotals(
+        gross, discount, net_of_discount, tax, tax_exclusive, unit_excl, breakdown
+    )
 
 
 def _accumulate_tax(

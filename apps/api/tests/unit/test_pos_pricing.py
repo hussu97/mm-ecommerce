@@ -112,6 +112,40 @@ def test_percentage_discount_respects_its_cap():
     assert result.total == D("195.00")
 
 
+def test_two_line_discounts_report_their_own_amounts_not_the_line_total():
+    """
+    F-POS-25: two discounts on one line stack — the second applies to what the
+    first left — so they are not equal shares. `_line_totals` must return each
+    discount's OWN amount; stamping the line's whole discount onto both made
+    "Discounts by name" double-count. The breakdown must sum to the line discount
+    and hold each distinct applied amount.
+    """
+    result = calculate_order(
+        [
+            line(
+                1,
+                "100.00",
+                discounts=[
+                    DiscountInput("10% off", is_percentage=True, value=D("0.10")),
+                    DiscountInput("5 off", value=D("5.00")),
+                ],
+            )
+        ]
+    )
+    breakdown = result.lines[0].discount_breakdown
+    # 10% of 100 = 10.00, then 5.00 off the remaining 90.00.
+    assert breakdown == [D("10.00"), D("5.00")]
+    assert sum(breakdown) == result.lines[0].discount == D("15.00")
+    assert result.total == D("85.00")
+
+
+def test_single_line_discount_breakdown_matches_the_line_discount():
+    result = calculate_order(
+        [line(1, "100.00", discounts=[DiscountInput("Ten", value=D("10.00"))])]
+    )
+    assert result.lines[0].discount_breakdown == [D("10.00")]
+
+
 def test_order_discount_applies_after_line_discounts():
     result = calculate_order(
         [line(1, "100.00", discounts=[DiscountInput("Ten", value=D("10.00"))])],

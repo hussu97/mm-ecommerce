@@ -19,7 +19,7 @@ from app.models.pos_order import (
 from app.models.till import DrawerOperation, Till
 
 from ._base import (
-    CLOSED,
+    _COMPLETED_SALE,
     ZERO,
     _scope,
     _staff_labels,
@@ -88,8 +88,21 @@ async def tax_report(
     branch_id: uuid.UUID | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-) -> list[dict]:
-    """VAT return input: taxable base and tax collected, per rate."""
+) -> dict:
+    """VAT return input: taxable base and tax collected, per rate.
+
+    Scoped to `_COMPLETED_SALE` — the same set of orders `sales_summary` calls a
+    sale — not `pos_status == closed` alone. The old filter counted only closed
+    counter checks, so a delivered website order's VAT was in the sales summary
+    but missing from the tax report, and the two never reconciled (F-POS-8).
+
+    `discrepancies` is a data-integrity signal alongside the rates: how many
+    completed-sale orders whose stamped `vat_amount` does not equal the sum of
+    their own `order_taxes` rows. It should be zero; a non-zero count means the
+    per-rate breakdown here and the VAT figure on the sales summary are drawn
+    from tax data that no longer agrees with itself, and the return needs looking
+    at before it is filed.
+    """
     stmt = (
         select(
             OrderTax.name,
@@ -102,11 +115,11 @@ async def tax_report(
     )
     stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
     stmt = (
-        stmt.where(Order.pos_status == CLOSED)
+        stmt.where(_COMPLETED_SALE)
         .group_by(OrderTax.name, OrderTax.rate)
         .order_by(OrderTax.rate)
     )
-    return [
+    rates = [
         {
             "name": name,
             "rate": float(rate or 0),
@@ -116,6 +129,34 @@ async def tax_report(
         }
         for name, rate, base, amount in (await db.execute(stmt)).all()
     ]
+
+    # The sum of an order's own tax lines, per order.
+    tax_sum = (
+        select(
+            OrderTax.order_id.label("order_id"),
+            func.coalesce(func.sum(OrderTax.amount), 0).label("tax_lines_total"),
+        )
+        .group_by(OrderTax.order_id)
+        .subquery()
+    )
+    disc_stmt = _scope(
+        select(func.count())
+        .select_from(Order)
+        .outerjoin(tax_sum, tax_sum.c.order_id == Order.id),
+        branch_id=branch_id,
+        date_from=date_from,
+        date_to=date_to,
+    ).where(
+        _COMPLETED_SALE,
+        # NULL-safe: an order with no tax rows (sum → NULL) reconciles against a
+        # zero `vat_amount` and is not flagged; only a genuine mismatch counts.
+        func.coalesce(tax_sum.c.tax_lines_total, 0).is_distinct_from(
+            func.coalesce(Order.vat_amount, 0)
+        ),
+    )
+    discrepancies = int((await db.execute(disc_stmt)).scalar_one() or 0)
+
+    return {"rates": rates, "discrepancies": discrepancies}
 
 
 async def voids_and_returns(

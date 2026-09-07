@@ -47,23 +47,46 @@ CLOSED = PosOrderStatusEnum.CLOSED.value
 VOID = PosOrderStatusEnum.VOID.value
 
 
-#: What counts as a completed POS sale, across every sales report.
-#:
-#: A counter check is done when the till closes it (`pos_status = closed`), and a
-#: GrubOps order maps its own `delivered` to the same `closed` on ingest — so the
-#: aggregators were already in. A website order is the exception the reports used
-#: to miss entirely: it is paid online and fulfilled by a courier, so its
-#: `pos_status` never leaves `active` and only its e-commerce `status` reaches
-#: `delivered`. Counting that here is what puts Website revenue on the same
-#: footing as a Talabat order, which is the whole point of a per-channel report.
-#:
-#: Cancellations and refunds are excluded by construction: a cancelled website
-#: order is `cancelled`, not `delivered`, and a voided counter check is
-#: `pos_status = void`, not `closed`.
-_COMPLETED_SALE = or_(
-    Order.pos_status == CLOSED,
-    and_(Order.source == "online", Order.status == OrderStatusEnum.DELIVERED.value),
+#: What counts as a completed POS sale — built from one named clause per channel
+#: so the definition is legible and so the daily owner email and the console
+#: cannot drift apart. This is the SINGLE predicate both use: `daily_sales_email`
+#: imports `_COMPLETED_SALE` from here rather than keeping its own copy, which is
+#: the fix for "owner inbox ≠ console" (F-POS-19). Any deliberate per-channel
+#: rule lives in the named clause below and applies to both readers at once.
+
+#: A counter check is a completed sale once the till closes it.
+_COUNTER_SALE = and_(Order.source == "cashier", Order.pos_status == CLOSED)
+
+#: A website order is paid online and fulfilled by a courier, so its `pos_status`
+#: never leaves `active`; only its e-commerce `status` reaches `delivered`.
+#: Counting it here is what puts Website revenue on the same footing as a Talabat
+#: order — the whole point of a per-channel report.
+_WEBSITE_SALE = and_(
+    Order.source == "online", Order.status == OrderStatusEnum.DELIVERED.value
 )
+
+#: An aggregator order's sale stands once the parcel leaves the counter — the
+#: money is settled with the marketplace whatever the rider then does. The live
+#: GrubOps push reliably reaches `out_for_delivery`; the `delivered`/`closed`
+#: rung is carried later by the overnight scrape (Keeta especially lags). Keying
+#: on `pos_status = closed` alone would hold the day's aggregator revenue out of
+#: every report until that scrape landed — and the owner email, which counts from
+#: `out_for_delivery`, would then disagree with the console. Naming the arm on
+#: `status` keeps both in step.
+_AGGREGATOR_SALE = and_(
+    Order.source == "aggregator",
+    Order.status.in_(
+        [
+            OrderStatusEnum.OUT_FOR_DELIVERY.value,
+            OrderStatusEnum.DELIVERED.value,
+        ]
+    ),
+)
+
+#: Cancellations and refunds are excluded by construction: a cancelled order is
+#: `cancelled` (matches no arm), and a voided counter check is `pos_status =
+#: void`, not `closed`.
+_COMPLETED_SALE = or_(_COUNTER_SALE, _WEBSITE_SALE, _AGGREGATOR_SALE)
 
 
 #: When an order carries no cashier or terminal of its own — every aggregator and
@@ -76,6 +99,7 @@ def _covering_till():
     when = func.coalesce(Order.closed_at, Order.created_at)
     return (
         select(
+            Till.id.label("id"),
             Till.user_id.label("user_id"),
             Till.device_id.label("device_id"),
         )

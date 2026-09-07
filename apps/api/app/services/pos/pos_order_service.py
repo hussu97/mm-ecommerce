@@ -1139,12 +1139,16 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
         item.tax_exclusive_total_price = line_total.tax_exclusive
         item.total_price = line_total.net_of_discount
 
-    for item_id, discounts in per_item_discounts.items():
-        item = next((i for i in live_items if i.id == item_id), None)
-        if item is None:
-            continue
-        for discount in discounts:
-            discount.amount = item.discount_amount
+        # Stamp each of the line's discounts with the amount IT actually took, not
+        # the line's whole discount. Two discounts on one line stack — the second
+        # applies to what the first left — so writing the line total onto both
+        # made "Discounts by name" count the saving twice (F-POS-25). The
+        # per-discount figures come from `_line_totals`, in the same order the
+        # LineInput's discounts were built (from `per_item_discounts[item.id]`).
+        item_discounts = per_item_discounts.get(item.id, [])
+        for od, applied in zip(item_discounts, line_total.discount_breakdown):
+            od.amount = applied
+
     if order_level is not None:
         order_level.amount = totals.order_discount
 

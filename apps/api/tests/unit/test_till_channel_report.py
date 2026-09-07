@@ -77,11 +77,24 @@ async def test_channel_breakdown_groups_and_filters_like_the_sales_report():
     # its own row rather than one lumped "aggregator".
     assert "aggregator_channel" in sql
     assert "GROUP BY" in sql
-    # Website revenue is counted — the completed-sale filter is closed OR
-    # (online AND delivered), not closed alone.
+    # Website revenue is counted — the completed-sale filter counts an online
+    # order once delivered, not closed alone.
     assert "delivered" in sql
     # The net line is revenue minus refunds, so the refund column has to be here.
     assert "refunded_amount" in sql
-    # Bounded by the till's open window, not by till_id (aggregator/website
-    # orders carry no till).
-    assert "till_id" not in sql
+
+
+@pytest.mark.asyncio
+async def test_channel_breakdown_attributes_per_till_not_per_branch():
+    """F-POS-22: a counter sale counts for the till that rang it up (`till_id`),
+    and an un-tilled online/marketplace order for the till that was open when it
+    arrived (`_covering_till`, a LATERAL over `tills`) — so two tills open at one
+    branch do not each report the whole branch's revenue."""
+    db = _CompilingDB()
+    await till_service._channel_breakdown(db, _till())
+    sql = db.sql[0].lower()
+
+    # Counter orders are now scoped to this till.
+    assert "till_id" in sql
+    # Un-tilled orders are attributed via the covering-till LATERAL over tills.
+    assert "lateral" in sql and "tills" in sql

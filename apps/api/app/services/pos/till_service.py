@@ -16,7 +16,8 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import true as sa_true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -417,12 +418,17 @@ async def _channel_breakdown(db: AsyncSession, till: Till) -> dict:
     they all share — the till-close report and the day's channel report cannot
     disagree about what an order's channel is called.
 
-    Scoped to orders that arrived at this branch across the till's open window
-    (`opened_at` → `closed_at`, or → now while it is still open), not by
-    `till_id`: an aggregator or website order carries no till, because nobody
-    rings it up, so a `till_id` filter would report a kitchen's whole shift as
-    almost nothing. `_COMPLETED_SALE` keeps it to finished sales and nets out
-    cancellations, exactly as the day's sales report does.
+    Attribution is per till, NOT per branch-window (F-POS-22). A counter order
+    counts for the till that rang it up (`till_id`); an un-tilled order — website
+    or aggregator, which nobody rings up — counts for the till that was open when
+    it arrived (`_covering_till`, the most-recently-opened covering till, so
+    exactly ONE till claims it). Scoping the whole thing to the branch and the
+    open window instead meant two tills open together each reported the WHOLE
+    branch's revenue, and a close-out double-counted the day. Each row is labelled
+    with its `attribution`: `"till"` for this shift's own counter sales, `"branch"`
+    for the branch-wide online/marketplace trade this till happened to be covering
+    — so a cashier's Z-report does not read as if they personally rang up the
+    website.
     """
     # Imported here rather than at module top: the reports package pulls in a
     # wide slice of the model layer, and a till is opened and closed on hot
@@ -431,30 +437,41 @@ async def _channel_breakdown(db: AsyncSession, till: Till) -> dict:
         _CHANNEL_COLUMN,
         _COMPLETED_SALE,
         _channel_labels,
+        _covering_till,
     )
 
     when = func.coalesce(Order.closed_at, Order.created_at)
     upper = till.closed_at or utcnow()
+    covering = _covering_till()
     rows = (
         await db.execute(
             select(
                 _CHANNEL_COLUMN.label("key"),
+                Order.source.label("source"),
                 func.count(Order.id),
                 func.coalesce(func.sum(Order.total), 0),
                 func.coalesce(func.sum(Order.refunded_amount), 0),
             )
+            .select_from(Order)
+            .outerjoin(covering, sa_true())
             .where(
                 Order.is_pos.is_(True),
                 Order.branch_id == till.branch_id,
                 _COMPLETED_SALE,
                 when >= till.opened_at,
                 when <= upper,
+                or_(
+                    # This till's own counter sales.
+                    Order.till_id == till.id,
+                    # Un-tilled trade covered by this till and no other.
+                    and_(Order.till_id.is_(None), covering.c.id == till.id),
+                ),
             )
-            .group_by(_CHANNEL_COLUMN)
+            .group_by(_CHANNEL_COLUMN, Order.source)
         )
     ).all()
 
-    labels = _channel_labels(rows)
+    labels = _channel_labels([(r[0],) for r in rows])
     channels = [
         {
             "key": str(key),
@@ -462,8 +479,10 @@ async def _channel_breakdown(db: AsyncSession, till: Till) -> dict:
             "orders": int(count or 0),
             "revenue": money(revenue),
             "refunds": money(refunds),
+            # This shift's own takings vs the branch-wide trade it is covering.
+            "attribution": "till" if source == "cashier" else "branch",
         }
-        for key, count, revenue, refunds in rows
+        for key, source, count, revenue, refunds in rows
         if key is not None
     ]
     # Biggest earner first, so two prints of the same shift read identically and
@@ -560,9 +579,13 @@ async def _payment_breakdown(
     ).all()
 
     payments_by_method = {name: money(amount) for name, amount in tender_rows}
+    # Same funnel convention as `pos_reports.sales_summary` (F-POS-16): `subtotal`
+    # is stored post-return, so `gross_sales` is stated PRE-return as
+    # `subtotal + returns` and the returns line is subtracted once, not twice. The
+    # Z-report and the day's sales report cannot disagree about gross.
     sales = {
         "orders_count": int(orders_count or 0),
-        "gross_sales": money(subtotal),
+        "gross_sales": money(subtotal + returns),
         "discounts": money(discounts),
         "returns": returns,
         "charges": money(charges),
