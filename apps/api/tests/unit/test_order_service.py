@@ -1248,7 +1248,12 @@ class TestCreateOrderWithPromo:
         mock_validate.return_value = PromoCodeValidateResponse(
             valid=True, discount_amount=Decimal("15.00")
         )
-        mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None,
+            id=uuid.uuid4(),
+            first_orders_limit=None,
+            max_uses_per_user=None,
+        )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = self._promo_db(
@@ -1271,7 +1276,12 @@ class TestCreateOrderWithPromo:
         mock_validate.return_value = PromoCodeValidateResponse(
             valid=True, discount_amount=Decimal("15.00")
         )
-        mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None,
+            id=uuid.uuid4(),
+            first_orders_limit=None,
+            max_uses_per_user=None,
+        )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = self._promo_db(cart, _order_mock())
@@ -1286,7 +1296,11 @@ class TestCreateOrderWithPromo:
             valid=True, discount_amount=Decimal("10.00")
         )
         mock_get_promo.return_value = MagicMock(
-            max_uses=None, id=uuid.uuid4(), code="SAVE10"
+            max_uses=None,
+            id=uuid.uuid4(),
+            code="SAVE10",
+            first_orders_limit=None,
+            max_uses_per_user=None,
         )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
@@ -1314,7 +1328,11 @@ class TestCreateOrderWithPromo:
             valid=True, discount_amount=Decimal("10.00")
         )
         mock_get_promo.return_value = MagicMock(
-            max_uses=None, id=uuid.uuid4(), code="SAVE10"
+            max_uses=None,
+            id=uuid.uuid4(),
+            code="SAVE10",
+            first_orders_limit=None,
+            max_uses_per_user=None,
         )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
@@ -1399,7 +1417,11 @@ class TestCreateOrderWithPromo:
             valid=True, discount_amount=Decimal("10.00")
         )
         mock_get_promo.return_value = MagicMock(
-            max_uses=None, id=uuid.uuid4(), code="NEW"
+            max_uses=None,
+            id=uuid.uuid4(),
+            code="NEW",
+            first_orders_limit=None,
+            max_uses_per_user=None,
         )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
@@ -1454,7 +1476,12 @@ class TestCreateOrderWithPromo:
         mock_validate.return_value = PromoCodeValidateResponse(
             valid=True, discount_amount=Decimal("100.00")
         )
-        mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None,
+            id=uuid.uuid4(),
+            first_orders_limit=None,
+            max_uses_per_user=None,
+        )
 
         cart = _cart(items=[_cart_item(_product("250.00"))])
         db = self._promo_db(
@@ -1481,7 +1508,12 @@ class TestCreateOrderWithPromo:
         mock_validate.return_value = PromoCodeValidateResponse(
             valid=True, discount_amount=Decimal("10.00")
         )
-        mock_get_promo.return_value = MagicMock(max_uses=None, id=uuid.uuid4())
+        mock_get_promo.return_value = MagicMock(
+            max_uses=None,
+            id=uuid.uuid4(),
+            first_orders_limit=None,
+            max_uses_per_user=None,
+        )
 
         cart = _cart(items=[_cart_item(_product("100.00"))])
         db = self._promo_db(cart, _order_mock())

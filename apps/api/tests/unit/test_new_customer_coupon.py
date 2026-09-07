@@ -276,6 +276,45 @@ async def test_a_real_address_that_merely_mentions_guest_is_kept():
     assert _asked_for(db)["lower_1"] == "myguest.local@gmail.com"
 
 
+# ── a declined card is not a placed order (F-ORD-6) ───────────────────────────
+
+
+def _excluded_statuses(db) -> set[str]:
+    """The statuses the count's WHERE clause leaves out."""
+    params = _asked_for(db)
+    return {getattr(s, "value", s) for s in params["status_1"]}
+
+
+async def test_a_declined_payment_does_not_use_up_a_first_order():
+    """
+    A card that was declined (`payment_failed`) is not a purchase — no money
+    moved and the order was never placed. Counting it burned the customer's
+    new-customer coupon on a sale that did not happen: they came back, retried,
+    and were told they were no longer new. The count now excludes it alongside
+    `cancelled`, so the failed attempt sitting beside a later successful retry
+    does not spend the slot.
+    """
+    db = _capture_db(0)
+    await promo_code_service.orders_placed_by(
+        db, user_id=None, email="declined@example.com", phone=None
+    )
+    assert _excluded_statuses(db) == {"cancelled", "payment_failed"}
+
+
+async def test_redemptions_also_ignore_a_declined_card():
+    """The per-user redemption count excludes the same two, so a declined
+    attempt does not eat a `max_uses_per_user` slot either."""
+    db = _capture_db(0)
+    await promo_code_service._redemptions_by(
+        db,
+        _promo(code="WELCOME15", code_ar=None),
+        user_id=uuid.uuid4(),
+        email="declined@example.com",
+        phone=None,
+    )
+    assert _excluded_statuses(db) == {"cancelled", "payment_failed"}
+
+
 # ── the two spellings are one coupon ──────────────────────────────────────────
 
 

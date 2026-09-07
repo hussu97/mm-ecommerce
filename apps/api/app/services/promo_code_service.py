@@ -8,7 +8,7 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.money import money
 from app.core.phone import phone_identities
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
@@ -24,10 +24,12 @@ from app.services import firebase_auth_service
 
 __all__ = [
     "advertisable",
+    "assert_within_per_user_limits",
     "create",
     "delete",
     "get_all",
     "get_promo",
+    "orders_placed_by",
     "update",
     "validate",
 ]
@@ -139,7 +141,12 @@ async def orders_placed_by(
       change between visits.
 
     Cancelled orders do not count — an order that never happened is not a
-    purchase. Everything else does, including orders still in flight. Counting
+    purchase — and neither does one whose card was **declined**
+    (`payment_failed`): the money never moved, the order was never placed, and
+    counting it burns the customer's new-customer coupon on a purchase that did
+    not happen. A declined card that the customer retries successfully writes a
+    fresh order that *does* count; the failed attempt sitting beside it must
+    not. Everything else does count, including orders still in flight. Counting
     only *delivered* ones would be the more literal reading of "first three
     orders", and it would let somebody place ten in one evening before any of
     them lands.
@@ -167,33 +174,119 @@ async def orders_placed_by(
     result = await db.execute(
         select(func.count())
         .select_from(Order)
-        .where(or_(*identities), Order.status != OrderStatusEnum.CANCELLED)
+        .where(or_(*identities), Order.status.not_in(_UNPLACED_STATUSES))
     )
     return int(result.scalar() or 0)
 
 
+#: The statuses that do not count as a placed order: a cancellation never
+#: happened, and a `payment_failed` card was declined so no money moved. Both
+#: `orders_placed_by` and `_redemptions_by` exclude them, so a declined attempt
+#: neither spends a coupon nor uses up a first-order slot. Anything else — in
+#: flight or delivered — counts.
+_UNPLACED_STATUSES = (OrderStatusEnum.CANCELLED, OrderStatusEnum.PAYMENT_FAILED)
+
+
 async def _redemptions_by(
-    db: AsyncSession, promo: PromoCode, user_id: uuid.UUID
+    db: AsyncSession,
+    promo: PromoCode,
+    *,
+    user_id: uuid.UUID | None,
+    email: str | None,
+    phone: str | None,
 ) -> int:
     """
-    How many orders this customer has already placed with this code.
+    How many orders this person has already placed with this code.
 
     Counted off `orders.promo_code_used` rather than a separate ledger, because
     that column is written in the same transaction as the order and is
-    therefore exactly as true as the order itself. Cancelled orders are
-    excluded — a code spent on an order that never happened has not been spent.
+    therefore exactly as true as the order itself.
+
+    Keyed on the **same identity triple** as `orders_placed_by` — account,
+    email and phone, OR'd — not the account alone. A guest checkout mints a
+    fresh `users` row per session, so keying on `user_id` counted every guest
+    as a first-time redeemer and made `max_uses_per_user` unenforceable for the
+    people it most needed to catch. See `orders_placed_by` for why each of the
+    three identities is needed and how the placeholder guest address is dropped.
+
+    Cancelled and `payment_failed` orders are excluded — a code spent on an
+    order that never happened, or on a card that was declined, has not been
+    spent.
     """
     codes = [c for c in (promo.code, promo.code_ar) if c]
+    if not codes:
+        return 0
+
+    identities = []
+    if user_id is not None:
+        identities.append(Order.user_id == user_id)
+    wanted_email = (email or "").strip().lower()
+    if wanted_email and not wanted_email.endswith(_PLACEHOLDER_EMAIL_DOMAIN):
+        identities.append(func.lower(Order.email) == wanted_email)
+    spellings = phone_identities(phone)
+    if spellings:
+        identities.append(Order.customer_phone.in_(spellings))
+    if not identities:
+        return 0
+
     result = await db.execute(
         select(func.count())
         .select_from(Order)
         .where(
-            Order.user_id == user_id,
+            or_(*identities),
             Order.promo_code_used.in_(codes),
-            Order.status != OrderStatusEnum.CANCELLED,
+            Order.status.not_in(_UNPLACED_STATUSES),
         )
     )
     return int(result.scalar() or 0)
+
+
+async def assert_within_per_user_limits(
+    db: AsyncSession,
+    promo: PromoCode,
+    *,
+    user_id: uuid.UUID | None,
+    email: str | None,
+    phone: str | None,
+) -> None:
+    """
+    The authoritative per-customer check, under a row lock. Raises, or returns.
+
+    `validate` runs the same two rules while the customer is still shopping, but
+    that answer is advisory: between it and the write, another order from the
+    same person can land, and both would pass a check made before either
+    existed. That is the ordinary TOCTOU on a per-user cap, and on an
+    acquisition coupon it is money — the rule exists precisely to stop one
+    person taking the new-customer discount twice.
+
+    `SELECT … FOR UPDATE` on the promo row serialises the racers: the second
+    blocks until the first's transaction commits, then counts the first's
+    now-visible order and is refused. **Call this before the order being written
+    is inserted**, so the counts are of the customer's *other* orders and do not
+    include the one in hand. The messages match `validate`'s so a customer who
+    loses the race reads the same sentence as one who was simply too late.
+
+    Nothing to lock and nothing to check when the code carries neither rule, so
+    it returns without taking the lock — an ordinary coupon pays no cost here.
+    """
+    if promo.first_orders_limit is None and promo.max_uses_per_user is None:
+        return
+
+    await db.execute(
+        select(PromoCode.id).where(PromoCode.id == promo.id).with_for_update()
+    )
+
+    if promo.first_orders_limit is not None:
+        placed = await orders_placed_by(db, user_id=user_id, email=email, phone=phone)
+        if placed >= promo.first_orders_limit:
+            raise BadRequestError("This code is for new customers only")
+
+    if promo.max_uses_per_user is not None:
+        used = await _redemptions_by(
+            db, promo, user_id=user_id, email=email, phone=phone
+        )
+        if used >= promo.max_uses_per_user:
+            raise BadRequestError("You have already used this code")
 
 
 async def validate(
@@ -310,8 +403,13 @@ async def validate(
                 message="This code is for new customers only",
             )
 
-    if promo.max_uses_per_user is not None and user_id is not None:
-        used = await _redemptions_by(db, promo, user_id)
+    if promo.max_uses_per_user is not None:
+        # The same identity triple the campaign's first-orders rule uses. Keyed
+        # on the account alone, this was unenforceable: a guest gets a fresh
+        # `users` row per session, so every redemption looked like the first.
+        used = await _redemptions_by(
+            db, promo, user_id=user_id, email=email, phone=phone
+        )
         if used >= promo.max_uses_per_user:
             return PromoCodeValidateResponse(
                 valid=False,

@@ -785,6 +785,19 @@ async def _persist_order(
         contact_phone_country = parts.country
         contact_phone_type = parts.type
 
+    # The per-customer coupon rules, re-checked here under a row lock — the
+    # authoritative test, where `validate` in the checkout was only advisory.
+    # Taken before this order is inserted, so the counts are of the customer's
+    # *other* orders. See `promo_code_service.assert_within_per_user_limits`.
+    if promo_obj is not None:
+        await promo_code_service.assert_within_per_user_limits(
+            db,
+            promo_obj,
+            user_id=user_id,
+            email=order_email,
+            phone=contact_phone,
+        )
+
     order = Order(
         order_number=await _generate_order_number(db),
         user_id=user_id,

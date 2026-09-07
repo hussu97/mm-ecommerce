@@ -973,35 +973,40 @@ async def _handle_checkout_expired(db: AsyncSession, order: Order) -> bool:
     """
     A checkout nobody finished, closed out. Returns whether the order moved.
 
-    **Cancelled rather than `payment_failed`.** Nothing was refused here: the
-    gateway never attempted a charge, the customer simply left the page. Calling
-    that a payment failure would put a card-declined story on an order that has
-    none, and would send the customer the payment-failed email for a checkout
-    they walked away from on purpose.
+    **Cancelled rather than left where it was.** Nothing more is going to happen
+    to either kind of order this sweeps. A `created` one never attempted a
+    charge — the customer left the page; a `payment_failed` one attempted one
+    and was declined and was never retried. Cancelling both is right, and it
+    sends nothing to anybody: the cancellation email is dispatched by its
+    callers, not by `transition`, and neither an abandoned checkout nor a
+    dead declined attempt needs telling.
 
-    Left at `created`, which is what happened until now, it is not harmless. The
-    row keeps whatever the checkout claimed when it was written: a redemption of
-    its promo code, a place in the customer's first-orders count, and — for a
+    Left where it is, it is not harmless. The row keeps whatever the checkout
+    claimed when it was written: a redemption of its promo code, and — for a
     stock product — stock taken off the shelf at checkout and never put back.
-    `_redemptions_by` and `orders_placed_by` both exclude *cancelled* orders and
-    nothing else, so an abandoned checkout quietly spends a coupon the customer
-    still has. MM-20260820-001 did exactly that: opened at 05:16, abandoned,
+    A `payment_failed` order used to also hold a place in the customer's
+    first-orders count, which is the sharper loss: a declined card burned the
+    new-customer coupon for good, because `orders_placed_by` counted it. That
+    counting is now fixed at the source (`payment_failed` is excluded there and
+    in `_redemptions_by`, alongside `cancelled`), and this sweep is the other
+    half — it moves the dead attempt to `cancelled` so `_consequences` restocks
+    it and releases its promo use rather than leaving both stranded.
+
+    MM-20260820-001 showed the `created` half: opened at 05:16, abandoned,
     re-ordered as -002 at 05:28, and the first one went on holding a use of the
     NEW code for a sale that never existed.
 
     Cancelling gives all of that back through `_consequences`, which restocks
-    and releases, and it sends nothing to anybody: the cancellation email is
-    dispatched by its callers, not by `transition`, and an order the customer
-    abandoned themselves does not need to be told about.
+    and releases the promo use.
 
-    Guarded twice on purpose. `created` is the only status this may touch — an
-    expiry arriving after a successful payment is a late duplicate, not a
-    reversal — and `_is_paid` is asked as well, because the status is our record
-    of the money and this is precisely the case where our record could be the
-    thing that is wrong. A wrongly cancelled order cannot be walked back:
+    Guarded twice on purpose. Only `created` and `payment_failed` may be
+    touched — an expiry arriving after a successful payment is a late duplicate,
+    not a reversal — and `_is_paid` is asked as well, because the status is our
+    record of the money and this is precisely the case where our record could be
+    the thing that is wrong. A wrongly cancelled order cannot be walked back:
     `cancelled` is terminal outside `ADMIN_RECOVERABLE`.
     """
-    if order.status != OrderStatusEnum.CREATED:
+    if order.status not in _SWEEPABLE_STATUSES:
         logger.info(
             "Checkout expiry ignored — order %s is already %s",
             order.order_number,
@@ -1041,6 +1046,15 @@ async def _handle_checkout_expired(db: AsyncSession, order: Order) -> bool:
 #: Being early would cancel a checkout somebody is still paying for.
 _ABANDONED_AFTER = timedelta(hours=48)
 
+#: The statuses this sweep may close out. `created` is an abandoned checkout;
+#: `payment_failed` is a declined card nobody retried — both leave a promo use
+#: and (for a stock line) drawn stock stranded, and a declined card additionally
+#: sat in the customer's first-orders count until it was excluded there. Neither
+#: is coming back to life on its own, so both are swept to `cancelled` once past
+#: `_ABANDONED_AFTER`. `_handle_checkout_expired` still asks `_is_paid` before
+#: touching either, so a missed success webhook is never cancelled.
+_SWEEPABLE_STATUSES = (OrderStatusEnum.CREATED, OrderStatusEnum.PAYMENT_FAILED)
+
 
 async def expire_stale_checkouts(db: AsyncSession, *, limit: int = 100) -> list[str]:
     """
@@ -1052,8 +1066,9 @@ async def expire_stale_checkouts(db: AsyncSession, *, limit: int = 100) -> list[
     orders written before the event was mapped at all.
 
     Its whole safety lives in `_handle_checkout_expired`, which refuses anything
-    that is not still `created` and anything that reads as paid — and that is
-    why the transactions are eager-loaded here rather than left to a lazy
+    that is not still `created` or `payment_failed`, and anything that reads as
+    paid — and that is why the transactions are eager-loaded here rather than
+    left to a lazy
     fetch that would raise inside async SQLAlchemy: the paid check is the one
     that must never be skipped, and `items` is what the restock walks.
 
@@ -1070,7 +1085,7 @@ async def expire_stale_checkouts(db: AsyncSession, *, limit: int = 100) -> list[
                     selectinload(Order.payment_transactions),
                 )
                 .where(
-                    Order.status == OrderStatusEnum.CREATED,
+                    Order.status.in_(_SWEEPABLE_STATUSES),
                     # A counter sale is never in this state waiting for a card
                     # page, and a cashier's open check is not this function's
                     # business.

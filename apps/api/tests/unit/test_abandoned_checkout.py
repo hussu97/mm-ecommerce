@@ -7,11 +7,13 @@ delivered. The first order sat at `created` with its session `open`, and would
 have sat there forever: `checkout.session.expired` mapped to `UNHANDLED`, and
 nothing else looks at a stale checkout.
 
-That is not inert. `_redemptions_by` and `orders_placed_by` exclude *cancelled*
-orders and nothing else, so the abandoned row went on holding one of that
-customer's three redemptions of the NEW code and one of their three "first
+That is not inert. `_redemptions_by` and `orders_placed_by` used to exclude
+*cancelled* orders and nothing else, so the abandoned row went on holding one of
+that customer's three redemptions of the NEW code and one of their three "first
 orders". For a stock product it would also have held the stock the checkout took
-off the shelf at write time.
+off the shelf at write time. Those counts now also exclude `payment_failed`
+(F-ORD-6), and the sweep below closes out a declined-and-never-retried order as
+well as an abandoned one.
 """
 
 from __future__ import annotations
@@ -81,6 +83,20 @@ async def test_an_abandoned_checkout_is_cancelled(moved):
 
     assert await payment_service._handle_checkout_expired(None, order)
 
+    assert moved == [OrderStatusEnum.CANCELLED]
+
+
+async def test_a_declined_card_nobody_retried_is_also_swept(moved):
+    """
+    F-ORD-6: a `payment_failed` order is a declined card that was never retried.
+    Left where it is, it holds a promo use and (for a stock line) drawn stock,
+    and it used to sit in the customer's first-orders count too. It is swept to
+    `cancelled` like an abandoned `created` one, so `_consequences` gives it all
+    back and the promo counts stop seeing it.
+    """
+    order = _order(status=OrderStatusEnum.PAYMENT_FAILED)
+
+    assert await payment_service._handle_checkout_expired(None, order)
     assert moved == [OrderStatusEnum.CANCELLED]
 
 
