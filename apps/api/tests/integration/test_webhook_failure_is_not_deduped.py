@@ -251,10 +251,19 @@ class TestTheDedupRowDoesNotSurviveAFailedApply:
         from app.services.couriers import noon_send_service
 
         # A unique task so the dedup event_id belongs to this test alone.
+        #
+        # A *terminal* status on purpose. Since F-COU-8 the dedup key is
+        # deterministic — `(task, status)` — only for terminal statuses; a
+        # non-terminal push is given a per-push nonce so a repeated `assigned`
+        # (a rider swap) is never collapsed. This test is about the *other*
+        # property: that a dedup row is rolled back with a failed apply so the
+        # retry is not blocked. That only means anything where a surviving row
+        # *would* block the retry — i.e. where the retry reuses the key — which
+        # is the terminal case. So `delivered`, whose key both pushes share.
         task = f"TASK-{uuid.uuid4().hex[:12]}"
         push = {
             "order_nr": task,
-            "status_code": "picked_up",
+            "status_code": "delivered",
             "order_reference": "MM-DEDUP-TEST",
             "timestamp": "2026-09-07 08:55:14",
         }

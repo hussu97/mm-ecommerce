@@ -51,6 +51,7 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import (
     NOON_SEND_FAILED_STATUSES,
     NOON_SEND_STATUS_RANK,
+    NOON_SEND_TERMINAL_STATUSES,
     NoonSendStatusEnum,
     OrderDelivery,
 )
@@ -730,17 +731,35 @@ _ORDER_STATUS_FOR: dict[str, OrderStatusEnum] = {
 
 def _event_id(payload: dict[str, Any]) -> str:
     """
-    A stable id for an event that arrived without one.
+    A dedup id for an event that arrived without one.
 
-    noon Send sends no event identifier, so dedup keys on the thing that is
-    actually unique about a status change: the task, the status, and when it
-    happened. A genuine retry reproduces all three; a real transition changes at
-    least one.
+    noon Send sends no event identifier *and no timestamp* — their whole status
+    contract is `order_nr`, `status_code` and `order_reference`. So the key can
+    only be built from those, and how it is built depends on what the status
+    means:
+
+    **Terminal** statuses (`delivered`/`undelivered`/`cancelled`) are an ending.
+    One is worth folding once; a repeat says nothing new and the rank guard in
+    `apply_webhook` would drop it anyway. Keyed on `(order_nr, status)`, so a
+    redelivered terminal push dedups even with no timestamp to tell two apart.
+
+    **Non-terminal** statuses can each carry a live change even when the *word*
+    is unchanged: a courier that swaps riders re-sends `assigned` — the same
+    word it already sent. Keying those on `(order_nr, status)` too (which,
+    without a timestamp, is what the old key collapsed to) deduped the second
+    `assigned` away before it ever reached `apply_webhook`, so the new rider was
+    never read (F-COU-8). They are given a per-push nonce instead, so every one
+    is journalled and applied. That is safe: `apply_webhook` is idempotent for a
+    word that did not change (the rank guard and `transition(on_invalid="skip")`
+    absorb the repeat), and `_refresh_rider` only announces a rider that is
+    actually new — so a genuine network retry costs one detail call and raises
+    no false alarm.
     """
-    return (
-        f"noon_send:{payload.get('order_nr')}:"
-        f"{payload.get('status_code')}:{payload.get('timestamp')}"
-    )
+    order_nr = payload.get("order_nr")
+    status = str(payload.get("status_code") or "").strip().lower()
+    if status in NOON_SEND_TERMINAL_STATUSES:
+        return f"noon_send:{order_nr}:{status}"
+    return f"noon_send:{order_nr}:{status}:{uuid.uuid4()}"
 
 
 async def _delivery_for(

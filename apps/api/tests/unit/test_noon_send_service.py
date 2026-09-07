@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import inspect
+from sqlalchemy.dialects.postgresql.dml import Insert as PGInsert
 
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
@@ -393,16 +394,27 @@ async def test_a_settled_order_is_not_reopened():
     assert not pending_events(order)
 
 
-def test_a_replay_produces_the_same_dedup_key():
+def test_a_terminal_replay_dedups_but_a_non_terminal_one_does_not():
     """
-    They send no event id, so dedup keys on task, status and time. A genuine
-    retry reproduces all three; a real transition changes at least one.
+    They send no event id and no timestamp, so the key is built from the task
+    and the status alone — and what that key must do depends on the status.
+
+    A terminal push is an ending: a replay of it is worth dropping, so two
+    `delivered` pushes for one task share a key. A non-terminal push is not: a
+    courier that swaps riders re-sends `assigned`, the same word, and that
+    second push has to reach `apply_webhook` to learn the new rider (F-COU-8) —
+    so each one gets a fresh key rather than colliding with the last.
     """
-    first = noon_send_service._event_id(_push("picked_up"))
-    replay = noon_send_service._event_id(_push("picked_up"))
-    later = noon_send_service._event_id(_push("delivered"))
-    assert first == replay
-    assert first != later
+    delivered = noon_send_service._event_id(_push("delivered"))
+    delivered_again = noon_send_service._event_id(_push("delivered"))
+    assert delivered == delivered_again
+
+    assigned = noon_send_service._event_id(_push("assigned"))
+    assigned_again = noon_send_service._event_id(_push("assigned"))
+    assert assigned != assigned_again
+
+    # And a terminal key never collides with a non-terminal one for the task.
+    assert delivered != assigned
 
 
 @pytest.mark.asyncio
@@ -825,6 +837,124 @@ async def test_a_repeated_assigned_still_asks_who_is_carrying_it(monkeypatch):
 
 async def _swallow_announcement(_db, _delivery):
     """The push is somebody else's test; this one is about who the row names."""
+
+
+class _JournalDb(_FakeDb):
+    """A `_FakeDb` that also stands in for the `webhook_events` unique index.
+
+    `handle_webhook` dedups by inserting a journal row `on_conflict_do_nothing`
+    and reading `rowcount`; the plain `_FakeDb` has no notion of that. This one
+    records every `event_id` it is asked to insert and answers `rowcount=0` for
+    one it has already seen, exactly as the real unique index would — so a test
+    can prove a second push is (or is not) collapsed as a duplicate. It also has
+    to hand back the *delivery* for `_delivery_for`'s lookup, which the base
+    fake, built for `apply_webhook` with the delivery passed in, does not.
+    """
+
+    def __init__(self, order=None, delivery=None, drivers=None):
+        super().__init__(order=order, drivers=drivers)
+        self.delivery = delivery
+        self.seen_event_ids: list[str] = []
+
+    async def execute(self, stmt):
+        if isinstance(stmt, PGInsert):
+            event_id = stmt.compile().params.get("event_id")
+            seen = event_id in self.seen_event_ids
+            self.seen_event_ids.append(event_id)
+            return SimpleNamespace(rowcount=0 if seen else 1)
+        if _selects(stmt, OrderDelivery):
+            return _FakeResult(self.delivery)
+        return await super().execute(stmt)
+
+
+def _status_push(status: str) -> dict:
+    """A status push shaped like the real one: no event id, and no timestamp.
+
+    The whole contract is these three fields — which is why a repeated word had
+    nothing to tell two pushes apart, and F-COU-8 collapsed the second away.
+    """
+    return {
+        "order_nr": TASK_NR,
+        "status_code": status,
+        "order_reference": "MM-1001",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_assigned_reaches_apply_webhook_through_the_journal(
+    monkeypatch,
+):
+    """
+    F-COU-8: the real entry point is `handle_webhook`, and a rider swap arrives
+    there as a second timestamp-less `assigned`.
+
+    The old key was `task:status:timestamp`, and with no timestamp that is
+    `task:status:None` — identical for both pushes, so the journal swallowed the
+    second as a duplicate and it never reached `apply_webhook`. The new rider
+    went unread. Driven through `handle_webhook` (not `apply_webhook`), the
+    second push must be journalled as new and must re-read the task detail.
+    """
+    asked: list[str] = []
+
+    async def _get_task(task_nr):
+        asked.append(task_nr)
+        # Whoever is asked, the task now names Bilal.
+        return {
+            "status_code": "assigned",
+            "da_details": {"name": "Bilal", "phone_number": "+971500000004"},
+        }
+
+    monkeypatch.setattr(noon_send_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(noon_send_provider.provider, "get_task", _get_task)
+    monkeypatch.setattr(noon_send_service, "_announce_rider", _swallow_announcement)
+
+    order = _order(OrderStatusEnum.PACKED)
+    delivery = _delivery(
+        courier_status="assigned",
+        driver_name="Mohammed",
+        driver_phone="+971500000003",
+        driver_assignment_count=1,
+    )
+    db = _JournalDb(order=order, delivery=delivery)
+
+    first = await noon_send_service.handle_webhook(
+        db, _status_push("assigned"), trusted=True
+    )
+    second = await noon_send_service.handle_webhook(
+        db, _status_push("assigned"), trusted=True
+    )
+
+    # Neither push was collapsed as a duplicate; both matched and applied.
+    assert first == {"received": True, "event_type": "assigned", "matched": True}
+    assert second == {"received": True, "event_type": "assigned", "matched": True}
+    # The detail was re-read on the repeat, so the swap was learned.
+    assert asked == [TASK_NR, TASK_NR]
+    assert delivery.driver_name == "Bilal"
+    assert delivery.driver_assignment_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_delivered_is_still_deduped_by_the_journal(monkeypatch):
+    """The other half of F-COU-8: a terminal replay must still be dropped.
+
+    `delivered` is an ending — a second copy of it says nothing new, so the
+    journal collapses it and it never reaches `apply_webhook` a second time.
+    """
+    monkeypatch.setattr(noon_send_service, "is_enabled", lambda: True)
+
+    order = _order(OrderStatusEnum.OUT_FOR_DELIVERY)
+    delivery = _delivery(courier_status="picked_up")
+    db = _JournalDb(order=order, delivery=delivery)
+
+    first = await noon_send_service.handle_webhook(
+        db, _status_push("delivered"), trusted=True
+    )
+    second = await noon_send_service.handle_webhook(
+        db, _status_push("delivered"), trusted=True
+    )
+
+    assert first == {"received": True, "event_type": "delivered", "matched": True}
+    assert second == {"received": True, "duplicate": True}
 
 
 @pytest.mark.asyncio
