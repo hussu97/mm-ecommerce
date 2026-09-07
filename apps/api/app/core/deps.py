@@ -22,6 +22,7 @@ __all__ = [
     "get_current_active_user",
     "get_current_user",
     "get_db",
+    "get_db_lazy",
     "get_optional_user",
     "oauth2_scheme",
 ]
@@ -39,6 +40,77 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+class _LazyDBSession:
+    """An `AsyncSession` stand-in that defers checking a connection out of the
+    pool until it is actually used (WP5, F-OPS-3).
+
+    The cached public routes (translations, redirects, featured products…) answer
+    most requests from Redis and never touch the database. With `Depends(get_db)`
+    they still open a session — and hold one of the thirteen request-pool
+    connections — on every one of those cache hits, which is exactly the
+    fan-out that saturates the pool under a storefront burst. Injected instead of
+    `get_db`, this opens nothing up front: the first `await db.<method>(...)` (on
+    a cache MISS) opens a real session, and from there behaviour is identical to
+    `get_db` — commit on success, rollback on error, close at teardown. On a hit
+    the handler returns before touching `db`, so no connection is ever taken.
+
+    It proxies only the async `AsyncSession` methods a read path uses
+    (`execute`, `scalar`, `scalars`, `get`, `stream`…). It deliberately does NOT
+    support sync access (`.add`, `.begin_nested`, attribute reads) before the
+    session is open — those are write-path operations, and a write path uses
+    `get_db`, whose connection cost is not what this exists to avoid.
+    """
+
+    __slots__ = ("_cm", "_session")
+
+    def __init__(self) -> None:
+        self._cm: object | None = None
+        self._session: AsyncSession | None = None
+
+    async def _ensure(self) -> AsyncSession:
+        if self._session is None:
+            self._cm = AsyncSessionFactory()
+            self._session = await self._cm.__aenter__()
+        return self._session
+
+    @property
+    def opened(self) -> bool:
+        return self._session is not None
+
+    def __getattr__(self, name: str):
+        async def _proxy(*args, **kwargs):
+            session = await self._ensure()
+            return await getattr(session, name)(*args, **kwargs)
+
+        return _proxy
+
+    async def _finish(self, exc: BaseException | None) -> None:
+        if self._session is None:
+            return
+        try:
+            if exc is None:
+                await self._session.commit()
+            else:
+                await self._session.rollback()
+        finally:
+            assert self._cm is not None
+            await self._cm.__aexit__(type(exc) if exc else None, exc, None)
+
+
+async def get_db_lazy() -> AsyncGenerator[_LazyDBSession, None]:
+    """A DB dependency that opens a session only if the handler actually uses it.
+
+    For the cached, read-only public routes only. See `_LazyDBSession`.
+    """
+    db = _LazyDBSession()
+    try:
+        yield db
+        await db._finish(None)
+    except Exception as exc:
+        await db._finish(exc)
+        raise
 
 
 async def _get_user_from_token(
@@ -129,7 +201,9 @@ async def get_admin_user(
 async def get_optional_user(
     request: Request,
     token: str | None = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
+    # Lazy: a guest with no token never reaches the `db.execute` below, so an
+    # anonymous cached-route request checks out no connection at all (F-OPS-3).
+    db: AsyncSession = Depends(get_db_lazy),
 ) -> User | None:
     """Returns the current user if authenticated, otherwise None (for guest browsing)."""
     resolved = request.cookies.get("mm_access_token") or token
@@ -145,7 +219,9 @@ async def browsing_branch(
             "what any branch can. Read `branch_id` off GET /delivery/area."
         ),
     ),
-    db: AsyncSession = Depends(get_db),
+    # Lazy: with no `branch_id` the body returns before the `db.get` below, so a
+    # request that names no branch checks out no connection here (F-OPS-3).
+    db: AsyncSession = Depends(get_db_lazy),
 ) -> uuid.UUID | None:
     """
     The branch this shopper is browsing as, or None to answer for the estate.

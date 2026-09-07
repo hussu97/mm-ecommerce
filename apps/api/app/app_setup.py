@@ -16,7 +16,7 @@ import logging
 from contextlib import asynccontextmanager, suppress
 
 import sentry_sdk
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -24,13 +24,12 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.core import heartbeat
 from app.core.background import spawn_tracked
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
-from app.core.deps import get_db
+from app.core.database import AsyncSessionFactory, engine, scheduler_engine
 from app.core.exceptions import AppError
 from app.core.limiter import limiter
 from app.services import firebase_auth_service
@@ -303,6 +302,69 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+#: Health/liveness paths that must answer even when the request pool is full —
+#: shedding these would make the container mark ITSELF unhealthy under load and
+#: trigger a restart loop, turning a transient saturation into an outage.
+_ADMISSION_EXEMPT = ("/ping", "/health")
+
+
+class PoolSaturationMiddleware:
+    """Shed load with a 503 before routing when the request pool is exhausted.
+
+    The outermost middleware, and a raw-ASGI one on purpose: when every request
+    connection is checked out, the honest answer is "come back in a moment", and
+    it must be given in microseconds without touching the database, allocating a
+    session, or waiting on `pool_timeout`. Piling requests up behind a full pool
+    is how a brief spike (or a leaked connection) became the multi-hour 503 storms
+    this package exists to prevent — a fast, cheap refusal keeps the event loop
+    free to drain the in-flight work instead.
+
+    Trips at `pool_size + max_overflow - 1`: one connection of headroom is left so
+    `/health` (exempt anyway) and the last few honest requests can still be
+    served while the shed protects the rest. `/ping` and `/health` are never
+    shed — a healthcheck that fails under load restarts the very container that
+    was coping.
+    """
+
+    def __init__(self, app, *, checkedout, threshold: int) -> None:
+        self.app = app
+        # A zero-arg callable returning the pool's current checked-out count,
+        # injected so a test can drive saturation without a real pool.
+        self._checkedout = checkedout
+        self._threshold = threshold
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if not path.startswith(_ADMISSION_EXEMPT) and self._is_saturated():
+            await self._reject(send)
+            return
+        await self.app(scope, receive, send)
+
+    def _is_saturated(self) -> bool:
+        try:
+            return self._checkedout() >= self._threshold
+        except Exception:  # noqa: BLE001 — a stats failure must never shed traffic
+            return False
+
+    async def _reject(self, send) -> None:
+        body = b'{"detail":"Server is busy, please retry shortly"}'
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"retry-after", b"2"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
 def configure(
     app: FastAPI, *, allowed_hosts: list[str], cors_origins: list[str]
 ) -> None:
@@ -347,6 +409,20 @@ def configure(
                 "max-age=31536000; includeSubDomains"
             )
         return response
+
+    # Added LAST so it is the OUTERMOST middleware: a saturated server sheds the
+    # request before any other work (routing, a DB session, a `pool_timeout`
+    # wait) is spent on it. The threshold tracks THIS app's request pool — the
+    # register (2+3) trips at 4, the storefront (5+8) at 12 — leaving one
+    # connection of headroom above the shed.
+    _admission_threshold = (
+        settings.DATABASE_POOL_SIZE + settings.DATABASE_MAX_OVERFLOW - 1
+    )
+    app.add_middleware(
+        PoolSaturationMiddleware,
+        checkedout=engine.pool.checkedout,
+        threshold=_admission_threshold,
+    )
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -418,18 +494,72 @@ def add_system_endpoints(app: FastAPI, *, service: str) -> None:
         return {"service": service, "checks": checks}
 
     @app.get(
-        "/health", tags=["System"], summary="Health check — verifies DB connectivity"
+        "/health",
+        tags=["System"],
+        summary="Health check — DB connectivity, pool stats, loop heartbeats",
     )
-    async def health(db: AsyncSession = Depends(get_db)) -> dict:
+    async def health() -> JSONResponse:
+        """Readiness with a hard budget, so it answers even under saturation.
+
+        The old `/health` resolved `Depends(get_db)` BEFORE the handler ran, so
+        under pool exhaustion it queued for the full `pool_timeout` and then
+        500ed — a health probe that hangs exactly when a human most needs it to
+        answer. This opens its OWN session inside an `asyncio.timeout(2)`: DB
+        trouble (a full pool, a slow server) is reported as `db: "unavailable"`
+        with a 503 in at most two seconds, not a hang. It also surfaces both
+        pools' checkout stats and each background loop's heartbeat age, so a
+        wedged sweep or a saturating pool is visible here rather than only in a
+        post-mortem. `/ping` stays the trivial, dependency-free liveness probe
+        the container healthcheck polls; this is for a human and for alerting.
+        """
+        db_ok = False
         try:
-            await db.execute(text("SELECT 1"))
-            return {"status": "ok", "service": service, "env": settings.APP_ENV}
-        except Exception:  # noqa: BLE001
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "status": "error",
-                    "service": service,
-                    "env": settings.APP_ENV,
-                },
-            )
+            async with asyncio.timeout(2):
+                async with AsyncSessionFactory() as db:
+                    await db.execute(text("SELECT 1"))
+            db_ok = True
+        except (Exception, TimeoutError):  # noqa: BLE001 — report, never raise
+            db_ok = False
+
+        heartbeats: dict[str, float | None] = {}
+        try:
+            async with asyncio.timeout(1):
+                for name in heartbeat.LOOP_NAMES:
+                    heartbeats[name] = await heartbeat.age_seconds(name)
+        except (Exception, TimeoutError):  # noqa: BLE001 — Redis is best-effort
+            heartbeats = {name: None for name in heartbeat.LOOP_NAMES}
+
+        body = {
+            "status": "ok" if db_ok else "error",
+            "service": service,
+            "env": settings.APP_ENV,
+            "db": "ok" if db_ok else "unavailable",
+            "pools": {
+                "request": _pool_stats(engine),
+                "scheduler": _pool_stats(scheduler_engine),
+            },
+            "heartbeat_ages_seconds": heartbeats,
+        }
+        return JSONResponse(status_code=200 if db_ok else 503, content=body)
+
+
+def _pool_stats(an_engine) -> dict[str, int]:
+    """checkedout/size/overflow for an async engine's pool, defensively.
+
+    Read-only introspection; a pool implementation without these methods (a
+    NullPool in a test) must not turn `/health` into a 500."""
+    pool = an_engine.pool
+    stats: dict[str, int] = {}
+    for label, method in (
+        ("checked_out", "checkedout"),
+        ("checked_in", "checkedin"),
+        ("size", "size"),
+        ("overflow", "overflow"),
+    ):
+        fn = getattr(pool, method, None)
+        if callable(fn):
+            try:
+                stats[label] = int(fn())
+            except Exception:  # noqa: BLE001
+                pass
+    return stats

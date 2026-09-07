@@ -27,8 +27,17 @@ never sent a run. See `delivery_scheduler`.
 
 Holding the lock on a connection of its own is the fix, and it has to be an
 `AsyncConnection` rather than a `Session`: a connection checked out with
-`engine.connect()` stays checked out for the life of the block whether or not it
-commits, so the lock and the unlock are guaranteed to be the same connection.
+`scheduler_engine.connect()` stays checked out for the life of the block whether
+or not it commits, so the lock and the unlock are guaranteed to be the same
+connection.
+
+**It is `scheduler_engine`, never the request `engine` (WP5, F-OPS-13).** Every
+holder of one of these locks is a background loop, and one of them — the
+aggregator scheduler leader — keeps its connection checked out for the entire
+life of leadership (an `asyncio.gather` on child loops that never returns). On
+the request `engine` that pinned a customer-pool connection forever; on the
+scheduler pool it pins one of the loops' own three, which is exactly what that
+pool is for.
 
 The transaction is committed the moment the lock is taken, deliberately. The
 work inside can take as long as a courier's API does, and leaving this
@@ -44,7 +53,11 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy import text
 
-from app.core.database import engine
+# The SCHEDULER pool, bound to the module name `engine` every holder and every
+# test already uses. Every advisory-lock holder is a background loop, and the
+# aggregator leader holds its connection for the whole life of leadership — that
+# belongs on the loops' own three connections, never a request's (F-OPS-13).
+from app.core.database import scheduler_engine as engine
 
 logger = logging.getLogger(__name__)
 
