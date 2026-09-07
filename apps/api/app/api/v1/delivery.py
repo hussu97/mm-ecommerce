@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,14 +31,19 @@ router = APIRouter()
 class DeliveryCalculateRequest(BaseModel):
     delivery_method: DeliveryMethodEnum
     subtotal: Decimal
-    latitude: Decimal | None = None
-    longitude: Decimal | None = None
+    # Bounded for the same reason `/area`'s `Query` is: a bare `Decimal`
+    # accepts `NaN` and `Infinity`, and a coordinate that cannot compare
+    # against a bound is not a coordinate. Adding `ge`/`le` here makes
+    # pydantic-core require a finite number, so a NaN pin fails validation
+    # instead of silently reaching the courier.
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90)
+    longitude: Decimal | None = Field(default=None, ge=-180, le=180)
 
 
 class DeliveryQuoteRequest(BaseModel):
     subtotal: Decimal
-    latitude: Decimal | None = None
-    longitude: Decimal | None = None
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90)
+    longitude: Decimal | None = Field(default=None, ge=-180, le=180)
     #: The pin's formatted address. Passed to the courier so its own estimate
     #: is taken against the same place the driver would be sent to — and, where
     #: the fee is that estimate, against the place it is charged for.
@@ -110,11 +115,18 @@ async def get_rates(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/calculate", response_model=DeliveryCalculateResponse)
+@limiter.limit("60/minute")
 async def calculate_delivery(
+    request: Request,
     data: DeliveryCalculateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """The delivery fee for a pin and an order subtotal."""
+    """
+    The delivery fee for a pin and an order subtotal.
+
+    Rate limited for the same reason `/area` is: public, unauthenticated, and
+    otherwise a free way to hammer the same lookup.
+    """
     settings = await delivery_service.get_settings(db)
     fee = await delivery_service.calculate_fee(
         data.delivery_method,
@@ -239,7 +251,9 @@ async def delivery_area(
 
 
 @router.post("/quote", response_model=DeliveryQuoteResponse)
+@limiter.limit("60/minute")
 async def quote_delivery(
+    request: Request,
     data: DeliveryQuoteRequest,
     x_session_id: str | None = Header(None, alias="X-Session-Id"),
     db: AsyncSession = Depends(get_db),
@@ -252,6 +266,10 @@ async def quote_delivery(
 
     The identity is used to find the basket the courier's own estimate gets
     filed against. Nothing about the courier appears in the response either way.
+
+    Rate limited: this is public and unauthenticated, and every hit is a call
+    against the courier's own quote API — a live estimate priced in requests
+    per minute upstream, not just database time on our side.
     """
     cart = await cart_service.find_cart(
         db,

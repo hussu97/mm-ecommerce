@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 class TestDeliveryRates:
     async def test_get_rates_200(self, client):
@@ -71,3 +73,85 @@ class TestDeliveryCalculate:
             json={"delivery_method": "invalid", "subtotal": "100.00"},
         )
         assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "latitude,longitude",
+        [
+            # NaN parses as a `Decimal` like any other number and compares
+            # false (or, for `Decimal`, raises) against every bound — a
+            # coordinate that would otherwise reach the courier as "nowhere in
+            # particular" rather than being refused outright. F-COU-11.
+            ("NaN", "55.3"),
+            ("25.2", "NaN"),
+            ("Infinity", "55.3"),
+            # Out of the physically possible range for a latitude/longitude.
+            ("9999", "55.3"),
+            ("25.2", "-9999"),
+        ],
+    )
+    async def test_out_of_range_coordinates_422(self, client, latitude, longitude):
+        response = await client.post(
+            "/api/v1/delivery/calculate",
+            json={
+                "delivery_method": "delivery",
+                "subtotal": "100.00",
+                "latitude": latitude,
+                "longitude": longitude,
+            },
+        )
+        assert response.status_code == 422
+
+
+class TestDeliveryQuote:
+    @pytest.mark.parametrize(
+        "latitude,longitude",
+        [
+            ("NaN", "55.3"),
+            ("25.2", "NaN"),
+            ("Infinity", "55.3"),
+            ("9999", "55.3"),
+            ("25.2", "-9999"),
+        ],
+    )
+    async def test_out_of_range_coordinates_422(self, client, latitude, longitude):
+        """
+        F-COU-11: `/quote` calls a courier's live quote API, so an unbounded
+        or NaN pin is not just a bad answer — it is a free way to burn the
+        courier's own rate limit. Bounds on the request model reject it before
+        any courier is asked.
+        """
+        response = await client.post(
+            "/api/v1/delivery/quote",
+            json={
+                "subtotal": "100.00",
+                "latitude": latitude,
+                "longitude": longitude,
+            },
+        )
+        assert response.status_code == 422
+
+
+class TestDeliveryQuoteAbuseRateLimit:
+    """
+    F-COU-11: `/quote` and `/calculate` are public, unauthenticated, and each
+    hit against `/quote` is a call against a courier quote API that throttles
+    itself upstream (~100/min) — so an unlimited storefront route is a way for
+    one caller to burn the whole account's budget. `/area` already carries
+    `@limiter.limit("60/minute")` for the same reason; this locks the other
+    two routes to the same ceiling.
+
+    Exercised as a decoration check rather than by firing 61 real requests:
+    slowapi's in-memory limiter is a module-level singleton for the life of
+    the test process, so driving it over its limit here would also start
+    throttling every other test in this file that shares a client IP.
+    """
+
+    def test_quote_and_calculate_are_rate_limited(self):
+        from app.api.v1 import delivery
+        from app.core.limiter import limiter
+
+        for endpoint in (delivery.calculate_delivery, delivery.quote_delivery):
+            name = f"{endpoint.__module__}.{endpoint.__name__}"
+            limits = limiter._route_limits.get(name, [])
+            assert limits, f"{name} carries no rate limit"
+            assert [str(lim.limit) for lim in limits] == ["60 per 1 minute"]
