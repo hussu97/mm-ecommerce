@@ -756,6 +756,19 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    # F-OPS-24: Redis had no `maxmemory` of its own, so it just kept
+    # allocating until it hit the 64m cgroup limit below and the container's
+    # OOM killer took it out with no warning and no eviction — the exact
+    # cutover-adjacent risk F-OPS-14/15 is about, on a service that holds
+    # rate-limiter state and idempotency keys, not something to lose to a
+    # surprise kill. 48mb (below the 64m cap, leaving headroom for Redis's
+    # own overhead) + allkeys-lru makes it evict the coldest key instead of
+    # dying once it's full. `--save ""` turns off RDB snapshotting: this
+    # instance holds caches, rate limits and idempotency keys — nothing here
+    # needs to survive a restart — and a BGSAVE fork briefly doubles the
+    # process's resident memory, which is the last thing to allow under a 64m
+    # cap.
+    command: redis-server --maxmemory 48mb --maxmemory-policy allkeys-lru --save ""
     networks:
       - mm_network
     deploy:

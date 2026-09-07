@@ -204,6 +204,22 @@ def test_certbot_has_a_memory_cap():
     assert memory == "64m", memory
 
 
+def test_redis_has_a_maxmemory_and_evicts_instead_of_dying():
+    """
+    F-OPS-24: Redis had a 64m cgroup cap but no `maxmemory` of its own, so it
+    just kept allocating until the container's OOM killer took it out with no
+    warning — on a service holding rate-limiter state and idempotency keys.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    command = str(compose["services"]["redis"].get("command", ""))
+    assert "--maxmemory 48mb" in command
+    assert "--maxmemory-policy allkeys-lru" in command
+    assert '--save ""' in command, (
+        "RDB snapshotting forks the process and briefly doubles its resident "
+        "memory — the wrong thing to allow under a 64m cap for a pure cache"
+    )
+
+
 def test_register_idle_postgres_pool_is_smaller_than_the_storefront():
     """
     Both apps share database.py; compose is what gives the till a smaller
