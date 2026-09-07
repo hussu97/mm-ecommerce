@@ -71,7 +71,9 @@ async def test_a_post_close_edit_reverses_and_reconsumes_in_one_group(engine):
     Session = async_sessionmaker(engine, expire_on_commit=False)
     created: dict = {}
     async with Session() as db:
-        branch = Branch(name=f"{MARKER} b", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}")
+        branch = Branch(
+            name=f"{MARKER} b", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}"
+        )
         db.add(branch)
         await db.flush()
         db.add(Warehouse(branch_id=branch.id, name="Default", is_default=True))
@@ -85,7 +87,9 @@ async def test_a_post_close_edit_reverses_and_reconsumes_in_one_group(engine):
                 go_live_sequence=0,
             )
         )
-        user = User(email=f"{MARKER}-{uuid.uuid4().hex[:8]}@ex.com", hashed_password="x")
+        user = User(
+            email=f"{MARKER}-{uuid.uuid4().hex[:8]}@ex.com", hashed_password="x"
+        )
         db.add(user)
         ingredient = InventoryItem(
             sku=f"{MARKER}-{uuid.uuid4().hex[:10]}",
@@ -263,12 +267,14 @@ async def test_a_post_close_edit_reverses_and_reconsumes_in_one_group(engine):
                 )
             )
             await db.execute(
-                Product.__table__.delete().where(
-                    Product.id == created["product_id"]
-                )
+                Product.__table__.delete().where(Product.id == created["product_id"])
             )
-            await db.execute(Warehouse.__table__.delete().where(Warehouse.branch_id == bid))
-            await db.execute(User.__table__.delete().where(User.id == created["user_id"]))
+            await db.execute(
+                Warehouse.__table__.delete().where(Warehouse.branch_id == bid)
+            )
+            await db.execute(
+                User.__table__.delete().where(User.id == created["user_id"])
+            )
             await db.execute(Branch.__table__.delete().where(Branch.id == bid))
             await db.execute(text("SET session_replication_role = 'origin'"))
             await db.commit()

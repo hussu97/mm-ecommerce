@@ -2521,9 +2521,7 @@ async def _unpromotable_backlog() -> dict[str, int]:
         async with AsyncSessionFactory() as db:
             rows = (
                 await db.execute(
-                    select(
-                        AggregatorOrder.channel, func.count().label("n")
-                    )
+                    select(AggregatorOrder.channel, func.count().label("n"))
                     .where(
                         AggregatorOrder.mm_order_id.is_(None),
                         AggregatorOrder.branch_id.is_not(None),

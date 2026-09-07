@@ -98,8 +98,12 @@ async def branch_and_item(session_factory):
                 InventoryTransaction.branch_id == branch_id
             )
         )
-        await db.execute(InventoryItem.__table__.delete().where(InventoryItem.id == item_id))
-        await db.execute(Warehouse.__table__.delete().where(Warehouse.branch_id == branch_id))
+        await db.execute(
+            InventoryItem.__table__.delete().where(InventoryItem.id == item_id)
+        )
+        await db.execute(
+            Warehouse.__table__.delete().where(Warehouse.branch_id == branch_id)
+        )
         await db.execute(Branch.__table__.delete().where(Branch.id == branch_id))
         await db.execute(text("SET session_replication_role = 'origin'"))
         await db.commit()
@@ -154,8 +158,7 @@ async def test_a_closed_transaction_line_is_immutable(session_factory, branch_an
         async with session_factory() as db:
             await db.execute(
                 text(
-                    "UPDATE inventory_transaction_items "
-                    "SET quantity = 9 WHERE id = :i"
+                    "UPDATE inventory_transaction_items SET quantity = 9 WHERE id = :i"
                 ),
                 {"i": line_id},
             )

@@ -75,7 +75,9 @@ async def test_required_group_with_inactive_modifier_is_sellable_on_both_paths()
 
     assert _availability().blocking_groups(product) == []
     # No BadRequestError: the product can be ordered without picking from it.
-    assert await modifier_rules.resolve(_db([link]), product=product, selections=[]) == []
+    assert (
+        await modifier_rules.resolve(_db([link]), product=product, selections=[]) == []
+    )
 
 
 @pytest.mark.asyncio

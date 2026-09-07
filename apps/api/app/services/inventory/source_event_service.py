@@ -66,9 +66,7 @@ def bump_inventory_revision(order: Order) -> int:
     return order.inventory_revision
 
 
-def _warn_if_edited_after_acceptance(
-    order: Order, event: InventorySourceEvent
-) -> None:
+def _warn_if_edited_after_acceptance(order: Order, event: InventorySourceEvent) -> None:
     """Flag a posted consumption whose order was edited afterwards (F-INV-10).
 
     The idempotency short-circuit returns the existing event untouched. If the

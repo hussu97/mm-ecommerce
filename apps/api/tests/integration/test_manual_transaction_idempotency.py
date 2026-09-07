@@ -57,7 +57,9 @@ async def env(engine):
         )
         db.add(branch)
         await db.flush()
-        warehouse = Warehouse(branch_id=branch.id, name="Default stock", is_default=True)
+        warehouse = Warehouse(
+            branch_id=branch.id, name="Default stock", is_default=True
+        )
         db.add(warehouse)
         db.add(
             BranchInventorySettings(
@@ -113,8 +115,12 @@ async def env(engine):
                 BranchInventorySettings.branch_id == branch_id
             )
         )
-        await db.execute(Warehouse.__table__.delete().where(Warehouse.branch_id == branch_id))
-        await db.execute(InventoryItem.__table__.delete().where(InventoryItem.id == item_id))
+        await db.execute(
+            Warehouse.__table__.delete().where(Warehouse.branch_id == branch_id)
+        )
+        await db.execute(
+            InventoryItem.__table__.delete().where(InventoryItem.id == item_id)
+        )
         await db.execute(User.__table__.delete().where(User.id == user_id))
         await db.execute(Branch.__table__.delete().where(Branch.id == branch_id))
         await db.commit()

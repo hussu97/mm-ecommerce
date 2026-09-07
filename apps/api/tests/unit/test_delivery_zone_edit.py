@@ -80,7 +80,9 @@ class _ZoneReadDb:
         if entity is DeliveryPolygonVersion:
             rows = [self.version] if self.version and self.version.is_active else []
             return SimpleNamespace(
-                scalars=lambda rows=rows: SimpleNamespace(first=lambda: rows[0] if rows else None)
+                scalars=lambda rows=rows: SimpleNamespace(
+                    first=lambda: rows[0] if rows else None
+                )
             )
         return SimpleNamespace(
             scalars=lambda: SimpleNamespace(all=lambda: list(self.polygons))

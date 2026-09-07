@@ -495,7 +495,9 @@ class TestSweepHoldsNoConnectionAcrossReauth:
     the pool and took the API down). `_sweep_channel` no longer takes a `db`; these
     pin that the fetch is sessionless and the reauth path never opens/holds one."""
 
-    async def test_dead_session_upfront_reauths_without_opening_a_run(self, monkeypatch):
+    async def test_dead_session_upfront_reauths_without_opening_a_run(
+        self, monkeypatch
+    ):
         from app.services.aggregators import ingest
 
         calls: list[str] = []

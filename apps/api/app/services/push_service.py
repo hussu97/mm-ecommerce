@@ -202,8 +202,10 @@ def _channel_line(order: Order) -> str:
 
         code = courier_catalog.code_for_channel(order.aggregator_channel)
         channel = (
-            courier_catalog.COURIER_NAMES.get(code) if code else None
-        ) or order.aggregator_channel or "Aggregator"
+            (courier_catalog.COURIER_NAMES.get(code) if code else None)
+            or order.aggregator_channel
+            or "Aggregator"
+        )
         if order.aggregator_driver_name:
             return f"{channel} · {order.aggregator_driver_name}"
         return channel

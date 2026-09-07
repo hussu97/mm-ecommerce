@@ -101,16 +101,20 @@ def upgrade() -> None:
 
     # Anything still non-canonical is either a genuine duplicate pair the fold had
     # to skip (F-AGG-4 clears these) or an unrecognised channel left verbatim.
-    left = op.get_bind().execute(
-        sa.text(
-            f"""
+    left = (
+        op.get_bind()
+        .execute(
+            sa.text(
+                f"""
             SELECT count(*) FROM orders
             WHERE source = 'aggregator'
               AND aggregator_channel IS NOT NULL
               AND aggregator_channel NOT IN {_CODES!r}
             """
+            )
         )
-    ).scalar()
+        .scalar()
+    )
     if left:
         print(
             f"211: {left} aggregator order(s) left non-canonical "

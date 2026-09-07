@@ -57,7 +57,9 @@ async def test_a_poison_event_is_quarantined_and_the_rest_of_the_branch_posts(en
     Session = async_sessionmaker(engine, expire_on_commit=False)
     created: dict = {}
     async with Session() as db:
-        branch = Branch(name=f"{MARKER} branch", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}")
+        branch = Branch(
+            name=f"{MARKER} branch", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}"
+        )
         db.add(branch)
         await db.flush()
         db.add(Warehouse(branch_id=branch.id, name="Default", is_default=True))
@@ -207,7 +209,9 @@ async def test_a_poison_event_is_quarantined_and_the_rest_of_the_branch_posts(en
                     InventoryItem.id == created["item_id"]
                 )
             )
-            await db.execute(Warehouse.__table__.delete().where(Warehouse.branch_id == bid))
+            await db.execute(
+                Warehouse.__table__.delete().where(Warehouse.branch_id == bid)
+            )
             await db.execute(Branch.__table__.delete().where(Branch.id == bid))
             await db.execute(text("SET session_replication_role = 'origin'"))
             await db.commit()
