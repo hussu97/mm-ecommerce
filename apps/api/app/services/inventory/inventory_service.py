@@ -56,8 +56,6 @@ from app.models.inventory import (
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
-    ModifierOptionIngredient,
-    ProductIngredient,
     PurchaseOrder,
     PurchaseOrderStatusEnum,
     TransactionStatusEnum,
@@ -67,7 +65,7 @@ from app.models.inventory_v2 import (
     BranchInventorySettings,
     InventoryTrackingModeEnum,
 )
-from app.models.order import Order, OrderItem
+from app.models.order import Order
 from app.models.user import User
 from app.services.pos import business_day_service
 
@@ -920,71 +918,6 @@ async def deplete_for_order(
     if event_row is None or event_row.transaction_id is None:
         return None
     return await db.get(InventoryTransaction, event_row.transaction_id)
-
-
-async def _consumption_for_order(
-    db: AsyncSession, order: Order
-) -> dict[uuid.UUID, Decimal]:
-    """Total ingredient usage for an order, from product and modifier recipes."""
-    totals: dict[uuid.UUID, Decimal] = {}
-
-    stmt = select(OrderItem).where(OrderItem.order_id == order.id)
-    items = list((await db.execute(stmt)).scalars().all())
-
-    for line in items:
-        if line.status == "void" or line.product_id is None:
-            continue
-        billable = max(line.quantity - (line.returned_quantity or 0), 0)
-        if billable <= 0:
-            continue
-
-        recipes = list(
-            (
-                await db.execute(
-                    select(ProductIngredient).where(
-                        ProductIngredient.product_id == line.product_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for recipe in recipes:
-            inactive = recipe.inactive_in_order_types or []
-            if order.order_type and order.order_type in inactive:
-                continue
-            totals[recipe.item_id] = _q(
-                totals.get(recipe.item_id, Decimal("0"))
-                + Decimal(str(recipe.quantity)) * billable
-            )
-
-        for option in line.selected_options_snapshot or []:
-            raw_id = option.get("modifier_option_id")
-            if not raw_id:
-                continue
-            try:
-                option_id = uuid.UUID(str(raw_id))
-            except (ValueError, AttributeError):
-                continue
-            option_quantity = int(option.get("quantity", 1) or 1)
-            option_recipes = list(
-                (
-                    await db.execute(
-                        select(ModifierOptionIngredient).where(
-                            ModifierOptionIngredient.modifier_option_id == option_id
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            for recipe in option_recipes:
-                totals[recipe.item_id] = _q(
-                    totals.get(recipe.item_id, Decimal("0"))
-                    + Decimal(str(recipe.quantity)) * billable * option_quantity
-                )
-
-    return {k: v for k, v in totals.items() if v > 0}
 
 
 async def load_transaction(

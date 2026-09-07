@@ -81,10 +81,6 @@ def effective_unique(link: ProductModifier) -> bool:
     return bool(link.unique_options) or link.maximum_options <= 1
 
 
-def total_quantity(selections: list[Selection]) -> int:
-    return sum(s.quantity for s in selections)
-
-
 def describe_requirement(link: ProductModifier, name: str) -> str:
     """
     The one sentence every client uses for an unmet group.

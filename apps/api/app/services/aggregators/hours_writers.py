@@ -403,21 +403,6 @@ def _talabat_set_day(raw: Any, *, dh_day: int, opens: str, closes: str) -> Any:
     return target
 
 
-def _talabat_clear_day(raw: Any, *, dh_day: int) -> Any:
-    if not isinstance(raw, dict):
-        return {"calendars": []}
-    calendars = [dict(c) for c in (raw.get("calendars") or []) if isinstance(c, dict)]
-    for cal in calendars:
-        schedule = dict(cal.get("schedule") or {})
-        schedule["openingTimesByDay"] = [
-            e
-            for e in (schedule.get("openingTimesByDay") or [])
-            if not (isinstance(e, dict) and e.get("day") == dh_day)
-        ]
-        cal["schedule"] = schedule
-    return {"calendars": calendars}
-
-
 async def _talabat_push(
     db: AsyncSession, branch: Any, *, opens: str, closes: str, weekday: int
 ) -> dict[str, Any]:
