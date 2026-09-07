@@ -30,6 +30,22 @@ TransactionTypeLiteral = Literal[
     "inventory_count",
 ]
 
+#: The subset an operator may post by hand through `POST /inventory/transactions`.
+#: Deliberately excludes every system-coupled type — `transfer_send`/
+#: `transfer_receive` (a bare send evaporates stock with no paired receive; use
+#: the transfer-orders flow), the order/production consumption, return and waste
+#: types, and `transfer` returns — all of which are emitted by their own services
+#: in sequence and would corrupt the ledger if injected unpaired here.
+ManualTransactionTypeLiteral = Literal[
+    "opening_balance",
+    "quantity_adjustment",
+    "cost_adjustment",
+    "inventory_count",
+    "internal_use",
+    "purchasing",
+    "return_to_supplier",
+]
+
 UnitLiteral = Literal["storage", "ingredient"]
 
 
@@ -292,11 +308,16 @@ class TransactionLineInput(BaseModel):
 
 
 class InventoryTransactionCreate(BaseModel):
-    type: TransactionTypeLiteral
+    # `forbid`, so a client that still sends `other_branch_id`/`other_warehouse_id`
+    # (the cross-branch transfer fields this endpoint no longer accepts) is
+    # refused with a 422 rather than having them silently dropped.
+    model_config = ConfigDict(extra="forbid")
+
+    #: Only hand-posted manual types. Cross-branch transfers are refused here —
+    #: they have their own sequenced flow — so there is no `other_branch_id`.
+    type: ManualTransactionTypeLiteral
     branch_id: UUID
     warehouse_id: UUID | None = None
-    other_branch_id: UUID | None = None
-    other_warehouse_id: UUID | None = None
     supplier_id: UUID | None = None
     reason_id: UUID | None = None
     invoice_number: str | None = Field(None, max_length=100)
@@ -304,6 +325,9 @@ class InventoryTransactionCreate(BaseModel):
     additional_cost: Decimal = Field(Decimal("0"), ge=0)
     paid_tax: Decimal = Field(Decimal("0"), ge=0)
     notes: str | None = None
+    #: Required: a retried POST (double-click, network retry) must not post the
+    #: movement twice. The endpoint returns the first transaction for a key.
+    idempotency_key: str = Field(min_length=8, max_length=200)
     items: list[TransactionLineInput] = Field(min_length=1)
 
 

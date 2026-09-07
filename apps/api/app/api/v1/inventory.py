@@ -472,14 +472,21 @@ async def create_transaction(
         await inventory_service.assert_warehouse_for_branch(
             db, data.warehouse_id, data.branch_id
         )
-    if data.other_warehouse_id:
-        if data.other_branch_id is None:
-            raise BadRequestError(
-                "A destination branch is required for its stock container"
+
+    # Idempotent by key: a retried POST returns the transaction the first one
+    # posted rather than moving stock a second time. The lookup is before any
+    # write, and the unique key on the column is the backstop under a race.
+    existing = (
+        await db.execute(
+            select(InventoryTransaction).where(
+                InventoryTransaction.idempotency_key == data.idempotency_key
             )
-        await inventory_service.assert_warehouse_for_branch(
-            db, data.other_warehouse_id, data.other_branch_id
         )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing = await inventory_service.load_transaction(db, existing.id)
+        return _serialise_transaction(existing, await _item_lookup(db, existing))
+
     business_date = await business_day_service.current_business_date(db, branch)
 
     transaction = InventoryTransaction(
@@ -488,8 +495,6 @@ async def create_transaction(
         status=TransactionStatusEnum.DRAFT.value,
         branch_id=data.branch_id,
         warehouse_id=data.warehouse_id,
-        other_branch_id=data.other_branch_id,
-        other_warehouse_id=data.other_warehouse_id,
         supplier_id=data.supplier_id,
         reason_id=data.reason_id,
         business_date=business_date,
@@ -498,6 +503,7 @@ async def create_transaction(
         additional_cost=data.additional_cost,
         paid_tax=data.paid_tax,
         notes=data.notes,
+        idempotency_key=data.idempotency_key,
         creator_id=user.id,
     )
     db.add(transaction)
