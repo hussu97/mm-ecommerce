@@ -25,7 +25,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "215_delivery_version_revision"
-down_revision: Union[str, None] = "209_auth_session_revocation"
+down_revision: Union[str, None] = "214_order_client_request_id"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
