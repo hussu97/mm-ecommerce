@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.payments import process_gateway_webhook
+from app.core.alerting import capture_issue
 from app.core.config import settings
 from app.core.deps import get_db
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
@@ -20,6 +21,48 @@ from app.services.webhook_log_service import Recorder
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _swallow_apply_failure(
+    db: AsyncSession,
+    recorder: Recorder,
+    exc: Exception,
+    *,
+    provider: str,
+    endpoint: str,
+) -> dict[str, Any]:
+    """
+    A courier apply that raised mid-transition, turned into a 200 that keeps the
+    retry alive rather than dropping the update.
+
+    The dedup `webhook_events` row is inserted on this **same request session**,
+    before the work it guards. So a clean return would let `get_db` commit that
+    dedup row while the transition it was meant to protect was rolled back with
+    the exception — and the provider's retry of the identical event would then be
+    recognised as a duplicate and discarded, losing the status change for good
+    (F-COU-4). Half-applied work committing under the 200 is the same wound from
+    the other side (F-ORD-17). Rolling the request session back discards the
+    dedup row *together with* the half-applied work, so the retry re-inserts and
+    re-applies from a clean slate.
+
+    The audit row is unaffected: `Recorder.save()` writes on its own session
+    (see `webhook_log_service`), so the rollback here never erases the record of
+    what arrived. Reported through `capture_issue` — with a stable fingerprint so
+    a recurring apply failure is one grouped, alertable Sentry issue rather than
+    a swallow nobody sees — and still answered 200, because a fail-loud response
+    is retried and then has the webhook URL disabled, which would leave every
+    later order with no status at all.
+    """
+    await db.rollback()
+    logger.exception("%s webhook processing failed", provider)
+    capture_issue(
+        f"{provider} webhook apply failed: {exc}",
+        level="error",
+        fingerprint=["courier-webhook-apply-failed", provider],
+        tags={"provider": provider, "endpoint": endpoint},
+    )
+    recorder.finish(result={"received": True, "error": str(exc)}, error=str(exc))
+    return {"received": True, "error": str(exc)}
 
 
 def _key_fingerprint(presented: str | None) -> str:
@@ -177,12 +220,10 @@ async def lalamove_webhook(request: Request, db: AsyncSession = Depends(get_db))
                 result={"received": True, "error": str(exc)}, error=str(exc)
             )
             return {"received": True, "error": str(exc)}
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.exception("Lalamove webhook processing failed")
-            recorder.finish(
-                result={"received": True, "error": str(exc)}, error=str(exc)
+        except Exception as exc:
+            return await _swallow_apply_failure(
+                db, recorder, exc, provider="lalamove", endpoint="status"
             )
-            return {"received": True, "error": str(exc)}
     finally:
         await recorder.save()
 
@@ -240,12 +281,10 @@ async def noon_send_webhook(
                 result={"received": True, "error": str(exc)}, error=str(exc)
             )
             return {"received": True, "error": str(exc)}
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.exception("noon Send webhook processing failed")
-            recorder.finish(
-                result={"received": True, "error": str(exc)}, error=str(exc)
+        except Exception as exc:
+            return await _swallow_apply_failure(
+                db, recorder, exc, provider="noon_send", endpoint="status"
             )
-            return {"received": True, "error": str(exc)}
     finally:
         await recorder.save()
 
@@ -358,12 +397,10 @@ async def slider_webhook(request: Request, db: AsyncSession = Depends(get_db)):
                 result={"received": True, "error": str(exc)}, error=str(exc)
             )
             return {"received": True, "error": str(exc)}
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.exception("Slider webhook processing failed")
-            recorder.finish(
-                result={"received": True, "error": str(exc)}, error=str(exc)
+        except Exception as exc:
+            return await _swallow_apply_failure(
+                db, recorder, exc, provider="slider", endpoint="status"
             )
-            return {"received": True, "error": str(exc)}
     finally:
         await recorder.save()
 
@@ -422,11 +459,13 @@ async def noon_send_tracking_webhook(
             )
             recorder.finish(result=result)
             return result
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.exception("noon Send tracking webhook processing failed")
-            recorder.finish(
-                result={"received": True, "error": str(exc)}, error=str(exc)
+        except Exception as exc:
+            # Tracking writes no `webhook_events` row (see the docstring), so
+            # there is no dedup to lose here — but a ping that raised mid-write
+            # still leaves half-applied rider/position work that `get_db` would
+            # commit under the 200. Same rollback, same report, same reason.
+            return await _swallow_apply_failure(
+                db, recorder, exc, provider="noon_send", endpoint="tracking"
             )
-            return {"received": True, "error": str(exc)}
     finally:
         await recorder.save()
