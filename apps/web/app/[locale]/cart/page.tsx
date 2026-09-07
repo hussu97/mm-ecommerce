@@ -9,7 +9,7 @@ import { useAuth } from '@/lib/auth-context';
 import { accountEmailOf, ensureCheckoutAuth } from '@/lib/checkout-auth';
 import { analytics, failureReason } from '@/lib/analytics';
 import { formatPrice } from '@/lib/utils';
-import { usePromoValidation } from '@/lib/use-promo-validation';
+import { useCartPromoRecovery, usePromoValidation } from '@/lib/use-promo-validation';
 import { Button } from '@/components/ui/Button';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Input } from '@/components/ui/Input';
@@ -201,6 +201,43 @@ export default function CartPage() {
     // as an application rather than a failure, because that is what it is.
     return { kind: outcome.needsVerify ? 'pending' : 'applied' };
   }, [validateCode, subtotal, user, addToast, t]);
+
+  /**
+   * Put the basket's own saved code back on this screen.
+   *
+   * `Cart.promo_code` is set the moment a code is applied — see `applyCode`
+   * above — but a reload, a second tab, or arriving here from a link only ever
+   * refetched `cart`, never re-ran the validation that turns that code into a
+   * discount. The customer saw the full subtotal here and then, at checkout,
+   * watched the same code they never re-typed take a slice off — the mismatch
+   * F-WEB-7 is named for. `useCartPromoRecovery` is the checkout's own fix for
+   * exactly this gap; reusing it here rather than copying its guards keeps the
+   * two screens from drifting on when a recovery is safe to run.
+   */
+  useCartPromoRecovery({
+    cartCode: cart?.promo_code,
+    formCode: promoCode,
+    subtotal,
+    identity: { email: accountEmailOf(user) },
+    enabled: cartLoaded && subtotal > 0,
+    onRecovered: (outcome) => {
+      setPromoCode(outcome.code);
+      setAppliedPromo({
+        code: outcome.code,
+        discount: outcome.discount,
+        message: outcome.message,
+        needsVerify: outcome.needsVerify,
+      });
+      // Silent to the customer, same as the checkout's recovery — the only
+      // trace is this event, and it is what turns "does this still happen"
+      // from a guess into a rate.
+      analytics.promoRecovered({
+        code: outcome.code,
+        discount: outcome.discount,
+        subtotal,
+      });
+    },
+  });
 
   const handleApplyPromo = useCallback(async () => {
     if (!promoCode.trim()) return;
