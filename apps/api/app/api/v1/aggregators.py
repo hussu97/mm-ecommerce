@@ -14,6 +14,7 @@ returns the password.
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 from decimal import Decimal
 from uuid import UUID
@@ -781,8 +782,12 @@ async def statement_invoice_url(
     if not row.invoice_object_key:
         raise NotFoundError("this statement has no archived invoice")
     expires = 3600
-    url = statement_docs.presigned_get_url(
-        row.invoice_object_key, expires_seconds=expires
+    # `presigned_get_url` signs via the IAM `signBlob` API — a blocking network
+    # call — so keep it off the event loop like the rest of object storage.
+    url = await asyncio.to_thread(
+        statement_docs.presigned_get_url,
+        row.invoice_object_key,
+        expires_seconds=expires,
     )
     if url is None:
         raise ServiceUnavailableError("invoice storage is not configured")
