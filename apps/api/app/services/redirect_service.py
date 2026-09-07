@@ -204,16 +204,32 @@ async def delete(db: AsyncSession, redirect_id: UUID) -> None:
     await db.flush()
 
 
-async def record_rename(db: AsyncSession, old_slug: str, new_slug: str) -> None:
+async def record_rename(
+    db: AsyncSession,
+    old_slug: str,
+    new_slug: str,
+    *,
+    is_prefix: bool = True,
+    source: str = "category_rename",
+    note: str | None = None,
+) -> None:
     """
-    A category changed its slug; keep its old URLs working.
+    A slug changed; keep its old URLs working.
 
-    Called from `category_service.update`, in the same transaction, so a rename
-    that fails to commit does not leave a redirect claiming it happened.
+    Called from `category_service.update` and `product_service.update`, in the
+    same transaction, so a rename that fails to commit does not leave a redirect
+    claiming it happened.
 
-    A **prefix** rule, because the category page is the smaller half of what
-    moved: every product under it — `/cat-mixboxes/mix-cookies-box-of-9` and its
-    35 siblings — is an indexed URL that an exact-match rule would not touch.
+    A category rename is a **prefix** rule, because the category page is the
+    smaller half of what moved: every product under it —
+    `/cat-mixboxes/mix-cookies-box-of-9` and its 35 siblings — is an indexed URL
+    that an exact-match rule would not touch. A product rename is a single leaf
+    URL, so it passes `is_prefix=False`.
+
+    The arguments are whole path bodies, not bare slugs: a category passes
+    `brownies`, a product passes the localized `en/brownies/mix-cookies-box-of-9`
+    once per locale, so its from-path is the real page and not a slug that
+    matches nothing.
 
     Existing rules pointing at the old path are carried forward by
     `_collapse_and_clear`, which is what makes renaming twice safe: the first
@@ -235,18 +251,18 @@ async def record_rename(db: AsyncSession, old_slug: str, new_slug: str) -> None:
         # human edited alone beyond repointing it, since they have taken it over.
         row.to_path = to_path
         row.is_active = True
-        row.is_prefix = True
+        row.is_prefix = is_prefix
         return
 
     db.add(
         UrlRedirect(
             from_path=from_path,
             to_path=to_path,
-            is_prefix=True,
+            is_prefix=is_prefix,
             status_code=308,
             is_active=True,
-            source="category_rename",
-            note=f"Category slug renamed from '{old_slug}' to '{new_slug}'.",
+            source=source,
+            note=note or f"Category slug renamed from '{old_slug}' to '{new_slug}'.",
         )
     )
     await db.flush()

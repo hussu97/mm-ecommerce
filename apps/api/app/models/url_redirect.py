@@ -21,7 +21,7 @@ ALLOWED_STATUS_CODES = (301, 308)
 #: Where a row came from, which is the difference between "a human decided this"
 #: and "a rename wrote it". Only the first is safe to edit freely; the second is
 #: rewritten if the same category is renamed again.
-ALLOWED_SOURCES = ("manual", "category_rename", "seed")
+ALLOWED_SOURCES = ("manual", "category_rename", "product_rename", "seed")
 
 
 class UrlRedirect(Base, UUIDMixin, TimestampMixin):
@@ -52,7 +52,7 @@ class UrlRedirect(Base, UUIDMixin, TimestampMixin):
             name="ck_url_redirects_status_code_allowed",
         ),
         CheckConstraint(
-            "source IN ('manual', 'category_rename', 'seed')",
+            "source IN ('manual', 'category_rename', 'product_rename', 'seed')",
             name="ck_url_redirects_source_allowed",
         ),
         # A row pointing at itself is an infinite loop the browser gives up on.

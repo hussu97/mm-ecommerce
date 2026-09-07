@@ -17,11 +17,17 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
+from app.services import indexnow_service
 from app.services.catalog import menu_group_service
 from app.services.catalog.storefront_visibility import (
     active_website_category_clause,
     website_product_visibility_clause,
 )
+
+# Imported from the module, not the package: `app.services.__init__` is still
+# executing this file when it runs, so `from app.services import redirect_service`
+# would look for an attribute that is not set yet (see `category_service`).
+from app.services.redirect_service import record_rename
 
 __all__ = [
     "create",
@@ -351,8 +357,29 @@ async def update(db: AsyncSession, slug: str, data: ProductUpdate) -> ProductRes
         if sku_existing.scalar_one_or_none():
             raise ConflictError(f"Product with SKU '{new_sku}' already exists")
 
+    # The category the product currently lives under, captured before any
+    # category change in this same call moves it. A product's canonical URL is
+    # /{locale}/{category}/{slug}, so a redirect needs the old category slug.
+    old_category_slug = product.category.slug if product.category else None
+
     for key, val in updates.items():
         setattr(product, key, val)
+
+    # Keep the old product URLs working when the slug changes — the same promise
+    # a category rename keeps (F-INV-12). A product page is /{locale}/{category}/
+    # {slug}, so this records one leaf redirect per locale rather than the bare,
+    # locale-less prefix a category uses. In this transaction on purpose: a
+    # rename that does not commit must not leave a redirect claiming it did.
+    if new_slug and new_slug != slug and old_category_slug:
+        for locale in indexnow_service.LOCALES:
+            await record_rename(
+                db,
+                f"{locale}/{old_category_slug}/{slug}",
+                f"{locale}/{old_category_slug}/{new_slug}",
+                is_prefix=False,
+                source="product_rename",
+                note=f"Product slug renamed from '{slug}' to '{new_slug}'.",
+            )
 
     await db.flush()
 
