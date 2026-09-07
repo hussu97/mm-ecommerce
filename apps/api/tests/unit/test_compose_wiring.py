@@ -60,6 +60,21 @@ def test_the_register_gets_its_own_host_and_cors_lists():
     assert "POS_CORS_ORIGINS" in env
 
 
+def test_every_slot_gets_allowed_hosts_so_settings_can_boot():
+    """Settings fail-closes on ALLOWED_HOSTS in production (config.py: not empty,
+    not '*'), and it is the SHARED model — the register runs it too. WP-10
+    (F-OPS-22) dropped the ${ALLOWED_HOSTS:-*} default but left the line off the
+    pos anchors, so the pos-api slot could not boot; the pos-api-first cutover
+    (F-OPS-15) is what surfaced it. Every prod api/pos slot must pass ALLOWED_HOSTS
+    through from the VM .env (not defaulted), or its container never starts."""
+    for svc in ("api", "api-green", "pos-api", "pos-api-green"):
+        env = _environment(svc)
+        assert env.get("ALLOWED_HOSTS") == "${ALLOWED_HOSTS}", (
+            f"{svc} must pass ALLOWED_HOSTS through with no default, or Settings "
+            f"fail-closes and the container never boots"
+        )
+
+
 def test_the_register_runs_the_register_app():
     compose = yaml.safe_load(COMPOSE.read_text())
     for svc in ("pos-api", "pos-api-green"):

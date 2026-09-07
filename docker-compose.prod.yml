@@ -242,6 +242,14 @@ x-pos-environment: &pos-environment
   FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
   GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
   GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
+  # The register runs the SAME `Settings` as the storefront, and Settings
+  # fail-closes on ALLOWED_HOSTS in production (config.py: not empty, not '*').
+  # The pos app enforces its OWN hosts via POS_ALLOWED_HOSTS (pos_main.py:58),
+  # so ALLOWED_HOSTS here only satisfies that shared validator — without it the
+  # pos-api container never boots. WP-10 (F-OPS-22) dropped the ${ALLOWED_HOSTS:-*}
+  # default but left this line off the pos anchors; the pos-api-first cutover
+  # order (F-OPS-15) is what surfaced it. Same value the api slots read from .env.
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS}
   POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
   POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
   POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
@@ -627,6 +635,14 @@ x-pos-green-environment: &pos-green-environment
   FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
   GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
   GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
+  # The register runs the SAME `Settings` as the storefront, and Settings
+  # fail-closes on ALLOWED_HOSTS in production (config.py: not empty, not '*').
+  # The pos app enforces its OWN hosts via POS_ALLOWED_HOSTS (pos_main.py:58),
+  # so ALLOWED_HOSTS here only satisfies that shared validator — without it the
+  # pos-api container never boots. WP-10 (F-OPS-22) dropped the ${ALLOWED_HOSTS:-*}
+  # default but left this line off the pos anchors; the pos-api-first cutover
+  # order (F-OPS-15) is what surfaced it. Same value the api slots read from .env.
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS}
   POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
   POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
   POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
