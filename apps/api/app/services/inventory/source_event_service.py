@@ -12,10 +12,12 @@ import logging
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import advisory_lock, heartbeat
+from app.core.database import SchedulerSessionFactory
 from app.core.exceptions import AppError, BadRequestError, ConflictError
 from app.core.money import unit_cost
 from app.models.base import utcnow
@@ -633,13 +635,50 @@ async def record_return(
     return [returned, wasted]
 
 
-async def sweep_pending_once() -> int:
-    """Recover pending accepted events in strict per-branch acceptance order."""
-    from app.core.database import AsyncSessionFactory
+#: Leader election for the sweeper (WP5, F-OPS-2). "mmBINV\0\1" — its OWN key, so
+#: only one slot ever sweeps, distinct from the per-branch inventory xact lock the
+#: acceptance path takes. Before this the sweeper had no leader election at all:
+#: every slot swept, each taking a BLOCKING `pg_advisory_xact_lock` per branch on
+#: a held pool connection, with no `lock_timeout` — a live acceptance could stall
+#: the whole sweep, on the request pool, every five seconds.
+_SWEEPER_LEADER_LOCK_KEY = 0x6D6D_4249_4E56_0001
 
-    processed = 0
-    async with AsyncSessionFactory() as db:
-        branch_ids = list(
+#: The sweeper wakes this often. 30s, not the old 5s: this is recovery of orders
+#: whose recipe was missing at acceptance, nothing a customer waits on, and 5s
+#: spent a connection and a per-branch lock twelve times a minute for nothing.
+_SWEEPER_TICK_SECONDS = 30
+
+#: Hard budget on one sweep so a wedged branch cannot pin the leader connection.
+_SWEEPER_BUDGET_SECONDS = 30
+
+
+async def _try_lock_branch_inventory(db: AsyncSession, branch_id: uuid.UUID) -> bool:
+    """Non-blocking `lock_branch_inventory` for the sweeper.
+
+    The acceptance path takes the branch lock with `pg_advisory_xact_lock`
+    (blocking) so two finalizing orders serialise. The sweeper must not block on
+    it — a live acceptance holding the lock would otherwise stall the whole pass —
+    so it takes the SAME key with `pg_try_advisory_xact_lock`: got it, sweep the
+    branch; did not, another transaction (an acceptance, or a stray pass) is on
+    it, so skip and let the next tick recover it. `lock_timeout` is set too, so
+    no other lock the sweep touches can hang past the budget either.
+    """
+    await db.execute(text("SET LOCAL lock_timeout = '3s'"))
+    got = await db.scalar(
+        select(
+            func.pg_try_advisory_xact_lock(
+                func.hashtextextended(f"inventory:{branch_id}", 0)
+            )
+        )
+    )
+    return bool(got)
+
+
+async def _pending_branch_ids() -> list[uuid.UUID]:
+    """Branches with pending events, read on a session of their own and released
+    before any per-branch work opens one."""
+    async with SchedulerSessionFactory() as db:
+        return list(
             (
                 await db.execute(
                     select(InventorySourceEvent.branch_id)
@@ -653,61 +692,106 @@ async def sweep_pending_once() -> int:
             .scalars()
             .all()
         )
-        for branch_id in branch_ids:
-            await lock_branch_inventory(db, branch_id)
-            events = list(
-                (
-                    await db.execute(
-                        select(InventorySourceEvent)
-                        .where(
-                            InventorySourceEvent.branch_id == branch_id,
-                            InventorySourceEvent.status
-                            == InventorySourceEventStatusEnum.PENDING.value,
-                        )
-                        .order_by(InventorySourceEvent.accepted_sequence)
-                        .with_for_update(skip_locked=True)
-                    )
+
+
+async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
+    """Process one branch's pending events in acceptance order.
+
+    The caller holds the branch try-lock in this transaction and commits it.
+    """
+    events = list(
+        (
+            await db.execute(
+                select(InventorySourceEvent)
+                .where(
+                    InventorySourceEvent.branch_id == branch_id,
+                    InventorySourceEvent.status
+                    == InventorySourceEventStatusEnum.PENDING.value,
                 )
-                .scalars()
-                .all()
+                .order_by(InventorySourceEvent.accepted_sequence)
+                .with_for_update(skip_locked=True)
             )
-            for event in events:
-                if event.source_type != "order":
+        )
+        .scalars()
+        .all()
+    )
+    processed = 0
+    for event in events:
+        if event.source_type != "order":
+            continue
+        order = await db.get(Order, uuid.UUID(event.source_id))
+        if order is None:
+            event.status = InventorySourceEventStatusEnum.EXCEPTION.value
+            event.error_code = "order_not_found"
+            event.error_detail = "Order no longer exists"
+            event.processed_at = utcnow()
+            continue
+        if event.error_code == "missing_recipe":
+            # Re-snapshot: a recipe may have been activated since this order was
+            # accepted, and the frozen plan does not grow on its own.
+            await retry_event(
+                db, event=event, order=order, user=None, already_locked=True
+            )
+        else:
+            await _post_or_record_exception(
+                db, event=event, order=order, user=None, already_locked=True
+            )
+        processed += 1
+    return processed
+
+
+async def sweep_pending_once() -> int:
+    """Recover pending accepted events in strict per-branch acceptance order.
+
+    ONE session PER BRANCH (WP5, F-OPS-2): each branch is try-locked, its pending
+    events processed and committed, and the connection handed back before the
+    next branch opens one — so a slow branch can neither hold a scheduler
+    connection across every other branch's work nor pin the whole sweep behind
+    one live acceptance.
+    """
+    branch_ids = await _pending_branch_ids()
+    processed = 0
+    for branch_id in branch_ids:
+        async with SchedulerSessionFactory() as db:
+            try:
+                if not await _try_lock_branch_inventory(db, branch_id):
+                    await db.rollback()
                     continue
-                order = await db.get(Order, uuid.UUID(event.source_id))
-                if order is None:
-                    event.status = InventorySourceEventStatusEnum.EXCEPTION.value
-                    event.error_code = "order_not_found"
-                    event.error_detail = "Order no longer exists"
-                    event.processed_at = utcnow()
-                    continue
-                if event.error_code == "missing_recipe":
-                    # Re-snapshot: a recipe may have been activated since this order
-                    # was accepted, and the frozen plan does not grow on its own.
-                    await retry_event(
-                        db, event=event, order=order, user=None, already_locked=True
-                    )
-                else:
-                    await _post_or_record_exception(
-                        db,
-                        event=event,
-                        order=order,
-                        user=None,
-                        already_locked=True,
-                    )
-                processed += 1
-        # This worker owns the session and has no request dependency to commit
-        # it after the service returns; one commit makes the swept batch durable.
-        await db.commit()
+                processed += await _sweep_branch_pending(db, branch_id)
+                # This worker owns the session and has no request dependency to
+                # commit it; one commit per branch makes that branch durable.
+                await db.commit()
+            except Exception:  # noqa: BLE001 — one branch must not stop the rest
+                await db.rollback()
+                logger.exception(
+                    "Inventory source-event sweep failed for branch %s", branch_id
+                )
     return processed
 
 
 async def run_sweeper_forever() -> None:
+    """The loop. Leader-elected, 30s cadence sleeping first, a per-tick budget.
+
+    Cancelled on shutdown; never allowed to die on an exception or a timeout —
+    one wedged sweep must not stop every future one.
+    """
+    logger.info(
+        "Inventory source-event sweeper started (every %ss)", _SWEEPER_TICK_SECONDS
+    )
     while True:
         try:
-            await sweep_pending_once()
+            # Sleeps FIRST: boot is the busiest moment a process has, and this is
+            # recovery work, not anything a customer is waiting on.
+            await asyncio.sleep(_SWEEPER_TICK_SECONDS)
+            await heartbeat.beat("inventory_source_event_sweeper")
+            async with advisory_lock.held(
+                _SWEEPER_LEADER_LOCK_KEY, name="inventory source-event sweeper"
+            ) as mine:
+                if not mine:
+                    continue
+                async with asyncio.timeout(_SWEEPER_BUDGET_SECONDS):
+                    await sweep_pending_once()
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 — the next sweep must still run
+        except (Exception, TimeoutError):  # noqa: BLE001 — the next sweep must still run
             logger.exception("Inventory source-event sweep failed")
-        await asyncio.sleep(5)

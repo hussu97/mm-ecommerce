@@ -37,8 +37,8 @@ from io import BytesIO
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock, trading_hours
-from app.core.database import AsyncSessionFactory
+from app.core import advisory_lock, heartbeat, trading_hours
+from app.core.database import SchedulerSessionFactory
 from app.models.aggregator import (
     AggregatorPayout,
     AggregatorStatement,
@@ -860,7 +860,8 @@ async def run_forever() -> None:
     logger.info("Daily sales report loop started")
     while True:
         try:
-            async with AsyncSessionFactory() as db:
+            await heartbeat.beat("daily_sales_email")
+            async with SchedulerSessionFactory() as db:
                 await _tick(db)
         except asyncio.CancelledError:
             raise

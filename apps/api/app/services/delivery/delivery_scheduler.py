@@ -28,8 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.core import advisory_lock
-from app.core.database import AsyncSessionFactory
+from app.core import advisory_lock, heartbeat
+from app.core.database import SchedulerSessionFactory
 from app.services.couriers import courier_service
 from app.services.delivery import arrival_service, driver_routing, driver_tracking
 from app.services.payments import payment_service
@@ -75,7 +75,7 @@ async def sweep_once() -> bool:
     ) as mine:
         if not mine:
             return False
-        async with AsyncSessionFactory() as session:
+        async with SchedulerSessionFactory() as session:
             try:
                 landed = await arrival_service.sweep(session)
                 await session.commit()
@@ -144,6 +144,7 @@ async def run_forever() -> None:
     while True:
         try:
             await asyncio.sleep(_TICK_SECONDS)
+            await heartbeat.beat("delivery_scheduler")
             await sweep_once()
         except asyncio.CancelledError:
             logger.info("Delivery scheduler stopping")

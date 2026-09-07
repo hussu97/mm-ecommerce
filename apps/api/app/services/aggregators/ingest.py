@@ -44,9 +44,11 @@ from sqlalchemy.exc import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock, alerting
+from app.core import advisory_lock, alerting, heartbeat
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
+from app.core.database import (
+    SchedulerSessionFactory as AsyncSessionFactory,  # noqa: N813 — scheduler pool, kept under this name for existing patch points
+)
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
     CHANNEL_KEETA,
@@ -2448,6 +2450,14 @@ async def run_scheduler_forever() -> None:
             logger.exception("aggregator daily run failed")
 
 
+async def _leader_heartbeat_forever() -> None:
+    """Beat `aggregator_ingest` every 30s while this slot leads. Cancelled with
+    the other children when leadership is lost or the supervisor shuts down."""
+    while True:
+        await heartbeat.beat("aggregator_ingest")
+        await asyncio.sleep(30)
+
+
 async def run_aggregator_schedulers_forever() -> None:
     """Run the two aggregator schedulers on exactly ONE API slot at a time.
 
@@ -2471,6 +2481,10 @@ async def run_aggregator_schedulers_forever() -> None:
     announced_standby = False
     while True:
         try:
+            # Liveness of the supervisor task itself — beats whether or not this
+            # slot is the leader, so `/health` can tell a wedged supervisor from a
+            # standby (WP5).
+            await heartbeat.beat("aggregator_ingest")
             async with advisory_lock.held(
                 _SCHEDULER_LEADER_LOCK_KEY, name="aggregator scheduler leader"
             ) as leader:
@@ -2494,6 +2508,12 @@ async def run_aggregator_schedulers_forever() -> None:
                 )
 
                 children = [
+                    # A steady heartbeat while this slot leads: the daily/rolling
+                    # children tick too rarely (hourly, daily) to be a liveness
+                    # signal, and the supervisor itself blocks in the gather below
+                    # for the whole tenure — so a dedicated beater is what keeps
+                    # `/health` fresh on the leader (WP5).
+                    asyncio.create_task(_leader_heartbeat_forever()),
                     asyncio.create_task(run_scheduler_forever()),
                     asyncio.create_task(run_sales_refresh_scheduler_forever()),
                     # Standing multi-day coverage backfill — re-pulls dates a long

@@ -22,9 +22,9 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.core import advisory_lock
+from app.core import advisory_lock, heartbeat
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
+from app.core.database import SchedulerSessionFactory
 from app.models.grubops_order import GrubOpsOrderMap
 from app.services.foodics import foodics_orders_service
 from app.services.grubops import grubops_orders_service
@@ -108,7 +108,7 @@ async def sweep_once() -> int:
             logger.exception("GrubOps: could not list orders")
             summaries = []
 
-        async with AsyncSessionFactory() as db:
+        async with SchedulerSessionFactory() as db:
             touched = 0
             seen_ids: set[str] = set()
             for summary in summaries:
@@ -176,6 +176,7 @@ async def run_forever() -> None:
         try:
             # Sleeps first: boot is busy, and the first orders can wait a tick.
             await asyncio.sleep(_tick_seconds())
+            await heartbeat.beat("grubops_orders")
             touched = await sweep_once()
             if touched:
                 logger.info("GrubOps order ingest handled %s order(s)", touched)

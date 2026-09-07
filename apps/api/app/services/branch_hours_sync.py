@@ -29,9 +29,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core import advisory_lock, alerting, trading_hours
+from app.core import advisory_lock, alerting, heartbeat, trading_hours
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
+from app.core.database import SchedulerSessionFactory
 from app.models.aggregator import BranchHoursSyncRun, FoodicsBranchMap
 from app.models.base import utcnow
 from app.models.branch import Branch
@@ -336,12 +336,18 @@ def _today() -> date:
     return datetime.now(trading_hours.TZ).date()
 
 
-async def _tick(db: AsyncSession) -> None:
+async def _tick() -> None:
+    # Leadership FIRST, THEN a session (WP5, F-OPS-5). This loop used to open the
+    # session in `run_forever` and pass it in, so every non-leader slot checked
+    # out a scheduler connection each tick only to take the lock, find it held,
+    # and hand the connection back. Now a non-leader takes nothing but the lock's
+    # own connection; only the leader opens a session to do the work.
     async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="branch hours sync") as mine:
         if not mine:
             return
-        results = await sync_all(db)
-        await db.commit()
+        async with SchedulerSessionFactory() as db:
+            results = await sync_all(db)
+            await db.commit()
         synced = sum(1 for r in results if r.get("status") != "no-schedule")
         if synced:
             logger.info("branch-hours sync: mirrored %s branch(es)", synced)
@@ -352,8 +358,8 @@ async def run_forever() -> None:
     logger.info("Branch hours sync loop started")
     while True:
         try:
-            async with AsyncSessionFactory() as db:
-                await _tick(db)
+            await heartbeat.beat("branch_hours_sync")
+            await _tick()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a bad tick must not kill the loop

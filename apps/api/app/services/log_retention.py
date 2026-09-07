@@ -39,9 +39,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete
 
-from app.core import advisory_lock
+from app.core import advisory_lock, heartbeat
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
+from app.core.database import SchedulerSessionFactory
 from app.models.audit_log import AuditLog
 from app.models.email_log import EmailLog
 from app.models.webhook_event import WebhookEvent
@@ -73,7 +73,7 @@ async def sweep_once(now: datetime | None = None) -> dict[str, int]:
     async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="log retention") as mine:
         if not mine:
             return {}
-        async with AsyncSessionFactory() as session:
+        async with SchedulerSessionFactory() as session:
             short = _cutoff(settings.LOG_RETENTION_DAYS, now)
             long = _cutoff(settings.AUDIT_RETENTION_DAYS, now)
 
@@ -126,6 +126,7 @@ async def run_forever() -> None:
             # Sleeps first. Boot is the busiest moment a process has, and
             # nothing here is urgent enough to compete with serving requests.
             await asyncio.sleep(_TICK_SECONDS)
+            await heartbeat.beat("log_retention")
             removed = await sweep_once()
             if removed:
                 logger.info(

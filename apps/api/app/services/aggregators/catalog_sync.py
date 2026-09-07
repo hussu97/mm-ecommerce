@@ -40,7 +40,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core import advisory_lock
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
+from app.core.database import (
+    SchedulerSessionFactory as AsyncSessionFactory,  # noqa: N813 — scheduler pool, kept under this name for existing patch points
+)
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.models.aggregator import AGGREGATOR_CHANNELS
 from app.models.branch import Branch

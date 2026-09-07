@@ -40,9 +40,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock
+from app.core import advisory_lock, heartbeat
 from app.core.config import settings
-from app.core.database import AsyncSessionFactory
+from app.core.database import SchedulerSessionFactory
 from app.models.branch import Branch
 from app.models.external_item_map import ExternalItemMap
 from app.models.grubops import GrubOpsLocationMap, GrubOpsSyncState
@@ -211,7 +211,7 @@ async def sweep_once() -> dict[str, int]:
         if not mine:
             return {}
 
-        async with AsyncSessionFactory() as db:
+        async with SchedulerSessionFactory() as db:
             rows = (
                 await db.execute(
                     select(GrubOpsLocationMap, Branch)
@@ -252,6 +252,7 @@ async def run_forever() -> None:
             # Sleeps first: boot is the busiest moment a process has, and
             # nothing here is urgent enough to compete with serving requests.
             await asyncio.sleep(_tick_seconds())
+            await heartbeat.beat("grubops_reconcile")
             pushed = await sweep_once()
             if pushed:
                 logger.info(
