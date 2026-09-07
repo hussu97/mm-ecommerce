@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models import Branch, Order, OrderDelivery
+from app.models.inventory import Warehouse
 from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 from app.services.couriers import courier_service
 
@@ -58,16 +59,24 @@ async def order(engine):
     """
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
-        # `branches.reference` is VARCHAR(50); MARKER (27) + a full uuid (36)
-        # overruns it, so trim the suffix like `order_number` does below.
+        # `branches.reference` is VARCHAR(50), so MARKER (27) + a full uuid (36)
+        # overruns it — trim the suffix. `orders.order_number` is tighter still
+        # at VARCHAR(30), too narrow for the MARKER prefix, so it uses a short
+        # `PDC-` tag instead. Both stay unique; teardown is by id, not by name.
         branch = Branch(
             name=f"{MARKER} branch", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}"
         )
         db.add(branch)
         await db.flush()
 
+        # A non-deleted branch must own exactly one default stock container at
+        # commit (deferred trigger from migration 186), so give it one.
+        db.add(Warehouse(branch_id=branch.id, name="Default stock", is_default=True))
+
         order = Order(
-            order_number=f"{MARKER}-{uuid.uuid4().hex[:12]}",
+            order_number=f"PDC-{uuid.uuid4().hex[:12]}",
+            email="pytest-dispatch@example.com",
+            source="online",
             branch_id=branch.id,
             status=OrderStatusEnum.CONFIRMED,
             delivery_method=DeliveryMethodEnum.DELIVERY,
