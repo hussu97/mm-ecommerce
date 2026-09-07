@@ -14,8 +14,8 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db
-from app.core.permissions import require
+from app.core.deps import get_db
+from app.core.permissions import require, require_any
 from app.models import User
 from app.schemas.menu_group import (
     MenuGroupClone,
@@ -59,7 +59,7 @@ async def get_tree(
         None, description="'branch' for the shop trees, 'integrator' for the sync menu"
     ),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_any("pos.register.access", "catalogue.manage")),
 ):
     """A menu, nested. A terminal fetches its own branch's tree; the console can
     ask for every tree, one branch's, or the integrator menu."""
@@ -75,7 +75,7 @@ async def get_tree(
 async def get_group(
     group_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_any("pos.register.access", "catalogue.manage")),
 ):
     return _to_response(await menu_group_service.get(db, group_id))
 

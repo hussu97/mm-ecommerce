@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
-from app.core.permissions import require
+from app.core.permissions import require, require_any
 from app.models.user import User
 from app.schemas.modifier import (
     ModifierCreate,
@@ -24,8 +24,15 @@ router = APIRouter()
 async def list_modifiers(
     include_inactive: bool = Query(False),
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_any("pos.register.access", "catalogue.manage")),
 ):
-    """List all modifiers with their options."""
+    """List all modifiers with their options.
+
+    An admin/catalogue surface, not a storefront one — the storefront reads a
+    product's modifiers embedded in the product response and never calls this.
+    It carried no auth at all, so any caller could enumerate the catalogue's
+    modifier structure; it now requires the register or a catalogue manager.
+    """
     return await modifier_service.get_all(db, include_inactive=include_inactive)
 
 
@@ -40,8 +47,12 @@ async def create_modifier(
 
 
 @router.get("/{modifier_id}", response_model=ModifierResponse)
-async def get_modifier(modifier_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Get a modifier by ID."""
+async def get_modifier(
+    modifier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_any("pos.register.access", "catalogue.manage")),
+):
+    """Get a modifier by ID (admin/register surface — see `list_modifiers`)."""
     return await modifier_service.get_by_id(db, modifier_id)
 
 

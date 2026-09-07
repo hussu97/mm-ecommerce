@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
-from app.core.deps import get_current_active_user, get_db
+from app.core.deps import get_db
 from app.core.exceptions import ConflictError, UnauthorizedError
+from app.core.limiter import limiter
 from app.core.permissions import require
 from app.models import (
     Branch,
@@ -41,6 +42,7 @@ from app.schemas.pos import (
     PrinterUpdate,
 )
 from app.services import audit_service, crud_service, push_service
+from app.services.inventory.access_service import assert_branch_access
 
 logger = logging.getLogger("mm.pos.devices")
 
@@ -458,7 +460,9 @@ async def unpair_device(
 
 
 @router.post("/pair", response_model=DevicePairResponse)
+@limiter.limit("10/minute")
 async def pair_device(
+    request: Request,
     data: DevicePairRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -466,7 +470,20 @@ async def pair_device(
     Exchange a one-time pairing code for a long-lived device token.
 
     The token is returned exactly once; only its digest is stored.
+
+    Hardened (F-POS-30): a dedicated rate limit (the code is 8 chars over a
+    32-symbol alphabet, so an un-throttled endpoint is a guessable-code oracle);
+    refused off the register host, since a terminal only ever pairs against the
+    POS app and the public storefront host has no business minting device tokens
+    (this endpoint saw dozens of stray hits a day there); and an audit row, so a
+    pairing — the birth of a long-lived counter credential — leaves a trail.
     """
+    # Refuse on the storefront host. The register API is the only place a
+    # terminal pairs; honouring it on the public host gives that boundary away
+    # for a request no real terminal makes.
+    if not getattr(request.app.state, "is_pos_app", False):
+        raise UnauthorizedError("Device pairing is only accepted by the register API")
+
     stmt = select(Device).where(
         Device.pairing_code == data.pairing_code.upper().strip(),
         Device.deleted_at.is_(None),
@@ -498,6 +515,20 @@ async def pair_device(
     device.last_seen_at = utcnow()
     await db.flush()
     await db.refresh(device)
+
+    # The device is its own actor here — there is no signed-in admin on the pair
+    # call. Recorded so the minting of a counter credential is not invisible.
+    await audit_service.log_actor_action(
+        db,
+        action="UPDATE",
+        entity_type="device",
+        entity_id=str(device.id),
+        entity_label=device.name,
+        actor_id=device.id,
+        actor_email=f"device:{device.reference}",
+        changes={"paired": True},
+        request=request,
+    )
 
     branch = await crud_service.get_or_404(db, Branch, device.branch_id)
     return DevicePairResponse(
@@ -672,7 +703,7 @@ class PushTokenResponse(BaseModel):
 async def register_push_token(
     data: PushTokenRegisterRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
     """
     Register this device for order notifications, or update its registration.
@@ -680,10 +711,22 @@ async def register_push_token(
     Called on every launch, so it upserts on the token: a row per launch would
     mean the same iPad buzzing five times for one order.
 
+    Gated on `pos.register.access` and branch membership (F-POS-13): this is a
+    register endpoint carrying staff name and phone in its order payloads, and it
+    was open to `get_current_active_user` — any active account, a storefront
+    customer's included — with a client-chosen `branch_id`, so a customer could
+    register (or, below, revoke) a push token for any branch. It now demands the
+    register permission and that the caller actually belongs to the branch they
+    are wiring the device to.
+
     `push_enabled` in the response says whether the server can actually send —
     false means no APNs key is configured, and the app should keep polling
     rather than assume silence means no orders.
     """
+    # A push token is addressed to a branch (a kitchen), so the caller must be
+    # assigned to that branch. Admins pass; a cashier only for their own shops.
+    if data.branch_id is not None:
+        await assert_branch_access(db, user, data.branch_id)
     row = await push_service.register_token(
         db,
         token=data.token.strip(),
@@ -706,9 +749,15 @@ async def register_push_token(
 async def revoke_push_token(
     token: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("pos.register.access")),
 ):
-    """Stop sending to this device — a sign-out, or notifications turned off."""
+    """Stop sending to this device — a sign-out, or notifications turned off.
+
+    Scoped to the owner (F-POS-13): it used to revoke by the path token alone, so
+    any active account that knew or guessed a token string could silence any
+    branch's register. The caller must now hold `pos.register.access` and be
+    assigned to the branch the token belongs to.
+    """
     row = (
         (
             await db.execute(
@@ -719,5 +768,9 @@ async def revoke_push_token(
         .first()
     )
     if row is not None and row.revoked_at is None:
+        # A token bound to a branch may only be revoked by someone assigned to
+        # that branch. An unbound (inert) token has no branch to gate on.
+        if row.branch_id is not None:
+            await assert_branch_access(db, user, row.branch_id)
         row.revoked_at = utcnow()
         row.revoked_reason = "revoked by device"

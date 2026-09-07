@@ -20,7 +20,7 @@ from app.core.deps import (
     get_optional_user,
 )
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
-from app.core.permissions import require
+from app.core.permissions import require, require_any
 from app.models.branch import Branch
 from app.models.menu import BranchProduct
 from app.models.product import Product
@@ -370,7 +370,7 @@ async def unlink_modifier(
 async def list_branch_availability(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(require_any("pos.register.access", "catalogue.manage")),
 ):
     """
     Every product this branch has overridden.

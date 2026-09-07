@@ -22,9 +22,9 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, get_db
+from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, ConflictError
-from app.core.permissions import require
+from app.core.permissions import require, require_any
 from app.models import (
     Charge,
     Course,
@@ -87,16 +87,19 @@ def build_crud_router(
     def _label(entity: Any) -> str:
         return str(getattr(entity, label_field, entity.id))
 
-    # Reads are open to any signed-in user: a POS terminal has to load payment
-    # methods, taxes, charges and reasons at launch, and a cashier is staff with
-    # a role rather than a console admin. Writes stay admin-only below.
+    # Reads need the register or a settings manager — not merely any signed-in
+    # user. A POS terminal loads payment methods, taxes, charges and reasons at
+    # launch (pos.register.access), and the console's settings editor reads them
+    # too (admin.settings.manage); an admin passes either way. Bare
+    # `get_current_active_user` also admitted a storefront customer's token on
+    # the public API host, which is the gap this closes. Writes stay admin-only.
     @router.get("", response_model=list[response_schema])  # type: ignore[valid-type]
     async def list_items(
         include_deleted: bool = False,
         include_inactive: bool = True,
         type: str | None = Query(None, description="Filter by type where supported"),
         db: AsyncSession = Depends(get_db),
-        _: User = Depends(get_current_active_user),
+        _: User = Depends(require_any("pos.register.access", "admin.settings.manage")),
     ):
         filters: list[Any] = []
         if type is not None and hasattr(model, "type"):
@@ -137,7 +140,7 @@ def build_crud_router(
     async def get_item(
         item_id: uuid.UUID,
         db: AsyncSession = Depends(get_db),
-        _: User = Depends(get_current_active_user),
+        _: User = Depends(require_any("pos.register.access", "admin.settings.manage")),
     ):
         return await crud_service.get_or_404(db, model, item_id, include_deleted=True)
 

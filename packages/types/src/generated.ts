@@ -2926,6 +2926,13 @@ export interface paths {
          * @description Exchange a one-time pairing code for a long-lived device token.
          *
          *     The token is returned exactly once; only its digest is stored.
+         *
+         *     Hardened (F-POS-30): a dedicated rate limit (the code is 8 chars over a
+         *     32-symbol alphabet, so an un-throttled endpoint is a guessable-code oracle);
+         *     refused off the register host, since a terminal only ever pairs against the
+         *     POS app and the public storefront host has no business minting device tokens
+         *     (this endpoint saw dozens of stray hits a day there); and an audit row, so a
+         *     pairing — the birth of a long-lived counter credential — leaves a trail.
          */
         post: operations["pair_device_api_v1_devices_pair_post"];
         delete?: never;
@@ -2949,6 +2956,14 @@ export interface paths {
          *
          *     Called on every launch, so it upserts on the token: a row per launch would
          *     mean the same iPad buzzing five times for one order.
+         *
+         *     Gated on `pos.register.access` and branch membership (F-POS-13): this is a
+         *     register endpoint carrying staff name and phone in its order payloads, and it
+         *     was open to `get_current_active_user` — any active account, a storefront
+         *     customer's included — with a client-chosen `branch_id`, so a customer could
+         *     register (or, below, revoke) a push token for any branch. It now demands the
+         *     register permission and that the caller actually belongs to the branch they
+         *     are wiring the device to.
          *
          *     `push_enabled` in the response says whether the server can actually send —
          *     false means no APNs key is configured, and the app should keep polling
@@ -2974,6 +2989,11 @@ export interface paths {
         /**
          * Revoke Push Token
          * @description Stop sending to this device — a sign-out, or notifications turned off.
+         *
+         *     Scoped to the owner (F-POS-13): it used to revoke by the path token alone, so
+         *     any active account that knew or guessed a token string could silence any
+         *     branch's register. The caller must now hold `pos.register.access` and be
+         *     assigned to the branch the token belongs to.
          */
         delete: operations["revoke_push_token_api_v1_devices_push_token__token__delete"];
         options?: never;
@@ -4709,6 +4729,11 @@ export interface paths {
         /**
          * List Modifiers
          * @description List all modifiers with their options.
+         *
+         *     An admin/catalogue surface, not a storefront one — the storefront reads a
+         *     product's modifiers embedded in the product response and never calls this.
+         *     It carried no auth at all, so any caller could enumerate the catalogue's
+         *     modifier structure; it now requires the register or a catalogue manager.
          */
         get: operations["list_modifiers_api_v1_modifiers_get"];
         put?: never;
@@ -4732,7 +4757,7 @@ export interface paths {
         };
         /**
          * Get Modifier
-         * @description Get a modifier by ID.
+         * @description Get a modifier by ID (admin/register surface — see `list_modifiers`).
          */
         get: operations["get_modifier_api_v1_modifiers__modifier_id__get"];
         /**

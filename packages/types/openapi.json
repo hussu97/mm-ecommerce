@@ -42390,7 +42390,7 @@
     },
     "/api/v1/devices/pair": {
       "post": {
-        "description": "Exchange a one-time pairing code for a long-lived device token.\n\nThe token is returned exactly once; only its digest is stored.",
+        "description": "Exchange a one-time pairing code for a long-lived device token.\n\nThe token is returned exactly once; only its digest is stored.\n\nHardened (F-POS-30): a dedicated rate limit (the code is 8 chars over a\n32-symbol alphabet, so an un-throttled endpoint is a guessable-code oracle);\nrefused off the register host, since a terminal only ever pairs against the\nPOS app and the public storefront host has no business minting device tokens\n(this endpoint saw dozens of stray hits a day there); and an audit row, so a\npairing \u2014 the birth of a long-lived counter credential \u2014 leaves a trail.",
         "operationId": "pair_device_api_v1_devices_pair_post",
         "requestBody": {
           "content": {
@@ -42432,7 +42432,7 @@
     },
     "/api/v1/devices/push-token": {
       "post": {
-        "description": "Register this device for order notifications, or update its registration.\n\nCalled on every launch, so it upserts on the token: a row per launch would\nmean the same iPad buzzing five times for one order.\n\n`push_enabled` in the response says whether the server can actually send \u2014\nfalse means no APNs key is configured, and the app should keep polling\nrather than assume silence means no orders.",
+        "description": "Register this device for order notifications, or update its registration.\n\nCalled on every launch, so it upserts on the token: a row per launch would\nmean the same iPad buzzing five times for one order.\n\nGated on `pos.register.access` and branch membership (F-POS-13): this is a\nregister endpoint carrying staff name and phone in its order payloads, and it\nwas open to `get_current_active_user` \u2014 any active account, a storefront\ncustomer's included \u2014 with a client-chosen `branch_id`, so a customer could\nregister (or, below, revoke) a push token for any branch. It now demands the\nregister permission and that the caller actually belongs to the branch they\nare wiring the device to.\n\n`push_enabled` in the response says whether the server can actually send \u2014\nfalse means no APNs key is configured, and the app should keep polling\nrather than assume silence means no orders.",
         "operationId": "register_push_token_api_v1_devices_push_token_post",
         "requestBody": {
           "content": {
@@ -42479,7 +42479,7 @@
     },
     "/api/v1/devices/push-token/{token}": {
       "delete": {
-        "description": "Stop sending to this device \u2014 a sign-out, or notifications turned off.",
+        "description": "Stop sending to this device \u2014 a sign-out, or notifications turned off.\n\nScoped to the owner (F-POS-13): it used to revoke by the path token alone, so\nany active account that knew or guessed a token string could silence any\nbranch's register. The caller must now hold `pos.register.access` and be\nassigned to the branch the token belongs to.",
         "operationId": "revoke_push_token_api_v1_devices_push_token__token__delete",
         "parameters": [
           {
@@ -49298,7 +49298,7 @@
     },
     "/api/v1/modifiers": {
       "get": {
-        "description": "List all modifiers with their options.",
+        "description": "List all modifiers with their options.\n\nAn admin/catalogue surface, not a storefront one \u2014 the storefront reads a\nproduct's modifiers embedded in the product response and never calls this.\nIt carried no auth at all, so any caller could enumerate the catalogue's\nmodifier structure; it now requires the register or a catalogue manager.",
         "operationId": "list_modifiers_api_v1_modifiers_get",
         "parameters": [
           {
@@ -49338,6 +49338,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
         "summary": "List Modifiers",
         "tags": [
           "Modifiers"
@@ -49431,7 +49436,7 @@
         ]
       },
       "get": {
-        "description": "Get a modifier by ID.",
+        "description": "Get a modifier by ID (admin/register surface \u2014 see `list_modifiers`).",
         "operationId": "get_modifier_api_v1_modifiers__modifier_id__get",
         "parameters": [
           {
@@ -49467,6 +49472,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
         "summary": "Get Modifier",
         "tags": [
           "Modifiers"

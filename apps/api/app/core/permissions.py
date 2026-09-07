@@ -32,7 +32,7 @@ from app.core.deps import get_current_active_user
 from app.core.exceptions import ForbiddenError
 from app.models.user import User
 
-__all__ = ["assert_no_escalation", "ensure", "require"]
+__all__ = ["assert_no_escalation", "ensure", "require", "require_any"]
 
 
 def ensure(user: User, permission: str, *, message: str | None = None) -> None:
@@ -64,6 +64,37 @@ def require(
     # Stamped on the closure so a test can assert which permission a route
     # demands without spelling the check out in source-string matching.
     _check.permission = permission  # type: ignore[attr-defined]
+    return _check
+
+
+def require_any(
+    *permissions: str, message: str | None = None
+) -> Callable[..., Awaitable[User]]:
+    """A dependency that admits a holder of *any one* of *permissions*.
+
+    For a read that several roles legitimately reach by different doors — a menu
+    group the register renders and a catalogue manager edits, a tax the till
+    prices with and a settings manager maintains. Gating it on a single slug
+    would lock out one of them; leaving it on bare `get_current_active_user` let
+    any signed-in account through, a storefront customer's token included, which
+    is the gap this closes. Admins pass regardless (`User.can` short-circuits on
+    `is_admin`).
+    """
+    if not permissions:
+        raise ValueError("require_any needs at least one permission")
+
+    async def _check(user: User = Depends(get_current_active_user)) -> User:
+        if not any(user.can(p) for p in permissions):
+            raise ForbiddenError(
+                message or "You do not have permission to " + " or ".join(permissions)
+            )
+        return user
+
+    # Both stamps: `.permission` keeps the single-slug introspection the route
+    # guard and permission tests already rely on working, and `.permissions`
+    # carries the full set for anything that wants it.
+    _check.permission = permissions[0]  # type: ignore[attr-defined]
+    _check.permissions = permissions  # type: ignore[attr-defined]
     return _check
 
 

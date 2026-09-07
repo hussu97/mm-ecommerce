@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
-from app.core.deps import get_current_active_user, get_db
+from app.core.deps import get_current_staff_user, get_db
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.permissions import require
 from app.models import (
@@ -65,7 +65,7 @@ async def list_branches(
     include_deleted: bool = False,
     include_inactive: bool = True,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(get_current_staff_user),
 ):
     return await crud_service.list_all(
         db,
@@ -137,7 +137,7 @@ async def create_branch(
 async def get_branch(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_active_user),
+    _: User = Depends(get_current_staff_user),
 ):
     return await crud_service.get_or_404(db, Branch, branch_id, include_deleted=True)
 
