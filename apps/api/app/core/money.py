@@ -30,10 +30,12 @@ __all__ = [
     "CENTS",
     "COST",
     "QUANTITY",
+    "RATE",
     "ZERO",
     "money",
     "money_or_none",
     "quantity",
+    "rate",
     "to_decimal",
     "unit_cost",
 ]
@@ -42,6 +44,12 @@ __all__ = [
 CENTS = Decimal("0.01")
 #: Four places: stock counts, which are weighed as well as counted.
 QUANTITY = Decimal("0.0001")
+#: Four places: a tax *rate* stored as a fraction. `orders.vat_rate` is
+#: `Numeric(5,4)`, so a blended rate on a mixed-rate basket (say 0.0357) has to
+#: keep four places — quantising it to two through `money()` writes 0.04 and the
+#: order's three VAT columns stop reconciling with each other. A rate is not a
+#: money figure and must not be rounded to the cent.
+RATE = Decimal("0.0001")
 #: Six places: a per-unit ingredient cost, where two places rounds a gram of
 #: vanilla to nothing and the error compounds over a batch.
 COST = Decimal("0.000001")
@@ -70,6 +78,16 @@ def money(value: object) -> Decimal:
 def quantity(value: object) -> Decimal:
     """Quantise a stock figure to four places."""
     return to_decimal(value).quantize(QUANTITY, rounding=ROUND_HALF_UP)
+
+
+def rate(value: object) -> Decimal:
+    """Quantise a tax rate (a fraction) to four places, rounding half up.
+
+    For `orders.vat_rate` and anything else that is a `_rate` fraction rather
+    than a money figure — see `RATE`. `money()` would round a blended rate to
+    the cent and break the order's VAT reconciliation.
+    """
+    return to_decimal(value).quantize(RATE, rounding=ROUND_HALF_UP)
 
 
 def unit_cost(value: object) -> Decimal:

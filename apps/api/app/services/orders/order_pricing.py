@@ -35,6 +35,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.money import rate as money_rate
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
 from app.services.delivery import delivery_service
@@ -236,7 +237,11 @@ async def tax_breakdown(
         lines=rows,
         total=pos_pricing.money(total),
         # One row's rate where the basket has one; the blended rate otherwise.
-        rate=rows[0].rate if len(rows) == 1 else pos_pricing.money(effective),
+        # A rate is a `Numeric(5,4)` fraction, not a money figure — quantised to
+        # four places through `money.rate`, never to the cent through `money()`,
+        # which would round a mixed basket's blended rate off and stop
+        # `orders.vat_rate` reconciling with its `vat_amount`/`total_excl_vat`.
+        rate=rows[0].rate if len(rows) == 1 else money_rate(effective),
     )
 
 
