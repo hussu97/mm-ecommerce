@@ -227,6 +227,65 @@ describe('api', () => {
     expect(result).toEqual({ data: 'success' });
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
+
+  /**
+   * The stampede. Checkout fires roughly seven calls in parallel; if every one
+   * of them starts its own refresh, the API's refresh-token rotation
+   * invalidates all but the first and the customer is signed out mid-checkout.
+   * Only one `POST /auth/refresh` may ever be in flight — every 401 that lands
+   * while it is pending must await that same promise and retry once it
+   * settles, not start a second one.
+   */
+  it('coalesces concurrent 401s into a single in-flight refresh', async () => {
+    const refreshResponse = {
+      access_token: 'new-access-token',
+      refresh_token: 'new-refresh-token',
+      token_type: 'bearer',
+      user: {},
+    };
+
+    let protectedCalls = 0;
+    const mockFetch = vi.fn((url: string) => {
+      if (url.includes('/auth/refresh')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(refreshResponse),
+        });
+      }
+      protectedCalls += 1;
+      // Every caller's *first* attempt lands before the refresh completes and
+      // 401s. Once the refresh has gone through, retries succeed.
+      if (protectedCalls <= 5) {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ detail: 'Unauthorized' }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ data: 'success' }),
+      });
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const results = await Promise.all([
+      api.get('/protected'),
+      api.get('/protected'),
+      api.get('/protected'),
+      api.get('/protected'),
+      api.get('/protected'),
+    ]);
+
+    expect(results).toEqual(Array(5).fill({ data: 'success' }));
+
+    const refreshCalls = mockFetch.mock.calls.filter(([url]) =>
+      String(url).includes('/auth/refresh'),
+    );
+    expect(refreshCalls).toHaveLength(1);
+  });
 });
 
 // ─── api_error reporting ─────────────────────────────────────────────────────
