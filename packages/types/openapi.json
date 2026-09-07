@@ -12111,6 +12111,7 @@
         "type": "object"
       },
       "InventoryTransactionCreate": {
+        "additionalProperties": false,
         "properties": {
           "additional_cost": {
             "anyOf": [
@@ -12129,6 +12130,12 @@
           "branch_id": {
             "format": "uuid",
             "title": "Branch Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Idempotency Key",
             "type": "string"
           },
           "invoice_date": {
@@ -12174,30 +12181,6 @@
             ],
             "title": "Notes"
           },
-          "other_branch_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Other Branch Id"
-          },
-          "other_warehouse_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Other Warehouse Id"
-          },
           "paid_tax": {
             "anyOf": [
               {
@@ -12239,21 +12222,12 @@
           "type": {
             "enum": [
               "opening_balance",
+              "quantity_adjustment",
+              "cost_adjustment",
+              "inventory_count",
               "internal_use",
               "purchasing",
-              "transfer_send",
-              "transfer_receive",
-              "quantity_adjustment",
-              "return_to_supplier",
-              "production",
-              "consumption_from_production",
-              "consumption_from_orders",
-              "return_from_orders",
-              "return_from_transfers",
-              "waste_from_orders",
-              "waste_from_production",
-              "cost_adjustment",
-              "inventory_count"
+              "return_to_supplier"
             ],
             "title": "Type",
             "type": "string"
@@ -12274,6 +12248,7 @@
         "required": [
           "type",
           "branch_id",
+          "idempotency_key",
           "items"
         ],
         "title": "InventoryTransactionCreate",

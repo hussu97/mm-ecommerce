@@ -12488,6 +12488,8 @@ export interface components {
              * Format: uuid
              */
             branch_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
             /** Invoice Date */
             invoice_date?: string | null;
             /** Invoice Number */
@@ -12496,10 +12498,6 @@ export interface components {
             items: components["schemas"]["TransactionLineInput"][];
             /** Notes */
             notes?: string | null;
-            /** Other Branch Id */
-            other_branch_id?: string | null;
-            /** Other Warehouse Id */
-            other_warehouse_id?: string | null;
             /**
              * Paid Tax
              * @default 0
@@ -12513,7 +12511,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "opening_balance" | "internal_use" | "purchasing" | "transfer_send" | "transfer_receive" | "quantity_adjustment" | "return_to_supplier" | "production" | "consumption_from_production" | "consumption_from_orders" | "return_from_orders" | "return_from_transfers" | "waste_from_orders" | "waste_from_production" | "cost_adjustment" | "inventory_count";
+            type: "opening_balance" | "quantity_adjustment" | "cost_adjustment" | "inventory_count" | "internal_use" | "purchasing" | "return_to_supplier";
             /** Warehouse Id */
             warehouse_id?: string | null;
         };
