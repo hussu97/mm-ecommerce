@@ -361,6 +361,391 @@ x-pos-environment: &pos-environment
   SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
   SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.02}
 
+# ── F-OPS-14/15: lean green boot (2026-09-07 cutover OOM) ──────────────────
+# A deploy recreated the idle ("green") slot with the SAME full-size pool and
+# the SAME five background loops (delivery/log-retention/inventory-sweep/
+# daily-email/business-day sweeper, all started by STOREFRONT_SCHEDULER_ENABLED)
+# as the live one. For the few seconds both colours are up together — compose
+# --wait, then /health, then the nginx drain — that is two full storefront
+# processes at once, and the idle one was OOM-killed (exit 137) on this VM's
+# 1976 MB. The green slot serves nothing until nginx retargets to it, so it
+# does not need the storefront's full connection pool or its scheduler while
+# it is only warming up next to the real one.
+#
+# Trade-off, written down rather than left silent: once cutover finishes, the
+# slot that was "green" a moment ago IS the new live colour, and it keeps
+# running on this lean config (2 pool connections, no background loops) until
+# the *next* deploy cuts away from it — this box's traffic has been fine on a
+# 2-connection idle pool for the register for a while, and the scheduler gap
+# is one deploy cycle at most (usually well under a day here). Revisit if
+# deploys slow down enough that "green" spends a long stretch as the only
+# live colour.
+x-api-green-environment: &api-green-environment
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  # F-OPS-14/15: hardcoded lean, not ${DATABASE_POOL_SIZE:-5} —
+  # see the anchor note above this block. api keeps the tunable
+  # default; api-green does not, so a secret raising the
+  # storefront's pool cannot also inflate the overlap window.
+  DATABASE_POOL_SIZE: "2"
+  DATABASE_MAX_OVERFLOW: "0"
+  REDIS_URL: redis://redis:6379/0
+  APP_ENV: ${APP_ENV:-production}
+  SECRET_KEY: ${SECRET_KEY}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+  # ── Ziina (the second card gateway) ─────────────────────────────────
+  # Present, and deliberately switched off. Production runs on Stripe;
+  # Ziina exists so a Stripe incident is a row update in `payment_gateways`
+  # rather than a deploy, and it must not take live traffic before someone
+  # decides it should.
+  #
+  # `ZIINA_ENABLED` defaults false here as well as in `Settings`, because a
+  # default in this file silently overrides the one in the app — the same
+  # mechanism that put the AED 5 door-to-door charge back on every Lalamove
+  # booking. Two falses, so neither file alone can turn it on by accident.
+  ZIINA_ENABLED: ${ZIINA_ENABLED:-false}
+  ZIINA_API_KEY: ${ZIINA_API_KEY:-}
+  ZIINA_WEBHOOK_SECRET: ${ZIINA_WEBHOOK_SECRET:-}
+  ZIINA_API_URL: ${ZIINA_API_URL:-https://api-v2.ziina.com/api}
+  ZIINA_TEST_MODE: ${ZIINA_TEST_MODE:-false}
+  ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
+  RESEND_API_KEY: ${RESEND_API_KEY}
+  FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
+  GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
+  GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
+  CORS_ORIGINS: ${CORS_ORIGINS}
+  # No `:-*` default: an unset ALLOWED_HOSTS must fail the container closed on
+  # boot (validate_production_secrets rejects a wildcard/empty host list in
+  # production), never come up with the Host check switched off.
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS}
+  # The storefront API is the one that has to *refuse* device tokens,
+  # so it needs this as much as the register does. Setting it only on
+  # pos-api left the flag in .env doing nothing at all.
+  POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
+  WEB_URL: ${WEB_URL}
+  ADMIN_URL: ${ADMIN_URL}
+  UMAMI_API_KEY: ${UMAMI_API_KEY:-}
+  UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.02}
+  # ── Courier ─────────────────────────────────────────────────────────
+  # This block is an allow-list, not an env_file: a variable written to
+  # .env and not named here never reaches the container. Leaving these
+  # out would have shipped the whole integration inert, priced correctly
+  # and dispatching nothing, with no error anywhere to say why.
+  #
+  # Empty key and secret mean "no courier", which the app handles: zones
+  # still price from the map and dispatch by hand. The rest carry their
+  # real defaults so an unset value cannot write an empty string over one.
+  LALAMOVE_API_KEY: ${LALAMOVE_API_KEY:-}
+  LALAMOVE_API_SECRET: ${LALAMOVE_API_SECRET:-}
+  LALAMOVE_ENV: ${LALAMOVE_ENV:-production}
+  LALAMOVE_MARKET: ${LALAMOVE_MARKET:-AE}
+  LALAMOVE_LANGUAGE: ${LALAMOVE_LANGUAGE:-en_AE}
+  LALAMOVE_SERVICE_TYPE: ${LALAMOVE_SERVICE_TYPE:-CAR}
+  # No default. `:-DOOR_TO_DOOR` here would put the AED 5 door-to-door
+  # charge back on every booking the moment the variable was left empty —
+  # which is how it is deliberately set, since dropping that charge was the
+  # point.
+  LALAMOVE_SPECIAL_REQUESTS: ${LALAMOVE_SPECIAL_REQUESTS:-}
+  LALAMOVE_WEBHOOK_PATH: ${LALAMOVE_WEBHOOK_PATH:-/api/v1/webhooks/lalamove}
+  LALAMOVE_TIMEOUT_SECONDS: ${LALAMOVE_TIMEOUT_SECONDS:-8}
+  LALAMOVE_QUOTE_CACHE_SECONDS: ${LALAMOVE_QUOTE_CACHE_SECONDS:-120}
+  # Only the storefront API runs the batch sweeper; the register has no
+  # web orders to batch and the advisory lock would make a second one
+  # pointless anyway.
+  # ── noon Send (second courier) ──────────────────────────────────────
+  # Absent from this list until 2026-08-05, which meant the whole
+  # integration was inert on production: the key never reached the app,
+  # `is_enabled()` was false, and every order in a noon Send zone fell
+  # through to Lalamove with the reason in a log nobody was reading. The
+  # `.env` had all of it. This file is what decides.
+  NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
+  NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+  # The register shows how far the driver is too, so both services need it.
+  # An empty default is correct here and only here: the token is optional and
+  # an empty string is the "no routing, use the estimate" state the code is
+  # written around — unlike NOON_SEND_BASE, where "" reaches a float field
+  # and pydantic refuses it at import.
+  MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+  MAPBOX_MIN_ROUTE_INTERVAL_S: ${MAPBOX_MIN_ROUTE_INTERVAL_S:-60}
+  MAPBOX_TIMEOUT_S: ${MAPBOX_TIMEOUT_S:-5.0}
+  NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-true}
+  NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
+  NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
+  NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-noon_food}
+  NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
+  NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
+  NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+  GRUBOPS_SYNC_ENABLED: ${GRUBOPS_SYNC_ENABLED:-false}
+  GRUBOPS_USERNAME: ${GRUBOPS_USERNAME:-}
+  GRUBOPS_PASSWORD: ${GRUBOPS_PASSWORD:-}
+  GRUBOPS_PARTNER_ID: ${GRUBOPS_PARTNER_ID:-6922fe267f5b1c6d208c634f}
+  GRUBOPS_COGNITO_CLIENT_ID: ${GRUBOPS_COGNITO_CLIENT_ID:-75n3em3l16kvhnf6c512680vm9}
+  GRUBOPS_COGNITO_REGION: ${GRUBOPS_COGNITO_REGION:-eu-west-2}
+  GRUBOPS_API_BASE: ${GRUBOPS_API_BASE:-https://internal-api.grubtech.io}
+  GRUBOPS_CATALOG_API_BASE: ${GRUBOPS_CATALOG_API_BASE:-https://api-grubone.grubtech.io}
+  GRUBOPS_SOURCE: "${GRUBOPS_SOURCE:-grubOps 2.0}"
+  GRUBOPS_TIMEOUT_SECONDS: ${GRUBOPS_TIMEOUT_SECONDS:-8}
+  GRUBOPS_RECONCILE_TICK_SECONDS: ${GRUBOPS_RECONCILE_TICK_SECONDS:-120}
+  GRUBOPS_ORDERS_ENABLED: ${GRUBOPS_ORDERS_ENABLED:-false}
+  GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
+  GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
+  AGG_AUTO_CLOSE_SECONDS: ${AGG_AUTO_CLOSE_SECONDS:-300}
+  FOODICS_ORDER_PUSH_ENABLED: ${FOODICS_ORDER_PUSH_ENABLED:-false}
+  FOODICS_CONSOLE_BASE: ${FOODICS_CONSOLE_BASE:-https://console.foodics.com}
+  FOODICS_ACCOUNT_NUMBER: ${FOODICS_ACCOUNT_NUMBER:-862261}
+  FOODICS_EMAIL: ${FOODICS_EMAIL:-}
+  FOODICS_PASSWORD: ${FOODICS_PASSWORD:-}
+  FOODICS_TIMEOUT_SECONDS: ${FOODICS_TIMEOUT_SECONDS:-8}
+  # ── Aggregator ingestion (Careem/Deliveroo/Talabat/Noon/Keeta) ──────
+  # Storefront-only, like the GrubOps loops and STOREFRONT_SCHEDULER_ENABLED:
+  # the sales and finance sweeps run here and not on the register. The two
+  # strings default empty (Fernet key and push token — an empty key keeps
+  # the ingest inert rather than storing credentials in plaintext); the
+  # numeric and boolean defaults are real so an unset value cannot write an
+  # empty string over a field pydantic would refuse at import.
+  AGGREGATOR_INGEST_ENABLED: ${AGGREGATOR_INGEST_ENABLED:-true}
+  AGGREGATOR_CONFIG_ENCRYPTION_KEY: ${AGGREGATOR_CONFIG_ENCRYPTION_KEY:-}
+  AGGREGATOR_SESSION_PUSH_TOKEN: ${AGGREGATOR_SESSION_PUSH_TOKEN:-}
+  AGGREGATOR_RUN_HOUR_DXB: ${AGGREGATOR_RUN_HOUR_DXB:-23}
+  AGGREGATOR_LOOKBACK_DAYS: ${AGGREGATOR_LOOKBACK_DAYS:-1}
+  AGGREGATOR_PROMOTE_LOOKBACK_DAYS: ${AGGREGATOR_PROMOTE_LOOKBACK_DAYS:-30}
+  AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS: ${AGGREGATOR_GRUBOPS_ADOPT_GRACE_HOURS:-12}
+  AGGREGATOR_REAUTH_WAIT_SECONDS: ${AGGREGATOR_REAUTH_WAIT_SECONDS:-360}
+  AGGREGATOR_REAUTH_POLL_SECONDS: ${AGGREGATOR_REAUTH_POLL_SECONDS:-5.0}
+  AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS: ${AGGREGATOR_NOON_PUBLICATION_LOOKBACK_DAYS:-14}
+  AGGREGATOR_SALES_REFRESH_MINUTES: ${AGGREGATOR_SALES_REFRESH_MINUTES:-60}
+  AGGREGATOR_SALES_ROLLING_HOURS: ${AGGREGATOR_SALES_ROLLING_HOURS:-36}
+  AGGREGATOR_COVERAGE_BACKFILL_DAYS: ${AGGREGATOR_COVERAGE_BACKFILL_DAYS:-7}
+  AGGREGATOR_COVERAGE_BACKFILL_MINUTES: ${AGGREGATOR_COVERAGE_BACKFILL_MINUTES:-60}
+  AGGREGATOR_TIMEOUT_SECONDS: ${AGGREGATOR_TIMEOUT_SECONDS:-20.0}
+  AGGREGATOR_REQUESTS_PER_SECOND: ${AGGREGATOR_REQUESTS_PER_SECOND:-1.0}
+  # ── Catalog & hours sync (menu/hours push) ──────────────────────────
+  # Both default OFF: the read side opens marketplace sessions, and the
+  # write side would change a live menu / branch hours. They stay false in
+  # production until watched, exactly like AGGREGATOR_INGEST_ENABLED did.
+  # Named here because this block is an allow-list — an unset flag reads as
+  # its default, which for these is the safe (off) state, but a flag the app
+  # reads and this file does not name is still model↔prod drift.
+  CATALOG_SYNC_READ_ENABLED: ${CATALOG_SYNC_READ_ENABLED:-false}
+  CATALOG_SYNC_ENABLED: ${CATALOG_SYNC_ENABLED:-false}
+  BRANCH_HOURS_SYNC_LIVE: ${BRANCH_HOURS_SYNC_LIVE:-false}
+  CATALOG_SYNC_ENFORCE_PRICE_PARITY: ${CATALOG_SYNC_ENFORCE_PRICE_PARITY:-true}
+  CATALOG_SYNC_SWEEP_MINUTES: ${CATALOG_SYNC_SWEEP_MINUTES:-0}
+  # ── Slider ──────────────────────────────────────────────────────────
+  # The third courier. Every one of these has to be here and not only in
+  # `.env`: this block is an allow-list, and a variable the VM holds but
+  # this file does not name never reaches the container — the app just sees
+  # its default. That is exactly how noon Send ran inert on production for
+  # weeks with the key sitting on the box the whole time.
+  SLIDER_API_KEY: ${SLIDER_API_KEY:-}
+  SLIDER_ACCOUNT_ID: ${SLIDER_ACCOUNT_ID:-}
+  SLIDER_TIMEOUT_SECONDS: ${SLIDER_TIMEOUT_SECONDS:-8}
+  SLIDER_BIKE_MAX_KM: ${SLIDER_BIKE_MAX_KM:-35}
+  SLIDER_DETOUR_FACTOR: ${SLIDER_DETOUR_FACTOR:-1.44}
+  SLIDER_WEBHOOK_TOKEN: ${SLIDER_WEBHOOK_TOKEN:-}
+  SLIDER_WEBHOOK_HEADER: ${SLIDER_WEBHOOK_HEADER:-X-Slider-Token}
+  # ── How long the debugging trails live ──────────────────────────────
+  # `webhook_logs` grows by a row every 15-30 seconds per live noon Send
+  # task. The bound is what makes storing every one at full payload
+  # affordable. `audit_logs` is who-changed-what and outlives them all.
+  LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+  AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-90}
+  # ── Push to the registers ───────────────────────────────────────────
+  # Empty means no push: orders still arrive and the register still shows
+  # them when it polls, so a missing key is a quieter shop, not a broken one.
+  APNS_KEY_P8: ${APNS_KEY_P8:-}
+  APNS_KEY_ID: ${APNS_KEY_ID:-}
+  APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+  APNS_ORDER_SOUND: ${APNS_ORDER_SOUND:-new-order.caf}
+  APNS_TIMEOUT_SECONDS: ${APNS_TIMEOUT_SECONDS:-10}
+  # ── Bot check on signup and password reset ──────────────────────────
+  # Empty disables it. Both halves or neither — the storefront's public
+  # site key lives in Vercel.
+  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+  FIREBASE_MAX_AUTH_AGE_SECONDS: ${FIREBASE_MAX_AUTH_AGE_SECONDS:-3600}
+  FIREBASE_TIMEOUT_SECONDS: ${FIREBASE_TIMEOUT_SECONDS:-5.0}
+  PHONE_VERIFICATION_TTL_SECONDS: ${PHONE_VERIFICATION_TTL_SECONDS:-2592000}
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+  TURNSTILE_TIMEOUT_SECONDS: ${TURNSTILE_TIMEOUT_SECONDS:-5}
+  # The rate card. Tunable without a deploy, which is the whole reason
+  # these are settings and not constants.
+  NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
+  NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
+  NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
+  # ── Sessions and the rest ───────────────────────────────────────────
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+  REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+  PASSWORD_RESET_EXPIRE_MINUTES: ${PASSWORD_RESET_EXPIRE_MINUTES:-60}
+  USE_SSL: ${USE_SSL:-false}
+  STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+  BACKUP_GCS_BUCKET: ${BACKUP_GCS_BUCKET:-}
+  # The storefront API refuses device tokens, so it reads the same two
+  # settings the register does.
+  POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
+  POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
+  # Neither is switched on. Listed so turning one on is a secret rather
+  # than a deploy.
+  TABBY_API_KEY: ${TABBY_API_KEY:-}
+  TABBY_PUBLIC_KEY: ${TABBY_PUBLIC_KEY:-}
+  TABBY_MERCHANT_CODE: ${TABBY_MERCHANT_CODE:-}
+  TAMARA_API_KEY: ${TAMARA_API_KEY:-}
+  TAMARA_API_URL: ${TAMARA_API_URL:-https://api.tamara.co}
+  # F-OPS-14/15: off while green overlaps live — see the anchor note above.
+  STOREFRONT_SCHEDULER_ENABLED: "false"
+  UVICORN_WORKERS: "1"
+
+# The register never ran a scheduler (see the "Deliberately absent" note on
+# the pos anchor below), so the only lean-boot change it needs is capping the
+# overflow that would otherwise let it hold 2+3=5 connections while idle.
+x-pos-green-environment: &pos-green-environment
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  # Hardcoded, not ${DATABASE_POOL_SIZE:-2}: the VM .env writes 5/8 for the
+  # storefront, and interpolating the same names here would give the register
+  # that pool too. 2+3=5 max vs the storefront's 13.
+  DATABASE_POOL_SIZE: "2"
+  # F-OPS-14/15: 0, not "3" — lean while pos-api-green overlaps
+  # live during cutover; see the anchor note above.
+  DATABASE_MAX_OVERFLOW: "0"
+  REDIS_URL: redis://redis:6379/0
+  APP_ENV: ${APP_ENV:-production}
+  SECRET_KEY: ${SECRET_KEY}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+  # The register shares `Settings`, so it needs these to boot even though
+  # it takes no card payments over a gateway — a till takes cash and a
+  # terminal. Same defaults, same reason.
+  ZIINA_ENABLED: ${ZIINA_ENABLED:-false}
+  ZIINA_API_KEY: ${ZIINA_API_KEY:-}
+  ZIINA_WEBHOOK_SECRET: ${ZIINA_WEBHOOK_SECRET:-}
+  ZIINA_API_URL: ${ZIINA_API_URL:-https://api-v2.ziina.com/api}
+  ZIINA_TEST_MODE: ${ZIINA_TEST_MODE:-false}
+  ZIINA_TIMEOUT_SECONDS: ${ZIINA_TIMEOUT_SECONDS:-10}
+  RESEND_API_KEY: ${RESEND_API_KEY}
+  FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
+  GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
+  GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
+  POS_CORS_ORIGINS: ${POS_CORS_ORIGINS:-}
+  POS_ALLOWED_HOSTS: ${POS_ALLOWED_HOSTS:-*}
+  POS_REQUIRE_POS_HOST: ${POS_REQUIRE_POS_HOST:-false}
+  # The register books couriers. `POST /pos/orders/{id}/packed` is the event
+  # the whole delivery chain hangs off — it assigns the batch, books the
+  # driver and emails the customer — and it is served by *this* container,
+  # not the storefront one.
+  #
+  # Without these, `lalamove_service.is_enabled()` is False here and every
+  # order packed at the counter fell back to "Courier is not configured;
+  # dispatch this order by hand", while the identical order dispatched from
+  # the admin console booked a driver perfectly. Same code, same database,
+  # different container — which is exactly why that error read as a polygon
+  # problem and was not one.
+  #
+  # Item 5 of CLAUDE.md's secret checklist, and the second time: noon Send
+  # went inert in production on 2026-08-05 for this reason. Guarded now by
+  # `test_the_register_can_book_a_courier`.
+  LALAMOVE_API_KEY: ${LALAMOVE_API_KEY:-}
+  LALAMOVE_API_SECRET: ${LALAMOVE_API_SECRET:-}
+  LALAMOVE_ENV: ${LALAMOVE_ENV:-production}
+  LALAMOVE_MARKET: ${LALAMOVE_MARKET:-AE}
+  LALAMOVE_LANGUAGE: ${LALAMOVE_LANGUAGE:-en_AE}
+  LALAMOVE_SERVICE_TYPE: ${LALAMOVE_SERVICE_TYPE:-CAR}
+  LALAMOVE_SPECIAL_REQUESTS: ${LALAMOVE_SPECIAL_REQUESTS:-}
+  LALAMOVE_WEBHOOK_PATH: ${LALAMOVE_WEBHOOK_PATH:-/api/v1/webhooks/lalamove}
+  LALAMOVE_TIMEOUT_SECONDS: ${LALAMOVE_TIMEOUT_SECONDS:-8}
+  LALAMOVE_QUOTE_CACHE_SECONDS: ${LALAMOVE_QUOTE_CACHE_SECONDS:-120}
+  # Byte-for-byte the same defaults as the `api` block above, and that is a
+  # requirement rather than tidiness. Two of these are prices — NOON_SEND_BASE
+  # and NOON_SEND_BULKY_BASE are fares in dirhams, not URLs, whatever the
+  # names suggest — and DETOUR_FACTOR and SURGE_AED feed the same quote. A
+  # register quoting on different numbers from the storefront would sell the
+  # same delivery at two prices depending on which door the order came
+  # through, and nothing would fail to make anyone look.
+  #
+  # An empty default is not neutral here either: `${NOON_SEND_BASE:-}` passes
+  # "" to a float field, and pydantic refuses it at import, so the container
+  # never boots. That is what took the register down on this deploy.
+  NOON_SEND_API_KEY: ${NOON_SEND_API_KEY:-}
+  NOON_SEND_WEBHOOK_API_KEY: ${NOON_SEND_WEBHOOK_API_KEY:-}
+  # The register shows how far the driver is too, so both services need it.
+  # An empty default is correct here and only here: the token is optional and
+  # an empty string is the "no routing, use the estimate" state the code is
+  # written around — unlike NOON_SEND_BASE, where "" reaches a float field
+  # and pydantic refuses it at import.
+  MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+  MAPBOX_MIN_ROUTE_INTERVAL_S: ${MAPBOX_MIN_ROUTE_INTERVAL_S:-60}
+  MAPBOX_TIMEOUT_S: ${MAPBOX_TIMEOUT_S:-5.0}
+  NOON_SEND_ENFORCE_WEBHOOK_KEY: ${NOON_SEND_ENFORCE_WEBHOOK_KEY:-true}
+  NOON_SEND_ENV: ${NOON_SEND_ENV:-production}
+  NOON_SEND_LOCALE: ${NOON_SEND_LOCALE:-en-ae}
+  NOON_SEND_CLIENT_CODE: ${NOON_SEND_CLIENT_CODE:-noon_food}
+  NOON_SEND_MAX_DISTANCE_M: ${NOON_SEND_MAX_DISTANCE_M:-20000}
+  NOON_SEND_DETOUR_FACTOR: ${NOON_SEND_DETOUR_FACTOR:-1.49}
+  NOON_SEND_TIMEOUT_SECONDS: ${NOON_SEND_TIMEOUT_SECONDS:-8}
+  # ── Slider ──────────────────────────────────────────────────────────
+  # The third courier. Every one of these has to be here and not only in
+  # `.env`: this block is an allow-list, and a variable the VM holds but
+  # this file does not name never reaches the container — the app just sees
+  # its default. That is exactly how noon Send ran inert on production for
+  # weeks with the key sitting on the box the whole time.
+  SLIDER_API_KEY: ${SLIDER_API_KEY:-}
+  SLIDER_ACCOUNT_ID: ${SLIDER_ACCOUNT_ID:-}
+  SLIDER_TIMEOUT_SECONDS: ${SLIDER_TIMEOUT_SECONDS:-8}
+  SLIDER_BIKE_MAX_KM: ${SLIDER_BIKE_MAX_KM:-35}
+  SLIDER_DETOUR_FACTOR: ${SLIDER_DETOUR_FACTOR:-1.44}
+  SLIDER_WEBHOOK_TOKEN: ${SLIDER_WEBHOOK_TOKEN:-}
+  SLIDER_WEBHOOK_HEADER: ${SLIDER_WEBHOOK_HEADER:-X-Slider-Token}
+  NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
+  NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
+  NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
+  # The register marks things out of stock, so it needs the credentials to
+  # tell GrubOps about it. GRUBOPS_SYNC_ENABLED is here too because the
+  # immediate push honours the same flag — but the reconcile *loop* is
+  # started only by the storefront, in `app_setup`, so a second copy of it
+  # cannot run here however this is set.
+  GRUBOPS_SYNC_ENABLED: ${GRUBOPS_SYNC_ENABLED:-false}
+  GRUBOPS_USERNAME: ${GRUBOPS_USERNAME:-}
+  GRUBOPS_PASSWORD: ${GRUBOPS_PASSWORD:-}
+  GRUBOPS_PARTNER_ID: ${GRUBOPS_PARTNER_ID:-6922fe267f5b1c6d208c634f}
+  GRUBOPS_COGNITO_CLIENT_ID: ${GRUBOPS_COGNITO_CLIENT_ID:-75n3em3l16kvhnf6c512680vm9}
+  GRUBOPS_COGNITO_REGION: ${GRUBOPS_COGNITO_REGION:-eu-west-2}
+  GRUBOPS_API_BASE: ${GRUBOPS_API_BASE:-https://internal-api.grubtech.io}
+  GRUBOPS_CATALOG_API_BASE: ${GRUBOPS_CATALOG_API_BASE:-https://api-grubone.grubtech.io}
+  GRUBOPS_SOURCE: "${GRUBOPS_SOURCE:-grubOps 2.0}"
+  GRUBOPS_TIMEOUT_SECONDS: ${GRUBOPS_TIMEOUT_SECONDS:-8}
+  GRUBOPS_RECONCILE_TICK_SECONDS: ${GRUBOPS_RECONCILE_TICK_SECONDS:-120}
+  GRUBOPS_ORDERS_ENABLED: ${GRUBOPS_ORDERS_ENABLED:-false}
+  GRUBOPS_ORDERS_API_BASE: ${GRUBOPS_ORDERS_API_BASE:-https://api-grubops.grubtech.io}
+  GRUBOPS_ORDERS_TICK_SECONDS: ${GRUBOPS_ORDERS_TICK_SECONDS:-60}
+  AGG_AUTO_CLOSE_SECONDS: ${AGG_AUTO_CLOSE_SECONDS:-300}
+  # The register presses Packed, so it fires the Foodics dispatch too.
+  FOODICS_ORDER_PUSH_ENABLED: ${FOODICS_ORDER_PUSH_ENABLED:-false}
+  FOODICS_CONSOLE_BASE: ${FOODICS_CONSOLE_BASE:-https://console.foodics.com}
+  FOODICS_ACCOUNT_NUMBER: ${FOODICS_ACCOUNT_NUMBER:-862261}
+  FOODICS_EMAIL: ${FOODICS_EMAIL:-}
+  FOODICS_PASSWORD: ${FOODICS_PASSWORD:-}
+  FOODICS_TIMEOUT_SECONDS: ${FOODICS_TIMEOUT_SECONDS:-8}
+  # Deliberately absent: STOREFRONT_SCHEDULER_ENABLED. That starts the
+  # background loop that dispatches orders, lands arrivals, tracks drivers and
+  # sends the daily email, and a second copy of it in this container would race
+  # the storefront's over the same rows. The register books the courier for the
+  # order in front of it; it does not run the scheduler.
+  # The register API answers `/devices/push-token`, so it needs the same
+  # credentials the storefront one uses to send with.
+  APNS_KEY_P8: ${APNS_KEY_P8:-}
+  APNS_KEY_ID: ${APNS_KEY_ID:-}
+  APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+  APNS_ORDER_SOUND: ${APNS_ORDER_SOUND:-new-order.caf}
+  APNS_TIMEOUT_SECONDS: ${APNS_TIMEOUT_SECONDS:-10}
+  WEB_URL: ${WEB_URL}
+  ADMIN_URL: ${ADMIN_URL}
+  UMAMI_API_KEY: ${UMAMI_API_KEY:-}
+  UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.02}
+
 x-gcplogs: &gcplogs
   driver: gcplogs
   options:
@@ -536,7 +921,8 @@ services:
       --workers ${UVICORN_WORKERS:-1} --log-level warning
       --timeout-graceful-shutdown 8"
     stop_grace_period: 10s
-    environment: *api-environment
+    # F-OPS-14/15: lean, not *api-environment — see the anchor's note above.
+    environment: *api-green-environment
     logging: *gcplogs
     networks:
       - mm_network
@@ -570,7 +956,8 @@ services:
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
       --timeout-graceful-shutdown 8"
     stop_grace_period: 10s
-    environment: *pos-environment
+    # F-OPS-14/15: lean, not *pos-environment — see the anchor's note above.
+    environment: *pos-green-environment
     logging: *gcplogs
     networks:
       - mm_network

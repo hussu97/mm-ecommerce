@@ -212,3 +212,23 @@ def test_bootstrap_path_filter_does_not_include_the_workflow_file():
     assert "deploy.yml" not in listed
     assert "aggregator-bootstrap/deploy" not in listed
     assert "aggregator-bootstrap/src/**" in listed
+
+
+def test_cutover_pair_cuts_pos_api_before_the_storefront():
+    """
+    F-OPS-14/15: pos-api is the smaller pair (256m, 2+3 connections vs the
+    storefront's 512m, 5+8) — cutting it over first keeps the bigger overlap
+    (the one that OOM-killed a slot on 2026-09-07) from ever landing on top of
+    a pos-api overlap that has not drained yet.
+    """
+    text = CUTOVER.read_text()
+    match = re.search(r"^cutover\(\) \{.*?^\}", text, re.M | re.S)
+    assert match is not None, "could not find the cutover() function body"
+    body = match.group(0)
+    pos_at = body.find("_cutover_pair pos-api pos-api-green")
+    api_at = body.find("_cutover_pair api api-green")
+    assert pos_at != -1, "cutover() never cuts over pos-api"
+    assert api_at != -1, "cutover() never cuts over api"
+    assert pos_at < api_at, (
+        "pos-api must be cut over before the storefront api (F-OPS-14/15)"
+    )

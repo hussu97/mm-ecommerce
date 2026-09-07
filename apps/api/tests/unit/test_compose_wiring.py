@@ -216,7 +216,106 @@ def test_register_idle_postgres_pool_is_smaller_than_the_storefront():
     assert api["DATABASE_MAX_OVERFLOW"] == "${DATABASE_MAX_OVERFLOW:-8}"
     assert str(pos["DATABASE_POOL_SIZE"]) == "2"
     assert str(pos["DATABASE_MAX_OVERFLOW"]) == "3"
-    green_api = _environment("api-green")
     green_pos = _environment("pos-api-green")
-    assert green_api["DATABASE_POOL_SIZE"] == api["DATABASE_POOL_SIZE"]
     assert green_pos["DATABASE_POOL_SIZE"] == pos["DATABASE_POOL_SIZE"]
+    # api-green is deliberately NOT equal to api any more (F-OPS-14/15): it
+    # boots lean (pool 2, no overflow) while it briefly overlaps the live
+    # storefront during cutover — see test_green_slots_boot_lean_for_cutover
+    # below and the anchor's note in docker-compose.prod.yml.
+    green_api = _environment("api-green")
+    assert green_api["DATABASE_POOL_SIZE"] != api["DATABASE_POOL_SIZE"]
+
+
+def test_green_slots_boot_lean_for_cutover():
+    """
+    F-OPS-14/15: a 2026-09-07 deploy OOM-killed a container (exit 137) when
+    the idle "green" slot came up with the SAME full pool and the SAME
+    background scheduler as the live one, for the seconds both are up during
+    cutover on this VM's 1976 MB. Green does not serve anything until nginx
+    retargets to it, so it does not need either while it is only warming up.
+    """
+    api_green = _environment("api-green")
+    pos_green = _environment("pos-api-green")
+
+    assert str(api_green["DATABASE_POOL_SIZE"]) == "2"
+    assert str(api_green["DATABASE_MAX_OVERFLOW"]) == "0"
+    assert api_green["STOREFRONT_SCHEDULER_ENABLED"] == "false", (
+        "the green api slot must not run a second delivery/log-retention/"
+        "inventory-sweep/daily-email/business-day scheduler while it "
+        "overlaps the live one"
+    )
+
+    assert str(pos_green["DATABASE_POOL_SIZE"]) == "2"
+    assert str(pos_green["DATABASE_MAX_OVERFLOW"]) == "0"
+
+
+def test_cutover_overlap_connection_budget_stays_under_max_connections():
+    """
+    F-OPS-14/15: the worst-case simultaneous asyncpg connection count during
+    a blue/green cutover, budgeted against the 27 non-superuser slots
+    Postgres has (max_connections=30, 3 reserved — see the postgres
+    `command:` comment in docker-compose.prod.yml).
+
+        api (live, full)        5 pool + 8 overflow = 13
+        api-green (lean, up     2 pool + 0 overflow =  2
+          briefly during cutover)
+        scheduler headroom                            3   (the five
+          delivery/log-retention/inventory-sweep/daily-email/business-day
+          loops borrow from the live api's own pool; reserved so a sweep
+          tick cannot starve request handling)
+        pos-api (live)           2 pool + 3 overflow =  5
+        pos-api-green (lean)     2 pool + 0 overflow =  2
+        migration (`compose run --rm api alembic upgrade head`)         1
+        ------------------------------------------------------------------
+        total                                                          26
+
+    26 <= 27. This test reads the actual pool/overflow settings out of the
+    compose file so raising one without updating this arithmetic fails loudly
+    instead of quietly eating the headroom a cutover needs.
+    """
+    api = _environment("api")
+    api_green = _environment("api-green")
+    pos = _environment("pos-api")
+    pos_green = _environment("pos-api-green")
+
+    def _default(value: str) -> int:
+        # "${NAME:-N}" -> N. The non-green services keep the tunable-by-secret
+        # default form; the green ones are plain hardcoded strings.
+        if value.startswith("$"):
+            return int(value.rsplit(":-", 1)[1].rstrip("}"))
+        return int(value)
+
+    api_max = _default(api["DATABASE_POOL_SIZE"]) + _default(
+        api["DATABASE_MAX_OVERFLOW"]
+    )
+    api_green_max = _default(api_green["DATABASE_POOL_SIZE"]) + _default(
+        api_green["DATABASE_MAX_OVERFLOW"]
+    )
+    pos_max = _default(pos["DATABASE_POOL_SIZE"]) + _default(
+        pos["DATABASE_MAX_OVERFLOW"]
+    )
+    pos_green_max = _default(pos_green["DATABASE_POOL_SIZE"]) + _default(
+        pos_green["DATABASE_MAX_OVERFLOW"]
+    )
+    scheduler_reserve = 3
+    migration_reserve = 1
+
+    assert api_max == 13
+    assert api_green_max == 2
+    assert pos_max == 5
+    assert pos_green_max == 2
+
+    total = (
+        api_max
+        + api_green_max
+        + scheduler_reserve
+        + pos_max
+        + pos_green_max
+        + migration_reserve
+    )
+    assert total == 26
+    assert total <= 27, (
+        "cutover's worst-case connection budget exceeds the 27 non-superuser "
+        "Postgres slots — this is exactly how a rolling deploy exhausts the "
+        "pool (see the 2026-08-30 incident note on the postgres command:)"
+    )
