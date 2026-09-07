@@ -293,16 +293,13 @@ async def update_custom_order(
     changes = data.model_dump(exclude_unset=True)
 
     # Moving a booking is a booking on the new date, so the new date has to have
-    # room. Checked before anything is written, so a refusal leaves the original
-    # date intact rather than half-moved.
+    # room. The capacity check and the write live in `custom_order_service.move`,
+    # under the same per-date lock `book` uses, so a move and a fresh booking
+    # cannot both take a day's last slot. A refusal leaves the original date
+    # intact rather than half-moved.
     new_date = changes.pop("due_date", None)
-    if new_date is not None and new_date != custom_order.due_date:
-        availability = await custom_order_service.availability_for(db, new_date)
-        if not availability.is_available:
-            raise BadRequestError(
-                f"{new_date.isoformat()} has no capacity left for a custom order."
-            )
-        custom_order.due_date = new_date
+    if new_date is not None:
+        await custom_order_service.move(db, custom_order, new_date)
 
     for field, value in changes.items():
         setattr(custom_order, field, value)

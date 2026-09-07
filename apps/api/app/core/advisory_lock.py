@@ -52,6 +52,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # The SCHEDULER pool, bound to the module name `engine` every holder and every
 # test already uses. Every advisory-lock holder is a background loop, and the
@@ -61,11 +62,43 @@ from app.core.database import scheduler_engine as engine
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["held"]
+__all__ = ["held", "held_for_request"]
 
 _ACQUIRE = text("SELECT pg_try_advisory_lock(:key)")
 _ACQUIRE_WAIT = text("SELECT pg_advisory_lock(:key)")
 _RELEASE = text("SELECT pg_advisory_unlock(:key)")
+_ACQUIRE_XACT = text("SELECT pg_advisory_xact_lock(:key)")
+
+
+@asynccontextmanager
+async def held_for_request(db: AsyncSession, key: int) -> AsyncIterator[None]:
+    """
+    Serialise a check-then-write on the CALLER's request session, until it commits.
+
+    The request-scoped sibling of `held`, and it exists because `held` is the
+    wrong tool for a guard that reads committed rows. `held` takes a
+    *session-level* lock on a **separate** scheduler connection and releases it
+    the moment its `with` block exits — which is correct for a background sweep
+    that commits its own work inside the block, and wrong for a request handler,
+    where the row this guard just inserted is not committed until `get_db`
+    commits, *after* the handler returns. A second racer would acquire `held`'s
+    lock in that gap, count, and miss the first's still-uncommitted row — the
+    exact double-booking the lock was meant to stop.
+
+    `pg_advisory_xact_lock` is **transaction-scoped**: it is held on this
+    session's own connection until the request's transaction commits or rolls
+    back, so the whole check → insert → commit is one critical section. The
+    blocking acquire (the analogue of `held(..., wait=True)`) serialises racers:
+    the second waits for the first to commit, then counts the first's now-visible
+    row and refuses.
+
+    Nothing to release by hand — the transaction end does it — so this yields
+    nothing and only marks the section. Use it for count-based capacity a single
+    row lock cannot express (custom-order slots per day); reach for a plain
+    `SELECT … FOR UPDATE` where there *is* a row to lock (a promo's ceiling).
+    """
+    await db.execute(_ACQUIRE_XACT, {"key": key})
+    yield
 
 
 @asynccontextmanager

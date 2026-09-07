@@ -10,6 +10,7 @@ had already taken.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import advisory_lock
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.phone import normalise_phone
 from app.models.business_settings import BusinessSettings
@@ -39,8 +41,26 @@ __all__ = [
     "availability_range",
     "book",
     "earliest_bookable_date",
+    "move",
     "set_status",
 ]
+
+
+def _capacity_lock_key(day: date) -> int:
+    """
+    A stable advisory-lock key for one date's capacity.
+
+    A date has no single row to lock — capacity is a count over the day's
+    bookings — so the guard serialises on the *date itself*. Derived by hash so
+    two requests for the same day always take the same lock and different days
+    never block each other, in a namespace of its own (the "cocap:" prefix) so it
+    cannot collide with the fixed singleton keys the background sweeps hold. A
+    full signed 64-bit value, which is what `pg_advisory_xact_lock` takes.
+    """
+    digest = hashlib.blake2b(
+        f"cocap:{day.isoformat()}".encode(), digest_size=8
+    ).digest()
+    return int.from_bytes(digest, "big", signed=True)
 
 
 @dataclass(frozen=True)
@@ -232,38 +252,49 @@ async def book(
     The single writer. An admin adding an Instagram order and a customer
     checking out both land here, so a date cannot be filled by one in a way the
     other cannot see.
+
+    The capacity check and the insert run under a per-date advisory lock held to
+    the end of the request. Without it the check is count-then-insert with a gap:
+    two bookings for the last slot each read "one free" before either has
+    written, and the date is promised twice — the last-slot race a single row
+    lock cannot express, because a date's capacity is a count and not a row. See
+    `advisory_lock.held_for_request`.
     """
     product = await db.get(Product, product_id) if product_id else None
-    await _assert_bookable(db, due_date, product=product, allow_past=allow_past)
 
-    custom_order = CustomOrder(
-        due_date=due_date,
-        status=status,
-        source=source,
-        order_id=order_id,
-        customer_name=customer_name.strip(),
-        # Normalised to E.164 like every other customer number, so the operator
-        # typing "0501234567" and the website's "+971501234567" are one format.
-        # The raw is kept where it will not parse — a booking still needs ringing.
-        customer_phone=normalise_phone(customer_phone) or customer_phone,
-        customer_email=customer_email,
-        description=description.strip(),
-        cake_message=cake_message,
-        flavour=flavour,
-        size_label=size_label,
-        servings=servings,
-        reference_image_urls=reference_image_urls or [],
-        quoted_total=quoted_total,
-        deposit_amount=deposit_amount or 0,
-        product_id=product_id,
-        branch_id=branch_id,
-        brief=brief or {},
-        admin_notes=admin_notes,
-        created_by_id=created_by_id,
-    )
-    db.add(custom_order)
-    await db.flush()
-    await db.refresh(custom_order)
+    async with advisory_lock.held_for_request(db, _capacity_lock_key(due_date)):
+        await _assert_bookable(db, due_date, product=product, allow_past=allow_past)
+
+        custom_order = CustomOrder(
+            due_date=due_date,
+            status=status,
+            source=source,
+            order_id=order_id,
+            customer_name=customer_name.strip(),
+            # Normalised to E.164 like every other customer number, so the
+            # operator typing "0501234567" and the website's "+971501234567" are
+            # one format. The raw is kept where it will not parse — a booking
+            # still needs ringing.
+            customer_phone=normalise_phone(customer_phone) or customer_phone,
+            customer_email=customer_email,
+            description=description.strip(),
+            cake_message=cake_message,
+            flavour=flavour,
+            size_label=size_label,
+            servings=servings,
+            reference_image_urls=reference_image_urls or [],
+            quoted_total=quoted_total,
+            deposit_amount=deposit_amount or 0,
+            product_id=product_id,
+            branch_id=branch_id,
+            brief=brief or {},
+            admin_notes=admin_notes,
+            created_by_id=created_by_id,
+        )
+        db.add(custom_order)
+        await db.flush()
+        await db.refresh(custom_order)
+
     logger.info(
         "Custom order booked for %s (%s, source=%s)",
         due_date.isoformat(),
@@ -302,4 +333,34 @@ async def set_status(
     custom_order.status = status
     await db.flush()
     await db.refresh(custom_order)
+    return custom_order
+
+
+async def move(
+    db: AsyncSession, custom_order: CustomOrder, new_date: date
+) -> CustomOrder:
+    """
+    Move a booking to another date, if that date has room.
+
+    Moving a booking *is* a booking on the new date, so the new date has to have
+    a free slot — the same rule `book` enforces, and it used to be spelled a
+    second time inside the admin update route where it could quietly drift from
+    this one. It lives here now, beside `book`, under the same per-date advisory
+    lock so a move and a fresh booking cannot both take the last slot on a day.
+
+    A no-op move (new date equals the current one) short-circuits: a date is not
+    "full for this order" against itself, and taking the lock to prove that would
+    only be ceremony.
+    """
+    if new_date == custom_order.due_date:
+        return custom_order
+
+    async with advisory_lock.held_for_request(db, _capacity_lock_key(new_date)):
+        availability = await availability_for(db, new_date)
+        if not availability.is_available:
+            raise BadRequestError(
+                f"{new_date.isoformat()} has no capacity left for a custom order."
+            )
+        custom_order.due_date = new_date
+        await db.flush()
     return custom_order
