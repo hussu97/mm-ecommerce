@@ -844,7 +844,12 @@ async def promote_order(
     # blinded by the overlay.
     if await reconcile._branch_has_grubops(db, agg.branch_id):
         grubops_order = await reconcile._find_mm_order(
-            db, agg.channel, agg.external_order_id, agg.display_ref
+            db,
+            agg.channel,
+            agg.external_order_id,
+            agg.display_ref,
+            branch_id=agg.branch_id,
+            business_date=agg.business_date,
         )
         if grubops_order is not None:
             agg.mm_order_id = grubops_order.id

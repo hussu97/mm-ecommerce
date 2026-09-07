@@ -171,6 +171,9 @@ async def _find_mm_order(
     channel: str,
     external_order_id: str,
     display_ref: str | None = None,
+    *,
+    branch_id=None,
+    business_date: str | None = None,
 ):
     """The MM order this aggregator order became, matched on channel + number.
 
@@ -179,7 +182,17 @@ async def _find_mm_order(
     matched on either id the two sides might carry — the long `external_order_id`
     or the short `display_ref` — under any source_channel string GrubTech uses for
     this channel (its display label plus any `_GRUBOPS_SOURCE_ALIASES`), which keeps
-    the lookup channel-scoped without missing Noon's "Noon" vs "Noon Food" split."""
+    the lookup channel-scoped without missing Noon's "Noon" vs "Noon Food" split.
+
+    When `branch_id` and `business_date` (the marketplace placed-day, Dubai) are
+    given, the match is SCOPED to that branch and day. The short `external_id` is a
+    per-branch-per-day code (Noon's `orderRef`) that noon RECYCLES across days — two
+    orders a couple of days apart share "6227" — so an unscoped lookup returned an
+    arbitrary one of the two `grubops_order_map` rows and stranded the other
+    (AGG-20260906-085 sat out_for_delivery while its delivered scrape landed on the
+    Sept-4 order that reused the code). The day is read off the MM order's
+    `created_at` (the placed-at both paths stamp) in Dubai time, matching
+    `promote._find_mm_order`."""
     labels = grubops_channel_names(channel)
     refs = [r for r in (external_order_id, display_ref) if r]
     # Also match a short numeric code against its zero-stripped form, so a scrape
@@ -191,18 +204,21 @@ async def _find_mm_order(
         id_match = or_(
             id_match, func.ltrim(GrubOpsOrderMap.external_id, "0").in_(stripped)
         )
-    map_row = await db.scalar(
-        select(GrubOpsOrderMap).where(
-            GrubOpsOrderMap.source_channel.in_(labels),
-            id_match,
-            GrubOpsOrderMap.mm_order_id.is_not(None),
+    conds = [
+        GrubOpsOrderMap.source_channel.in_(labels),
+        id_match,
+        GrubOpsOrderMap.mm_order_id.is_not(None),
+    ]
+    if branch_id is not None and business_date:
+        created_dubai_day = func.to_char(
+            func.timezone("Asia/Dubai", Order.created_at), "YYYY-MM-DD"
         )
-    )
-    if map_row is None:
-        return None
+        conds.append(Order.branch_id == branch_id)
+        conds.append(created_dubai_day == business_date)
     return await db.scalar(
         select(Order)
-        .where(Order.id == map_row.mm_order_id)
+        .join(GrubOpsOrderMap, GrubOpsOrderMap.mm_order_id == Order.id)
+        .where(*conds)
         .options(selectinload(Order.items))
     )
 
@@ -269,7 +285,12 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
     mm_order = None
     if has_grubops:
         mm_order = await _find_mm_order(
-            db, agg.channel, agg.external_order_id, agg.display_ref
+            db,
+            agg.channel,
+            agg.external_order_id,
+            agg.display_ref,
+            branch_id=agg.branch_id,
+            business_date=agg.business_date,
         )
         match_status = MATCH_MATCHED if mm_order is not None else MATCH_UNMATCHED_AGG
     else:

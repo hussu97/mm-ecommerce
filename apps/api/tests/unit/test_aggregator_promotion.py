@@ -316,7 +316,7 @@ async def test_grubops_owned_order_is_not_re_attached_to_pos(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext, display_ref=None):
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
         return grubops_order
 
     async def fake_stamp(db, order, **kwargs):
@@ -349,7 +349,7 @@ async def test_grubops_owned_order_carries_scraped_delivered_status(monkeypatch)
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext, display_ref=None):
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
         return grubops_order
 
     async def fake_stamp(db, order, **kwargs):
@@ -464,6 +464,36 @@ async def test_find_mm_order_matches_deliveroo_zero_padded_code():
     assert "'127'" in sql  # matched against the stripped short code
 
 
+async def test_find_mm_order_scopes_to_branch_and_day_for_recurring_code():
+    """noon recycles the short orderRef across days, so two grubops_order_map rows
+    can share "6227". Given branch + business_date the lookup must scope to that
+    branch and Dubai placed-day, else it links an arbitrary one and strands the
+    other (AGG-20260906-085 sat out_for_delivery while its delivery landed on the
+    Sept-4 order that reused the code)."""
+    from app.models.aggregator import CHANNEL_NOON
+
+    captured = {}
+
+    class _DB:
+        async def scalar(self, stmt):
+            captured["sql"] = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            return None
+
+    await promote.reconcile._find_mm_order(
+        _DB(),
+        CHANNEL_NOON,
+        "FG96NNC9ZVQT4FA",
+        "6227",
+        branch_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        business_date="2026-09-06",
+    )
+    sql = captured["sql"]
+    assert "'2026-09-06'" in sql  # the Dubai placed-day scope
+    assert "Asia/Dubai" in sql
+    assert "branch_id" in sql.lower()
+    assert "'6227'" in sql
+
+
 async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     """Barsha/Sharjah with a GrubOps order → link only, never build/recreate it.
 
@@ -478,7 +508,7 @@ async def test_grubops_owned_order_is_never_recreated(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext, display_ref=None):
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
         return grubops_order
 
     async def fake_build(db, agg, label, *, draw_stock=True):
@@ -520,7 +550,7 @@ async def test_grubops_owned_order_backfills_scraped_customer_fill_only(monkeypa
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext, display_ref=None):
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
         return grubops_order
 
     async def _noop(*a, **k):
@@ -560,7 +590,7 @@ async def test_grubops_branch_defers_within_grace(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext, display_ref=None):
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
         return None  # GrubOps has not produced it *yet*
 
     async def fake_build(db, agg, label, *, draw_stock=True):
@@ -587,7 +617,7 @@ async def test_grubops_branch_gap_is_filled_past_grace(monkeypatch):
     async def fake_has_grubops(db, branch_id):
         return True
 
-    async def fake_find_mm(db, channel, ext, display_ref=None):
+    async def fake_find_mm(db, channel, ext, display_ref=None, **kwargs):
         return None  # GrubOps never produced it
 
     async def fake_find_conv(db, ext):
