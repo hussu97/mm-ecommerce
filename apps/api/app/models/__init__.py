@@ -57,6 +57,7 @@ from .custom_order import (  # noqa: F401
     CustomOrderSourceEnum,
     CustomOrderStatusEnum,
 )
+from .daily_sales_send import DailySalesSend  # noqa: F401
 from .delivery_polygon import (  # noqa: F401
     DeliveryPolygon,
     DeliveryPolygonVersion,

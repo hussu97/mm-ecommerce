@@ -35,6 +35,7 @@ from decimal import Decimal
 from io import BytesIO
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, heartbeat, trading_hours
@@ -44,14 +45,15 @@ from app.models.aggregator import (
     AggregatorStatement,
     AggregatorStatementLine,
 )
+from app.models.base import utcnow
 from app.models.branch import Branch
-from app.models.email_log import EmailLog
-from app.models.order import Order, OrderStatusEnum
+from app.models.daily_sales_send import DailySalesSend
+from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
-from app.models.pos_order import PosOrderStatusEnum
 from app.services import branch_hours_service, email_service
 from app.services.couriers import courier_catalog
 from app.services.pos import business_day_service
+from app.services.pos.pos_reports._base import _COMPLETED_SALE
 
 logger = logging.getLogger(__name__)
 
@@ -103,34 +105,15 @@ def _label(column: str) -> str:
     return _COLUMN_LABELS.get(column, column)
 
 
-#: Delivered trade only. A counter check is done when the till closes it; a
-#: marketplace or website order when it is delivered. Cancelled, refunded and
-#: in-progress orders never match either arm.
-_DELIVERED = or_(
-    and_(
-        Order.source == "cashier", Order.pos_status == PosOrderStatusEnum.CLOSED.value
-    ),
-    and_(
-        Order.source == "online",
-        Order.status == OrderStatusEnum.DELIVERED.value,
-    ),
-    # An aggregator order's sale stands once the parcel leaves the counter — the
-    # money is settled with the marketplace whatever the rider then does, and that
-    # is when its check closes. This used to read `delivered`, which worked only
-    # because an auto-close asserted a doorstep five minutes after packing; that
-    # claim is gone, so the arm names what it means. Without this the day's
-    # aggregator revenue would sit out of the email until the channel's own status
-    # arrived, which for most channels is the next morning.
-    and_(
-        Order.source == "aggregator",
-        Order.status.in_(
-            [
-                OrderStatusEnum.OUT_FOR_DELIVERY.value,
-                OrderStatusEnum.DELIVERED.value,
-            ]
-        ),
-    ),
-)
+#: Delivered trade only — and the SAME predicate the POS reports use, imported
+#: from `pos_reports._base` rather than kept as a second copy here, so the owner's
+#: inbox and the manager console can never define "a completed sale" differently
+#: (F-POS-19). A counter check counts once the till closes it; a website order
+#: once its e-commerce status is delivered; an aggregator order once the parcel
+#: leaves the counter (`out_for_delivery`). Cancelled, refunded and in-progress
+#: orders match no arm. The per-channel reasoning now lives in one place; see the
+#: named clauses in `pos_reports._base`.
+_DELIVERED = _COMPLETED_SALE
 
 
 @dataclass
@@ -746,17 +729,41 @@ _CATCHUP_DAYS = 3
 
 
 async def _already_sent(db: AsyncSession, business_date: str) -> bool:
-    """Whether a report for this date already went — the subject carries it."""
-    count = (
+    """Whether the NIGHTLY report for this date is journalled as fully sent.
+
+    Reads the explicit `daily_sales_sends` journal, not `email_logs`. The old
+    subject-`LIKE` check let a manual admin send (which also writes an
+    `email_logs` row carrying the date) suppress the automatic send, and treated
+    a run where one recipient failed as done. The journal carries a row ONLY when
+    every recipient of the automatic send succeeded (`_record_sent`), so a manual
+    send never appears here and a partial failure leaves the day due (F-POS-18).
+    """
+    return (
         await db.execute(
-            select(func.count(EmailLog.id)).where(
-                EmailLog.template == _TEMPLATE,
-                EmailLog.subject.like(f"%{business_date}%"),
-                EmailLog.status == "sent",
+            select(DailySalesSend.business_date).where(
+                DailySalesSend.business_date == business_date
             )
         )
-    ).scalar_one()
-    return count > 0
+    ).scalar_one_or_none() is not None
+
+
+async def _record_sent(
+    db: AsyncSession, business_date: str, recipients: list[str]
+) -> None:
+    """Journal a business date as fully sent, and commit it.
+
+    Idempotent: `ON CONFLICT DO NOTHING` on the `business_date` primary key, so a
+    second worker that sent it in the same window records nothing rather than
+    raising. Committed on the scheduler session because this record is the
+    idempotency guard itself — it must survive the tick, not wait for a request
+    dependency that never runs on a background loop.
+    """
+    await db.execute(
+        pg_insert(DailySalesSend)
+        .values(business_date=business_date, recipients=recipients, sent_at=utcnow())
+        .on_conflict_do_nothing(index_elements=["business_date"])
+    )
+    await db.commit()
 
 
 def _branch_close(window: tuple[str, str] | None, day: date) -> datetime | None:
@@ -849,9 +856,26 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
                 date_to=business_date,
                 recipients=DEFAULT_RECIPIENTS,
             )
-            logger.info(
-                "Daily sales report sent for %s: %s", business_date, summary["sent"]
-            )
+            outcomes = summary["sent"]
+            # Journal the day ONLY when every recipient succeeded. A partial
+            # failure leaves no journal row, so the next tick retries rather than
+            # calling a half-delivered report done (F-POS-18). The trade-off is
+            # that a retry re-mails the recipients who already got it, which is
+            # the right side to err on for a financial report.
+            if outcomes and all(o["status"] == "sent" for o in outcomes):
+                await _record_sent(
+                    db, business_date, [o["recipient"] for o in outcomes]
+                )
+                logger.info(
+                    "Daily sales report sent for %s: %s", business_date, outcomes
+                )
+            else:
+                logger.warning(
+                    "Daily sales report for %s not fully delivered; leaving it due "
+                    "for the next tick: %s",
+                    business_date,
+                    outcomes,
+                )
 
 
 async def run_forever() -> None:
