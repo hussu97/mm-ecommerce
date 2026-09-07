@@ -2803,6 +2803,9 @@ export interface paths {
         /**
          * Calculate Delivery
          * @description The delivery fee for a pin and an order subtotal.
+         *
+         *     Rate limited for the same reason `/area` is: public, unauthenticated, and
+         *     otherwise a free way to hammer the same lookup.
          */
         post: operations["calculate_delivery_api_v1_delivery_calculate_post"];
         delete?: never;
@@ -2828,6 +2831,10 @@ export interface paths {
          *
          *     The identity is used to find the basket the courier's own estimate gets
          *     filed against. Nothing about the courier appears in the response either way.
+         *
+         *     Rate limited: this is public and unauthenticated, and every hit is a call
+         *     against the courier's own quote API — a live estimate priced in requests
+         *     per minute upstream, not just database time on our side.
          */
         post: operations["quote_delivery_api_v1_delivery_quote_post"];
         delete?: never;
@@ -13922,9 +13929,7 @@ export interface components {
             /** Item Sku */
             item_sku: string;
             /** Recipe Path */
-            recipe_path: {
-                [key: string]: unknown;
-            }[];
+            recipe_path: unknown[];
             /** Recipe Version Id */
             recipe_version_id: string | null;
             /** Signed Quantity */
@@ -18594,9 +18599,7 @@ export interface components {
              * Recipe Path
              * @default []
              */
-            recipe_path: {
-                [key: string]: unknown;
-            }[];
+            recipe_path: unknown[];
             /** Recipe Version Id */
             recipe_version_id?: string | null;
             /** Signed Quantity */

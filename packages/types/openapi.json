@@ -8693,6 +8693,8 @@
           "latitude": {
             "anyOf": [
               {
+                "maximum": 90.0,
+                "minimum": -90.0,
                 "type": "number"
               },
               {
@@ -8708,6 +8710,8 @@
           "longitude": {
             "anyOf": [
               {
+                "maximum": 180.0,
+                "minimum": -180.0,
                 "type": "number"
               },
               {
@@ -8812,6 +8816,8 @@
           "latitude": {
             "anyOf": [
               {
+                "maximum": 90.0,
+                "minimum": -90.0,
                 "type": "number"
               },
               {
@@ -8827,6 +8833,8 @@
           "longitude": {
             "anyOf": [
               {
+                "maximum": 180.0,
+                "minimum": -180.0,
                 "type": "number"
               },
               {
@@ -16709,10 +16717,7 @@
             "type": "string"
           },
           "recipe_path": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
+            "items": {},
             "title": "Recipe Path",
             "type": "array"
           },
@@ -30745,10 +30750,7 @@
           },
           "recipe_path": {
             "default": [],
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
+            "items": {},
             "title": "Recipe Path",
             "type": "array"
           },
@@ -41920,7 +41922,7 @@
     },
     "/api/v1/delivery/calculate": {
       "post": {
-        "description": "The delivery fee for a pin and an order subtotal.",
+        "description": "The delivery fee for a pin and an order subtotal.\n\nRate limited for the same reason `/area` is: public, unauthenticated, and\notherwise a free way to hammer the same lookup.",
         "operationId": "calculate_delivery_api_v1_delivery_calculate_post",
         "requestBody": {
           "content": {
@@ -41962,7 +41964,7 @@
     },
     "/api/v1/delivery/quote": {
       "post": {
-        "description": "What delivery costs to a specific point, and how far the basket is from\nfree. The checkout calls this whenever the pin or the basket changes, so the\nfigure on screen is the one the order will be written with.\n\nThe identity is used to find the basket the courier's own estimate gets\nfiled against. Nothing about the courier appears in the response either way.",
+        "description": "What delivery costs to a specific point, and how far the basket is from\nfree. The checkout calls this whenever the pin or the basket changes, so the\nfigure on screen is the one the order will be written with.\n\nThe identity is used to find the basket the courier's own estimate gets\nfiled against. Nothing about the courier appears in the response either way.\n\nRate limited: this is public and unauthenticated, and every hit is a call\nagainst the courier's own quote API \u2014 a live estimate priced in requests\nper minute upstream, not just database time on our side.",
         "operationId": "quote_delivery_api_v1_delivery_quote_post",
         "parameters": [
           {
