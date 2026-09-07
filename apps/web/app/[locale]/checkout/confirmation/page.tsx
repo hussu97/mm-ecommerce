@@ -5,6 +5,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ordersApi } from '@/lib/api';
 import { analytics } from '@/lib/analytics';
+import { reportedOrders } from '@/lib/reported-orders';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
@@ -65,24 +66,32 @@ function ConfirmationContent() {
     ordersApi.get(orderNumber, email ?? undefined)
       .then(order => {
         setOrder(order);
-        analytics.orderCompleted({
-          order_number: order.order_number,
-          total: Number(order.total),
-          payment_provider: order.payment_provider ?? 'unknown',
-          delivery_method: order.delivery_method,
-          item_count: order.items.length,
-          // The total broken into the parts that are actually decisions: what
-          // the food cost, what delivery added, what the small-basket surcharge
-          // added and what a coupon took away. One `total` could not tell a
-          // 200-dirham basket with free delivery apart from a 180-dirham basket
-          // with a 20-dirham fee, which are opposite outcomes for the shop.
-          subtotal: Number(order.subtotal),
-          delivery_fee: Number(order.delivery_fee),
-          low_order_fee: Number(order.low_order_fee ?? 0),
-          discount: Number(order.discount_amount ?? 0),
-          promo_code: order.promo_code_used ?? undefined,
-          is_guest: !user || Boolean(user.is_guest),
-        });
+        // The effect re-runs every time this URL is opened — a refresh, the
+        // back button, a bookmarked link — and `ordersApi.get` answers the
+        // same order every time. Without this guard each of those looks like
+        // a second sale to Umami. `markIfFirstSeen` is the one gate: it both
+        // decides and records in a single localStorage round trip, so a
+        // refresh mid-effect can't fire twice under it.
+        if (reportedOrders.markIfFirstSeen(order.order_number)) {
+          analytics.orderCompleted({
+            order_number: order.order_number,
+            total: Number(order.total),
+            payment_provider: order.payment_provider ?? 'unknown',
+            delivery_method: order.delivery_method,
+            item_count: order.items.length,
+            // The total broken into the parts that are actually decisions: what
+            // the food cost, what delivery added, what the small-basket surcharge
+            // added and what a coupon took away. One `total` could not tell a
+            // 200-dirham basket with free delivery apart from a 180-dirham basket
+            // with a 20-dirham fee, which are opposite outcomes for the shop.
+            subtotal: Number(order.subtotal),
+            delivery_fee: Number(order.delivery_fee),
+            low_order_fee: Number(order.low_order_fee ?? 0),
+            discount: Number(order.discount_amount ?? 0),
+            promo_code: order.promo_code_used ?? undefined,
+            is_guest: !user || Boolean(user.is_guest),
+          });
+        }
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
