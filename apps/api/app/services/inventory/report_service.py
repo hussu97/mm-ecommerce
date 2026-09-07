@@ -59,6 +59,23 @@ _NET_OUT_COLUMNS = (
     "internal_use_quantity",
 )
 
+# The non-count per-item ``required_input`` values, each mapped to the transaction
+# type it posts on submit. ``physical_count`` is added at post time because it maps
+# to either an opening balance or a count. The full set of supported inputs
+# (``supported_report_item_inputs()``) must equal the schema Literal on
+# ReportTemplateItemInput — an input the schema accepts but this cannot post 500s
+# the submit; test_report_inputs_all_have_a_posting_type guards the two together.
+_ITEM_INPUT_TRANSACTION_TYPES = {
+    "internal_use": InventoryTransactionTypeEnum.INTERNAL_USE.value,
+    "waste": InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
+    "receipt": InventoryTransactionTypeEnum.PURCHASING.value,
+}
+
+
+def supported_report_item_inputs() -> frozenset[str]:
+    """Every ``required_input`` value ``post_report`` knows how to post."""
+    return frozenset({"physical_count", *_ITEM_INPUT_TRANSACTION_TYPES})
+
 
 def _net_quantity(line: ShiftInventoryReportLine) -> Decimal:
     """Closing = Opening + Σ(in) − Σ(out), derived from the row's columns."""
@@ -460,6 +477,14 @@ def _apply_source_columns(
     line.source_summary = {
         **(line.source_summary or {}),
         "through_sequence": through_sequence,
+        # What the ledger already holds for every movement column, captured at
+        # prefill time. Submit posts only what the shop *added* on top of this
+        # (entered − prefilled), so confirming a column the ledger already filled
+        # posts nothing and editing it posts the delta, never the whole value.
+        "prefilled": {
+            column: str(quantity(getattr(line, column) or 0))
+            for column in (*_NET_IN_COLUMNS, *_NET_OUT_COLUMNS)
+        },
     }
 
 
@@ -595,6 +620,12 @@ async def refresh_report(
         line.source_summary = {
             **line.source_summary,
             "moved_since_prefill": line.item_id in moved,
+            # _apply_source_columns just rewrote every movement column back to the
+            # ledger's value, discarding whatever the shop had typed. The typed
+            # markers must go with them — otherwise submit would re-post the
+            # ledger's own movement as if the shop had entered it. The shop
+            # re-enters and re-confirms after a refresh.
+            "entered_columns": [],
         }
     report.base_posting_sequence = latest
     await db.flush()
@@ -882,31 +913,13 @@ async def post_report(
     await source_event_service.lock_branch_inventory(db, report.branch_id)
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
     report_type = report.template_snapshot.get("report_type")
-    if report_type == InventoryReportTypeEnum.PRODUCTION.value:
-        branch = await db.get(Branch, report.branch_id)
-        if branch is None:
-            raise NotFoundError("Branch not found")
-        first_transaction_id = None
-        for report_line in report.lines:
-            entered = quantity(report_line.entered_quantity or 0)
-            if entered == 0:
-                continue
-            production, _ = await transfer_service.produce(
-                db,
-                branch=branch,
-                user=user,
-                item_id=report_line.item_id,
-                quantity=entered,
-                warehouse_id=warehouse.id,
-                notes=f"Production report {report.id}",
-            )
-            first_transaction_id = first_transaction_id or production.id
-        report.transaction_id = first_transaction_id
-        report.status = ShiftInventoryReportStatusEnum.POSTED.value
-        report.approved_by = report.approved_by or user.id
-        report.approved_at = report.approved_at or utcnow()
-        await db.flush()
-        return report
+    # A `production` report is an alias of the finished-goods sheet (see
+    # report_columns._COLUMNS): the entered "Produced" column posts through
+    # produce() below, and the physical count then trues the row up. The legacy
+    # early-return that produced the *physical closing count* instead of the
+    # Produced column inflated stock by the whole count and never posted the
+    # count as a reconciliation — the generic path is now the only production
+    # posting route.
     first_transaction: InventoryTransaction | None = None
 
     # The entered movement columns post first — each changes the level the physical
@@ -916,15 +929,24 @@ async def post_report(
     # type carries the sign, so a positive magnitude is all the shop ever types.
     branch: Branch | None = None
     for column in report_columns.editable_columns(report_type):
-        # Only a column the shop actually typed posts; a value the ledger prefilled
-        # for context is already on the ledger and must not be posted again.
-        valued = [
-            (report_line, quantity(getattr(report_line, column.key) or 0))
-            for report_line in report.lines
-            if column.key
-            in (report_line.source_summary or {}).get("entered_columns", [])
-            and quantity(getattr(report_line, column.key) or 0) != 0
-        ]
+        # Only a column the shop actually typed posts, and only the amount it typed
+        # *beyond* what the ledger had already prefilled for it — the prefilled part
+        # is on the ledger and must not be posted again (a prefilled production
+        # figure would otherwise be produced twice). A non-positive delta means the
+        # shop confirmed the prefill unchanged (or lowered it), so nothing posts.
+        valued = []
+        for report_line in report.lines:
+            summary = report_line.source_summary or {}
+            if column.key not in summary.get("entered_columns", []):
+                continue
+            entered_value = quantity(getattr(report_line, column.key) or 0)
+            prefilled_value = quantity(
+                Decimal(str((summary.get("prefilled") or {}).get(column.key, 0)))
+            )
+            delta = quantity(entered_value - prefilled_value)
+            if delta <= 0:
+                continue
+            valued.append((report_line, delta))
         if not valued:
             continue
         if column.posts == InventoryTransactionTypeEnum.PRODUCTION.value:
@@ -991,9 +1013,7 @@ async def post_report(
             if report.template_snapshot.get("opening_count")
             else InventoryTransactionTypeEnum.INVENTORY_COUNT.value
         ),
-        "internal_use": InventoryTransactionTypeEnum.INTERNAL_USE.value,
-        "waste": InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
-        "receipt": InventoryTransactionTypeEnum.PURCHASING.value,
+        **_ITEM_INPUT_TRANSACTION_TYPES,
     }
     grouped: dict[str, list[ShiftInventoryReportLine]] = {}
     for report_line in report.lines:

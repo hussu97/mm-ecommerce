@@ -182,7 +182,9 @@ async def test_template_update_appends_a_same_name_revision():
         is_required=True,
         is_active=True,
         configuration={},
-        items=[{"item_id": item_id, "required_input": "production"}],
+        # 'production' is no longer a per-item input (F-INV-5): a production report
+        # posts through its Produced column, and the count trues up.
+        items=[{"item_id": item_id, "required_input": "physical_count"}],
     )
 
     async def flush_assigns_id():

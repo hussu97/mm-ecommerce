@@ -40,6 +40,7 @@ from app.schemas.inventory_v2 import (
     RecipeDraftRequest,
     RecipeExpansionRequest,
     RecipeExpansionResponse,
+    RecipeReadinessResponse,
     RecipeVersionResponse,
     ReportActionRequest,
     ReportSaveRequest,
@@ -47,6 +48,7 @@ from app.schemas.inventory_v2 import (
     ReportTemplateUpsert,
     ReverseTransactionRequest,
     ShiftReportResponse,
+    SourceEventRetryResponse,
     StockAuditPreviewResponse,
     StockAuditRequest,
     StockAuditRowInput,
@@ -243,6 +245,52 @@ async def reverse_inventory_transaction(
     return await ledger_service.reverse_transaction(
         db, transaction_id=transaction_id, user=user, reason=data.reason
     )
+
+
+@control_router.get(
+    "/branches/{branch_id}/recipe-readiness",
+    response_model=RecipeReadinessResponse,
+)
+async def branch_recipe_readiness(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    """Pre-go-live check: sellable items on this branch with no active recipe."""
+    await _assert_branch_access(db, user, branch_id)
+    return await recipe_service.branch_menu_recipe_gaps(db, branch_id)
+
+
+@control_router.post(
+    "/source-events/{event_id}/retry",
+    response_model=SourceEventRetryResponse,
+)
+async def retry_inventory_source_event(
+    event_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.adjustments.manage")),
+):
+    """Re-snapshot a stranded order event so a newly-activated recipe consumes.
+
+    Recovers ``missing_recipe`` events (and any never-posted exception): it re-runs
+    the recipe expansion against the live graph and posts. Guarded against
+    double-posting an event that already moved stock.
+    """
+    event = await db.get(InventorySourceEvent, event_id)
+    if event is None:
+        raise NotFoundError("Inventory source event not found")
+    await _assert_branch_access(db, user, event.branch_id)
+    order = await db.get(Order, uuid.UUID(event.source_id))
+    if order is None:
+        raise NotFoundError("Order not found")
+    await source_event_service.retry_event(db, event=event, order=order, user=user)
+    return {
+        "id": event.id,
+        "status": event.status,
+        "error_code": event.error_code,
+        "error_detail": event.error_detail,
+        "transaction_id": event.transaction_id,
+    }
 
 
 @control_router.get("/projection-drift", response_model=list[ProjectionDriftResponse])

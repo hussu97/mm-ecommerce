@@ -412,9 +412,15 @@ async def post_transaction(
 
         level = await level_for(db, line.item_id, warehouse_id, for_update=True)
 
-        if transaction.type == InventoryTransactionTypeEnum.INVENTORY_COUNT.value:
-            # A count sets the balance rather than moving it; the variance is
-            # what the report cares about.
+        if transaction.type in (
+            InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+            InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+        ):
+            # A count and an opening balance SET the balance to the counted figure
+            # rather than adding it. Posting an opening balance as an addition let a
+            # second opening count (or a re-run) double the stock; setting it means
+            # the balance lands on the count whatever was there before. The variance
+            # is what the report cares about.
             line.expected_quantity = _q(level.quantity)
             delta = _q(normalised - _q(level.quantity))
 

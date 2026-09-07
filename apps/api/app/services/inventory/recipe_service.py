@@ -29,7 +29,7 @@ from app.models.inventory_v2 import (
     RecipeVersion,
     RecipeVersionStatusEnum,
 )
-from app.models.modifier import ModifierOption
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderItem
 from app.models.product import Product
 
@@ -627,3 +627,90 @@ async def snapshot_order(
         },
         warnings,
     )
+
+
+async def branch_menu_recipe_gaps(
+    db: AsyncSession, branch_id: uuid.UUID
+) -> dict[str, Any]:
+    """Products and modifier options a branch can sell that have no active recipe.
+
+    A pre-go-live check: a sellable item without an active recipe expands to no
+    consumption, so its sales silently move no stock and the ledger drifts from the
+    shelf from day one. This walks the branch's live menu tree and lists what would
+    be missed, without changing anything — the operator activates the missing
+    recipes before enabling inventory.
+    """
+    # Imported here (not at module top) to keep the recipe service from importing
+    # the catalog menu service at module load, where it would risk a cycle.
+    from app.services.catalog import menu_group_service
+
+    product_ids = set(
+        (
+            await db.execute(
+                select(Product.id).where(
+                    Product.id.in_(
+                        menu_group_service.visible_product_ids_subquery(
+                            branch_id=branch_id
+                        )
+                    ),
+                    Product.is_active == True,  # noqa: E712
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    products_with_recipe = set(
+        (
+            await db.execute(
+                select(Recipe.product_id)
+                .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
+                .where(
+                    Recipe.owner_kind == RecipeOwnerKindEnum.PRODUCT.value,
+                    Recipe.product_id.in_(product_ids),
+                    RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    option_ids = set(
+        (
+            await db.execute(
+                select(ModifierOption.id)
+                .join(Modifier, Modifier.id == ModifierOption.modifier_id)
+                .join(ProductModifier, ProductModifier.modifier_id == Modifier.id)
+                .where(
+                    ProductModifier.product_id.in_(product_ids),
+                    ModifierOption.is_active == True,  # noqa: E712
+                    Modifier.is_active == True,  # noqa: E712
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    options_with_recipe = set(
+        (
+            await db.execute(
+                select(Recipe.modifier_option_id)
+                .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
+                .where(
+                    Recipe.owner_kind == RecipeOwnerKindEnum.MODIFIER_OPTION.value,
+                    Recipe.modifier_option_id.in_(option_ids),
+                    RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    products_missing = sorted(str(pid) for pid in product_ids - products_with_recipe)
+    options_missing = sorted(str(oid) for oid in option_ids - options_with_recipe)
+    return {
+        "branch_id": str(branch_id),
+        "ready": not products_missing and not options_missing,
+        "products_missing_recipe": products_missing,
+        "modifier_options_missing_recipe": options_missing,
+    }

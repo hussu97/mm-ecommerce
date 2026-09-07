@@ -169,9 +169,15 @@ class StockAuditPreviewResponse(BaseModel):
 class ReportTemplateItemInput(BaseModel):
     item_id: UUID
     display_order: int = 0
-    required_input: Literal[
-        "physical_count", "production", "internal_use", "waste", "receipt"
-    ] = "physical_count"
+    # Every value here maps to an InventoryTransaction type in
+    # report_service.post_report's ``inputs_to_type``; the two sets are kept
+    # identical by test_report_inputs_all_have_a_posting_type. 'production' was
+    # accepted here and by the CHECK constraint but had no posting type, so a
+    # report holding it 500'd on submit — production posts through the report's
+    # Produced *column*, not an item input.
+    required_input: Literal["physical_count", "internal_use", "waste", "receipt"] = (
+        "physical_count"
+    )
 
 
 class ReportTemplateUpsert(BaseModel):
@@ -295,9 +301,11 @@ class OrderInventoryMovementLine(BaseModel):
     signed_quantity: Decimal
     balance_after_quantity: Decimal | None
     recipe_version_id: UUID | None
-    # A list of arbitrary JSON, not a fixed shape — the consumption poster stores a
-    # list of paths (each a list of hop dicts). See TransactionLineResponse.recipe_path.
-    recipe_path: list[Any]
+    # A list of paths, each path a list of hop dicts ({owner_kind, owner_id,
+    # recipe_version_id, item_id} — all strings). Every writer (order consumption,
+    # production, returns) now emits this one shape. See
+    # TransactionLineResponse.recipe_path.
+    recipe_path: list[list[dict[str, str]]]
 
 
 class OrderInventoryMovement(BaseModel):
@@ -323,3 +331,18 @@ class OrderInventoryConsumptionResponse(BaseModel):
     source_events: list[OrderInventorySourceEvent]
     theoretical_plan: dict[str, Any] | None
     warnings: list[str]
+
+
+class SourceEventRetryResponse(BaseModel):
+    id: UUID
+    status: str
+    error_code: str | None
+    error_detail: str | None
+    transaction_id: UUID | None
+
+
+class RecipeReadinessResponse(BaseModel):
+    branch_id: UUID
+    ready: bool
+    products_missing_recipe: list[UUID]
+    modifier_options_missing_recipe: list[UUID]

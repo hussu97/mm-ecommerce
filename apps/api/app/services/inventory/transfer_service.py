@@ -658,8 +658,12 @@ async def produce(
             recipe_version_id=active_output_version.id
             if active_output_version
             else None,
+            # A list of hop-lists, matching the consumption poster's shape
+            # (list[list[dict[str, str]]]) so the shared schema is one type, not a
+            # widened `list[Any]`. The produced good is one hop per recipe version
+            # that fed it.
             recipe_path=[
-                {"recipe_version_id": str(value), "owner_id": str(item_id)}
+                [{"recipe_version_id": str(value), "owner_id": str(item_id)}]
                 for value in sorted(used_versions, key=str)
             ],
         )

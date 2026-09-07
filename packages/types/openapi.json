@@ -16717,7 +16717,15 @@
             "type": "string"
           },
           "recipe_path": {
-            "items": {},
+            "items": {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
             "title": "Recipe Path",
             "type": "array"
           },
@@ -24619,6 +24627,43 @@
         "title": "RecipeLineResponse",
         "type": "object"
       },
+      "RecipeReadinessResponse": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "modifier_options_missing_recipe": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Modifier Options Missing Recipe",
+            "type": "array"
+          },
+          "products_missing_recipe": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Products Missing Recipe",
+            "type": "array"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "branch_id",
+          "ready",
+          "products_missing_recipe",
+          "modifier_options_missing_recipe"
+        ],
+        "title": "RecipeReadinessResponse",
+        "type": "object"
+      },
       "RecipeResponse": {
         "properties": {
           "ingredients": {
@@ -25302,7 +25347,6 @@
             "default": "physical_count",
             "enum": [
               "physical_count",
-              "production",
               "internal_use",
               "waste",
               "receipt"
@@ -26888,6 +26932,62 @@
           "columns"
         ],
         "title": "ShiftReportResponse",
+        "type": "object"
+      },
+      "SourceEventRetryResponse": {
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Detail"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Id"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "error_code",
+          "error_detail",
+          "transaction_id"
+        ],
+        "title": "SourceEventRetryResponse",
         "type": "object"
       },
       "SplitOrderRequest": {
@@ -30750,7 +30850,15 @@
           },
           "recipe_path": {
             "default": [],
-            "items": {},
+            "items": {
+              "items": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
             "title": "Recipe Path",
             "type": "array"
           },
@@ -44334,6 +44442,55 @@
         ]
       }
     },
+    "/api/v1/inventory/branches/{branch_id}/recipe-readiness": {
+      "get": {
+        "description": "Pre-go-live check: sellable items on this branch with no active recipe.",
+        "operationId": "branch_recipe_readiness_api_v1_inventory_branches__branch_id__recipe_readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeReadinessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Branch Recipe Readiness",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/categories": {
       "get": {
         "operationId": "list_items_api_v1_inventory_categories_get",
@@ -46600,6 +46757,55 @@
           }
         ],
         "summary": "List Shift Reports",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/source-events/{event_id}/retry": {
+      "post": {
+        "description": "Re-snapshot a stranded order event so a newly-activated recipe consumes.\n\nRecovers ``missing_recipe`` events (and any never-posted exception): it re-runs\nthe recipe expansion against the live graph and posts. Guarded against\ndouble-posting an event that already moved stock.",
+        "operationId": "retry_inventory_source_event_api_v1_inventory_source_events__event_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceEventRetryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Retry Inventory Source Event",
         "tags": [
           "Inventory Control"
         ]

@@ -421,8 +421,7 @@ class InventoryReportTemplateItem(Base, UUIDMixin):
             "template_id", "item_id", name="uq_inventory_report_template_item"
         ),
         CheckConstraint(
-            "required_input IN ('physical_count', 'production', 'internal_use', "
-            "'waste', 'receipt')",
+            "required_input IN ('physical_count', 'internal_use', 'waste', 'receipt')",
             name="ck_inventory_report_template_item_input",
         ),
     )

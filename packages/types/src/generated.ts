@@ -3541,6 +3541,26 @@ export interface paths {
         patch: operations["update_branch_inventory_settings_api_v1_inventory_branch_settings__branch_id__patch"];
         trace?: never;
     };
+    "/api/v1/inventory/branches/{branch_id}/recipe-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Branch Recipe Readiness
+         * @description Pre-go-live check: sellable items on this branch with no active recipe.
+         */
+        get: operations["branch_recipe_readiness_api_v1_inventory_branches__branch_id__recipe_readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/categories": {
         parameters: {
             query?: never;
@@ -4071,6 +4091,30 @@ export interface paths {
         get: operations["list_shift_reports_api_v1_inventory_shift_reports_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/source-events/{event_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry Inventory Source Event
+         * @description Re-snapshot a stranded order event so a newly-activated recipe consumes.
+         *
+         *     Recovers ``missing_recipe`` events (and any never-posted exception): it re-runs
+         *     the recipe expansion against the live graph and posts. Guarded against
+         *     double-posting an event that already moved stock.
+         */
+        post: operations["retry_inventory_source_event_api_v1_inventory_source_events__event_id__retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -13929,7 +13973,9 @@ export interface components {
             /** Item Sku */
             item_sku: string;
             /** Recipe Path */
-            recipe_path: unknown[];
+            recipe_path: {
+                [key: string]: string;
+            }[][];
             /** Recipe Version Id */
             recipe_version_id: string | null;
             /** Signed Quantity */
@@ -16495,6 +16541,20 @@ export interface components {
             /** Unit Cost */
             unit_cost?: string | null;
         };
+        /** RecipeReadinessResponse */
+        RecipeReadinessResponse: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Modifier Options Missing Recipe */
+            modifier_options_missing_recipe: string[];
+            /** Products Missing Recipe */
+            products_missing_recipe: string[];
+            /** Ready */
+            ready: boolean;
+        };
         /** RecipeResponse */
         RecipeResponse: {
             /**
@@ -16771,7 +16831,7 @@ export interface components {
              * @default physical_count
              * @enum {string}
              */
-            required_input: "physical_count" | "production" | "internal_use" | "waste" | "receipt";
+            required_input: "physical_count" | "internal_use" | "waste" | "receipt";
         };
         /** ReportTemplateItemResponse */
         ReportTemplateItemResponse: {
@@ -17332,6 +17392,22 @@ export interface components {
             };
             /** Till Id */
             till_id: string | null;
+            /** Transaction Id */
+            transaction_id: string | null;
+        };
+        /** SourceEventRetryResponse */
+        SourceEventRetryResponse: {
+            /** Error Code */
+            error_code: string | null;
+            /** Error Detail */
+            error_detail: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
             /** Transaction Id */
             transaction_id: string | null;
         };
@@ -18599,7 +18675,9 @@ export interface components {
              * Recipe Path
              * @default []
              */
-            recipe_path: unknown[];
+            recipe_path: {
+                [key: string]: string;
+            }[][];
             /** Recipe Version Id */
             recipe_version_id?: string | null;
             /** Signed Quantity */
@@ -25890,6 +25968,37 @@ export interface operations {
             };
         };
     };
+    branch_recipe_readiness_api_v1_inventory_branches__branch_id__recipe_readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecipeReadinessResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_items_api_v1_inventory_categories_get: {
         parameters: {
             query?: {
@@ -27188,6 +27297,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ShiftReportResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_inventory_source_event_api_v1_inventory_source_events__event_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceEventRetryResponse"];
                 };
             };
             /** @description Validation Error */

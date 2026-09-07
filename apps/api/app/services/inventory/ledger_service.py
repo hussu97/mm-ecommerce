@@ -394,19 +394,20 @@ async def apply_stock_audit(
             ingredient_cost = inventory_service.inventory_item_cost_for_unit(
                 item, "ingredient"
             )
-        entry_unit = "ingredient" if is_opening_count else input_row.unit
+        # Both an opening balance and a count now SET the level (see
+        # inventory_service.post_transaction), so both post the *counted* quantity
+        # in the row's own unit and let the poster net it against the current
+        # level. Opening no longer pre-computes a delta — that only worked while
+        # OPENING_BALANCE added, and doubled the balance on any re-run.
+        entry_unit = input_row.unit
         transaction.items.append(
             InventoryTransactionItem(
                 item_id=item.id,
-                quantity=(
-                    result["normalised_delta_quantity"]
-                    if is_opening_count
-                    else input_row.counted_quantity
-                ),
+                quantity=input_row.counted_quantity,
                 unit=entry_unit,
                 conversion_factor=(
                     item.storage_to_ingredient_factor
-                    if input_row.unit == "storage" and not is_opening_count
+                    if input_row.unit == "storage"
                     else Decimal("1")
                 ),
                 unit_cost=inventory_service.ingredient_cost_for_unit(

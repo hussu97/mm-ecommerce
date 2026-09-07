@@ -109,28 +109,31 @@ async def accept_order(
     plan, warnings = await recipe_service.snapshot_order(db, order)
     if warnings:
         plan["warnings"] = warnings
+    # A missing recipe on ONE product or modifier must not suppress the rest of the
+    # order: the items that DO expand are frozen in ``plan["lines"]`` and posted
+    # now. The event stays PENDING (never the old dead-end EXCEPTION, which the
+    # sweeper skips) and carries ``missing_recipe`` so it stays recoverable — the
+    # sweeper and the retry endpoint re-snapshot it once the recipe is activated.
     event = InventorySourceEvent(
         branch_id=order.branch_id,
         source_type="order",
         source_id=str(order.id),
         source_revision=1,
         idempotency_key=key,
-        status=(
-            InventorySourceEventStatusEnum.EXCEPTION.value
-            if warnings
-            else InventorySourceEventStatusEnum.PENDING.value
-        ),
+        status=InventorySourceEventStatusEnum.PENDING.value,
         occurred_at=order.created_at,
         accepted_at=utcnow(),
         frozen_plan=plan,
         recipe_version_ids=plan.get("recipe_version_ids", []),
         error_code="missing_recipe" if warnings else None,
         error_detail="; ".join(warnings) if warnings else None,
-        processed_at=utcnow() if warnings else None,
+        processed_at=None,
     )
     db.add(event)
     await db.flush()
-    if not warnings:
+    # Post whatever expanded. When nothing expanded but a recipe is missing, leave
+    # it PENDING for re-snapshot rather than finalising an empty movement.
+    if plan.get("lines") or not warnings:
         await _post_or_record_exception(
             db, event=event, order=order, user=user, already_locked=True
         )
@@ -188,6 +191,12 @@ async def post_event(
 
     lines = event.frozen_plan.get("lines", [])
     if not lines:
+        if event.error_code == "missing_recipe":
+            # Nothing expanded because a recipe is missing. Do NOT finalise an
+            # empty movement — that would strand the order at zero consumption
+            # forever. Leave it PENDING so the sweeper/retry re-snapshots it once
+            # the recipe exists.
+            return None
         event.status = InventorySourceEventStatusEnum.POSTED.value
         event.processed_at = utcnow()
         await db.flush()
@@ -268,6 +277,52 @@ async def post_event(
     event.processed_at = utcnow()
     await db.flush()
     return posted
+
+
+async def retry_event(
+    db: AsyncSession,
+    *,
+    event: InventorySourceEvent,
+    order: Order,
+    user: User | None,
+    already_locked: bool = False,
+) -> InventoryTransaction | None:
+    """Re-snapshot a never-posted event so a recipe activated since acceptance lands.
+
+    A ``missing_recipe`` event freezes only the lines that expanded at acceptance;
+    the frozen plan never grows on its own. This re-runs ``snapshot_order`` against
+    the live recipe graph, replaces the (never-applied) frozen plan, and posts.
+    Guarded to events that have not posted a movement, so it can never double-count
+    what a partial acceptance already consumed.
+    """
+    if (
+        event.status == InventorySourceEventStatusEnum.POSTED.value
+        or event.transaction_id is not None
+    ):
+        raise ConflictError("This inventory event has already posted a movement")
+    if event.source_type != "order":
+        raise BadRequestError("Only an order event can be re-snapshotted")
+    if not already_locked:
+        await lock_branch_inventory(db, event.branch_id)
+
+    plan, warnings = await recipe_service.snapshot_order(db, order)
+    if warnings:
+        plan["warnings"] = warnings
+    # The plan was never applied (guarded above), so re-freezing it is safe.
+    event.frozen_plan = plan
+    event.recipe_version_ids = plan.get("recipe_version_ids", [])
+    event.error_code = "missing_recipe" if warnings else None
+    event.error_detail = "; ".join(warnings) if warnings else None
+    event.status = InventorySourceEventStatusEnum.PENDING.value
+    event.processed_at = None
+    await db.flush()
+
+    if not plan.get("lines"):
+        # A recipe is still missing everywhere; keep it recoverable.
+        return None
+    return await _post_or_record_exception(
+        db, event=event, order=order, user=user, already_locked=True
+    )
 
 
 async def record_order_cancellation(db: AsyncSession, order: Order) -> None:
@@ -619,13 +674,20 @@ async def sweep_pending_once() -> int:
                     event.error_detail = "Order no longer exists"
                     event.processed_at = utcnow()
                     continue
-                await _post_or_record_exception(
-                    db,
-                    event=event,
-                    order=order,
-                    user=None,
-                    already_locked=True,
-                )
+                if event.error_code == "missing_recipe":
+                    # Re-snapshot: a recipe may have been activated since this order
+                    # was accepted, and the frozen plan does not grow on its own.
+                    await retry_event(
+                        db, event=event, order=order, user=None, already_locked=True
+                    )
+                else:
+                    await _post_or_record_exception(
+                        db,
+                        event=event,
+                        order=order,
+                        user=None,
+                        already_locked=True,
+                    )
                 processed += 1
         # This worker owns the session and has no request dependency to commit
         # it after the service returns; one commit makes the swept batch durable.
