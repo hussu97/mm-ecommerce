@@ -220,18 +220,43 @@ jobs:
 
           echo "Rolling back to SHA: $TARGET_SHA"
 
-          if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
-            echo "Running alembic downgrade -1..."
-            timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic downgrade -1 < /dev/null \
-              || { echo "ERROR: Migration downgrade failed or timed out after 5 minutes"; exit 1; }
-          fi
-
           echo "Pulling pre-built image for $TARGET_SHA from GHCR..."
           docker pull ghcr.io/hussu97/mm-ecommerce-api:"$TARGET_SHA"
 
           echo "Tagging as :latest for compose..."
           docker tag ghcr.io/hussu97/mm-ecommerce-api:"$TARGET_SHA" \
                      ghcr.io/hussu97/mm-ecommerce-api:latest
+
+          # F-OPS-10: this used to run `alembic upgrade head` AFTER cutover,
+          # against the CURRENT checkout's migration files — which is not what
+          # the rolled-back ($TARGET_SHA) code was built against, and "upgrade
+          # head" on the wrong set of migrations is not a rollback of the
+          # schema at all. A rollback needs the database at the schema
+          # $TARGET_SHA's code actually expects, which means DOWNGRADING to
+          # that SHA's migration head, and doing it BEFORE cutover — the old
+          # code must never run for even a moment against a newer schema.
+          if [ "${{ inputs.run_migration_downgrade }}" = "true" ]; then
+            echo "Backing up the database before downgrading..."
+            timeout 600 bash scripts/backup-db.sh < /dev/null \
+              || { echo "ERROR: Pre-rollback backup failed — refusing to downgrade"; exit 1; }
+
+            echo "Resolving the migration head baked into the \$TARGET_SHA image..."
+            # Read it OUT OF THE IMAGE, not the runner's checkout: the
+            # migration files that matter are whichever ones $TARGET_SHA's
+            # alembic/versions/ contained, and the image just pulled is that
+            # exact snapshot. get_current_head() (not the `alembic heads` CLI
+            # text) fails loudly if the chain is somehow branched instead of
+            # silently downgrading to the wrong one of several heads.
+            TARGET_HEAD=$(docker compose -f docker-compose.prod.yml run --rm --no-deps -T api \
+              python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; c = Config('alembic.ini'); print(ScriptDirectory.from_config(c).get_current_head())" \
+              < /dev/null | tr -d '\r\n ')
+            if [ -z "$TARGET_HEAD" ]; then
+              echo "ERROR: could not resolve the migration head inside the \$TARGET_SHA image"; exit 1
+            fi
+            echo "Downgrading database to ${TARGET_HEAD} (the head at ${TARGET_SHA})..."
+            timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic downgrade "$TARGET_HEAD" < /dev/null \
+              || { echo "ERROR: Migration downgrade failed or timed out after 5 minutes"; exit 1; }
+          fi
 
           # Stay on the currently deployed compose (blue-green slots + cutover
           # helper). Checking out $TARGET_SHA would drop api-green on any SHA
@@ -241,13 +266,33 @@ jobs:
           echo "Cutting over idle slots onto the rolled-back image..."
           bash scripts/cutover-backend.sh < /dev/null
 
-          echo "Running migrations for rolled-back version..."
-          timeout 300 docker compose -f docker-compose.prod.yml run --rm --no-deps -T api alembic upgrade head < /dev/null \
-            || { echo "ERROR: Migration failed or timed out after 5 minutes"; exit 1; }
-
           echo "Rollback complete. Running: $TARGET_SHA"
           docker compose -f docker-compose.prod.yml ps < /dev/null
           SCRIPT
+
+      - name: Roll back web on Vercel
+        # Best-effort, not fatal: this SHA may not have touched web at all (no
+        # new Vercel deployment to roll back from), and the API/DB rollback
+        # above is the part that must not be skipped over a Vercel hiccup.
+        # `vercel rollback` with no argument rolls back to the immediately
+        # preceding production deployment for the bound project — the same
+        # "undo the last deploy" this workflow does for the API.
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_WEB_PROJECT_ID }}
+        run: |
+          npx vercel@latest pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+          npx vercel@latest rollback --yes --token=${{ secrets.VERCEL_TOKEN }} \
+            || echo "::warning::vercel rollback (web) failed or had nothing to roll back to"
+
+      - name: Roll back admin on Vercel
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_ADMIN_PROJECT_ID }}
+        run: |
+          npx vercel@latest pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+          npx vercel@latest rollback --yes --token=${{ secrets.VERCEL_TOKEN }} \
+            || echo "::warning::vercel rollback (admin) failed or had nothing to roll back to"
 
       - name: Cleanup SSH key
         if: always()

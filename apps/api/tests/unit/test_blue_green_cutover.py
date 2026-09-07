@@ -340,3 +340,73 @@ def test_pre_push_lints_before_pushing():
     assert "ruff format --check ." in text
     assert "pnpm --filter web lint" in text
     assert "pnpm --filter admin lint" in text
+
+
+def test_rollback_downgrades_to_the_target_shas_head_before_cutover():
+    """
+    F-OPS-10: rollback.yml used to run `alembic upgrade head` AFTER cutover,
+    against the RUNNER's checkout of alembic/versions — not the schema the
+    rolled-back ($TARGET_SHA) code was actually built against. A rollback has
+    to downgrade the database to that SHA's migration head, before cutover
+    swaps traffic onto the old code, not upgrade it to whatever the newest
+    migration happens to be.
+    """
+    text = ROLLBACK_YML.read_text()
+    assert not re.search(r"^[^#\n]*alembic upgrade head", text, re.M), (
+        "rollback.yml must not upgrade to head — it needs to downgrade to "
+        "$TARGET_SHA's head instead"
+    )
+    downgrade_at = text.find('alembic downgrade "$TARGET_HEAD"')
+    cutover_at = text.find("scripts/cutover-backend.sh")
+    assert downgrade_at != -1, "rollback.yml never downgrades to a resolved target head"
+    assert cutover_at != -1, "rollback.yml never calls cutover"
+    assert downgrade_at < cutover_at, (
+        "the downgrade must happen BEFORE cutover swaps traffic onto the old "
+        "image — the old code must never run against a newer schema"
+    )
+
+
+def test_rollback_resolves_the_target_head_from_the_pulled_image():
+    """
+    The migration head has to come from $TARGET_SHA's own alembic/versions —
+    baked into the image just pulled — not from `alembic heads` run against
+    the runner's checkout of the CURRENT branch, which is a different set of
+    migration files entirely once anything has shipped since $TARGET_SHA.
+    `get_current_head()` (not parsing `alembic heads` CLI text) also fails
+    loudly on a branched history instead of silently downgrading to the wrong
+    one of several heads.
+    """
+    text = ROLLBACK_YML.read_text()
+    assert "ScriptDirectory.from_config" in text
+    assert "get_current_head()" in text
+    assert "TARGET_HEAD=$(docker compose" in text
+
+
+def test_rollback_backs_up_before_downgrading():
+    """A downgrade can drop a column or table; back up first, same rule as
+    the forward deploy's pre-migration backup."""
+    text = ROLLBACK_YML.read_text()
+    backup_at = text.find("scripts/backup-db.sh")
+    downgrade_at = text.find('alembic downgrade "$TARGET_HEAD"')
+    assert backup_at != -1, "rollback.yml never backs up the database"
+    assert downgrade_at != -1
+    assert backup_at < downgrade_at, "backup must run before the downgrade"
+
+
+def test_rollback_rolls_back_web_and_admin_on_vercel():
+    """
+    F-OPS-10: the API/DB side rolling back while web/admin keep serving the
+    newer frontend is a half-finished rollback. Best-effort (`|| ::warning::`)
+    because $TARGET_SHA may not have touched either app, so there may be
+    nothing on Vercel to roll back to.
+    """
+    text = ROLLBACK_YML.read_text()
+    assert text.count("npx vercel@latest rollback") == 2, (
+        "expected one `vercel rollback` invocation for web and one for admin"
+    )
+    assert "VERCEL_WEB_PROJECT_ID" in text
+    assert "VERCEL_ADMIN_PROJECT_ID" in text
+    assert "::warning::" in text, (
+        "a failed vercel rollback must not fail the whole job — the API/DB "
+        "rollback above it is the part that must not be skipped"
+    )
