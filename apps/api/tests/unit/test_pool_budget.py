@@ -9,7 +9,7 @@ available to the app. The budget the audit fixed:
     api request pool     5 + 5 = 10   (this process's `engine`)
     scheduler pool       5 + 1 =  6   (this process's `scheduler_engine`)
     pos-api request pool 2 + 3 =  5   (the register, from compose)
-    green slot overlap        ~  2    (steady during a blue/green cutover)
+    warming colour overlap    ~  2    (its lazy pool during the handoff)
     a migration               ~  1
     ────────────────────────────────
     total                       24  ≤ 27
@@ -36,9 +36,9 @@ COMPOSE = pathlib.Path(__file__).parents[3].parent / "docker-compose.prod.yml"
 
 #: Postgres reserves this many connections for a superuser (superuser_reserved).
 _SUPERUSER_RESERVED = 3
-#: Steady-state allowance for the green slot's brief overlap during a cutover
-#: (its schedulers are off) plus a running migration. Documented, not measured —
-#: the audit's headroom line.
+#: Allowance for the warming colour's lazy connections during the brief
+#: cutover handoff (nginx routes to one colour at a time) plus a running
+#: migration. Documented, not measured — the audit's headroom line.
 _CUTOVER_AND_MIGRATION_RESERVE = 2 + 1
 
 
