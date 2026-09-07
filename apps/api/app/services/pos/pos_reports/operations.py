@@ -41,6 +41,16 @@ async def sales_predictions(
     """
     day_of_week = func.extract("dow", func.cast(Order.business_date, sa.Date))
 
+    # Only the last `lookback_weeks` of trading feeds the average. Before this the
+    # forecast averaged ALL of history — a year-old launch spike still dragging on
+    # today's Saturday — and `lookback_weeks` reached nothing but the confidence
+    # label, so it could not narrow the window it named. The date bound also lets
+    # the query ride the partial index `(branch_id, business_date) WHERE
+    # pos_status = 'closed'` (migration 205) instead of sequentially scanning
+    # every order on the table on each request.
+    today = business_day_service.shop_today()
+    cutoff = (today - timedelta(weeks=lookback_weeks)).isoformat()
+
     stmt = (
         select(
             day_of_week.label("dow"),
@@ -50,7 +60,7 @@ async def sales_predictions(
             func.count(Order.id),
         )
         .select_from(Order)
-        .where(Order.pos_status == CLOSED)
+        .where(Order.pos_status == CLOSED, Order.business_date >= cutoff)
         .group_by(day_of_week)
     )
     if branch_id:
@@ -71,7 +81,6 @@ async def sales_predictions(
             "avg_daily_orders": int((orders or 0) / day_count),
         }
 
-    today = business_day_service.shop_today()
     predictions = []
     for offset in range(1, days_ahead + 1):
         target = today + timedelta(days=offset)
