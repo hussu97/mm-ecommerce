@@ -135,6 +135,13 @@ async def resolve(
         if not link.modifier.is_active:
             continue
         for option in link.modifier.options:
+            # Live options only, exactly as `availability_service` counts them
+            # ("an option switched off in the catalogue is gone everywhere").
+            # Without this a customer could still pick an inactive option, and
+            # `resolve` would call a group with no live option sellable while
+            # `availability_service.blocking_groups` called it out of stock.
+            if not option.is_active:
+                continue
             catalogue[option.id] = (link, option)
 
     # Collapse repeats. A client may express "two Ferrero" either as a
@@ -157,6 +164,13 @@ async def resolve(
 
     resolved: list[ResolvedOption] = []
     for link in links:
+        # An inactive modifier is off the menu: `availability_service` skips it
+        # rather than counting it as a blocker, so its requirement is not
+        # enforced here either. Enforcing a required group whose modifier is
+        # inactive — nothing left to pick from — made the product impossible to
+        # order everywhere while the storefront still listed it as sellable.
+        if not link.modifier.is_active:
+            continue
         picks = by_link.get(link.id, [])
         name = link.modifier.name
         chosen = sum(quantity for _, quantity in picks)
