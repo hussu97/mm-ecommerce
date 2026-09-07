@@ -18,7 +18,7 @@ from fastapi import (
 from jose import JWTError
 from pydantic import BaseModel, Field
 from slowapi.util import get_remote_address
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from webauthn import (
     generate_authentication_options,
@@ -36,6 +36,7 @@ from webauthn.helpers.structs import (
 )
 
 from app.core.config import settings
+from app.core.database import AsyncSessionFactory
 from app.core.deps import (
     get_current_active_user,
     get_db,
@@ -124,7 +125,36 @@ def _clear_auth_cookies(response: Response) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
+async def _revoke_family(token_family: uuid.UUID) -> None:
+    """Revoke every refresh token in a family, on a session of its own.
+
+    Called from the reuse-detection path in `/refresh`, which raises immediately
+    afterwards — and `get_db` rolls the request session back on that raise. A
+    dedicated committed session (the `webhook_log_service.Recorder` /
+    `_stamp_last_seen` shape) is what makes the revocation outlive the 401 that
+    triggers it.
+    """
+    async with AsyncSessionFactory() as session:
+        await session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.token_family == token_family)
+            .values(is_revoked=True)
+        )
+        await session.commit()
+
+
+async def _make_token_response(
+    user: User,
+    db: AsyncSession,
+    *,
+    token_family: uuid.UUID | None = None,
+) -> TokenResponse:
+    """Mint an access token and a fresh refresh token for *user*.
+
+    A login (``token_family=None``) opens a new rotation family; a rotation in
+    ``/refresh`` passes the presented token's family so the whole lineage can be
+    tracked and, on replay of a spent token, revoked together.
+    """
     token = create_access_token(
         user_id=str(user.id),
         email=user.email,
@@ -141,6 +171,7 @@ async def _make_token_response(user: User, db: AsyncSession) -> TokenResponse:
         token_hash=refresh_hash,
         expires_at=expires_at,
         is_revoked=False,
+        token_family=token_family or uuid.uuid4(),
     )
     db.add(rt)
     await db.flush()
@@ -926,7 +957,33 @@ async def reset_password(
     if not user or not user.is_active:
         raise BadRequestError("Invalid reset token")
 
+    # Single use. A reset token is valid until its `exp`, so without this the
+    # same token could reset the password repeatedly inside that window. Once a
+    # reset lands it stamps `password_changed_at` to now; a token issued at or
+    # before that instant is spent. This also invalidates any *other* reset token
+    # (or session) minted before this change.
+    now = datetime.now(timezone.utc)
+    iat = payload.get("iat")
+    issued_at = (
+        datetime.fromtimestamp(int(iat), tz=timezone.utc) if iat is not None else None
+    )
+    if (
+        user.password_changed_at is not None
+        and issued_at is not None
+        and issued_at <= user.password_changed_at
+    ):
+        raise BadRequestError("Invalid or expired reset token")
+
     user.hashed_password = hash_password(body.new_password)
+    # Ends every session that predates the change: stamps the cut-off the access
+    # tokens are checked against, and revokes every refresh token outright so a
+    # stolen session cannot be rotated forward past the reset.
+    user.password_changed_at = now
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id)
+        .values(is_revoked=True)
+    )
     await db.flush()
 
     return {"message": "Password updated successfully"}
@@ -963,10 +1020,31 @@ async def refresh_token(
     )
     rt = result.scalar_one_or_none()
 
-    if not rt or rt.is_revoked or rt.expires_at < datetime.now(timezone.utc):
+    if not rt:
         raise UnauthorizedError("Invalid or expired refresh token")
 
-    # Revoke old token (rotation)
+    if rt.is_revoked:
+        # Reuse detection. A refresh token is single-use: rotation revokes it the
+        # instant it is spent. Seeing a revoked one presented again is the
+        # signature of a stolen token being replayed — the legitimate client and
+        # the thief cannot both hold a *live* token in the same family, so one of
+        # them is using a spent one. We cannot tell which, so we end the whole
+        # family: every session descended from that original login is revoked,
+        # forcing a fresh sign-in that the thief cannot complete.
+        #
+        # On its own committed session, because this request is about to 401 and
+        # `get_db` rolls the request session back on the raise — the revocation
+        # is exactly the side-write that must survive that rollback (CLAUDE.md
+        # rule 2), or the replay would revoke nothing.
+        if rt.token_family is not None:
+            await _revoke_family(rt.token_family)
+        raise UnauthorizedError("Invalid or expired refresh token")
+
+    if rt.expires_at < datetime.now(timezone.utc):
+        raise UnauthorizedError("Invalid or expired refresh token")
+
+    # Rotation: revoke the presented token and mint its successor in the same
+    # family, so a later replay of this now-spent token trips the branch above.
     rt.is_revoked = True
 
     user_result = await db.execute(select(User).where(User.id == rt.user_id))
@@ -974,7 +1052,7 @@ async def refresh_token(
     if not user or not user.is_active:
         raise UnauthorizedError("User not found or inactive")
 
-    token_resp = await _make_token_response(user, db)
+    token_resp = await _make_token_response(user, db, token_family=rt.token_family)
     _set_auth_cookies(response, token_resp.access_token, token_resp.refresh_token)
     return token_resp
 

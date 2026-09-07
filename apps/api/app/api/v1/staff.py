@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, get_db
@@ -18,6 +19,7 @@ from app.core.exceptions import (
 )
 from app.core.limiter import limiter
 from app.core.permissions import assert_no_escalation, require
+from app.core.request_ip import client_ip
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models import (
     ALL_PERMISSIONS,
@@ -27,6 +29,7 @@ from app.models import (
     Role,
     UserBranch,
 )
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.pos import (
     PermissionCatalogue,
@@ -528,6 +531,17 @@ async def deactivate_staff(
     user = await crud_service.get_or_404(db, User, user_id)
     user.is_active = False
     user.pin_hash = None
+    # Ending the account must end its live sessions, not just bar new sign-ins.
+    # Revoke every refresh token so none can be rotated forward, and stamp the
+    # password cut-off so the stateless access tokens are refused too (see
+    # `deps._issued_before_password_change`) rather than lasting out their
+    # remaining minutes on any route that reads `get_current_user`.
+    user.password_changed_at = datetime.now(timezone.utc)
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id)
+        .values(is_revoked=True)
+    )
     await db.flush()
     await audit_service.log_action(
         db,
@@ -564,8 +578,31 @@ def _match_pin(
     return None
 
 
+def _pin_login_rate_key(request: Request) -> str:
+    """Rate-limit key for PIN sign-in: the branch being signed into *and* the
+    caller's real IP.
+
+    Keyed on the pair, not the IP alone. A PIN scoped to one branch is a few
+    thousand guesses against that shop's staff; a per-(branch, IP) bucket caps an
+    attacker's rate against any one branch without letting one till's fumbles at a
+    branch starve another branch that happens to share an egress IP. The branch id
+    is read from the already-parsed request body — FastAPI has resolved the body
+    param before this limiter key runs, so `request._body` is populated — and
+    falls back to IP-only if it cannot be read.
+    """
+    ip = client_ip(request) or "unknown"
+    branch = ""
+    body = getattr(request, "_body", None)
+    if body:
+        try:
+            branch = str(json.loads(body).get("branch_id", "") or "")
+        except (ValueError, AttributeError):
+            branch = ""
+    return f"{ip}:{branch}"
+
+
 @router.post("/pin-login", response_model=PinLoginResponse)
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=_pin_login_rate_key)
 async def pin_login(
     request: Request,
     data: PinLoginRequest,

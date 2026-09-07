@@ -48,7 +48,8 @@ def create_access_token(
     is_guest: bool = False,
     expires_delta: timedelta | None = None,
 ) -> str:
-    expire = datetime.now(timezone.utc) + (
+    issued_at = datetime.now(timezone.utc)
+    expire = issued_at + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     payload = {
@@ -57,19 +58,28 @@ def create_access_token(
         "is_admin": is_admin,
         "is_guest": is_guest,
         "type": "access",
+        # Stamped so a session cut off by a password change or a deactivation can
+        # be told from one issued afterwards: `deps._get_user_from_token` refuses
+        # any access token whose `iat` predates the user's `password_changed_at`.
+        # Access tokens are otherwise stateless and cannot be revoked before exp.
+        "iat": issued_at,
         "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_password_reset_token(user_id: str, email: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES
-    )
+    issued_at = datetime.now(timezone.utc)
+    expire = issued_at + timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
         "email": email,
         "type": "reset",
+        # A reset token is single-use through this stamp: `reset_password` refuses
+        # a token whose `iat` is at or before the user's `password_changed_at`, so
+        # once the reset lands (which sets `password_changed_at` to now) the same
+        # token can never drive a second change.
+        "iat": issued_at,
         "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)

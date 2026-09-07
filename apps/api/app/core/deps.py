@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "get_admin_user",
     "get_current_active_user",
+    "get_current_staff_user",
     "get_current_user",
     "get_db",
     "get_db_lazy",
@@ -149,7 +151,32 @@ async def _get_user_from_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+    if user is not None and _issued_before_password_change(payload, user):
+        # The password was changed after this token was minted (a reset, a staff
+        # password edit). Access tokens are stateless and cannot be revoked one
+        # by one before they expire, so this is how such a change actually ends
+        # the sessions it should: any token older than `password_changed_at` is
+        # refused. A token that carries no `iat` at all (issued before that claim
+        # existed) is treated as older than any change, so it is refused too once
+        # the password has moved on.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session ended — please sign in again",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     return user
+
+
+def _issued_before_password_change(payload: dict, user: User) -> bool:
+    """Whether *payload*'s `iat` predates the user's last password change."""
+    changed_at = getattr(user, "password_changed_at", None)
+    if changed_at is None:
+        return False
+    iat = payload.get("iat")
+    if iat is None:
+        return True
+    issued_at = datetime.fromtimestamp(int(iat), tz=timezone.utc)
+    return issued_at < changed_at
 
 
 async def get_current_user(
@@ -181,6 +208,27 @@ async def get_current_active_user(
     if getattr(request.app.state, "is_pos_app", False) and not (
         current_user.is_staff or current_user.is_admin
     ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Staff access required",
+        )
+    return current_user
+
+
+async def get_current_staff_user(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """Any staff member or admin — but never a customer.
+
+    For reads that every staff role legitimately reaches by a different door (the
+    branch list feeds order filters, inventory, reports, the dashboard, the
+    register) so no single permission slug fits, yet a plain storefront
+    customer's token must not. `get_current_active_user` alone admits a customer
+    on the storefront host, because the staff check there is only applied on the
+    POS app; this closes that door on both apps without guessing which of a
+    dozen role permissions the caller happens to hold.
+    """
+    if not (current_user.is_staff or current_user.is_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Staff access required",

@@ -25,6 +25,16 @@ class User(Base, UUIDMixin, TimestampMixin):
         String(255), unique=True, nullable=False, index=True
     )
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: When the password was last changed (reset flow, or a staff password edit).
+    #: Every access and reset token carries an `iat`; a token whose `iat` predates
+    #: this instant is refused, which is how a password reset or a staff password
+    #: change immediately invalidates sessions that stateless access tokens could
+    #: otherwise keep alive for their full lifetime, and how a reset token becomes
+    #: single-use. NULL means the password has never been changed since this
+    #: column existed — the common case, and one no `iat` can predate.
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     #: When this number was last proved to belong to whoever typed it, via a
     #: Firebase OTP. NULL means never — which is every account that predates

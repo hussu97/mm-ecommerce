@@ -25,6 +25,17 @@ class RefreshToken(UUIDMixin, Base):
         nullable=False,
         index=True,
     )
+    #: The rotation lineage this token belongs to. Every token minted from the
+    #: same original login shares one family id; a rotation carries it forward.
+    #: When a token that has already been rotated away (is_revoked) is presented
+    #: again — the fingerprint of a stolen, replayed token — the whole family is
+    #: revoked at once, so a thief who used a captured token cannot keep a live
+    #: session. NULL only on rows minted before this column existed.
+    token_family: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        index=True,
+    )
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
