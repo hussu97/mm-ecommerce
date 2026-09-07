@@ -547,6 +547,9 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         and delivery.courier_status not in FAILED_COURIER_STATUSES
     ):
         # Already out with someone. Re-booking would put two drivers on one cake.
+        # Defence-in-depth: the central guard in `courier_service._dispatch_once`
+        # now stops every courier here before this is reached, so on the ordinary
+        # path this is redundant — kept for a direct caller of `dispatch_order`.
         return delivery
     if not is_enabled():
         delivery.last_error = "Courier is not configured; dispatch this order by hand"

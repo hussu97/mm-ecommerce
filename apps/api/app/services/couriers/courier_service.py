@@ -50,7 +50,7 @@ from app.core import trading_hours
 from app.core.alerting import capture_issue
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
-from app.models.order_delivery import OrderDelivery
+from app.models.order_delivery import OrderDelivery, is_failed
 from app.services import branch_hours_service
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
 
@@ -276,7 +276,9 @@ def _is_sharjah_ground(zone_name: str | None, city: str | None) -> bool:
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 
-async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
+async def dispatch(
+    db: AsyncSession, order: Order, *, lock: bool = True
+) -> OrderDelivery | None:
     """
     Send one order out, on whichever courier its zone named.
 
@@ -290,12 +292,44 @@ async def dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
     applied here, once, on the way out — so a rung cannot be skipped by whichever
     of the two providers happened to answer, and the noon Send → Lalamove
     fallback counts as the single attempt it is rather than two.
+
+    **And the one place that serialises two dispatches of the same order.** The
+    row is read `FOR UPDATE` (F-COU-3): the admin Dispatch button took no lock,
+    so two admins — or an admin and the retry sweep — could each read an unbooked
+    row and each book a courier for one cake. Held against a concurrent caller,
+    the second waits, re-reads the row the first one booked, and the already-booked
+    guard in `_dispatch_once` returns it untouched. `lock=False` is the opt-out
+    for a caller that must not take the lock here: `retry_failed_dispatches`
+    already holds one on this row and has in-memory writes a refresh would undo,
+    and the `packed` consequence re-enters with the row already loaded.
     """
-    delivery = await lalamove_service.get_delivery(db, order.id)
+    delivery = await _delivery_for_dispatch(db, order.id, lock=lock)
     if delivery is None or not books_itself(delivery.provider):
         return delivery
 
     return await _record_outcome(db, order, await _dispatch_once(db, order, delivery))
+
+
+async def _delivery_for_dispatch(
+    db: AsyncSession, order_id: uuid.UUID, *, lock: bool
+) -> OrderDelivery | None:
+    """
+    This order's delivery row, optionally held against a concurrent dispatch.
+
+    `FOR UPDATE` is what makes two dispatches of one order safe (F-COU-3): the
+    second waits until the first commits, then reads the booked row rather than
+    an unbooked snapshot of it. `populate_existing` because the row is usually
+    already in the session's identity map — from `record_order_delivery` at
+    checkout or the order load a moment earlier — and a lock that returned those
+    stale attributes would defeat the re-check it exists for. It mirrors the
+    pattern `fulfilment_reassignment._locked` and the inventory services use.
+    """
+    statement = select(OrderDelivery).where(OrderDelivery.order_id == order_id)
+    if lock:
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    return (await db.execute(statement)).scalars().first()
 
 
 def _note_auto_fallback(
@@ -346,6 +380,21 @@ async def _dispatch_once(
     db: AsyncSession, order: Order, delivery: OrderDelivery
 ) -> OrderDelivery | None:
     """One attempt, on whichever courier ends up carrying it."""
+    # The one already-booked guard, for every courier (F-COU-1). A successful
+    # booking stamps the order `packed`, whose consequence re-enters `dispatch`,
+    # so the happy path arrives here a second time on a row that already has a
+    # courier — and without this every noon Send and Slider order booked twice,
+    # a second driver to one cake. (Lalamove alone was safe, by the local copy of
+    # this check in `lalamove_service.dispatch_order`.) A *failed* booking is not
+    # a booking: the row keeps a `courier_order_id` from an earlier attempt only
+    # when that attempt was not terminal-and-failed, so a re-dispatch of a
+    # rejected order still gets through. Read `FOR UPDATE` in `dispatch`, this is
+    # also where the second of two racing dispatches turns back.
+    if delivery.courier_order_id and not is_failed(
+        delivery.provider, delivery.courier_status
+    ):
+        return delivery
+
     # Cleared before the attempt, so a re-dispatch that now succeeds on the
     # zone's own courier leaves no stale "fell back" note behind. Set again below
     # only if this attempt actually falls back.
@@ -594,7 +643,11 @@ async def retry_failed_dispatches(db: AsyncSession, *, limit: int = 20) -> list:
         # same order up on the next tick.
         delivery.next_attempt_at = None
         try:
-            await dispatch(db, order)
+            # `lock=False`: the sweep already selected this row `FOR UPDATE
+            # SKIP LOCKED` above and has just cleared `next_attempt_at` in
+            # memory. A second `FOR UPDATE` here would refresh the row and undo
+            # that clear before the failure path could rewrite it.
+            await dispatch(db, order, lock=False)
         except Exception:  # pragma: no cover — defensive
             logger.exception(
                 "Retry for order %s blew up; it will be left for a human",
