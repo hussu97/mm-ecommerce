@@ -77,6 +77,30 @@ export function useOrderPreview({
   const [preview, setPreview] = useState<OrderPreview | null>(null);
 
   /**
+   * The subset of inputs that make the figures on screen wrong, not merely
+   * stale.
+   *
+   * Every input here refetches, but only these three make the *current*
+   * `preview` unsafe to keep showing while the refetch is in flight: moving
+   * the pin or switching delivery/pickup changes which fee — or whether
+   * there is one — is being priced, so the total already on screen belongs
+   * to a different order. `address` and the promo/identity fields are typed
+   * and re-priced too, but the old total stays a reasonable placeholder for
+   * them while the debounce runs (see the module docstring). Cleared here,
+   * synchronously during render, rather than from an effect: an effect runs
+   * after the browser has already painted the stale total next to a pressable
+   * button, and the debounce means that paint could last 400ms. This is
+   * React's own "adjusting state when a prop changes" pattern — a ref cannot
+   * be read during render, so the last-seen key is state too.
+   */
+  const invalidatingKey = JSON.stringify([deliveryMethod, latitude, longitude]);
+  const [lastInvalidatingKey, setLastInvalidatingKey] = useState(invalidatingKey);
+  if (lastInvalidatingKey !== invalidatingKey) {
+    setLastInvalidatingKey(invalidatingKey);
+    if (preview !== null) setPreview(null);
+  }
+
+  /**
    * Everything this preview would be asked for, as one comparable value.
    *
    * `pricing` is derived from it rather than flipped on by the effect: a hook
