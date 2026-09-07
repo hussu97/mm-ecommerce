@@ -245,10 +245,11 @@ async def create_custom_order(
     )
     await audit_service.log_action(
         db,
-        user=admin,
-        action="create",
+        admin=admin,
+        action="CREATE",
         entity_type="custom_order",
         entity_id=str(custom_order.id),
+        entity_label=f"{custom_order.customer_name} — {custom_order.due_date.isoformat()}",
         changes={"due_date": data.due_date.isoformat(), "source": data.source},
         request=request,
     )
@@ -310,10 +311,11 @@ async def update_custom_order(
 
     await audit_service.log_action(
         db,
-        user=admin,
-        action="update",
+        admin=admin,
+        action="UPDATE",
         entity_type="custom_order",
         entity_id=str(custom_order.id),
+        entity_label=f"{custom_order.customer_name} — {custom_order.due_date.isoformat()}",
         changes=data.model_dump(exclude_unset=True, mode="json"),
         request=request,
     )
@@ -333,10 +335,11 @@ async def update_status(
     )
     await audit_service.log_action(
         db,
-        user=admin,
-        action="update",
+        admin=admin,
+        action="UPDATE",
         entity_type="custom_order",
         entity_id=str(custom_order_id),
+        entity_label=f"{custom_order.customer_name} — {data.status}",
         changes={"status": data.status},
         request=request,
     )
