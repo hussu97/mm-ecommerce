@@ -321,6 +321,51 @@ class TestCategoryScope:
         assert added[0].order_item_id == cookie.id
 
 
+class TestUnscopedAutoApplyIsRefused:
+    """
+    An auto-apply promotion with no `sources` would discount every channel — the
+    counter, the website AND every marketplace. The API refuses to create one,
+    and the evaluator skips any that slipped in before the guard (F-POS-9).
+    """
+
+    async def test_create_schema_rejects_auto_apply_with_no_sources(self):
+        from pydantic import ValidationError
+
+        from app.api.v1.marketing import PromotionCreate
+
+        with pytest.raises(ValidationError, match="sources"):
+            PromotionCreate(
+                name="Everywhere 15%",
+                reward="percentage_off_order",
+                reward_value=Decimal("15"),
+                trigger="spend",
+                auto_apply=True,
+                sources=[],  # the hole
+            )
+
+    async def test_create_schema_accepts_auto_apply_with_a_source(self):
+        from app.api.v1.marketing import PromotionCreate
+
+        promo = PromotionCreate(
+            name="Counter 15%",
+            reward="percentage_off_order",
+            reward_value=Decimal("15"),
+            trigger="spend",
+            auto_apply=True,
+            sources=["cashier"],
+        )
+        assert promo.sources == ["cashier"]
+
+    async def test_candidates_skips_an_unscoped_auto_promotion(self):
+        # A row written before the guard: auto_apply on, sources empty.
+        order = _order(source="cashier")
+        unscoped = _promo(sources=[])
+        await auto_promotion_service.sync_auto_discounts(_db([unscoped]), order)
+        assert _auto_discounts(order) == [], (
+            "an unscoped auto promotion discounted an order it must not"
+        )
+
+
 class TestThroughRecalculate:
     """
     The whole path: `recalculate` runs the sync, then prices the order, and the

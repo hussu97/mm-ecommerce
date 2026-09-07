@@ -35,6 +35,7 @@ Two invariants it respects, both inherited from how `recalculate` prices:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from decimal import Decimal
 
@@ -50,6 +51,8 @@ from app.models.pos_order import (
 )
 from app.models.product import Product
 from app.services.pos import business_day_service
+
+logger = logging.getLogger(__name__)
 
 #: The rewards an auto-apply promotion may carry. Both reduce to one order-level
 #: `OrderDiscount` the engine can add unattended; a product-scoped or free-item
@@ -152,6 +155,20 @@ async def _candidates(
     out: list[Promotion] = []
     for promo in rows:
         if promo.reward not in _AUTO_REWARDS:
+            continue
+        # An auto-apply promotion with no channel scope would apply to every
+        # channel — the counter, the website AND every marketplace. That is a
+        # scope-by-data hole the API now refuses to create, but a row written
+        # before the guard (or straight to the table) must not be honoured: an
+        # unscoped auto promotion is skipped here rather than discounting orders
+        # nobody meant it to touch.
+        if not promo.sources:
+            logger.warning(
+                "Skipping unscoped auto-apply promotion %s (%s): auto_apply "
+                "with no sources would discount every channel",
+                promo.id,
+                promo.name,
+            )
             continue
         # Order-level rewards are unconditional-by-spend only; a quantity trigger
         # counts specific products and has no meaning for a whole-order discount.

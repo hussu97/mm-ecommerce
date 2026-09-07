@@ -174,6 +174,17 @@ class PromotionCreate(ScheduleFields):
                 "auto_apply is only allowed on an order-level reward "
                 "(percentage_off_order or fixed_off_order) with a spend trigger"
             )
+        # An auto-apply promotion with no `sources` is scoped to every channel,
+        # so the standing "15% off counter orders" would silently discount the
+        # website and every marketplace too. Auto-apply is a discount the engine
+        # puts on unattended, so it MUST name the channels it fires on — a scope
+        # by data, not by hope. An ordinary (cashier-invoked) promotion may still
+        # leave `sources` empty; only the unattended ones are pinned down.
+        if self.auto_apply and not self.sources:
+            raise ValueError(
+                "auto_apply needs an explicit sources scope (e.g. ['cashier']) — "
+                "an unscoped auto-apply promotion would discount every channel"
+            )
         return self
 
 
@@ -220,6 +231,14 @@ class PromotionUpdate(BaseModel):
                 )
             if self.trigger is not None and self.trigger != "spend":
                 raise ValueError("auto_apply needs a spend trigger")
+            # If this payload turns auto_apply on and also names the sources, an
+            # empty list is refused — same rule as create. A payload that sets
+            # auto_apply without touching sources is left to `_candidates`, which
+            # skips an unscoped auto promotion at apply time.
+            if self.sources is not None and not self.sources:
+                raise ValueError(
+                    "auto_apply needs an explicit sources scope (e.g. ['cashier'])"
+                )
         return self
 
 
