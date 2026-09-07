@@ -53,8 +53,55 @@ async def lock_branch_inventory(db: AsyncSession, branch_id: uuid.UUID) -> None:
     )
 
 
+def bump_inventory_revision(order: Order) -> int:
+    """Advance an order's consumption revision after its billable lines change.
+
+    The source event's idempotency key carries this number, so bumping it is what
+    lets a post-close edit be re-consumed (F-INV-10): the next `accept_order`
+    sees a fresh key instead of short-circuiting on the stale revision-1 event.
+    Callers must pair the bump with `reconsume_order`, which reverses the prior
+    revision's movement before posting the new one.
+    """
+    order.inventory_revision = (order.inventory_revision or 1) + 1
+    return order.inventory_revision
+
+
+def _warn_if_edited_after_acceptance(
+    order: Order, event: InventorySourceEvent
+) -> None:
+    """Flag a posted consumption whose order was edited afterwards (F-INV-10).
+
+    The idempotency short-circuit returns the existing event untouched. If the
+    order has been modified since that event was accepted and nothing bumped the
+    revision, the edit was never re-consumed — the stock movement no longer
+    matches the bill. Left as a WARN rather than a silent short-circuit so the
+    gap is visible until a billable-line edit path calls `reconsume_order`.
+    """
+    updated = getattr(order, "updated_at", None)
+    if (
+        event.status == InventorySourceEventStatusEnum.POSTED.value
+        and updated is not None
+        and event.accepted_at is not None
+        and updated > event.accepted_at
+    ):
+        logger.warning(
+            "Order %s was edited after its inventory was consumed at revision %s "
+            "(updated_at %s > accepted_at %s) but consumption was not re-run. "
+            "TODO(F-INV-10): the billable-line edit path must bump "
+            "inventory_revision and call reconsume_order to reverse and re-post.",
+            order.id,
+            event.source_revision,
+            updated,
+            event.accepted_at,
+        )
+
+
 async def accept_order(
-    db: AsyncSession, *, order: Order, user: User | None
+    db: AsyncSession,
+    *,
+    order: Order,
+    user: User | None,
+    correction_group_id: uuid.UUID | None = None,
 ) -> InventorySourceEvent | None:
     if order.branch_id is None:
         return None
@@ -76,7 +123,12 @@ async def accept_order(
     ):
         return None
 
-    key = f"order:{order.id}:1"
+    # The revision is the order's consumption counter, not a hardcoded 1: a
+    # re-consumption after a billable edit (F-INV-10) carries a higher revision,
+    # so its key is distinct and the poster does not short-circuit on the stale
+    # first event.
+    revision = order.inventory_revision or 1
+    key = f"order:{order.id}:{revision}"
     existing = (
         (
             await db.execute(
@@ -89,6 +141,7 @@ async def accept_order(
         .one_or_none()
     )
     if existing is not None:
+        _warn_if_edited_after_acceptance(order, existing)
         return existing
 
     await lock_branch_inventory(db, order.branch_id)
@@ -106,6 +159,7 @@ async def accept_order(
         .one_or_none()
     )
     if existing is not None:
+        _warn_if_edited_after_acceptance(order, existing)
         return existing
 
     plan, warnings = await recipe_service.snapshot_order(db, order)
@@ -127,7 +181,7 @@ async def accept_order(
         branch_id=order.branch_id,
         source_type="order",
         source_id=str(order.id),
-        source_revision=1,
+        source_revision=revision,
         idempotency_key=key,
         status=InventorySourceEventStatusEnum.PENDING.value,
         occurred_at=order.created_at,
@@ -144,7 +198,12 @@ async def accept_order(
     # it PENDING for re-snapshot rather than finalising an empty movement.
     if plan.get("lines") or not warnings:
         await _post_or_record_exception(
-            db, event=event, order=order, user=user, already_locked=True
+            db,
+            event=event,
+            order=order,
+            user=user,
+            already_locked=True,
+            correction_group_id=correction_group_id,
         )
     return event
 
@@ -156,6 +215,7 @@ async def _post_or_record_exception(
     order: Order,
     user: User | None,
     already_locked: bool,
+    correction_group_id: uuid.UUID | None = None,
 ) -> InventoryTransaction | None:
     """Post atomically, preserving a sequenced no-movement domain failure."""
     try:
@@ -166,6 +226,7 @@ async def _post_or_record_exception(
                 order=order,
                 user=user,
                 already_locked=already_locked,
+                correction_group_id=correction_group_id,
             )
     except AppError as exc:
         # The savepoint undoes every level/transaction mutation. Refresh the
@@ -187,6 +248,7 @@ async def post_event(
     order: Order,
     user: User | None,
     already_locked: bool = False,
+    correction_group_id: uuid.UUID | None = None,
 ) -> InventoryTransaction | None:
     if event.status == InventorySourceEventStatusEnum.POSTED.value:
         return await db.get(InventoryTransaction, event.transaction_id)
@@ -236,6 +298,9 @@ async def post_event(
         idempotency_key=f"inventory-event:{event.id}",
         source_type=event.source_type,
         source_id=event.source_id,
+        # Set when this consumption is the fresh half of a re-consumption, so the
+        # reversal of the prior revision and this posting are one audit group.
+        correction_group_id=correction_group_id,
         notes=f"Frozen recipe consumption for {order.order_number}",
         items=[],
     )
@@ -331,6 +396,67 @@ async def retry_event(
         return None
     return await _post_or_record_exception(
         db, event=event, order=order, user=user, already_locked=True
+    )
+
+
+async def reconsume_order(
+    db: AsyncSession, *, order: Order, user: User
+) -> InventorySourceEvent | None:
+    """Re-run sales consumption after a post-close billable-line edit (F-INV-10).
+
+    The contract is two steps: the edit path calls ``bump_inventory_revision``
+    when it changes the billable lines, then this. The idempotency key carries
+    the order's ``inventory_revision``, so this reverses the last movement posted
+    at a *lower* revision and posts a fresh consumption for the current one. The
+    reversal and the fresh posting share one ``correction_group_id`` so the pair
+    reads as a single correction in the ledger.
+
+    Idempotent: a retry finds the prior reversal already recorded (returned
+    unchanged by the ledger) and the current revision's event already posted, so
+    no movement is issued twice. If nothing was ever consumed this is simply the
+    first consumption; if the counter was not bumped it is a safe no-op.
+    """
+    if order.branch_id is None:
+        return None
+    # Deferred import: `ledger_service` imports this module for the branch lock.
+    from app.services.inventory import ledger_service
+
+    await lock_branch_inventory(db, order.branch_id)
+
+    revision = order.inventory_revision or 1
+    prior = (
+        (
+            await db.execute(
+                select(InventorySourceEvent)
+                .where(
+                    InventorySourceEvent.source_type == "order",
+                    InventorySourceEvent.source_id == str(order.id),
+                    InventorySourceEvent.source_revision < revision,
+                    InventorySourceEvent.status
+                    == InventorySourceEventStatusEnum.POSTED.value,
+                    InventorySourceEvent.transaction_id.isnot(None),
+                )
+                .order_by(InventorySourceEvent.source_revision.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+    correction_group_id: uuid.UUID | None = None
+    if prior is not None and prior.transaction_id is not None:
+        # Idempotent in the ledger: a second call returns the same reversal
+        # rather than reversing twice.
+        reversal = await ledger_service.reverse_transaction(
+            db,
+            transaction_id=prior.transaction_id,
+            user=user,
+            reason=f"Re-consumption of order {order.order_number}",
+        )
+        correction_group_id = reversal.correction_group_id
+
+    return await accept_order(
+        db, order=order, user=user, correction_group_id=correction_group_id
     )
 
 

@@ -491,6 +491,13 @@ class Order(Base, UUIDMixin, TimestampMixin):
     check_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     guests: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     kitchen_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Sales-consumption revision (F-INV-10). The inventory source event's
+    #: idempotency key carries this; a post-close billable-line edit bumps it
+    #: (`source_event_service.bump_inventory_revision`) so the movement can be
+    #: reversed and re-posted instead of short-circuiting on the stale event.
+    inventory_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
 
     creator_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
