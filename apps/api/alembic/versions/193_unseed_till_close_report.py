@@ -24,13 +24,34 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # shift_inventory_reports.template_id references this row ON DELETE RESTRICT,
+    # so a plain DELETE aborts the whole deploy half-applied the moment a till has
+    # closed against the seeded template. Deactivate any referenced seed (it stops
+    # being offered at close, same practical effect as removing it) and delete only
+    # the untouched ones. Same guarded shape as 192's downgrade.
     op.execute(
         """
-        DELETE FROM inventory_report_templates
-         WHERE name = 'End-of-shift finished goods count'
-           AND report_type = 'finished_goods'
-           AND cadence = 'per_till'
-           AND version_number = 1
+        UPDATE inventory_report_templates t
+           SET is_active = false
+         WHERE t.name = 'End-of-shift finished goods count'
+           AND t.report_type = 'finished_goods'
+           AND t.cadence = 'per_till'
+           AND t.version_number = 1
+           AND EXISTS (
+               SELECT 1 FROM shift_inventory_reports r WHERE r.template_id = t.id
+           )
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM inventory_report_templates t
+         WHERE t.name = 'End-of-shift finished goods count'
+           AND t.report_type = 'finished_goods'
+           AND t.cadence = 'per_till'
+           AND t.version_number = 1
+           AND NOT EXISTS (
+               SELECT 1 FROM shift_inventory_reports r WHERE r.template_id = t.id
+           )
         """
     )
 

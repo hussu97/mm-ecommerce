@@ -103,12 +103,32 @@ def downgrade() -> None:
     # Remove only what this seed creates — the named, seeded template and (by
     # cascade) its items. A template an operator has since edited keeps its
     # revised name and is left alone.
+    #
+    # But shift_inventory_reports.template_id references it ON DELETE RESTRICT, so a
+    # DELETE aborts the downgrade the moment a till has closed against the seed.
+    # Deactivate any referenced seed and delete only the untouched ones.
     op.execute(
         """
-        DELETE FROM inventory_report_templates
-         WHERE name = 'End-of-shift finished goods count'
-           AND report_type = 'finished_goods'
-           AND cadence = 'per_till'
-           AND version_number = 1
+        UPDATE inventory_report_templates t
+           SET is_active = false
+         WHERE t.name = 'End-of-shift finished goods count'
+           AND t.report_type = 'finished_goods'
+           AND t.cadence = 'per_till'
+           AND t.version_number = 1
+           AND EXISTS (
+               SELECT 1 FROM shift_inventory_reports r WHERE r.template_id = t.id
+           )
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM inventory_report_templates t
+         WHERE t.name = 'End-of-shift finished goods count'
+           AND t.report_type = 'finished_goods'
+           AND t.cadence = 'per_till'
+           AND t.version_number = 1
+           AND NOT EXISTS (
+               SELECT 1 FROM shift_inventory_reports r WHERE r.template_id = t.id
+           )
         """
     )
