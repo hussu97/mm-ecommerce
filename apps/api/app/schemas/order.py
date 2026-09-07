@@ -88,6 +88,13 @@ class OrderCreate(BaseModel):
     notes: str | None = None
     # Guest checkout: identify which cart to convert
     session_id: str | None = None
+    #: The storefront's idempotency key for this checkout attempt — a UUID minted
+    #: client-side, the same value across every retry of the same attempt. When a
+    #: `POST /orders` times out the browser cannot tell a lost request from a lost
+    #: response, so it replays this id; a repeat with an id already on an order
+    #: returns that order instead of writing a second one (F-WEB-5). Optional: a
+    #: client that sends none simply gets the old non-idempotent behaviour.
+    client_request_id: UUID | None = None
 
     @field_validator("email", mode="after")
     @classmethod

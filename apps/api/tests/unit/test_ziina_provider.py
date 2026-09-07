@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import uuid
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -215,6 +216,7 @@ class TestCreateSession:
     @staticmethod
     def _order():
         return SimpleNamespace(
+            id=uuid.uuid4(),
             order_number="MM-20260808-001",
             email="customer@example.com",
             total=Decimal("125.00"),

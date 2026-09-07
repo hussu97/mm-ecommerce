@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
+from app.core import receipt_token
 from app.core import search as search_text
 from app.core.exceptions import (
     BadRequestError,
@@ -100,6 +101,7 @@ __all__ = [
     "preview_order",
     "to_response",
     "get_all_admin",
+    "get_by_client_request_id",
     "get_by_order_number",
     "get_for_notification",
     "get_user_orders",
@@ -705,6 +707,23 @@ async def publish_to_register(
             )
 
 
+class _DuplicateClientRequest(Exception):
+    """Two creates of one checkout attempt raced to the insert; this one lost.
+
+    Private to this module — `create_order` catches it and adopts the winner. It
+    is not an error the customer ever sees."""
+
+
+def _is_client_request_id_conflict(error: IntegrityError) -> bool:
+    """Whether *error* is the `client_request_id` unique index firing.
+
+    Told apart from the `order_number` collision the persist loop already retries
+    by the index name in the driver's message. asyncpg surfaces the violated
+    constraint in the error text, so a substring match is enough and needs no
+    driver-specific attribute."""
+    return "uq_orders_client_request_id" in str(error.orig)
+
+
 async def _persist_order(
     db: AsyncSession,
     data: OrderCreate,
@@ -800,6 +819,10 @@ async def _persist_order(
 
     order = Order(
         order_number=await _generate_order_number(db),
+        # The checkout attempt's idempotency key, so a replay of a timed-out
+        # create is caught by the partial unique index rather than written twice
+        # (F-WEB-5). Null for anything that sent none.
+        client_request_id=data.client_request_id,
         user_id=user_id,
         email=order_email,
         customer_phone=contact_phone,
@@ -862,7 +885,13 @@ async def _persist_order(
                 db.add(order)
                 await db.flush()
             break
-        except IntegrityError:
+        except IntegrityError as e:
+            # A `client_request_id` clash is the idempotency race, not an
+            # order-number collision, and regenerating the number will never
+            # clear it. Surface it so `create_order` can adopt the winner rather
+            # than burn all three attempts and 500 (F-WEB-5).
+            if _is_client_request_id_conflict(e):
+                raise _DuplicateClientRequest() from e
             if attempt == 2:
                 raise
             order.order_number = await _generate_order_number(db)
@@ -985,6 +1014,23 @@ async def create_order(
     user_id: uuid.UUID | None,
     fallback_email: str | None = None,
 ) -> OrderResponse:
+    # 0. Idempotency. A `POST /orders` that times out leaves the browser unable
+    #    to tell a lost request from a lost response, so it replays the same
+    #    `client_request_id` — and without this, a create that actually succeeded
+    #    became a second order (F-WEB-5). Checked before anything else because a
+    #    successful create clears the cart: on the replay `_locate_cart` would
+    #    fail first and hide the order the customer already has. The email is only
+    #    for ownership scoping; the key itself is the client's unguessable UUID.
+    if data.client_request_id is not None:
+        existing = await _order_row_by_client_request_id(
+            db,
+            data.client_request_id,
+            user_id=user_id,
+            email=data.email or fallback_email,
+        )
+        if existing is not None:
+            return await to_response(db, existing)
+
     # 1. Locate and validate cart (with session_id fallback for guest checkout)
     cart = await _locate_cart(db, user_id, data.session_id)
 
@@ -1122,24 +1168,43 @@ async def create_order(
     #    The constructor sets `status`, which is a transition like any other and
     #    is recorded as one — the first row of every order's history is written
     #    from inside this call.
-    with acting_as(StatusSourceEnum.CHECKOUT.value, actor_id=user_id):
-        order = await _persist_order(
+    try:
+        with acting_as(StatusSourceEnum.CHECKOUT.value, actor_id=user_id):
+            order = await _persist_order(
+                db,
+                data,
+                user_id,
+                cart,
+                items_data,
+                # One object, not eight loose `Decimal`s. The argument list used to
+                # be thirteen long with four adjacent money figures in it, and a
+                # tuple whose elements can be swapped without a type error is how a
+                # small-basket fee gets charged to the customer as delivery.
+                totals,
+                promo_code_used,
+                promo_obj,
+                fallback_email,
+                branch,
+                promised,
+            )
+    except _DuplicateClientRequest:
+        # Two creates of the same attempt raced past the check at the top and
+        # both reached the insert; the partial unique index let exactly one
+        # through. This is the loser. Its transaction claimed stock and wrote
+        # rows that must not stand beside the winner's, so the whole attempt is
+        # rolled back — then the winner (now committed, which is why the index
+        # fired) is read back and handed over, an idempotent create rather than a
+        # 500 or a duplicate.
+        await db.rollback()
+        existing = await _order_row_by_client_request_id(
             db,
-            data,
-            user_id,
-            cart,
-            items_data,
-            # One object, not eight loose `Decimal`s. The argument list used to
-            # be thirteen long with four adjacent money figures in it, and a
-            # tuple whose elements can be swapped without a type error is how a
-            # small-basket fee gets charged to the customer as delivery.
-            totals,
-            promo_code_used,
-            promo_obj,
-            fallback_email,
-            branch,
-            promised,
+            data.client_request_id,  # type: ignore[arg-type]  # set: we got here
+            user_id=user_id,
+            email=data.email or fallback_email,
         )
+        if existing is None:
+            raise
+        return await to_response(db, existing)
 
     # 8. Open the delivery record — including for zones no courier API touches,
     #    so "what did fulfilment cost" is answerable for the whole country and
@@ -1547,12 +1612,46 @@ async def get_user_orders(
     return items, total
 
 
+def _email_matches(order: Order, email: str | None) -> bool:
+    """Whether *email* is the address this order was placed under.
+
+    Case-insensitive on the column, which is stored lower-cased now but has
+    historic rows and a caller's capitalisation to forgive."""
+    return bool(email) and (order.email or "").lower() == email.strip().lower()
+
+
+def _owns_order(
+    order: Order,
+    *,
+    user_id: uuid.UUID | None,
+    email: str | None,
+    token: str | None = None,
+) -> bool:
+    """
+    Whether the caller has proved they placed this order.
+
+    Three credentials, any one of which is enough. A signed-in customer owns the
+    orders under their account. A guest proves ownership with the order's email —
+    the long-standing scheme — or, additively, with a `receipt_token` the
+    checkout minted for exactly this order (F-ORD-20): the token replaces the
+    email in the payment gateway's `success_url`, so a confirmation link no
+    longer has to carry the address to be able to load the order. Links already
+    in the wild carry the email and keep working.
+    """
+    if user_id is not None:
+        return order.user_id == user_id
+    if token is not None and receipt_token.order_id_from(token) == order.id:
+        return True
+    return _email_matches(order, email)
+
+
 async def get_by_order_number(
     db: AsyncSession,
     order_number: str,
     user_id: uuid.UUID | None = None,
     admin: bool = False,
     email: str | None = None,
+    token: str | None = None,
 ) -> OrderResponse:
     stmt = (
         select(Order)
@@ -1564,19 +1663,67 @@ async def get_by_order_number(
     if not order:
         raise NotFoundError(f"Order '{order_number}' not found")
 
-    if not admin:
-        if user_id:
-            if order.user_id != user_id:
-                raise ForbiddenError("Not your order")
-        elif not email or (order.email or "").lower() != email.strip().lower():
-            # An order number alone must never expose the full order — it
-            # carries the customer's email and address. Unauthenticated callers
-            # prove ownership with the order's email, like /orders/track.
-            # Compared case-insensitively: the column is now stored lower-cased,
-            # but historic rows and a caller's capitalisation must still match.
-            raise ForbiddenError("Not your order")
+    if not admin and not _owns_order(order, user_id=user_id, email=email, token=token):
+        # An order number alone must never expose the full order — it carries the
+        # customer's email and address. An unauthenticated caller proves
+        # ownership with the order's email (like /orders/track) or the signed
+        # `receipt_token` the checkout put in the gateway return URL.
+        raise ForbiddenError("Not your order")
 
     return await to_response(db, order)
+
+
+async def _order_row_by_client_request_id(
+    db: AsyncSession,
+    client_request_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None,
+    email: str | None,
+) -> Order | None:
+    """The order carrying *client_request_id*, if the caller owns it.
+
+    Scoped to the same ownership rules as every other guest-reachable lookup:
+    the account that placed it, or the email it was placed under. The key itself
+    is an unguessable client-minted UUID, so this is defence in depth rather than
+    the primary control — but a recovery lookup must not become a way to read a
+    stranger's order by trying keys."""
+    stmt = (
+        select(Order)
+        .options(*_order_load_options())
+        .where(Order.client_request_id == client_request_id)
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if order is None:
+        return None
+    if not _owns_order(order, user_id=user_id, email=email):
+        return None
+    return order
+
+
+async def get_by_client_request_id(
+    db: AsyncSession,
+    client_request_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID | None = None,
+    email: str | None = None,
+) -> OrderListResponse | None:
+    """
+    The order a storefront checkout attempt created, looked up by its idempotency
+    key — the storefront's recovery path when a `POST /orders` timed out and it
+    cannot tell whether the order was written (F-WEB-5).
+
+    A list-shaped summary, the same the account page reads: the caller already
+    has the identity and only needs to learn the order exists and its number, so
+    it can adopt it rather than place a second one.
+    """
+    order = await _order_row_by_client_request_id(
+        db, client_request_id, user_id=user_id, email=email
+    )
+    if order is None:
+        return None
+    resp = OrderListResponse.model_validate(order)
+    resp.item_count = len(order.items)
+    return resp
 
 
 async def _email_has_account(db: AsyncSession, email: str | None) -> bool:

@@ -3,7 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel
 from slowapi.util import get_remote_address
 from sqlalchemy import func, select
@@ -11,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import (
-    get_current_active_user,
     get_db,
     get_optional_user,
 )
@@ -231,6 +239,7 @@ class OrderDeliveryResponse(BaseModel):
 @router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     data: OrderCreate,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
@@ -238,10 +247,34 @@ async def create_order(
     Create a new order from the current cart.
     For authenticated users, the cart is identified by user_id.
     For guests, provide session_id in the request body.
+
+    Idempotent on `client_request_id` (F-WEB-5): a repeat carrying an id already
+    on an order returns that order with `200 OK` instead of writing a second one,
+    so a checkout retried after a timed-out create cannot double-order. A first
+    create is `201 Created` as before.
     """
     user_id = current_user.id if current_user else None
+    fallback_email = current_user.email if current_user else None
+
+    # The common repeat — a sequential retry of a create that already
+    # succeeded — is answered as a 200 rather than a 201. Whether it is a repeat
+    # is decided here (a cheap summary lookup); the body still comes from
+    # `create_order`, whose own idempotency check returns that same order, so
+    # there is one path that builds the response. The rarer concurrent race is
+    # caught inside `create_order` by the unique index and also returns the
+    # existing order (as a 201 body); both mean no duplicate.
+    if data.client_request_id is not None:
+        existing = await order_service.get_by_client_request_id(
+            db,
+            data.client_request_id,
+            user_id=user_id,
+            email=data.email or fallback_email,
+        )
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+
     order = await order_service.create_order(
-        db, data, user_id, fallback_email=current_user.email if current_user else None
+        db, data, user_id, fallback_email=fallback_email
     )
     # No `cache_delete_pattern("analytics:*")` here any more, deliberately.
     #
@@ -298,10 +331,53 @@ async def preview_order(
 async def list_my_orders(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    client_request_id: uuid.UUID | None = Query(
+        None,
+        description="Storefront checkout idempotency key. When given, this looks "
+        "up the one order that attempt created (owner-scoped) rather than listing "
+        "orders — the recovery path after a timed-out POST /orders (F-WEB-5).",
+    ),
+    email: str | None = Query(
+        None,
+        description="Order email — proof of ownership for a guest's "
+        "`client_request_id` recovery, same scheme as GET /orders/{n}.",
+    ),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User | None = Depends(get_optional_user),
 ):
-    """Get the current user's orders, paginated."""
+    """
+    The current user's orders, paginated — or, with `client_request_id`, the
+    single order a storefront checkout attempt created.
+
+    The recovery lookup is reachable by a guest (proving ownership with `email`)
+    because the checkout that needs it may never have signed in; the plain list
+    still requires an authenticated, active account.
+    """
+    if client_request_id is not None:
+        found = await order_service.get_by_client_request_id(
+            db,
+            client_request_id,
+            user_id=current_user.id if current_user else None,
+            email=email,
+        )
+        items = [found] if found is not None else []
+        return PaginatedOrders(
+            items=items, total=len(items), page=1, per_page=per_page, pages=1
+        )
+
+    # The plain list is the customer's own orders and stays behind authentication,
+    # exactly as it did under `get_current_active_user`: 401 without a session,
+    # 403 for a deactivated account.
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive"
+        )
     items, total = await order_service.get_user_orders(
         db, current_user.id, page, per_page
     )
@@ -551,13 +627,19 @@ async def get_order(
     email: str | None = Query(
         None, description="Order email — proof of ownership for unauthenticated calls"
     ),
+    token: str | None = Query(
+        None,
+        description="Signed receipt token — proof of ownership minted by the "
+        "checkout, used by the confirmation page so the return URL need not carry "
+        "the customer's email (F-ORD-20). Accepted alongside `email`.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
     """
     Get an order by order number. Authenticated users can only view their own
-    orders; unauthenticated callers must supply the order's email as proof
-    (same scheme as /orders/track).
+    orders; unauthenticated callers prove ownership with the order's email or the
+    signed `token` the checkout issued (same scheme as /orders/track).
 
     Rate limited like `/orders/track` — this returns the *whole* order to a
     number-plus-email pair, so an unbounded lookup is a way to grind a guessed
@@ -566,7 +648,7 @@ async def get_order(
     user_id = current_user.id if current_user else None
     is_admin = current_user.is_admin if current_user else False
     return await order_service.get_by_order_number(
-        db, order_number, user_id=user_id, admin=is_admin, email=email
+        db, order_number, user_id=user_id, admin=is_admin, email=email, token=token
     )
 
 

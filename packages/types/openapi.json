@@ -15896,6 +15896,18 @@
       },
       "OrderCreate": {
         "properties": {
+          "client_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
+          },
           "delivery_method": {
             "$ref": "#/components/schemas/DeliveryMethodEnum"
           },
@@ -50017,7 +50029,7 @@
     },
     "/api/v1/orders": {
       "get": {
-        "description": "Get the current user's orders, paginated.",
+        "description": "The current user's orders, paginated \u2014 or, with `client_request_id`, the\nsingle order a storefront checkout attempt created.\n\nThe recovery lookup is reachable by a guest (proving ownership with `email`)\nbecause the checkout that needs it may never have signed in; the plain list\nstill requires an authenticated, active account.",
         "operationId": "list_my_orders_api_v1_orders_get",
         "parameters": [
           {
@@ -50041,6 +50053,43 @@
               "minimum": 1,
               "title": "Per Page",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Storefront checkout idempotency key. When given, this looks up the one order that attempt created (owner-scoped) rather than listing orders \u2014 the recovery path after a timed-out POST /orders (F-WEB-5).",
+            "in": "query",
+            "name": "client_request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Storefront checkout idempotency key. When given, this looks up the one order that attempt created (owner-scoped) rather than listing orders \u2014 the recovery path after a timed-out POST /orders (F-WEB-5).",
+              "title": "Client Request Id"
+            }
+          },
+          {
+            "description": "Order email \u2014 proof of ownership for a guest's `client_request_id` recovery, same scheme as GET /orders/{n}.",
+            "in": "query",
+            "name": "email",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Order email \u2014 proof of ownership for a guest's `client_request_id` recovery, same scheme as GET /orders/{n}.",
+              "title": "Email"
             }
           }
         ],
@@ -50077,7 +50126,7 @@
         ]
       },
       "post": {
-        "description": "Create a new order from the current cart.\nFor authenticated users, the cart is identified by user_id.\nFor guests, provide session_id in the request body.",
+        "description": "Create a new order from the current cart.\nFor authenticated users, the cart is identified by user_id.\nFor guests, provide session_id in the request body.\n\nIdempotent on `client_request_id` (F-WEB-5): a repeat carrying an id already\non an order returns that order with `200 OK` instead of writing a second one,\nso a checkout retried after a timed-out create cannot double-order. A first\ncreate is `201 Created` as before.",
         "operationId": "create_order_api_v1_orders_post",
         "requestBody": {
           "content": {
@@ -50569,7 +50618,7 @@
     },
     "/api/v1/orders/{order_number}": {
       "get": {
-        "description": "Get an order by order number. Authenticated users can only view their own\norders; unauthenticated callers must supply the order's email as proof\n(same scheme as /orders/track).\n\nRate limited like `/orders/track` \u2014 this returns the *whole* order to a\nnumber-plus-email pair, so an unbounded lookup is a way to grind a guessed\nnumber against many guessed addresses. Keyed on IP and order number.",
+        "description": "Get an order by order number. Authenticated users can only view their own\norders; unauthenticated callers prove ownership with the order's email or the\nsigned `token` the checkout issued (same scheme as /orders/track).\n\nRate limited like `/orders/track` \u2014 this returns the *whole* order to a\nnumber-plus-email pair, so an unbounded lookup is a way to grind a guessed\nnumber against many guessed addresses. Keyed on IP and order number.",
         "operationId": "get_order_api_v1_orders__order_number__get",
         "parameters": [
           {
@@ -50597,6 +50646,24 @@
               ],
               "description": "Order email \u2014 proof of ownership for unauthenticated calls",
               "title": "Email"
+            }
+          },
+          {
+            "description": "Signed receipt token \u2014 proof of ownership minted by the checkout, used by the confirmation page so the return URL need not carry the customer's email (F-ORD-20). Accepted alongside `email`.",
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signed receipt token \u2014 proof of ownership minted by the checkout, used by the confirmation page so the return URL need not carry the customer's email (F-ORD-20). Accepted alongside `email`.",
+              "title": "Token"
             }
           }
         ],

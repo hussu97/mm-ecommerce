@@ -4883,7 +4883,12 @@ export interface paths {
         };
         /**
          * List My Orders
-         * @description Get the current user's orders, paginated.
+         * @description The current user's orders, paginated — or, with `client_request_id`, the
+         *     single order a storefront checkout attempt created.
+         *
+         *     The recovery lookup is reachable by a guest (proving ownership with `email`)
+         *     because the checkout that needs it may never have signed in; the plain list
+         *     still requires an authenticated, active account.
          */
         get: operations["list_my_orders_api_v1_orders_get"];
         put?: never;
@@ -4892,6 +4897,11 @@ export interface paths {
          * @description Create a new order from the current cart.
          *     For authenticated users, the cart is identified by user_id.
          *     For guests, provide session_id in the request body.
+         *
+         *     Idempotent on `client_request_id` (F-WEB-5): a repeat carrying an id already
+         *     on an order returns that order with `200 OK` instead of writing a second one,
+         *     so a checkout retried after a timed-out create cannot double-order. A first
+         *     create is `201 Created` as before.
          */
         post: operations["create_order_api_v1_orders_post"];
         delete?: never;
@@ -5021,8 +5031,8 @@ export interface paths {
         /**
          * Get Order
          * @description Get an order by order number. Authenticated users can only view their own
-         *     orders; unauthenticated callers must supply the order's email as proof
-         *     (same scheme as /orders/track).
+         *     orders; unauthenticated callers prove ownership with the order's email or the
+         *     signed `token` the checkout issued (same scheme as /orders/track).
          *
          *     Rate limited like `/orders/track` — this returns the *whole* order to a
          *     number-plus-email pair, so an unbounded lookup is a way to grind a guessed
@@ -13803,6 +13813,8 @@ export interface components {
         };
         /** OrderCreate */
         OrderCreate: {
+            /** Client Request Id */
+            client_request_id?: string | null;
             delivery_method: components["schemas"]["DeliveryMethodEnum"];
             /**
              * Email
@@ -29262,6 +29274,10 @@ export interface operations {
             query?: {
                 page?: number;
                 per_page?: number;
+                /** @description Storefront checkout idempotency key. When given, this looks up the one order that attempt created (owner-scoped) rather than listing orders — the recovery path after a timed-out POST /orders (F-WEB-5). */
+                client_request_id?: string | null;
+                /** @description Order email — proof of ownership for a guest's `client_request_id` recovery, same scheme as GET /orders/{n}. */
+                email?: string | null;
             };
             header?: never;
             path?: never;
@@ -29509,6 +29525,8 @@ export interface operations {
             query?: {
                 /** @description Order email — proof of ownership for unauthenticated calls */
                 email?: string | null;
+                /** @description Signed receipt token — proof of ownership minted by the checkout, used by the confirmation page so the return URL need not carry the customer's email (F-ORD-20). Accepted alongside `email`. */
+                token?: string | null;
             };
             header?: never;
             path: {

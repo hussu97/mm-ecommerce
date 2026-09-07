@@ -124,10 +124,32 @@ class Order(Base, UUIDMixin, TimestampMixin):
             unique=True,
             postgresql_where=text("(source)::text = 'aggregator'::text"),
         ),
+        # Migration 214: the storefront mints one `client_request_id` per checkout
+        # attempt and replays it when a `POST /orders` times out, so a create that
+        # actually succeeded is adopted rather than placed twice (F-WEB-5). The
+        # partial unique index is what makes the second write of the same id a
+        # caught conflict instead of a duplicate order; partial because every
+        # counter and aggregator order carries NULL here and many NULLs must
+        # coexist.
+        Index(
+            "uq_orders_client_request_id",
+            "client_request_id",
+            unique=True,
+            postgresql_where=text("client_request_id IS NOT NULL"),
+        ),
     )
 
     order_number: Mapped[str] = mapped_column(
         String(30), unique=True, nullable=False, index=True
+    )
+    #: The storefront's idempotency key for the checkout attempt that created this
+    #: order — a UUID minted client-side, stable across retries of the same
+    #: attempt. NULL on everything that did not come through `POST /orders` with
+    #: one: counter sales, aggregator orders, and any storefront client from
+    #: before this shipped. See the partial unique index above and
+    #: `order_service.create_order`.
+    client_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

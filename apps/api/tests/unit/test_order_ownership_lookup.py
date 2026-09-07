@@ -86,6 +86,67 @@ async def test_a_wrong_email_is_still_refused(monkeypatch):
         )
 
 
+# ── read side: the signed receipt token is accepted too (F-ORD-20) ───────────
+
+
+async def test_a_receipt_token_proves_ownership_without_the_email(monkeypatch):
+    """The confirmation page arrives with a token instead of the email, so the
+    return URL never had to carry the address. The token alone opens the order."""
+    from app.core import receipt_token
+
+    order_id = uuid.uuid4()
+    order = SimpleNamespace(
+        id=order_id, email="john@x.com", user_id=None, order_number="MM-1"
+    )
+    sentinel = object()
+
+    async def fake_to_response(db, o):
+        assert o is order
+        return sentinel
+
+    monkeypatch.setattr(order_service, "to_response", fake_to_response)
+
+    got = await order_service.get_by_order_number(
+        _db_returning(order), "MM-1", token=receipt_token.mint(order_id)
+    )
+    assert got is sentinel
+
+
+async def test_the_email_path_still_works_alongside_the_token(monkeypatch):
+    """Additive: links already in the wild carry the email and must keep opening
+    the order even with no token."""
+    order = SimpleNamespace(
+        id=uuid.uuid4(), email="john@x.com", user_id=None, order_number="MM-1"
+    )
+    sentinel = object()
+
+    async def fake_to_response(db, o):
+        return sentinel
+
+    monkeypatch.setattr(order_service, "to_response", fake_to_response)
+
+    got = await order_service.get_by_order_number(
+        _db_returning(order), "MM-1", email="John@X.com"
+    )
+    assert got is sentinel
+
+
+async def test_a_token_for_a_different_order_is_refused(monkeypatch):
+    """A token minted for some other order proves nothing about this one, and
+    with no valid email either the lookup is refused rather than served."""
+    from app.core import receipt_token
+
+    order = SimpleNamespace(
+        id=uuid.uuid4(), email="john@x.com", user_id=None, order_number="MM-1"
+    )
+    monkeypatch.setattr(order_service, "to_response", AsyncMock())
+
+    with pytest.raises(ForbiddenError):
+        await order_service.get_by_order_number(
+            _db_returning(order), "MM-1", token=receipt_token.mint(uuid.uuid4())
+        )
+
+
 # ── the SQL predicate track/lookup uses (real Postgres) ─────────────────────
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
