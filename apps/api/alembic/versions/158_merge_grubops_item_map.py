@@ -156,6 +156,13 @@ def downgrade() -> None:
         sa.UniqueConstraint("product_id", name="uq_grubops_item_map_product"),
         sa.UniqueConstraint("modifier_option_id", name="uq_grubops_item_map_option"),
     )
+    # F-OPS-29: migration 131 created this table with an index on `approved`
+    # (`ix_grubops_item_map_approved`). This downgrade rebuilds the table
+    # shape but had never rebuilt that index, so downgrading further still —
+    # past 131, whose own downgrade drops it — failed with "index ...
+    # does not exist". Found by the new upgrade-head/downgrade-base/
+    # upgrade-head pr-check.yml job, which is exactly what it exists to catch.
+    op.create_index("ix_grubops_item_map_approved", "grubops_item_map", ["approved"])
     op.execute(
         """
         INSERT INTO grubops_item_map (

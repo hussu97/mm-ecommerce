@@ -75,6 +75,11 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         include_object=include_object,
         compare_type=True,
+        # F-OPS-29 — see the note on do_run_migrations below. Alembic's docs
+        # say this flag has no effect offline (offline migrations never use a
+        # transaction at all); set anyway so the two configure() calls do not
+        # silently drift apart.
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -88,6 +93,19 @@ def do_run_migrations(connection: Connection) -> None:
         # Off by default, so a column that changed type in a model and not in
         # the database looked identical to one that had not.
         compare_type=True,
+        # F-OPS-29: one transaction per migration, not one for the whole
+        # `upgrade head` run. Migration 030's docstring is the reason this
+        # matters — it tried CREATE INDEX CONCURRENTLY under the old
+        # single-transaction run, hand-committing and switching to AUTOCOMMIT
+        # inside the migration, and that commit leaked: every later migration
+        # in the same run reported success and then rolled back on exit,
+        # because `context.begin_transaction()` above only ever opened ONE
+        # transaction for the entire run and 030 had already ended it. With
+        # `transaction_per_migration=True`, alembic opens and commits a
+        # transaction per revision instead, so `op.get_context().autocommit_block()`
+        # (used by 210_fk_indexes for its CONCURRENTLY indexes) only ever
+        # suspends its OWN migration's transaction — nothing after it is at risk.
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()

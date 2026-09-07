@@ -241,6 +241,64 @@ jobs:
           cd apps/api
           python -m scripts.export_openapi --check
 
+  # F-OPS-29. `lint-python` above only ever runs `alembic upgrade head` on a
+  # brand-new database — it has never once exercised a `downgrade`. A
+  # migration's `downgrade()` can silently rot (wrong index name, a column
+  # dropped out of order) for years with nothing to notice, right up until
+  # someone actually needs it — a rollback, mid-incident, is the worst time to
+  # discover one is broken. Own job, own throwaway Postgres: this must not
+  # share `lint-python`'s database, since that job's own pytest run leaves it
+  # partway through fixtures rather than empty.
+  test-migrations-reversible:
+    name: Migrations upgrade/downgrade/upgrade cleanly
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mm
+          POSTGRES_PASSWORD: mm
+          POSTGRES_DB: mm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/pyproject.toml
+
+      # No `[dev]` extra: this job never imports pytest/ruff, only alembic and
+      # the app itself (env.py imports app.core.config and app.models).
+      - name: Install dependencies
+        run: |
+          cd apps/api
+          uv pip install --system .
+
+      # F-OPS-29: this is the whole point. `downgrade base` walks EVERY
+      # migration's downgrade() in reverse, including 210_fk_indexes'
+      # CREATE/DROP INDEX CONCURRENTLY pair, which only works at all because
+      # env.py now runs `transaction_per_migration=True` — see that
+      # migration's docstring for why the old shared-transaction run could
+      # never have supported this. Re-`upgrade head` at the end proves the
+      # round trip is clean, not just that downgrade ran without a crash.
+      - name: alembic upgrade head -> downgrade base -> upgrade head
+        run: |
+          cd apps/api
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
   test-aggregator-bootstrap:
     name: Lint & Test (Aggregator Bootstrap)
     needs: changes
