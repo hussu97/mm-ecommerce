@@ -1,11 +1,11 @@
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
-from app.core.deps import browsing_branch, get_db, get_optional_user
+from app.core.deps import browsing_branch, get_db, get_db_lazy, get_optional_user
 from app.core.exceptions import ForbiddenError
 from app.core.permissions import require
 from app.models.user import User
@@ -20,6 +20,9 @@ router = APIRouter()
 # serving the storefront's list to the register is the bug this endpoint had.
 _CACHE_KEY = "categories:channel:{channel}"
 _CACHE_TTL = 300
+#: CDN caching for the PUBLIC (web, active-only) list only — never the staff or
+#: include_inactive view (WP5, F-OPS-3).
+_PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"
 #: Every cache key this module writes, for invalidation on a write.
 _CACHED_CHANNELS = ("web", "pos")
 
@@ -43,6 +46,7 @@ async def _invalidate() -> None:
 
 @router.get("", response_model=list[CategoryResponse])
 async def list_categories(
+    response: Response,
     include_inactive: bool = False,
     channel: Literal["web", "pos", "all"] | None = Query(
         None,
@@ -53,7 +57,7 @@ async def list_categories(
         ),
     ),
     branch: uuid.UUID | None = Depends(browsing_branch),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_lazy),
     viewer: User | None = Depends(get_optional_user),
 ):
     """
@@ -78,6 +82,9 @@ async def list_categories(
     cacheable = not include_inactive and resolved in _CACHED_CHANNELS
 
     if cacheable:
+        # Public path only: let the CDN hold it, and (via get_db_lazy) take no
+        # connection on a Redis hit.
+        response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
         cached = await cache_get(cache_key)
         if cached is not None:
             return cached

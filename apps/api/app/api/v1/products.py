@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.core.deps import (
     browsing_branch,
     get_current_active_user,
     get_db,
+    get_db_lazy,
     get_optional_user,
 )
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
@@ -118,13 +119,19 @@ async def list_products(
     )
 
 
+#: CDN caching for these public, cacheable product lists (WP5, F-OPS-3).
+_PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"
+
+
 @router.get("/featured", response_model=list[ProductResponse])
 async def list_featured(
+    response: Response,
     limit: int = Query(8, ge=1, le=50),
     branch: uuid.UUID | None = Depends(browsing_branch),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_lazy),
 ):
     """Get featured products."""
+    response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
     # The branch is part of the key, not a variation the key ignores. Two
     # kitchens have two answers here, and one cache entry serving both would
     # put whichever was asked for first in front of every shopper for the TTL.
@@ -144,9 +151,10 @@ async def list_featured(
 
 @router.get("/cart-addons", response_model=list[ProductResponse])
 async def list_cart_addons(
+    response: Response,
     limit: int = Query(8, ge=1, le=20),
     branch: uuid.UUID | None = Depends(browsing_branch),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_lazy),
 ):
     """
     Products the cart offers as add-ons.
@@ -154,6 +162,7 @@ async def list_cart_addons(
     Declared above `/{slug}` deliberately: FastAPI matches in order, and below
     it this path would be read as a product whose slug is "cart-addons".
     """
+    response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
     cache_key = f"products:cart_addons:{limit}:{branch or 'any'}"
     cached = await cache_get(cache_key)
     if cached is not None:

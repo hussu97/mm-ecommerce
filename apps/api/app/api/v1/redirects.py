@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
-from app.core.deps import get_db
+from app.core.deps import get_db, get_db_lazy
 from app.core.permissions import require
 from app.models.user import User
 from app.schemas.redirect import (
@@ -31,7 +31,7 @@ async def _invalidate() -> None:
 
 
 @router.get("/map", response_model=RedirectMap)
-async def redirect_map(response: Response, db: AsyncSession = Depends(get_db)):
+async def redirect_map(response: Response, db: AsyncSession = Depends(get_db_lazy)):
     """
     Every live rule, for the storefront's middleware to hold in memory.
 

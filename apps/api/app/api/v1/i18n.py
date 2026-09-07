@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db
+from app.core.deps import get_db, get_db_lazy
 from app.core.permissions import require
 from app.models.user import User
 from app.schemas.i18n import (
@@ -14,9 +14,15 @@ from app.services import i18n_service
 
 router = APIRouter()
 
+#: The CDN absorbs the fan-out of these public, cacheable reads (WP5, F-OPS-3):
+#: fresh for a minute, then served stale for ten while one request revalidates,
+#: so a storefront burst hits the edge, not the pool.
+_PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"
+
 
 @router.get("/languages", response_model=list[LanguageResponse])
-async def list_languages(db: AsyncSession = Depends(get_db)):
+async def list_languages(response: Response, db: AsyncSession = Depends(get_db_lazy)):
+    response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
     return await i18n_service.get_active_languages(db)
 
 
@@ -29,7 +35,13 @@ async def list_all_languages(
 
 
 @router.get("/translations/{locale}", response_model=dict[str, str])
-async def get_translations(locale: str, db: AsyncSession = Depends(get_db)):
+async def get_translations(
+    locale: str, response: Response, db: AsyncSession = Depends(get_db_lazy)
+):
+    # `i18n_service.get_translations` answers from Redis on a hit and only then
+    # touches `db` — so with the lazy dependency a hit checks out no connection
+    # at all, and the CDN header keeps most requests off the origin entirely.
+    response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
     return await i18n_service.get_translations(db, locale)
 
 
