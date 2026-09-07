@@ -68,6 +68,24 @@ def test_the_register_runs_the_register_app():
         assert "--timeout-graceful-shutdown 8" in command
 
 
+def test_every_api_slot_trusts_the_proxy_headers():
+    """
+    Every uvicorn is reachable only through nginx, so it must honour
+    `X-Forwarded-For`/`X-Forwarded-Proto`. Without `--proxy-headers` uvicorn sets
+    `request.client.host` to nginx's container IP, which is what put the whole
+    internet in one rate-limit bucket (F-POS-4/F-OPS-9). All four slots — both
+    storefront and both register — need it, and `--forwarded-allow-ips` so the
+    single hop from nginx is trusted.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    for svc in ("api", "api-green", "pos-api", "pos-api-green"):
+        command = str(compose["services"][svc].get("command", ""))
+        assert "--proxy-headers" in command, f"{svc} does not trust proxy headers"
+        assert "--forwarded-allow-ips" in command, (
+            f"{svc} does not name the trusted proxy hop"
+        )
+
+
 def test_storefront_slots_finish_in_flight_requests():
     compose = yaml.safe_load(COMPOSE.read_text())
     for svc in ("api", "api-green"):

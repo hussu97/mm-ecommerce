@@ -35,7 +35,10 @@ x-api-environment: &api-environment
   GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
   GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
   CORS_ORIGINS: ${CORS_ORIGINS}
-  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-*}
+  # No `:-*` default: an unset ALLOWED_HOSTS must fail the container closed on
+  # boot (validate_production_secrets rejects a wildcard/empty host list in
+  # production), never come up with the Host check switched off.
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS}
   # The storefront API is the one that has to *refuse* device tokens,
   # so it needs this as much as the register does. Setting it only on
   # pos-api left the flag in .env doing nothing at all.
@@ -438,6 +441,7 @@ services:
     restart: always
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips='*'
       --workers ${UVICORN_WORKERS:-1} --log-level warning
       --timeout-graceful-shutdown 8"
     stop_grace_period: 10s
@@ -480,6 +484,7 @@ services:
     # The same image as the storefront API — one build, two applications.
     command: >
       sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips='*'
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
       --timeout-graceful-shutdown 8"
     stop_grace_period: 10s
@@ -527,6 +532,7 @@ services:
     restart: always
     command: >
       sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips='*'
       --workers ${UVICORN_WORKERS:-1} --log-level warning
       --timeout-graceful-shutdown 8"
     stop_grace_period: 10s
@@ -560,6 +566,7 @@ services:
     restart: always
     command: >
       sh -c "uvicorn app.pos_main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips='*'
       --workers ${POS_UVICORN_WORKERS:-1} --log-level warning
       --timeout-graceful-shutdown 8"
     stop_grace_period: 10s

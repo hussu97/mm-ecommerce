@@ -702,6 +702,26 @@ class Settings(BaseSettings):
                 "openssl rand -hex 32"
             )
 
+        # Host and origin allow-lists must be explicit in production. Both
+        # default to a wildcard/empty that is right for development and unsafe in
+        # production: `ALLOWED_HOSTS=["*"]` turns off the Host check that stops
+        # DNS-rebinding and Host-header poisoning, and `CORS_ORIGINS=""` parses to
+        # `[""]`, a bogus origin that credentialled CORS must never carry. Fail on
+        # boot — while the previous container still serves — rather than come up
+        # wide open.
+        real_hosts = [h for h in self.ALLOWED_HOSTS if h.strip()]
+        if not real_hosts or "*" in self.ALLOWED_HOSTS:
+            errors.append(
+                "ALLOWED_HOSTS must be an explicit host list in production "
+                "(not empty and not '*') — set it to the API hostnames"
+            )
+        real_origins = [o for o in self.CORS_ORIGINS if o.strip()]
+        if not real_origins or "*" in self.CORS_ORIGINS:
+            errors.append(
+                "CORS_ORIGINS must be an explicit origin list in production "
+                "(not empty and not '*') — set it to the storefront/admin origins"
+            )
+
         # Integrations — required for a functioning storefront
         required: dict[str, str] = {
             "STRIPE_SECRET_KEY": self.STRIPE_SECRET_KEY,

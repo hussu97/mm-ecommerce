@@ -415,10 +415,20 @@ def configure(
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
+        # The full set, on the app rather than only in nginx's TLS server blocks.
+        # They were `add_header` directives in `nginx/conf.d/ssl.conf` and
+        # `pos.conf`, so the HTTP-only path (`http.conf`, used before a
+        # certificate is issued) and any response that did not traverse a TLS
+        # block carried none of them. Setting them here means every response from
+        # either app carries them regardless of the nginx path it took.
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        # HSTS only in production: it is an HTTPS-only instruction, and asserting
+        # it over plain-HTTP local development would be wrong. Value matches the
+        # nginx blocks (two years, subdomains, preload).
         if settings.is_production:
             response.headers["Strict-Transport-Security"] = (
-                "max-age=31536000; includeSubDomains"
+                "max-age=63072000; includeSubDomains; preload"
             )
         return response
 
