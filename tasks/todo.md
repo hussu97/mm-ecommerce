@@ -1,203 +1,57 @@
-# Slider Prod Integration + Per-Area Polygon Rebuild
+# Inventory report submissions — admin review + POS grouping
 
----
+## Review (done 2026-09-07)
+All items below implemented and verified. Backend: ruff clean, OpenAPI exports,
+402 unit tests green (incl. 4 new). Admin: type-check + eslint clean. POS: kit
+`swift test` green (incl. new grouping test), both iPad + iPhone targets build.
+No DB migration needed — category data rides existing `source_summary` JSONB;
+response name fields are transient. OpenAPI diff is purely additive.
+Not committed yet (commit-author convention needs confirming — see chat).
 
-# iPhone manager inventory visibility (2026-09-06)
 
-## Plan
+Decision (confirmed with user): **keep threshold auto-post**. Low-variance
+reports still auto-approve + post at submit (auto-posted ⟹ auto-approved, already
+true via `post_report` stamping `approved_by`). Only `pending_approval` reports
+need the admin approve/reject/edit flow. Ledger already posts on approval for
+those — no change to posting timing.
 
-- [x] Audit the immutable-ledger, cached-level, and shift-report APIs and keep the new surface scoped to the iPhone manager companion.
-- [x] Add a bounded, branch-scoped inventory-item ledger-history filter and regenerate the public API contracts.
-- [x] Build branch-specific on-hand, item-history, report-list, and report-detail views with ledger provenance and source-movement context.
-- [x] Keep inventory entry in the register/iPad workflows; verify iPhone and iPad builds plus focused inventory tests.
+## Backend (mm-ecommerce/apps/api) — branch `wp-inv-reports`
+- [ ] `schemas/inventory_v2.py`: add `branch_name`, `submitted_by_name`,
+      `approved_by_name` (all `str | None = None`) to `ShiftReportResponse`.
+- [ ] `services/inventory/report_service.py`:
+  - [ ] `ensure_tasks_for_till`: add `category_name` + `category_order` to each
+        line's `source_summary` (batch-load `InventoryCategory`).
+  - [ ] extract `_write_line_edits(db, report, data)` from `save_report`; reuse.
+  - [ ] add `edit_pending_report(db, *, report, data, user)` — requires
+        `pending_approval`, applies edits, recomputes variance, stays pending.
+  - [ ] `submit_report`: email notify on every real submission (both paths).
+- [ ] `api/v1/inventory_v2.py` (control_router):
+  - [ ] `GET /inventory/shift-reports/{id}` (perm `reports.inventory`) + names.
+  - [ ] `PUT /inventory/reports/{id}` → `edit_pending_report` (perm `inventory.counts.approve`).
+  - [ ] enrich `list_shift_reports` responses with names.
+- [ ] `services/email_service.py`: `INVENTORY_REPORT_RECIPIENTS`,
+      `_admin_report_url`, `send_inventory_report_submitted`.
+- [ ] `templates/emails/inventory_report_submitted.html`.
+- [ ] Regenerate `@mm/types` (schema changed).
+- [ ] Tests: edit_pending_report, approve posts edited values, name enrichment,
+      category in source_summary, email-on-submit.
 
-## Results
+## Admin (mm-ecommerce/apps/admin)
+- [ ] `pos-api.ts`: `shiftReport(id)`, `editReport(id, body)`, `approveReport(id)`,
+      `rejectReport(id, reason)`.
+- [ ] `inventory/page.tsx`: new **Report submissions** tab (moved out of Shift
+      reports); DataTable + Pagination (W8 sizes) + filters (branch/status/type)
+      + search + sortable columns; columns: business date, submitted at
+      (localized), branch, submitted by, report, status, progress, variance;
+      row click → detail.
+- [ ] `inventory/reports/[id]/page.tsx`: detail page — header + line values in
+      POS-style columns; edit (pending only) → save; approve / reject(reason).
 
-- The manager app now requires a branch before showing stock, avoiding misleading cross-branch inventory aggregation. It shows cached on-hand quantity/value, projection state, attention signals, and actual immutable ledger movements for each item.
-- Inventory reports cover production, finished-goods, raw-material, packaging, and spot-check templates. Detail views expose status, cadence, prefill sequence, expected-versus-physical variance, approvals, notes, and every recorded source movement.
-- `/inventory/transactions` accepts an optional `item_id`, implemented with an `EXISTS` predicate so one transaction is returned once even when it contains several inventory lines.
-- Verification: focused inventory API tests (18 passed), focused Swift inventory-model tests (3 passed), full `swift test`, iPhone manager build, iPad register build, Ruff, OpenAPI export, and generated-type freshness checks all passed.
-
-## POS-host correction (2026-09-06)
-
-- [x] Reproduce the manager's `/inventory/*` calls against `pos.meltingmomentscakes.com`; all three were incorrectly absent from the dedicated POS app despite being present on the storefront API.
-- [x] Mount only the read-only levels, transactions, and shift-reports endpoints on the POS sub-application at their existing mobile paths.
-- [x] Deploy the routing correction and verify the POS host returns authenticated-route responses instead of 404.
-
-Result: production `pos.meltingmomentscakes.com` returned `401 Not authenticated`
-for levels, transactions, and shift reports after the GCP deployment. This is
-the expected unauthenticated response and proves the dedicated POS application,
-not the storefront API, owns all manager inventory calls.
-
-## Inventory item export correction (2026-09-06)
-
-- [x] Trace the production 500 from the admin export to its API stack trace.
-- [x] Restore the missing inventory-item category ORM relationship used by the CSV export and cover the exported category reference with a regression test.
-- [ ] Deploy and verify that the admin inventory-items export no longer raises a server error.
-
-## Recipe workbook and reconciliation navigation (2026-09-06)
-
-- [x] Restore a single Reconciliation sidebar entry under Reports, retaining GrubOps, invoices, VAT, sync runs, and mappings as lateral reconciliation tabs.
-- [x] Replace the recipe CSV download with a workbook containing an editable `Recipes` sheet and a protected, complete owner reference sheet (`owner_kind`, `owner_id`, `owner_sku`, and owner name).
-- [x] Make recipe import read only the editable workbook sheet, while preserving CSV compatibility and draft-only recipe staging.
-- [ ] Run focused backend/admin regression checks and deploy the operator workflow.
-
-## Recipe editor usability and inventory-table controls (2026-09-06)
-
-- [x] Reproduce why new recipe owners displayed no inventory ingredients: an expected recipe 404 rejected a combined promise and discarded the successfully fetched catalogue.
-- [x] Load ingredients independently; make a recipe-row action scroll to its revealed editor; add explicit build/validate/activate guidance, ingredient search, and actionable empty/error states.
-- [x] Add composable inventory category/kind/tracking/status filters and deterministic name/SKU/kind/category sorting before the existing pagination.
-- [x] Add a regression test for the new-owner (404) ingredient-catalogue path; type-check, lint, and run the focused admin test.
-- [ ] Commit, deploy, and smoke-test the repaired admin workflow in production before staging any recipes.
-
-## Inventory catalogue audit and Foodics recipe seed (2026-09-06)
-
-- [x] Reconcile the live 100-item MM catalogue with the 98-item Foodics extraction and the product catalogue; identify produced, packaging, raw, and direct-resale families without changing stock or availability.
-- [x] Add guarded categories and classifications: raw inputs, physical packaging, stocked produced goods, and Foodics-marked direct resale goods. Keep every currently countable item stocked; no phantom is inferred from a recipe.
-- [x] Correct the Foodics extractor to read detail `ingredients` payloads and the stager to normalize Foodics display units/yield percentages and retain product/option mappings.
-- [x] Verify the migration on a fresh PostgreSQL database, including downgrade/re-upgrade and representative finished/resale/raw catalogue rows.
-- [x] Forward-correct the live legacy blank-reference categories after the first deploy; the correction is limited to the audited SKU families and preserves every stock/ledger/recipe value.
-- [x] Add an idempotent, dry-run-first direct-resale recipe stager: it permits only an exact product SKU/name → stocked resale-item SKU/name match and creates draft one-unit recipes.
-- [x] Fix first-draft creation in the shared async recipe service so new Foodics/direct recipes cannot raise a lazy-load `MissingGreenlet` error.
-- [ ] Obtain a complete Foodics detail snapshot, stage its exact recipes as drafts, and publish the audited staging report. No recipe is inferred or activated from names.
-
----
-
-# Inventory bulk workflows, reconciliation navigation, and hour-sync hardening (2026-09-06)
-
-## Plan
-
-- [x] Audit current catalogue import/export templates, inventory/recipe models, recipe-owner screens, reconciliation tabs/sidebar, branch-map ordering, and provider hour-sync telemetry.
-- [x] Add versioned inventory-item and recipe bulk export/import APIs with deterministic templates, validation preview, branch-safe permissions, and generated contract coverage.
-- [x] Move recipe editing from the standalone inventory workspace into product, modifier-option, and inventory-item owners; add recursive dependency-tree previews in each owner surface.
-- [x] Seed missing raw-material catalogue entries and real storage units from the supplied Daily Consumption and Procurement Schedule without altering live availability or stock balances.
-- [x] Put GrubOps reconciliation beside the other reconciliation tabs; remove duplicate marketplace sidebar entries already represented by tabs; order branch mapping branch-first then aggregator.
-- [x] Expand every affected import/export template to cover the editable current model without silently changing unknown fields.
-- [x] Diagnose Deliveroo/Careem hour-sync failures from durable production records; add bounded retry, explicit failure state and observability where needed.
-- [x] Regenerate OpenAPI/types; run focused plus full backend/admin checks; validate a fresh migration cycle; commit with the required author.
-
-## Results / lessons (2026-09-06)
-
-- Production `branch_hours_sync_run` showed intermittent Deliveroo and Careem 401s after successful sweeps. Deliveroo’s 204 raw hours write bypassed its stale-token remint; it now uses the same single remint path. A persistent Careem 401 marks the encrypted session `needs_bootstrap` for headed recovery instead of hot-looping credentials.
-- The paper schedule provides units for the existing `RM001`–`RM028` raw-material SKUs. Migration `187_inventory_units_seed` changes only metadata and adds the two missing written inputs with deliberately generic units pending staff verification; it does not create stock, ledger, or availability changes.
-- Bulk recipe imports are all-or-nothing draft staging. They refuse name matching, duplicate ingredient lines, and foreign review drafts; an active recipe is never edited or activated by CSV import.
-
-Plan: /Users/hussainabbasi/.claude/plans/lets-plan-for-slider-crispy-wirth.md
-
-## Phase 0 — Slider production cutover (remove pilot gate + pilot free delivery) ✅ DONE
-- [x] courier_service.py: effective_provider drops the gate (slider→slider for all when configured; fallback only when not configured); drop user_id/email; module + carrier_for + estimate_for_point docstrings
-- [x] delivery_service.py: drop user_id/email from price/calculate_fee/quote/quote_priced; remove trial waiver
-- [x] order_pricing.py: drop user_id/email + trial free-delivery zeroing from compute_order_totals
-- [x] order_service.py: drop user_id/email at 3 call sites (compute_order_totals x2, quote_priced, effective_provider)
-- [x] delivery.py (api): drop user_id/email from /calculate + /quote
-- [x] Delete trial_customer.py; remove SLIDER_TRIAL_EMAILS from all 5 W9 locations (.env.example, PRODUCTION.md, deploy.yml, rollback.yml, docker-compose.prod.yml)
-- [x] Tests: deleted test_trial_customer_free_delivery.py + test_slider_rollout_is_a_no_op.py; rewrote gate section of test_courier_routing.py; fixed test_delivery_quote_privacy.py, test_delivery_fee_agreement.py, test_service_layout.py, test_compose_env_allowlist.py
-- [x] Full unit suite green (2592 passed), ruff format+check clean
-
-## Phase 1 — slider_bike + slider_car distinct fulfilment types ✅ DONE
-- [x] FulfilmentProviderEnum: SLIDER_BIKE, SLIDER_CAR (SLIDER kept legacy); DEFAULT_ALTERNATES entries
-- [x] Migration 173: couriers slider_bike/slider_car (60min) + alternates seed; verified on throwaway PG (upgrade/downgrade/re-upgrade)
-- [x] slider_service: vehicle_for_provider/provider_for_vehicle; estimate pins tier; dispatch books pinned tier, falls bike→car on Slider substitution, records ACTUAL tier as provider (+requested_vehicle in breakdown), no original_provider on auto-substitution
-- [x] courier_service: SLIDER_PROVIDERS in books_itself/is_enabled/effective_provider/_dispatch_once/FALLBACKS/estimate_for_point
-- [x] order_delivery: _status_family collapses slider_bike/car→slider for status maps
-- [x] orders API refresh map + fulfilment_service _BOOKED_BY_US learn the tiers
-- [x] fulfilment_reassignment: quote/move recognise SLIDER_PROVIDERS; allowed_targets directional guard (car never→bike) — **Phase 4 backend delivered early here**
-- [x] +16 tests (helpers, effective_provider tiers, estimate vehicle-pass, dispatch records-car substitution, allowed_targets bike↔car); full suite 2608 green; ruff clean
-
-## Phase 2 — Per-area Voronoi polygon map + Sharjah-branch provider simulation + cart backfill ✅ DONE
-- [x] Extracted 97 areas -> app/data/uae_delivery_areas.json
-- [x] Probed PROD Slider fares for all 97 areas from the VM (34.18.98.2); merged with real lalamove/noon -> app/data/courier_costs.json
-- [x] scripts/build_delivery_areas.py: per-emirate Voronoi (gap-filled), fee inherited from v2 band by centroid, provider = cheapest + >5 lalamove margin + fee>=80->3rd party + bike/car tier, N/S batch groups, per-polygon alternates (noon added for Sharjah slider)
-- [x] Committed v5 geojson + assignments (97 polys: 30 slider_bike, 22 slider_car, 8 noon, 1 lalamove, 36 third_party)
-- [x] Migration 174: rename Dubai->South of Sharjah / Northern Emirates->North of Sharjah, seed new ACTIVE version, cart delivery_quote_* backfill; verified on throwaway PG (upgrade/downgrade/re-upgrade)
-- [x] test_per_area_map.py validates committed map vs rules (103 cases); full suite 2711 green; ruff clean
-- [x] NOTE: prod-fare result — Slider dominates, lalamove=1 (batching minimal). Filename collision bug fixed (v3 was 085's file; now v5).
-- [ ] PENDING: push to main + deploy to prod + verify (per user request)
-## Phase 3 — Admin polygon data-table UI ✅ DONE
-- [x] Backend: GET /delivery-zones/polygons (paginated/search/sort/filter) + PolygonPage schema; relaxed update_polygon guard (attrs editable in place on active version) + invalidate_cache; regenerated @mm/types (no drift)
-- [x] Frontend: FulfilmentProvider += slider_bike/slider_car; provider-labels + ZoneMap colors; deliveryZonesApi.listPolygons; new PolygonTable.tsx (version switcher + search + provider/branch/batch filters + click-sort + Pagination 50-2000 + in-place ZoneEditForm); page.tsx uses it; deleted dead VersionCard/ZoneRow
-- [x] admin type-check + lint clean (0 errors); backend 2711 tests green
-
-## Phase 4 — Courier switching bike->car (not car->bike) ✅ DONE
-- [x] Backend delivered in Phase 1 (reassignment quote/move recognise slider tiers; allowed_targets directional guard car-never->bike)
-- [x] Frontend: DeliveryPanel + courier-labels render slider_bike/car labels + amber badge + status control; dialog offers slider_car for a slider_bike order (targets come from server allowed_targets)
-
-## Integration audit (whole order journey + reports + admin) — DONE
-Three parallel audits. Real gaps found + FIXED:
-- [x] courier_catalog.COURIER_NAMES missed the tiers -> dashboard per-courier scorecard SILENTLY DROPPED slider_bike/car orders + revenue, no badge, no filter option. Added both + logo falls back to slider.png. (order_query ALL_COURIER_CODES/grouping fixed via this.)
-- [x] slider_service._delivery_for matched webhooks on provider=="slider" only -> tier orders' status webhooks lost. Now .in_(PROVIDERS) (3 filters).
-- [x] courier_service.cancel routed slider_bike/car cancellation to Lalamove. Now in SLIDER_PROVIDERS.
-- [x] admin couriers.ts COURIER_OPTIONS + courierLogo + delivery courier-labels.ts missed tiers. Added.
-- [x] test_order_query updated + new tier test. Full suite 2723 green; ruff + admin type-check clean.
-- Confirmed SAFE (provider-agnostic): order_economics margin, daily_sales_email (by source), analytics commerce (by method), aggregator reconcile/fees, export_data, delivery_promise (keys on zone provider -> finds 60min tier rows), storefront apps/web (no courier field). NOTE: order-journey audit agent's premise was WRONG (claimed Phase 1 code missing) — verified Phase 1 intact; only #11 webhook + #3 cancel were real.
-
-## Merge with main — DONE
-- [x] Merged origin/main (8 commits ahead); re-chained migrations onto main's 173_branch_weekly (mine now 174_slider_vehicle_couriers, 175_per_area_courier_map); single alembic head verified on throwaway; 2723 tests + type-check green.
-
-## DEPLOY (user: reverify all -> fix bugs+optim -> push to main direct -> deploy green -> verify prod)
-
-## Notes
-- New versioning: attributes (fee/threshold/default courier) editable in place on active version; new version only for geometry changes.
-- Cutover backfill: re-resolve cart delivery_quote_* against new active version; users/addresses derive zone live.
-
----
-
-# Inventory v2 Production Audit (2026-09-05)
-
-## Sharjah report-template creation and staff workflow (2026-09-06)
-
-- [x] Capture the production failure and trace the template-create request through the API service and database constraint.
-- [x] Initialise all required report-template columns before the first database flush and preserve the existing update/versioning path.
-- [x] Add a focused regression test for first-time template creation.
-- [x] Make the admin builder explain the right Sharjah workflow, select relevant items safely, and show a recoverable save error.
-- [x] Verify backend/admin checks, deploy, and confirm the production endpoint no longer produces a null `report_type` failure (GitHub Actions 34016015407 green; live API first-create smoke test passed and rolled back).
-
-## Inventory category visibility (2026-09-06)
-
-- [x] Show the resolved category in the inventory-items table alongside the existing category filter and sort.
-
-## Branch report-template revisions (2026-09-06)
-
-- [x] Confirm live templates are branch-owned and capture the requested POS behaviour.
-- [x] Make report-template versions monotonic per branch and report type, with a database uniqueness guard.
-- [x] Resolve only the latest active version for each branch/report type when generating POS tasks; never fall back after its deactivation.
-- [x] Add a branch-first admin view and a safe action to deactivate only the latest template revision.
-- [ ] Cover version selection/deactivation behaviour, migrate, deploy, and verify the live Sharjah templates remain intact.
-
-## Invariants and business-logic review
-
-- [x] Compare the implementation with the approved inventory plan and both repositories' `CLAUDE.md` rules.
-- [x] Audit recipe publication, recursive expansion, snapshot history, and Foodics import idempotency.
-- [x] Audit ledger sequencing, valuation, reversals/returns, immutable SQL guards, and projection rebuild parity.
-- [x] Audit count/report concurrency, business-day aggregation, approval thresholds, and opening-count rollout safety.
-- [x] Audit branch scoping, permissions, generated contracts, admin maintainability, and shared iPad/iPhone behavior.
-
-## Fixes and regression proof
-
-- [x] Fix every correctness or scalability defect found, keeping compatibility adapters intact.
-- [x] Add focused regression tests for the costing, recursive yield, report reconciliation, Foodics import, source-event atomicity, and POS validation failures found.
-- [x] Re-run migration upgrade/downgrade/re-upgrade on a fresh PostgreSQL database (`186_inventory_v2` head after rebasing onto current main).
-- [x] Run backend lint/tests, regenerate and verify OpenAPI contracts, and run admin type/lint checks.
-- [x] Run `swift test` and build both the iPad and iPhone schemes.
-- [x] Record the final findings and verification evidence here, then commit coherent audit fixes with the required author.
-
-## Audit findings closed
-
-- [x] Ledger quantity and valuation now use the correct storage/ingredient conversion snapshots; transfer receipts preserve the source branch's moving-average value and production locks the whole value flow.
-- [x] Projection rebuild mirrors live posting, including exact receipt reversals and value-only cost adjustments, and streams long histories with bounded memory.
-- [x] Order consumption is acceptance-sequenced and savepoint-atomic; expected domain failures become durable no-movement exceptions instead of partially committed stock.
-- [x] Published recipes/source snapshots/closed ledger rows are SQL-immutable; draft preview validates recursive expansion, phantom dependencies, yield and cycles before activation.
-- [x] Counts and shift reports lock state transitions, detect any item movement since prefill, reprice variances at current average cost, require reasons, and post/approve atomically with retry-safe saves.
-- [x] Every active branch is database-enforced to have exactly one active default stock container; future branch creation provisions its container and rollout settings in the same transaction.
-- [x] Foodics staging is sanitized, UUID/SKU-based, unit-aware and rerunnable; zero values, duplicate-looking SKUs, conflicts and ambiguous mappings remain visible for review.
-- [x] Branch permissions are enforced across legacy and v2 APIs; ledger list labels are bulk-loaded and rebuild history is streamed rather than growing memory without bound.
-- [x] Admin recipe selection/validation, stock-audit feedback and integrity empty states are usable without raw UUIDs or false “no drift” claims.
-- [x] Shared POS flow requires variance/waste/internal-use reasons, uses stable per-payload retry keys, refreshes stale expected stock, supports explained skips, survives termination in Keychain, and adapts on both phone and tablet.
-
-## Verification
-
-- Backend: `2812 passed, 189 skipped` on the rebased branch; Ruff clean.
-- Inventory-focused backend: `101 passed` after rebasing onto current main and the final service changes.
-- Contracts/admin: generated OpenAPI fresh; types `3 passed`; admin `62 passed`; TypeScript clean; ESLint has two pre-existing warnings outside inventory and no errors.
-- Database: fresh PostgreSQL upgrade to head, downgrade to main's 185, and re-upgrade to `186_inventory_v2` passed.
-- POS: `332 passed`; `MMPos` iPad simulator build passed; `MMPosPhone` iPhone simulator build passed.
+## POS (mm-pos) — branch `wp-inv-report-grouping`
+- [ ] `Models/InventoryReports.swift`: add `categoryName`, `categoryOrder` to
+      `InventorySourceSummary`.
+- [ ] `InventoryReportModel`: `nonisolated static sections(from:)` grouping by
+      category (order by categoryOrder, then within by item name); `var sections`.
+- [ ] `InventoryReportView.swift`: render sectioned by category with headers.
+- [ ] `Tests/InventoryReportGroupingTests.swift`.
+- [ ] Build both targets (MMPos + MMPosPhone).

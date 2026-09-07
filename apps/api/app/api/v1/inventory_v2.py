@@ -488,6 +488,46 @@ async def deactivate_report_template(
     return await report_service.deactivate_template(db, template=template)
 
 
+async def _enrich_report_names(
+    db: AsyncSession, reports: list[ShiftInventoryReport]
+) -> None:
+    """Fill each report's branch, submitter and approver display names in one pass.
+
+    The names are transient attributes read by ``ShiftReportResponse``; only the
+    admin/manager read endpoints call this, so the register's own responses leave
+    them null and never pay for the lookup.
+    """
+    if not reports:
+        return
+    branch_ids = {report.branch_id for report in reports}
+    user_ids = {report.submitted_by for report in reports if report.submitted_by} | {
+        report.approved_by for report in reports if report.approved_by
+    }
+    branch_names = dict(
+        (
+            await db.execute(
+                select(Branch.id, Branch.name).where(Branch.id.in_(branch_ids))
+            )
+        ).all()
+    )
+    user_rows = (
+        (
+            await db.execute(
+                select(User.id, User.display_name, User.email).where(
+                    User.id.in_(user_ids)
+                )
+            )
+        ).all()
+        if user_ids
+        else []
+    )
+    user_names = {row.id: (row.display_name or row.email) for row in user_rows}
+    for report in reports:
+        report.branch_name = branch_names.get(report.branch_id)
+        report.submitted_by_name = user_names.get(report.submitted_by)
+        report.approved_by_name = user_names.get(report.approved_by)
+
+
 @control_router.get("/shift-reports", response_model=list[ShiftReportResponse])
 @pos_manager_read_router.get("/shift-reports", response_model=list[ShiftReportResponse])
 async def list_shift_reports(
@@ -506,11 +546,75 @@ async def list_shift_reports(
         stmt = stmt.where(ShiftInventoryReport.branch_id.in_(_branch_ids_for(user)))
     if report_status:
         stmt = stmt.where(ShiftInventoryReport.status == report_status)
-    return list(
+    reports = list(
         (await db.execute(stmt.order_by(ShiftInventoryReport.created_at.desc())))
         .scalars()
         .unique()
     )
+    await _enrich_report_names(db, reports)
+    return reports
+
+
+@control_router.get("/shift-reports/{report_id}", response_model=ShiftReportResponse)
+@pos_manager_read_router.get(
+    "/shift-reports/{report_id}", response_model=ShiftReportResponse
+)
+async def get_shift_report(
+    report_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("reports.inventory")),
+):
+    report = await report_service.load_report(db, report_id)
+    await _assert_branch_access(db, user, report.branch_id)
+    await _enrich_report_names(db, [report])
+    return report
+
+
+@control_router.put("/reports/{report_id}", response_model=ShiftReportResponse)
+async def edit_shift_report(
+    report_id: uuid.UUID,
+    data: ReportSaveRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.counts.approve")),
+):
+    """An approver corrects a report that is waiting for approval, before deciding
+    on it. The corrected figures are what approval then posts to the ledger."""
+    report = await report_service.load_report(db, report_id)
+    await _assert_branch_access(db, user, report.branch_id)
+    report = await report_service.edit_pending_report(
+        db, report=report, data=data, user=user
+    )
+    await _enrich_report_names(db, [report])
+    return report
+
+
+@control_router.post("/reports/{report_id}/approve", response_model=ShiftReportResponse)
+async def approve_shift_report_console(
+    report_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.counts.approve")),
+):
+    report = await report_service.load_report(db, report_id)
+    await _assert_branch_access(db, user, report.branch_id)
+    report = await report_service.approve_report(db, report=report, user=user)
+    await _enrich_report_names(db, [report])
+    return report
+
+
+@control_router.post("/reports/{report_id}/reject", response_model=ShiftReportResponse)
+async def reject_shift_report_console(
+    report_id: uuid.UUID,
+    data: ReportActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.counts.approve")),
+):
+    report = await report_service.load_report(db, report_id)
+    await _assert_branch_access(db, user, report.branch_id)
+    report = await report_service.reject_report(
+        db, report=report, reason=data.reason or ""
+    )
+    await _enrich_report_names(db, [report])
+    return report
 
 
 @pos_inventory_router.get("/tasks", response_model=list[ShiftReportResponse])

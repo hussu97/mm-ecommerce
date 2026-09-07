@@ -264,6 +264,14 @@ export const inventoryApi = {
     api.post<ReportTemplate>(`/inventory/report-templates/${id}/deactivate`, {}),
   shiftReports: (params?: { branch_id?: string; status?: string }) =>
     api.get<ShiftInventoryReport[]>(`/inventory/shift-reports${buildQs(params)}`),
+  shiftReport: (id: string) =>
+    api.get<ShiftInventoryReport>(`/inventory/shift-reports/${id}`),
+  editReport: (id: string, data: ReportSave) =>
+    api.put<ShiftInventoryReport>(`/inventory/reports/${id}`, data),
+  approveReport: (id: string) =>
+    api.post<ShiftInventoryReport>(`/inventory/reports/${id}/approve`, {}),
+  rejectReport: (id: string, reason: string) =>
+    api.post<ShiftInventoryReport>(`/inventory/reports/${id}/reject`, { reason }),
   branchSettings: (branchId: string) =>
     api.get<BranchInventorySettings>(`/inventory/branch-settings/${branchId}`),
   updateBranchSettings: (branchId: string, data: Partial<BranchInventorySettings>) =>

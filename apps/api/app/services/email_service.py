@@ -76,6 +76,9 @@ OWNER_ORDER_RECIPIENTS = (
     "fatema_f@hotmail.co.uk",
     "fahimakhtarabbasi@gmail.com",
 )
+#: Who is told when a shift inventory report is submitted, so the count can be
+#: reviewed (and, when it needs approval, approved) from the admin console.
+INVENTORY_REPORT_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
 
 #: The clock every date in an email is printed on. A customer in Sharjah reading
 #: "ready at 16:30" is standing on this one, and a UTC stamp would be four hours
@@ -169,6 +172,10 @@ def _account_order_url(order_number: str, locale: str = "en") -> str:
 
 def _admin_order_url(order_number: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/orders/{order_number}"
+
+
+def _admin_report_url(report_id: str) -> str:
+    return f"{settings.ADMIN_URL.rstrip('/')}/inventory/reports/{report_id}"
 
 
 # ─── Building the picture an order email paints ───────────────────────────────
@@ -836,6 +843,56 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
             subject,
             result,
             order.order_number,
+        )
+
+
+async def send_inventory_report_submitted(
+    *,
+    report_id: str,
+    report_name: str,
+    branch_name: str,
+    business_date: str,
+    submitted_by: str,
+    status: str,
+    requires_approval: bool,
+    variance_cost: Decimal,
+) -> None:
+    """Tell the office a shift inventory report was submitted, with a direct link
+    to review it in the admin console. Always English — it reaches the same people
+    the owner order notification does and links to the English-only admin."""
+    action = "needs approval" if requires_approval else "auto-posted"
+    subject = f"Inventory report {action} — {report_name} · {branch_name}"
+    for recipient in INVENTORY_REPORT_RECIPIENTS:
+        try:
+            html = _render(
+                "inventory_report_submitted.html",
+                recipient_email=recipient,
+                locale="en",
+                report_name=report_name,
+                branch_name=branch_name,
+                business_date=business_date,
+                submitted_by=submitted_by,
+                status=status.replace("_", " "),
+                requires_approval=requires_approval,
+                variance_cost=_money(variance_cost),
+                admin_report_url=_admin_report_url(report_id),
+            )
+            result = await asyncio.to_thread(_send, recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "inventory_report_submitted render/send failed for %s to %s: %s",
+                report_id,
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log(
+            "inventory_report_submitted",
+            recipient,
+            subject,
+            result,
+            report_id,
         )
 
 

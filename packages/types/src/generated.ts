@@ -4107,6 +4107,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/reports/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Edit Shift Report
+         * @description An approver corrects a report that is waiting for approval, before deciding
+         *     on it. The corrected figures are what approval then posts to the ledger.
+         */
+        put: operations["edit_shift_report_api_v1_inventory_reports__report_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/reports/{report_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Shift Report Console */
+        post: operations["approve_shift_report_console_api_v1_inventory_reports__report_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/reports/{report_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Shift Report Console */
+        post: operations["reject_shift_report_console_api_v1_inventory_reports__report_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/shift-reports": {
         parameters: {
             query?: never;
@@ -4116,6 +4171,23 @@ export interface paths {
         };
         /** List Shift Reports */
         get: operations["list_shift_reports_api_v1_inventory_shift_reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/shift-reports/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Shift Report */
+        get: operations["get_shift_report_api_v1_inventory_shift_reports__report_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -17399,6 +17471,8 @@ export interface components {
             approved_at: string | null;
             /** Approved By */
             approved_by: string | null;
+            /** Approved By Name */
+            approved_by_name?: string | null;
             /** Base Posting Sequence */
             base_posting_sequence: number | null;
             /**
@@ -17406,6 +17480,8 @@ export interface components {
              * Format: uuid
              */
             branch_id: string;
+            /** Branch Name */
+            branch_name?: string | null;
             /** Business Date */
             business_date: string;
             /**
@@ -17438,6 +17514,8 @@ export interface components {
             submitted_at: string | null;
             /** Submitted By */
             submitted_by: string | null;
+            /** Submitted By Name */
+            submitted_by_name?: string | null;
             /**
              * Template Id
              * Format: uuid
@@ -27333,6 +27411,107 @@ export interface operations {
             };
         };
     };
+    edit_shift_report_api_v1_inventory_reports__report_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShiftReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_shift_report_console_api_v1_inventory_reports__report_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShiftReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_shift_report_console_api_v1_inventory_reports__report_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShiftReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_shift_reports_api_v1_inventory_shift_reports_get: {
         parameters: {
             query?: {
@@ -27352,6 +27531,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ShiftReportResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_shift_report_api_v1_inventory_shift_reports__report_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShiftReportResponse"];
                 };
             };
             /** @description Validation Error */

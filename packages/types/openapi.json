@@ -26761,6 +26761,17 @@
             ],
             "title": "Approved By"
           },
+          "approved_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By Name"
+          },
           "base_posting_sequence": {
             "anyOf": [
               {
@@ -26776,6 +26787,17 @@
             "format": "uuid",
             "title": "Branch Id",
             "type": "string"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
           },
           "business_date": {
             "title": "Business Date",
@@ -26857,6 +26879,17 @@
               }
             ],
             "title": "Submitted By"
+          },
+          "submitted_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted By Name"
           },
           "template_id": {
             "format": "uuid",
@@ -46676,6 +46709,171 @@
         ]
       }
     },
+    "/api/v1/inventory/reports/{report_id}": {
+      "put": {
+        "description": "An approver corrects a report that is waiting for approval, before deciding\non it. The corrected figures are what approval then posts to the ledger.",
+        "operationId": "edit_shift_report_api_v1_inventory_reports__report_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportSaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Edit Shift Report",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/reports/{report_id}/approve": {
+      "post": {
+        "operationId": "approve_shift_report_console_api_v1_inventory_reports__report_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Approve Shift Report Console",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/reports/{report_id}/reject": {
+      "post": {
+        "operationId": "reject_shift_report_console_api_v1_inventory_reports__report_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reject Shift Report Console",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/shift-reports": {
       "get": {
         "operationId": "list_shift_reports_api_v1_inventory_shift_reports_get",
@@ -46746,6 +46944,54 @@
           }
         ],
         "summary": "List Shift Reports",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
+    "/api/v1/inventory/shift-reports/{report_id}": {
+      "get": {
+        "operationId": "get_shift_report_api_v1_inventory_shift_reports__report_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Shift Report",
         "tags": [
           "Inventory Control"
         ]

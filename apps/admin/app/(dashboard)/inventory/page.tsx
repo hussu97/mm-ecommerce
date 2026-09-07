@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   branchesApi,
   inventoryApi,
@@ -17,13 +18,13 @@ import type {
   Supplier,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Select, Spinner, TabBar } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Select, Spinner, TabBar } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime } from '@/lib/utils';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
-type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'suppliers' | 'categories' | 'integrity';
+type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'submissions' | 'suppliers' | 'categories' | 'integrity';
 
 type ReportTemplateKind = 'production' | 'finished_goods' | 'raw_materials' | 'packaging' | 'spot_check';
 
@@ -103,7 +104,8 @@ export default function InventoryPage() {
             { key: 'levels', label: 'On hand' },
             { key: 'ledger', label: 'Ledger' },
             { key: 'counts', label: 'Counts' },
-            { key: 'shift-reports', label: 'Shift reports' },
+            { key: 'shift-reports', label: 'Report templates' },
+            { key: 'submissions', label: 'Report submissions' },
             { key: 'suppliers', label: 'Suppliers' },
             { key: 'categories', label: 'Categories' },
             { key: 'integrity', label: 'Integrity' },
@@ -117,6 +119,7 @@ export default function InventoryPage() {
       {tab === 'ledger' && <LedgerTab />}
       {tab === 'counts' && <CountsTab />}
       {tab === 'shift-reports' && <ShiftReportsTab />}
+      {tab === 'submissions' && <SubmissionsTab />}
       {tab === 'suppliers' && <SuppliersTab />}
       {tab === 'categories' && <CategoriesTab />}
       {tab === 'integrity' && <IntegrityTab />}
@@ -766,7 +769,6 @@ function CountsTab() {
 
 function ShiftReportsTab() {
   const [branchId, setBranchId] = useState('');
-  const [rows, setRows] = useState<ShiftInventoryReport[]>([]);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [name, setName] = useState('Closing stock reconciliation');
@@ -794,36 +796,22 @@ function ShiftReportsTab() {
 
   const reload = useCallback(async () => {
     if (!branchId) {
-      setRows([]);
       setTemplates([]);
       return;
     }
-    const [reports, reportTemplates] = await Promise.all([
-      inventoryApi.shiftReports({ branch_id: branchId }),
-      inventoryApi.reportTemplates(branchId),
-    ]);
-    setRows(reports);
-    setTemplates(reportTemplates);
+    setTemplates(await inventoryApi.reportTemplates(branchId));
   }, [branchId]);
 
   useEffect(() => {
     let cancelled = false;
     if (!branchId) {
       void Promise.resolve().then(() => {
-        if (!cancelled) {
-          setRows([]);
-          setTemplates([]);
-        }
+        if (!cancelled) setTemplates([]);
       });
       return () => { cancelled = true; };
     }
-    void Promise.all([
-      inventoryApi.shiftReports({ branch_id: branchId }),
-      inventoryApi.reportTemplates(branchId),
-    ]).then(([reports, reportTemplates]) => {
-      if (cancelled) return;
-      setRows(reports);
-      setTemplates(reportTemplates);
+    void inventoryApi.reportTemplates(branchId).then((reportTemplates) => {
+      if (!cancelled) setTemplates(reportTemplates);
     });
     void inventoryApi.items().then(setItems);
     return () => {
@@ -944,15 +932,130 @@ function ShiftReportsTab() {
         { header: 'Action', render: (row) => latestTemplateIds.has(row.id) && row.is_active ? <Button size="sm" variant="outline" disabled={savingTemplate} onClick={() => void deactivateTemplate(row)}>Deactivate</Button> : '—' },
       ]} />}
     </div>
-    <h3 className="font-medium text-gray-800">Report submissions</h3>
-    <DataTable rows={rows} rowKey={(row) => row.id} columns={[
-      { header: 'Business date', render: (row) => row.business_date },
-      { header: 'Report', priority: 'primary', render: (row) => String(row.template_snapshot.name ?? row.template_id) },
-      { header: 'Status', render: (row) => <Badge variant={row.status === 'posted' ? 'success' : row.status === 'pending_approval' ? 'warning' : 'neutral'}>{row.status.replaceAll('_', ' ')}</Badge> },
-      { header: 'Progress', render: (row) => `${row.lines.filter((line) => line.confirmed).length}/${row.lines.length}` },
-      { header: 'Variance value', render: (row) => formatCurrency(row.lines.reduce((sum, line) => sum + Number(line.variance_cost ?? 0), 0)) },
-    ]} />
+    <p className="text-xs text-gray-500">Submitted reports are reviewed and approved under the <strong>Report submissions</strong> tab.</p>
   </div>;
+}
+
+export function reportStatusVariant(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (status === 'posted' || status === 'approved') return 'success';
+  if (status === 'pending_approval') return 'warning';
+  if (status === 'rejected') return 'danger';
+  return 'neutral';
+}
+
+const SUBMISSION_STATUSES = ['outstanding', 'draft', 'pending_approval', 'approved', 'posted', 'deferred', 'skipped', 'rejected'] as const;
+
+type SubmissionSortKey = 'business_date' | 'submitted_at' | 'branch' | 'report' | 'status' | 'variance';
+
+function SubmissionSortHeader({ label, col, sort, direction, onSort }: {
+  label: string; col: SubmissionSortKey; sort: SubmissionSortKey; direction: 'asc' | 'desc'; onSort: (col: SubmissionSortKey) => void;
+}) {
+  return (
+    <button type="button" onClick={() => onSort(col)} className="inline-flex items-center gap-1 hover:text-primary">
+      {label}{sort === col ? (direction === 'asc' ? ' ↑' : ' ↓') : ''}
+    </button>
+  );
+}
+
+const reportVariance = (row: ShiftInventoryReport) => row.lines.reduce((sum, line) => sum + Number(line.variance_cost ?? 0), 0);
+
+function SubmissionsTab() {
+  const router = useRouter();
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [rows, setRows] = useState<ShiftInventoryReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [sort, setSort] = useState<SubmissionSortKey>('submitted_at');
+  const [direction, setDirection] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
+
+  useEffect(() => {
+    void branchesApi.list().then(setBranches).catch(() => setBranches([]));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    inventoryApi.shiftReports({ branch_id: branchId || undefined })
+      .then((reports) => { if (!cancelled) { setRows(reports); setError(''); } })
+      .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.message : 'Failed to load submissions.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [branchId]);
+
+  const onSort = (col: SubmissionSortKey) => {
+    if (sort === col) setDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSort(col); setDirection('asc'); }
+    setPage(1);
+  };
+
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    const filtered = rows.filter((row) => {
+      if (statusFilter && row.status !== statusFilter) return false;
+      if (!needle) return true;
+      return [row.template_snapshot.name, row.submitted_by_name, row.branch_name, row.business_date]
+        .some((field) => String(field ?? '').toLowerCase().includes(needle));
+    });
+    const dir = direction === 'asc' ? 1 : -1;
+    const key = (row: ShiftInventoryReport): string | number => {
+      switch (sort) {
+        case 'business_date': return row.business_date;
+        case 'submitted_at': return row.submitted_at ?? '';
+        case 'branch': return row.branch_name ?? '';
+        case 'report': return String(row.template_snapshot.name ?? '');
+        case 'status': return row.status;
+        case 'variance': return reportVariance(row);
+      }
+    };
+    return [...filtered].sort((a, b) => {
+      const ka = key(a); const kb = key(b);
+      if (ka < kb) return -1 * dir;
+      if (ka > kb) return 1 * dir;
+      return 0;
+    });
+  }, [rows, search, statusFilter, sort, direction]);
+
+  const pages = Math.max(1, Math.ceil(visible.length / perPage));
+  const pageRows = visible.slice((page - 1) * perPage, page * perPage);
+
+  return (
+    <div className="p-6 max-w-[1400px] space-y-4">
+      <p className="text-sm text-gray-500">Every inventory report submitted from the register. Click a row to review its counts and, when it is awaiting approval, edit, approve or reject it. The stock ledger updates when a report is approved.</p>
+      <div className="flex flex-wrap items-end gap-3">
+        <Select label="Branch" value={branchId} onChange={(e) => { setBranchId(e.target.value); setPage(1); }} placeholder="All branches" className="w-56" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
+        <Select label="Status" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} placeholder="All statuses" className="w-48" options={SUBMISSION_STATUSES.map((s) => ({ value: s, label: s.replaceAll('_', ' ') }))} />
+        <label className="block flex-1 min-w-52 text-xs uppercase tracking-wider text-gray-500">Search
+          <Input aria-label="Search submissions" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Report, branch, or person" className="mt-1" />
+        </label>
+      </div>
+      {error && <p className="bg-red-50 p-2 text-sm text-red-800">{error}</p>}
+      {loading ? <Spinner /> : (
+        <>
+          <DataTable
+            rows={pageRows}
+            rowKey={(row) => row.id}
+            onRowClick={(row) => router.push(`/inventory/reports/${row.id}`)}
+            empty={<span className="text-sm text-gray-500">No report submissions match these filters.</span>}
+            columns={[
+              { header: 'Business date', headerRender: () => <SubmissionSortHeader label="Business date" col="business_date" sort={sort} direction={direction} onSort={onSort} />, render: (row) => row.business_date },
+              { header: 'Submitted', headerRender: () => <SubmissionSortHeader label="Submitted" col="submitted_at" sort={sort} direction={direction} onSort={onSort} />, render: (row) => row.submitted_at ? formatDateTime(row.submitted_at) : '—' },
+              { header: 'Branch', headerRender: () => <SubmissionSortHeader label="Branch" col="branch" sort={sort} direction={direction} onSort={onSort} />, render: (row) => row.branch_name ?? '—' },
+              { header: 'Submitted by', render: (row) => row.submitted_by_name ?? '—' },
+              { header: 'Report', priority: 'primary', headerRender: () => <SubmissionSortHeader label="Report" col="report" sort={sort} direction={direction} onSort={onSort} />, render: (row) => String(row.template_snapshot.name ?? row.template_id) },
+              { header: 'Status', headerRender: () => <SubmissionSortHeader label="Status" col="status" sort={sort} direction={direction} onSort={onSort} />, render: (row) => <Badge variant={reportStatusVariant(row.status)}>{row.status.replaceAll('_', ' ')}</Badge> },
+              { header: 'Progress', render: (row) => `${row.lines.filter((line) => line.confirmed).length}/${row.lines.length}` },
+              { header: 'Variance value', headerRender: () => <SubmissionSortHeader label="Variance value" col="variance" sort={sort} direction={direction} onSort={onSort} />, render: (row) => formatCurrency(reportVariance(row)) },
+            ]}
+          />
+          <Pagination page={page} pages={pages} total={visible.length} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="reports" />
+        </>
+      )}
+    </div>
+  );
 }
 
 function IntegrityTab() {

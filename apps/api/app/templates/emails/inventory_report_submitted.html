@@ -1,0 +1,64 @@
+{#
+  A shift inventory report has been submitted at a branch.
+
+  Sent to the office so the count can be reviewed — and, when the variance is
+  large enough to need approval, approved or rejected — from the admin console.
+  Always English: it is an internal notification and the admin it links to is
+  English-only.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}Inventory report submitted — {{ report_name }}{% endblock %}
+{% block preheader %}{{ branch_name }} &middot; {{ business_date }} &middot; {% if requires_approval %}needs approval{% else %}auto-posted{% endif %}{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Inventory report</p>
+    <h2 class="hero-title">{{ report_name }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>
+      {% if requires_approval %}
+        A count has been submitted and is <strong>waiting for approval</strong>.
+        The stock ledger updates once you approve it.
+      {% else %}
+        A count has been submitted and <strong>posted to the stock ledger</strong>
+        automatically (its variance was within the branch's approval threshold).
+      {% endif %}
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 140px; padding: 5px 0;">Branch</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ branch_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Business date</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ business_date }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Submitted by</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="auto">{{ submitted_by }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Status</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ status }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Variance value</td>
+            <td class="kv-value" style="padding: 5px 0;">AED {{ variance_cost }}</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+
+{{ parts.button(admin_report_url, 'Review the report in the admin') }}
+{% endblock %}

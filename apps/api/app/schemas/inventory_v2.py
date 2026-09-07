@@ -282,6 +282,12 @@ class ShiftReportResponse(ORMModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     transaction_id: UUID | None
+    # Resolved display names, filled by the admin/manager read endpoints so a
+    # reviewer sees who and where without a second lookup. The register endpoints
+    # leave them null — the POS never shows them.
+    branch_name: str | None = None
+    submitted_by_name: str | None = None
+    approved_by_name: str | None = None
     lines: list[ShiftReportLineResponse] = []
 
     @computed_field  # type: ignore[prop-decorator]

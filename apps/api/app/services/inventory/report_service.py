@@ -17,6 +17,7 @@ from app.core.money import money, quantity, unit_cost
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
+    InventoryCategory,
     InventoryItem,
     InventoryTransaction,
     InventoryTransactionItem,
@@ -35,6 +36,7 @@ from app.models.inventory_v2 import (
 )
 from app.models.till import Till, TillStatusEnum
 from app.models.user import User
+from app.services import email_service
 from app.services.inventory import (
     inventory_service,
     report_columns,
@@ -488,6 +490,40 @@ def _apply_source_columns(
     }
 
 
+async def _category_map(
+    db: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, InventoryCategory]:
+    """The categories of the given items, keyed by category id, in one query."""
+    if not item_ids:
+        return {}
+    category_ids = (
+        (
+            await db.execute(
+                select(InventoryItem.category_id)
+                .where(
+                    InventoryItem.id.in_(item_ids),
+                    InventoryItem.category_id.is_not(None),
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not category_ids:
+        return {}
+    categories = (
+        (
+            await db.execute(
+                select(InventoryCategory).where(InventoryCategory.id.in_(category_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {category.id: category for category in categories}
+
+
 async def _create_report(
     db: AsyncSession,
     *,
@@ -533,12 +569,18 @@ async def _create_report(
     db.add(report)
     await db.flush()
     movements = await _movement_totals(db, report, through_sequence=base_sequence)
+    # One lookup of the item categories the report touches, so each line carries
+    # its category name and the category's display order. The register groups the
+    # count by category and the admin review shows the same grouping — both read
+    # these off the line rather than re-fetching the catalogue.
+    categories = await _category_map(db, [row.item_id for row in template.items])
     for template_item in sorted(template.items, key=lambda row: row.display_order):
         item = await db.get(InventoryItem, template_item.item_id)
         if item is None:
             continue
         level = await inventory_service.level_for(db, item.id, warehouse.id)
         expected = quantity(level.quantity)
+        category = categories.get(item.category_id) if item.category_id else None
         report_line = ShiftInventoryReportLine(
             # Set the FK directly and add the line on its own, rather than
             # appending to the report's unloaded lines collection. The report was
@@ -555,6 +597,10 @@ async def _create_report(
                 "item_name": item.name,
                 "item_sku": item.sku,
                 "required_input": template_item.required_input,
+                "category_name": category.name if category else None,
+                "category_order": int(category.display_order or 0)
+                if category
+                else None,
             },
         )
         _apply_source_columns(
@@ -632,29 +678,17 @@ async def refresh_report(
     return report
 
 
-async def save_report(
+async def _write_line_edits(
     db: AsyncSession, *, report: ShiftInventoryReport, data
-) -> ShiftInventoryReport:
-    report = await _lock_report(db, report.id)
-    if report.status in {
-        ShiftInventoryReportStatusEnum.POSTED.value,
-        ShiftInventoryReportStatusEnum.APPROVED.value,
-        ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value,
-    }:
-        raise ConflictError("This inventory report is no longer editable")
-    payload_hash = hashlib.sha256(
-        json.dumps(
-            data.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-        ).encode()
-    ).hexdigest()
-    if report.last_save_idempotency_key == data.idempotency_key:
-        if report.last_save_payload_hash != payload_hash:
-            raise ConflictError(
-                "This save key was already used for different report data"
-            )
-        return report
-    if data.base_posting_sequence != report.base_posting_sequence:
-        raise ConflictError("Inventory moved since this report was refreshed")
+) -> None:
+    """Apply entered counts and movement columns from ``data`` onto the report's
+    lines, recomputing each line's derived closing and variance.
+
+    Shared by the register's save and the admin's pre-approval edit: the
+    arithmetic that decides what the ledger will post must be identical on both
+    paths, so an admin who corrects a count before approving posts exactly what a
+    cashier who had typed it would have.
+    """
     updates = {line.item_id: line for line in data.lines}
     unknown = set(updates) - {line.item_id for line in report.lines}
     if unknown:
@@ -720,10 +754,59 @@ async def save_report(
             line.variance_cost = money(
                 abs(Decimal(str(line.variance_quantity))) * per_ingredient_cost
             )
+
+
+async def save_report(
+    db: AsyncSession, *, report: ShiftInventoryReport, data
+) -> ShiftInventoryReport:
+    report = await _lock_report(db, report.id)
+    if report.status in {
+        ShiftInventoryReportStatusEnum.POSTED.value,
+        ShiftInventoryReportStatusEnum.APPROVED.value,
+        ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value,
+    }:
+        raise ConflictError("This inventory report is no longer editable")
+    payload_hash = hashlib.sha256(
+        json.dumps(
+            data.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    if report.last_save_idempotency_key == data.idempotency_key:
+        if report.last_save_payload_hash != payload_hash:
+            raise ConflictError(
+                "This save key was already used for different report data"
+            )
+        return report
+    if data.base_posting_sequence != report.base_posting_sequence:
+        raise ConflictError("Inventory moved since this report was refreshed")
+    await _write_line_edits(db, report=report, data=data)
     report.notes = data.notes
     report.status = ShiftInventoryReportStatusEnum.DRAFT.value
     report.last_save_idempotency_key = data.idempotency_key
     report.last_save_payload_hash = payload_hash
+    await db.flush()
+    return report
+
+
+async def edit_pending_report(
+    db: AsyncSession, *, report: ShiftInventoryReport, data, user: User
+) -> ShiftInventoryReport:
+    """An approver's correction to a report that is waiting for approval.
+
+    The register's ``save_report`` refuses a submitted report on purpose — the
+    shop cannot quietly rewrite a count it has handed in. But the approver may:
+    they are the person deciding whether the ledger takes these figures, so they
+    must be able to fix a fat-fingered count before approving it. The report stays
+    ``pending_approval`` (this is not an approval), and because approval posts
+    straight off the lines, the corrected figures are exactly what the ledger
+    takes.
+    """
+    report = await _lock_report(db, report.id)
+    if report.status != ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value:
+        raise ConflictError("Only a report awaiting approval can be edited here")
+    await _write_line_edits(db, report=report, data=data)
+    if data.notes is not None:
+        report.notes = data.notes
     await db.flush()
     return report
 
@@ -817,7 +900,37 @@ async def submit_report(
     await db.flush()
     if not requires_approval:
         await post_report(db, report=report, user=user)
+    await _notify_report_submitted(
+        db, report=report, submitter=user, requires_approval=requires_approval
+    )
     return report
+
+
+async def _notify_report_submitted(
+    db: AsyncSession,
+    *,
+    report: ShiftInventoryReport,
+    submitter: User,
+    requires_approval: bool,
+) -> None:
+    """Email the office a link to the report the moment it is submitted — whether
+    it auto-posted or is now waiting for approval. ``email_service`` never raises
+    and journals every attempt, so a mail outage cannot fail a till close."""
+    branch = await db.get(Branch, report.branch_id)
+    variance_cost = sum(
+        (Decimal(str(line.variance_cost or 0)) for line in report.lines),
+        Decimal("0"),
+    )
+    await email_service.send_inventory_report_submitted(
+        report_id=str(report.id),
+        report_name=str(report.template_snapshot.get("name") or "Inventory report"),
+        branch_name=branch.name if branch else "—",
+        business_date=report.business_date,
+        submitted_by=(submitter.display_name or submitter.email),
+        status=report.status,
+        requires_approval=requires_approval,
+        variance_cost=variance_cost,
+    )
 
 
 async def approve_report(
