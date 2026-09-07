@@ -33,7 +33,7 @@ const REPORT_TEMPLATE_GUIDANCE: Record<ReportTemplateKind, {
   cadence: 'per_till' | 'per_business_day' | 'ad_hoc';
   required: boolean;
   kinds: InventoryItem['kind'][];
-  requiredInput: 'physical_count' | 'production';
+  requiredInput: 'physical_count';
   staffInstruction: string;
 }> = {
   production: {
@@ -41,7 +41,7 @@ const REPORT_TEMPLATE_GUIDANCE: Record<ReportTemplateKind, {
     cadence: 'per_business_day',
     required: true,
     kinds: ['semi_finished', 'produced_good'],
-    requiredInput: 'production',
+    requiredInput: 'physical_count',
     staffInstruction: 'Enter finished units actually produced. The ledger consumes the captured item recipe and adds the finished stock.',
   },
   finished_goods: {
