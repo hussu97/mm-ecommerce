@@ -152,6 +152,29 @@ async function refreshAccessToken(): Promise<boolean> {
   return res.ok;
 }
 
+/**
+ * The one refresh in flight, shared by every caller that hits a 401 while it
+ * is pending — `null` when none is running.
+ *
+ * Checkout fires roughly seven calls in parallel, and every one of them can
+ * land its 401 in the same tick. Without this, each started its own
+ * `refreshAccessToken()`; with refresh-token rotation the first response
+ * invalidates every other refresh token still in flight, and the customer is
+ * signed out mid-checkout by the very requests trying to keep them signed in.
+ * A concurrent 401 now awaits this promise instead of minting a second one,
+ * and every caller retries once it settles — success or failure alike.
+ */
+let refreshing: Promise<boolean> | null = null;
+
+function refreshAccessTokenOnce(): Promise<boolean> {
+  if (!refreshing) {
+    refreshing = refreshAccessToken().finally(() => {
+      refreshing = null;
+    });
+  }
+  return refreshing;
+}
+
 // ─── Core fetch ───────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, options: RequestInit = {}, _retry = true): Promise<T> {
@@ -214,7 +237,7 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
   );
 
   if (res.status === 401 && _retry) {
-    const refreshed = await refreshAccessToken();
+    const refreshed = await refreshAccessTokenOnce();
     if (refreshed) {
       return request<T>(path, options, false);
     }
