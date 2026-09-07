@@ -1,13 +1,18 @@
 #!/usr/bin/env sh
 
-echo "▶ pre-push: type-checking and running frontend tests..."
+echo "▶ pre-push: type-checking, linting and running frontend tests..."
 
 pnpm --filter web exec tsc --noEmit
 pnpm --filter admin exec tsc --noEmit
+# F-OPS-12: CI (deploy.yml's test-api job doesn't touch these; deploy-web/
+# deploy-admin lint as their own steps) is not the first place a lint error
+# should surface. Same rule as the backend's ruff check below.
+pnpm --filter web lint
+pnpm --filter admin lint
 pnpm --filter web test
 pnpm --filter admin test
 
-echo "▶ pre-push: running backend tests..."
+echo "▶ pre-push: linting and running backend tests..."
 
 VENV="$(pwd)/apps/api/.venv/bin"
 if [ -d "$VENV" ]; then
@@ -15,10 +20,16 @@ if [ -d "$VENV" ]; then
   # PATH, and the hook then fails on a machine that has one without pytest —
   # which reads as "the tests broke" rather than "the wrong python ran".
   export PATH="$VENV:$PATH"
-  cd apps/api && python -m pytest tests/ --tb=short -q
+  cd apps/api
+  # F-OPS-12: ruff runs in CI's test-api job, but a push that fails it there
+  # still has to wait on a full CI round trip to find out — catch it locally
+  # first, the same way the frontend lint/type-check above already do.
+  ruff check .
+  ruff format --check .
+  python -m pytest tests/ --tb=short -q
   cd - > /dev/null
 else
-  echo "⚠ Python venv not found at apps/api/.venv — skipping backend tests"
+  echo "⚠ Python venv not found at apps/api/.venv — skipping backend lint/tests"
 fi
 
 echo "✓ pre-push checks passed"

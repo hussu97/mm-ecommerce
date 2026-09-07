@@ -84,8 +84,18 @@ jobs:
 
   deploy-web:
     name: Test & Deploy Web to Vercel
-    needs: changes
-    if: needs.changes.outputs.web == 'true'
+    # F-OPS-12: web imports @mm/types, generated from the API's OpenAPI
+    # document — shipping it against an API whose own tests are red is
+    # exactly the contract-drift class this pipeline exists to catch.
+    # `always()` + the explicit result check is required, not decorative:
+    # test-api only runs when `changes.outputs.api == 'true'` (see its own
+    # `if`), so a web-only push leaves it `skipped`, and a bare `needs:
+    # test-api` would make Actions skip THIS job too on every such push.
+    needs: [changes, test-api]
+    if: >
+      always() &&
+      needs.changes.outputs.web == 'true' &&
+      (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -161,8 +171,12 @@ jobs:
 
   deploy-admin:
     name: Test & Deploy Admin to Vercel
-    needs: changes
-    if: needs.changes.outputs.admin == 'true'
+    # F-OPS-12 — see the same note on deploy-web above.
+    needs: [changes, test-api]
+    if: >
+      always() &&
+      needs.changes.outputs.admin == 'true' &&
+      (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -337,6 +351,18 @@ jobs:
         run: |
           cd apps/api
           pytest tests/ --tb=short
+
+      # F-OPS-12: pr-check.yml already gates this on a PR, but a push that
+      # skipped review (or a PR whose branch drifted after its last check
+      # run) reaches this job with nothing else to catch a schema change that
+      # was never followed by regenerating packages/types/openapi.json —
+      # deploy-web/deploy-admin below now `needs: test-api`, so this is the
+      # one place left that can still fail loudly before that stale contract
+      # ships.
+      - name: Shared types freshness
+        run: |
+          cd apps/api
+          python -m scripts.export_openapi --check
 
   build-api:
     name: Build API image

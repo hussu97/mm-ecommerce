@@ -20,6 +20,7 @@ DEPLOY_SH = ROOT / "scripts" / "deploy.sh"
 DECOMMISSION = ROOT / "scripts" / "decommission-legacy-aggregator.sh"
 DEPLOY_YML = ROOT / ".github" / "workflows" / "deploy.yml"
 ROLLBACK_YML = ROOT / ".github" / "workflows" / "rollback.yml"
+PRE_PUSH = ROOT / ".husky" / "pre-push"
 BACKUP_DB = ROOT / "scripts" / "backup-db.sh"
 RESTORE_DB = ROOT / "scripts" / "restore-db.sh"
 
@@ -292,3 +293,50 @@ def test_backup_db_gcs_upload_failure_is_loud():
     assert text.count("::error::backup-db.sh") >= 2, (
         "both the cp-failed and no-CLI-available cases should be loud"
     )
+
+
+def test_deploy_web_and_admin_need_test_api_but_tolerate_it_skipping():
+    """
+    F-OPS-12: web imports @mm/types (generated from the API's OpenAPI
+    document), so it must not deploy against an API whose own tests are red.
+    But `test-api` only runs when `changes.outputs.api == 'true'`, so a
+    web-only push leaves it `skipped` — a bare `needs: test-api` would make
+    Actions skip deploy-web/deploy-admin too on every such push, which is the
+    overwhelmingly common case.
+    """
+    text = DEPLOY_YML.read_text()
+    for job in ("deploy-web:", "deploy-admin:"):
+        idx = text.find(job)
+        assert idx != -1, job
+        block = text[idx : idx + 800]
+        assert "needs: [changes, test-api]" in block, (
+            f"{job} does not depend on test-api"
+        )
+        assert "needs.test-api.result == 'success'" in block
+        assert "needs.test-api.result == 'skipped'" in block
+        assert "always()" in block, (
+            f"{job}'s if must start with always(), or Actions skips it "
+            "whenever test-api is skipped rather than evaluating the rest"
+        )
+
+
+def test_deploy_yml_checks_shared_types_freshness():
+    """
+    F-OPS-12: pr-check.yml already runs `export_openapi --check`, but that
+    only gates a reviewed PR. A push that skipped review (or a stale branch)
+    reaches deploy.yml with nothing else to catch a schema change that was
+    never followed by regenerating packages/types/openapi.json.
+    """
+    text = DEPLOY_YML.read_text()
+    assert "python -m scripts.export_openapi --check" in text
+
+
+def test_pre_push_lints_before_pushing():
+    """F-OPS-12: ruff and the two frontend linters run before pytest/tsc, so a
+    lint failure is found in the same second, not after paying for a slower
+    check first."""
+    text = PRE_PUSH.read_text()
+    assert "ruff check ." in text
+    assert "ruff format --check ." in text
+    assert "pnpm --filter web lint" in text
+    assert "pnpm --filter admin lint" in text
