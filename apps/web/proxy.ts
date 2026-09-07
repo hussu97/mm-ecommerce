@@ -91,31 +91,109 @@ let rulesCache: { rules: RedirectRule[]; expires: number } | null = null;
 const RULES_TTL_MS = 60_000;
 
 /**
- * Fails open, on purpose.
+ * How long a request will wait on the redirects endpoint before giving up.
  *
- * If the API is unreachable this returns the rules it last had, or none. A
- * storefront that serves every page and forgets some redirects is a bad
- * morning; a storefront that 500s because a redirect table could not be read is
- * an outage, and the thing that broke would be a feature for handling *old*
- * URLs.
+ * This used to be 2000ms, and every request that found a cold or expired
+ * cache paid it in full before this middleware could answer anything —
+ * measured on production as 147 daily 499s and TTFB stalls near two seconds,
+ * because a `NextRequest`'s own client gives up well before a slow edge
+ * function does. The redirect table is small and same-region, so a healthy
+ * answer comes back in tens of milliseconds; 600ms is generous headroom for
+ * that and still short enough that a genuinely stuck API cannot hold a
+ * request hostage.
  */
-async function getRules(): Promise<RedirectRule[]> {
-  const now = Date.now();
-  if (rulesCache && rulesCache.expires > now) return rulesCache.rules;
+const FETCH_TIMEOUT_MS = 600;
 
-  try {
-    const res = await fetch(`${API_BASE}/redirects/map`, {
-      signal: AbortSignal.timeout(2000),
+/** One in-flight fetch at a time, however many requests are waiting on it. */
+let inFlight: Promise<RedirectRule[]> | null = null;
+
+async function fetchRules(): Promise<RedirectRule[]> {
+  const res = await fetch(`${API_BASE}/redirects/map`, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(String(res.status));
+  const body = (await res.json()) as { rules: RedirectRule[] };
+  return body.rules ?? [];
+}
+
+/**
+ * Single-flight refresh: whoever asks first starts the fetch, and every
+ * request that lands while it is in the air — the common case, since this
+ * only runs when the cache is cold or has just expired — gets the same
+ * promise instead of firing one request each. Resolves to the table that
+ * ends up cached, success or fallback, so a caller that chooses to await it
+ * (an unprefixed path, below) gets a real answer either way.
+ */
+function refreshRules(): Promise<RedirectRule[]> {
+  if (inFlight) return inFlight;
+  const now = Date.now();
+  inFlight = fetchRules()
+    .then((rules) => {
+      rulesCache = { rules, expires: Date.now() + RULES_TTL_MS };
+      return rulesCache.rules;
+    })
+    .catch(() => {
+      // Keep serving the last good table rather than dropping every rule the
+      // moment the API hiccups; only a cold instance ends up with nothing.
+      // The expiry still moves forward so a persistent outage retries once
+      // per TTL rather than once per request.
+      rulesCache = { rules: rulesCache?.rules ?? [], expires: now + RULES_TTL_MS };
+      return rulesCache.rules;
+    })
+    .finally(() => {
+      inFlight = null;
     });
-    if (!res.ok) throw new Error(String(res.status));
-    const body = (await res.json()) as { rules: RedirectRule[] };
-    rulesCache = { rules: body.rules ?? [], expires: now + RULES_TTL_MS };
-  } catch {
-    // Keep serving the last good table rather than dropping every rule the
-    // moment the API hiccups; only a cold instance ends up with nothing.
-    rulesCache = { rules: rulesCache?.rules ?? [], expires: now + RULES_TTL_MS };
+  return inFlight;
+}
+
+/**
+ * Fails open, and — since the redirect check for F-WEB-12 — fails *fast*.
+ *
+ * The old version awaited a fetch on every request that found the cache cold
+ * or expired, which is what produced the 499s and the multi-second TTFB: a
+ * redirect lookup that exists to save a page a double hop was itself the
+ * slowest thing on the request. Now:
+ *
+ *   - a warm cache answers with no fetch at all, exactly as before;
+ *   - a *stale* cache answers immediately with the table it has, and starts
+ *     `refreshRules()` in the background (`waitUntil` outlives the response;
+ *     with no event — as in a test — it simply runs and is not awaited);
+ *   - a *cold* cache on a path that already carries a locale prefix — nearly
+ *     all real traffic, since the very first hop already added one — is
+ *     answered with no rules at all rather than waiting on the network,
+ *     because a page that has to keep working with no redirect table
+ *     answered instantly is a better trade than a fast redirect on the one
+ *     request in an instance's life that could not have known better;
+ *   - a *cold* cache on an unprefixed path still waits, bounded by
+ *     `FETCH_TIMEOUT_MS`, because this is exactly the request the table
+ *     exists to save from a second round trip, and it is a small minority of
+ *     traffic.
+ *
+ * A storefront that serves every page and forgets some redirects is a bad
+ * morning; a storefront that is slow on every page because a redirect table
+ * could not be read fast enough is an outage, caused by the feature for
+ * handling *old* URLs.
+ */
+async function getRules(hasLocale: boolean, event?: NextFetchEvent): Promise<RedirectRule[]> {
+  const now = Date.now();
+
+  if (rulesCache) {
+    if (rulesCache.expires <= now) {
+      const refresh = refreshRules();
+      if (event) event.waitUntil(refresh);
+      else void refresh.catch(() => {});
+    }
+    return rulesCache.rules;
   }
-  return rulesCache.rules;
+
+  if (hasLocale) {
+    const refresh = refreshRules();
+    if (event) event.waitUntil(refresh);
+    else void refresh.catch(() => {});
+    return [];
+  }
+
+  return refreshRules();
 }
 
 /** The one spelling of a path the table stores: lowercase, no trailing slash. */
@@ -232,7 +310,7 @@ export async function proxy(request: NextRequest, event?: NextFetchEvent) {
   // Looked up twice: once as written, so a rule for `/en/about-me` can be about
   // English only, and once with the locale stripped, because a slug rename
   // breaks both languages at once and the table stores that as one row.
-  const rules = await getRules();
+  const rules = await getRules(hasLocale, event);
   const asWritten = normalise(pathname);
   const localeless = hasLocale ? normalise(`/${pathnameSegments.slice(2).join("/")}`) : asWritten;
 

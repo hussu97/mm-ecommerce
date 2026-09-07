@@ -53,6 +53,23 @@ async function loadProxy(rules: Rule[] | 'api-down' = []) {
   return (await import('./proxy')).proxy;
 }
 
+/**
+ * A fresh module, with the rule table already warm.
+ *
+ * Real traffic warms the cache this way too: `getRules` answers a *cold*
+ * cache immediately when the path already carries a locale prefix, without
+ * waiting on the network (see the note on it in `proxy.ts`), so a test that
+ * wants to exercise redirect *matching* on a prefixed path needs one prior
+ * request to have populated the cache first — an unprefixed request does
+ * that, since that path still waits on the fetch. Tests about the cold-cache
+ * behaviour itself use `loadProxy` directly instead.
+ */
+async function loadWarmedProxy(rules: Rule[] | 'api-down') {
+  const proxy = await loadProxy(rules);
+  await proxy(request('/mm-proxy-test-warm-cache', { 'accept-language': 'en' }));
+  return proxy;
+}
+
 function request(path: string, headers: Record<string, string> = {}) {
   return new NextRequest(new URL(`https://meltingmomentscakes.com${path}`), { headers });
 }
@@ -197,7 +214,7 @@ describe('redirects', () => {
   const en = { 'accept-language': 'en-GB,en;q=0.9' };
 
   it('answers a moved category in the language the visitor was reading', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     const res = await proxy(request('/en/cat-brownies', en));
     expect(location(res)).toBe('https://meltingmomentscakes.com/en/brownies');
     expect(res?.status).toBe(308);
@@ -224,26 +241,26 @@ describe('redirects', () => {
    * leave every one of them behind.
    */
   it('carries everything below a prefix rule across', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     expect(location(await proxy(request('/en/cat-mixboxes/mix-cookies-box-of-9', en))))
       .toBe('https://meltingmomentscakes.com/en/mix-boxes/mix-cookies-box-of-9');
   });
 
   it('does not carry a non-prefix rule past its own path', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     // `/about-me` moved; `/about-me-and-you` is simply not a page, and turning
     // it into one silently would be worse than a 404.
     expect(location(await proxy(request('/en/about-me-and-you', en)))).toBeNull();
   });
 
   it('keeps the query string the visitor arrived with', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     expect(location(await proxy(request('/en/cat-brownies?sort=price_asc', en))))
       .toBe('https://meltingmomentscakes.com/en/brownies?sort=price_asc');
   });
 
   it('normalises case and a trailing slash before matching', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     for (const path of ['/en/Cat-Brownies', '/en/cat-brownies/']) {
       expect(location(await proxy(request(path, en))), path)
         .toBe('https://meltingmomentscakes.com/en/brownies');
@@ -251,7 +268,7 @@ describe('redirects', () => {
   });
 
   it('lets a rule that names a locale keep its own locale and status', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     const res = await proxy(request('/en/press-kit', en));
     expect(location(res)).toBe('https://meltingmomentscakes.com/en/about');
     expect(res?.status).toBe(301);
@@ -261,7 +278,7 @@ describe('redirects', () => {
   });
 
   it('leaves a path no rule covers alone', async () => {
-    const proxy = await loadProxy(RULES);
+    const proxy = await loadWarmedProxy(RULES);
     expect(location(await proxy(request('/en/brownies', en)))).toBeNull();
     expect(location(await proxy(request('/en/faq', en)))).toBeNull();
   });
@@ -277,6 +294,114 @@ describe('redirects', () => {
     expect(location(await proxy(request('/en/cat-brownies', en)))).toBeNull();
     expect(location(await proxy(request('/cat-brownies', en))))
       .toBe('https://meltingmomentscakes.com/en/cat-brownies');
+  });
+});
+
+/**
+ * F-WEB-12: the redirect table used to be awaited on every request that found
+ * the cache cold or expired, with no single-flight — 147 daily 499s and TTFB
+ * stalls near two seconds. These assert the fix directly, at the level the
+ * fixture-based tests above cannot reach: whether a fetch actually happened,
+ * and how many.
+ */
+describe('redirect table resilience', () => {
+  const en = { 'accept-language': 'en-GB,en;q=0.9' };
+
+  it('answers a locale-prefixed request on a cold cache without waiting on the network', async () => {
+    vi.resetModules();
+    // A fetch that never resolves. If the response depended on it in any way,
+    // the `await` below would hang until the test timed out.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    const { proxy } = await import('./proxy');
+
+    const res = await proxy(request('/en/checkout', en));
+
+    expect(location(res)).toBeNull();
+  });
+
+  it('still waits on an unprefixed path, since that is the one the table exists to save a hop for', async () => {
+    vi.resetModules();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/redirects/map')) {
+        return new Response(
+          JSON.stringify({ rules: [{ from_path: '/cat-brownies', to_path: '/brownies', is_prefix: true, status_code: 308 }] }),
+          { status: 200 },
+        );
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { proxy } = await import('./proxy');
+
+    expect(location(await proxy(request('/cat-brownies', en))))
+      .toBe('https://meltingmomentscakes.com/en/brownies');
+  });
+
+  it('coalesces concurrent cold-cache requests behind a single fetch to the redirect table', async () => {
+    vi.resetModules();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/redirects/map')) {
+        return new Response(JSON.stringify({ rules: RULES }), { status: 200 });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { proxy } = await import('./proxy');
+
+    // Unprefixed paths block on the fetch, so firing several at once against a
+    // cold cache is exactly the scenario that used to fire one request per
+    // request instead of one for all of them.
+    await Promise.all([
+      proxy(request('/cat-brownies', en)),
+      proxy(request('/cat-mixboxes', en)),
+      proxy(request('/cat-brownies', en)),
+    ]);
+
+    const mapCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/redirects/map'));
+    expect(mapCalls.length).toBe(1);
+  });
+
+  it('serves a stale table immediately and only replaces it once the background refresh lands', async () => {
+    vi.resetModules();
+    let mapCallCount = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/redirects/map')) {
+        mapCallCount += 1;
+        const table =
+          mapCallCount === 1
+            ? [{ from_path: '/cat-brownies', to_path: '/brownies', is_prefix: true, status_code: 308 }]
+            : [{ from_path: '/cat-brownies', to_path: '/brownies-v2', is_prefix: true, status_code: 308 }];
+        return new Response(JSON.stringify({ rules: table }), { status: 200 });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { proxy } = await import('./proxy');
+
+    // Cold and unprefixed: blocks, and populates the cache with the first table.
+    await proxy(request('/cat-brownies', en));
+    expect(mapCallCount).toBe(1);
+
+    // Push the clock past the 60s TTL without touching the fetch mock's own
+    // timers — `Date.now()` is all `getRules` reads to decide staleness.
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 61_000);
+
+    const stale = await proxy(request('/en/cat-brownies', en));
+    // Answered immediately from the table that is one call old...
+    expect(location(stale)).toBe('https://meltingmomentscakes.com/en/brownies');
+
+    vi.useRealTimers();
+    // ...while the second call landed in the background. `mapCallCount`
+    // ticks up the instant `fetch` is invoked, before its `.json()` and the
+    // `.then` that actually replaces `rulesCache` have had a turn — so poll
+    // the thing that matters (what the table now resolves to) rather than
+    // the call count, which can reach 2 slightly before the cache does.
+    await vi.waitFor(async () => {
+      const res = await proxy(request('/en/cat-brownies', en));
+      expect(location(res)).toBe('https://meltingmomentscakes.com/en/brownies-v2');
+    });
+    expect(mapCallCount).toBe(2);
   });
 });
 
