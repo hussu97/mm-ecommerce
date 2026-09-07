@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from slowapi.util import get_remote_address
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -509,7 +510,9 @@ async def track_order(
         .options(selectinload(Order.items))
         .where(
             Order.order_number == data.order_number,
-            Order.email == data.email.lower().strip(),
+            # Case-insensitive on the column: it is stored lower-cased now, but
+            # historic rows predate that and must still be found by their owner.
+            func.lower(Order.email) == data.email.strip().lower(),
         )
     )
     order = (await db.execute(stmt)).scalar_one_or_none()
@@ -526,8 +529,24 @@ async def track_order(
     )
 
 
+def _ip_and_order_number(request: Request) -> str:
+    """Rate-limit key for the order lookup: the caller's IP *and* the order
+    number they are asking about.
+
+    Keying on the pair rather than the IP alone is deliberate. This route
+    returns the full order to anyone who pairs a number with its email, and
+    order numbers are a date plus a counter — guessable. A per-IP-only bucket
+    would let one address grind a single number against many emails inside the
+    limit; a per-IP-and-number bucket caps the attempts against any one order.
+    """
+    order_number = request.path_params.get("order_number", "")
+    return f"{get_remote_address(request)}:{order_number}"
+
+
 @router.get("/{order_number}", response_model=OrderResponse)
+@limiter.limit("15/minute", key_func=_ip_and_order_number)
 async def get_order(
+    request: Request,
     order_number: str,
     email: str | None = Query(
         None, description="Order email — proof of ownership for unauthenticated calls"
@@ -539,6 +558,10 @@ async def get_order(
     Get an order by order number. Authenticated users can only view their own
     orders; unauthenticated callers must supply the order's email as proof
     (same scheme as /orders/track).
+
+    Rate limited like `/orders/track` — this returns the *whole* order to a
+    number-plus-email pair, so an unbounded lookup is a way to grind a guessed
+    number against many guessed addresses. Keyed on IP and order number.
     """
     user_id = current_user.id if current_user else None
     is_admin = current_user.is_admin if current_user else False

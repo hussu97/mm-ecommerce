@@ -89,6 +89,22 @@ class OrderCreate(BaseModel):
     # Guest checkout: identify which cart to convert
     session_id: str | None = None
 
+    @field_validator("email", mode="after")
+    @classmethod
+    def _normalise_email(cls, value: str) -> str:
+        """
+        Fold the address to lower case on the way in.
+
+        `orders.email` is what every ownership check keys on — the confirmation
+        page, the track page, the new-customer coupon — and each of those
+        lower-cases the value it compares. Stored verbatim, `John@x.com` never
+        matched `john@x.com`, so a customer who capitalised their address at
+        checkout was locked out of their own order. Normalising here means the
+        column only ever holds the canonical form, and `_persist_order` folds
+        the fallback the same way for the paths that do not reach this schema.
+        """
+        return value.strip().lower()
+
     @model_validator(mode="before")
     @classmethod
     def _email_is_not_optional(cls, data: Any) -> Any:

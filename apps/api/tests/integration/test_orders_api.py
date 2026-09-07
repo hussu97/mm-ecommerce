@@ -186,3 +186,39 @@ class TestOrdersEndpoints:
             json={"order_number": "MM-2026-9999", "email": "nobody@example.com"},
         )
         assert response.status_code == 404
+
+
+class TestGetOrderIsRateLimited:
+    """
+    F-ORD-9: `GET /orders/{order_number}?email=` returns the *whole* order to a
+    number-plus-email pair, and order numbers are a date plus a counter. It
+    carried no limit at all while the reduced `/track` view was capped at
+    15/min — so the full view was the softer target. It now matches `/track`,
+    keyed on IP *and* order number so one address cannot grind one number
+    against many guessed emails inside the bucket.
+
+    A decoration check, not 16 real requests: slowapi's in-memory limiter is a
+    process-level singleton, so exhausting it here would throttle every other
+    test that shares this client IP (see `TestDeliveryQuoteAbuseRateLimit`).
+    """
+
+    def test_the_route_carries_the_track_ceiling_keyed_on_ip_and_number(self):
+        from app.api.v1 import orders
+        from app.core.limiter import limiter
+
+        name = f"{orders.get_order.__module__}.{orders.get_order.__name__}"
+        limits = limiter._route_limits.get(name, [])
+        assert limits, f"{name} carries no rate limit"
+        assert [str(lim.limit) for lim in limits] == ["15 per 1 minute"]
+        # Keyed on the pair, not the bare IP — the whole point of the fix.
+        assert limits[0].key_func is orders._ip_and_order_number
+
+    def test_the_key_combines_ip_and_order_number(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from app.api.v1 import orders
+
+        request = SimpleNamespace(path_params={"order_number": "MM-2026-0007"})
+        with patch.object(orders, "get_remote_address", return_value="203.0.113.9"):
+            assert orders._ip_and_order_number(request) == "203.0.113.9:MM-2026-0007"

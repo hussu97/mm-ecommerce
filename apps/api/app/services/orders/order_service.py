@@ -752,6 +752,12 @@ async def _persist_order(
     order_email = data.email or fallback_email
     if not order_email:
         raise BadRequestError("An email address or an active session is required")
+    # Folded to the canonical lower case the column is matched on. `data.email`
+    # already arrives normalised (`OrderCreate._normalise_email`), but the
+    # fallback is the signed-in caller's account address and reaches here
+    # without passing that schema — so it is folded here too, or an order
+    # written from the fallback would be one its owner's own lookups miss.
+    order_email = order_email.strip().lower()
 
     address_snapshot: dict | None = (
         data.shipping_address.model_dump(mode="json") if data.shipping_address else None
@@ -1541,10 +1547,12 @@ async def get_by_order_number(
         if user_id:
             if order.user_id != user_id:
                 raise ForbiddenError("Not your order")
-        elif not email or order.email != email.lower().strip():
+        elif not email or (order.email or "").lower() != email.strip().lower():
             # An order number alone must never expose the full order — it
             # carries the customer's email and address. Unauthenticated callers
             # prove ownership with the order's email, like /orders/track.
+            # Compared case-insensitively: the column is now stored lower-cased,
+            # but historic rows and a caller's capitalisation must still match.
             raise ForbiddenError("Not your order")
 
     return await to_response(db, order)
