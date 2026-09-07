@@ -42,6 +42,10 @@ jobs:
               - 'apps/api/**'
               - 'nginx/**'
               - 'docker-compose*.yml'
+              # A change to this job's own workflow must re-run it, so the DB
+              # service + migration wiring below is exercised on the PR that
+              # edits it rather than first firing on the next api change.
+              - '.github/workflows/pr-check.yml'
             # The worker's own tests, plus the cross-package Keeta contract test,
             # which asserts against apps/api's keeta_provider — so a change to
             # either side must re-run it.
@@ -148,6 +152,25 @@ jobs:
     needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
+    # A real database, mirroring deploy.yml's Test API job. Without it the ~40
+    # DB-gated integration tests skip here and first run at the deploy gate,
+    # where a broken one blocks the release instead of the PR (F-TST-3).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mm
+          POSTGRES_PASSWORD: mm
+          POSTGRES_DB: mm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://mm:mm@localhost:5432/mm_test
     steps:
       - uses: actions/checkout@v4
 
@@ -194,6 +217,11 @@ jobs:
           ruff format --check .
         env:
           RUFF_CACHE_DIR: ~/.cache/ruff
+
+      - name: Prepare the test database
+        run: |
+          cd apps/api
+          DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
 
       # Serial on purpose — see the note in deploy.yml. xdist measured slower
       # here (50s vs 47s): the cost is importing the app, and each worker pays
