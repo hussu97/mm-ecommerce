@@ -66,6 +66,12 @@ _ACCEPT_LANGUAGE = "en-AE,en;q=0.9,ar-AE;q=0.8,ar;q=0.7"
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
+#: Longest a `Retry-After` may hold a call before we give up and treat the channel
+#: as unavailable (F-AGG-7). The header is uncapped and a marketplace can ask for
+#: minutes; honouring that inside the sweep is what wedged it — and the run row is
+#: better failed and retried next tick than blocked for a `Retry-After` of 600s.
+_RETRY_AFTER_MAX_SECONDS = 30.0
+
 
 class _RateLimiter:
     """One token every `1/rate` seconds, process-wide per client instance."""
@@ -286,7 +292,18 @@ class BaseAggregatorClient(ABC):
                     )
                 status = getattr(last_response, "status_code", 0)
                 if status in _RETRY_STATUSES and attempt == 0:
-                    await asyncio.sleep(_retry_after_seconds(last_response))
+                    wait_for = _retry_after_seconds(last_response)
+                    if wait_for > _RETRY_AFTER_MAX_SECONDS:
+                        # An uncapped Retry-After would idle the whole sweep (and,
+                        # before F-AGG-7, a pooled connection) for minutes. Fail the
+                        # call cleanly instead; the run is marked unavailable and the
+                        # next scheduled tick retries.
+                        raise AggregatorUnavailableError(
+                            f"{self.channel} asked to retry after {wait_for:.0f}s "
+                            f"(> {_RETRY_AFTER_MAX_SECONDS:.0f}s cap) — treating as "
+                            "unavailable"
+                        )
+                    await asyncio.sleep(wait_for)
                     continue
                 return last_response
             return last_response

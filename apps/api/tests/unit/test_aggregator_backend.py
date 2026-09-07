@@ -472,17 +472,33 @@ class TestSalesRefreshBootCatchup:
 
 
 # ── reauth waits must NOT hold a DB connection (2026-08-30 pool-deadlock fix) ──
-class TestSweepReleasesConnectionBeforeReauth:
-    """The sweep must release its pooled DB connection BEFORE the up-to-360s reauth
-    wait — holding it idle-in-transaction across the wait is what exhausted the pool
-    and took the API down. These pin the ordering: release happens before the wait."""
+class _DummyCtx:
+    """A stand-in `async with AsyncSessionFactory()` whose session is an AsyncMock —
+    for the sweep's short-lived session-load/finalise blocks when the DB-touching
+    steps around them are themselves patched out."""
 
-    async def test_upfront_reauth_rolls_back_first(self, monkeypatch):
+    async def __aenter__(self):
+        return AsyncMock()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _dummy_factory():
+    return _DummyCtx()
+
+
+class TestSweepHoldsNoConnectionAcrossReauth:
+    """F-AGG-7: the sweep opens the run on its OWN committed session, awaits the
+    marketplace fetch with NO session held, and finalises on a fresh session — so no
+    pooled connection is ever held across the up-to-360s reauth wait (what exhausted
+    the pool and took the API down). `_sweep_channel` no longer takes a `db`; these
+    pin that the fetch is sessionless and the reauth path never opens/holds one."""
+
+    async def test_dead_session_upfront_reauths_without_opening_a_run(self, monkeypatch):
         from app.services.aggregators import ingest
 
         calls: list[str] = []
-        db = AsyncMock()
-        db.rollback = AsyncMock(side_effect=lambda: calls.append("rollback"))
 
         async def no_session(*a, **k):
             return None
@@ -491,47 +507,54 @@ class TestSweepReleasesConnectionBeforeReauth:
             calls.append("await_reauth")
             return None
 
+        async def fake_open_run(*a, **k):
+            calls.append("open_run")
+            return 1
+
         monkeypatch.setattr(ingest, "_session_for", no_session)
         monkeypatch.setattr(ingest, "_await_reauth", fake_reauth)
+        monkeypatch.setattr(ingest, "_open_run", fake_open_run)
+        monkeypatch.setattr(ingest, "AsyncSessionFactory", _dummy_factory)
 
-        written = await ingest._sweep_channel(db, "careem", object(), "sales")
+        written = await ingest._sweep_channel("careem", object(), "sales")
         assert written == 0
-        assert calls == ["rollback", "await_reauth"], (
-            f"connection not released before the wait: {calls}"
-        )
+        assert calls == ["await_reauth"]  # reauth tried, and NO run row opened
 
-    async def test_midpull_reauth_commits_first(self, monkeypatch):
+    async def test_midpull_auth_death_reauths_then_fails_the_run(self, monkeypatch):
         from app.services.aggregators import ingest
 
-        calls: list[str] = []
-        db = AsyncMock()
-        db.commit = AsyncMock(side_effect=lambda: calls.append("commit"))
+        calls: list = []
 
         async def live_session(*a, **k):
             return object()
 
-        async def fake_new_run(*a, **k):
-            return SimpleNamespace(status=None, error=None, finished_at=None)
+        async def fake_open_run(*a, **k):
+            return 7
 
         async def fail_fetch(*a, **k):
+            # The fetch is what raises — and it is called with NO db session in scope.
             raise ingest.AggregatorAuthError("401")
 
         async def fake_reauth(*a, **k):
             calls.append("await_reauth")
             return None
 
-        monkeypatch.setattr(ingest, "_session_for", live_session)
-        monkeypatch.setattr(ingest, "_new_run", fake_new_run)
-        monkeypatch.setattr(ingest, "_fetch_and_persist", fail_fetch)
-        monkeypatch.setattr(ingest, "_await_reauth", fake_reauth)
-        monkeypatch.setattr(ingest, "_sweep_window", lambda *a, **k: (None, None))
-        monkeypatch.setattr(ingest.session_store, "mark_needs_bootstrap", AsyncMock())
+        async def fake_finalize(run_id, *, status, **k):
+            calls.append(("finalize", run_id, status))
 
-        written = await ingest._sweep_channel(db, "careem", object(), "sales")
+        monkeypatch.setattr(ingest, "_session_for", live_session)
+        monkeypatch.setattr(ingest, "_open_run", fake_open_run)
+        monkeypatch.setattr(ingest, "_fetch_channel_mode", fail_fetch)
+        monkeypatch.setattr(ingest, "_await_reauth", fake_reauth)
+        monkeypatch.setattr(ingest, "_finalize_run_status", fake_finalize)
+        monkeypatch.setattr(ingest, "_sweep_window", lambda *a, **k: (None, None))
+        monkeypatch.setattr(ingest, "AsyncSessionFactory", _dummy_factory)
+
+        written = await ingest._sweep_channel("careem", object(), "sales")
         assert written == 0
-        assert "commit" in calls and calls.index("commit") < calls.index(
-            "await_reauth"
-        ), f"connection not released before the wait: {calls}"
+        # Reauth was tried once, then the run was finalised FAILED on a fresh session.
+        assert "await_reauth" in calls
+        assert ("finalize", 7, ingest.RUN_FAILED) in calls
 
 
 # ── the reauth poll must keep what the provider's prepare wrote ───────────────

@@ -215,6 +215,13 @@ async def _async_false():
 def _patch_child_loops(monkeypatch, started):
     """Replace the forever-loops with markers that run until cancelled."""
 
+    async def fake_reap():
+        # Boot housekeeping (F-AGG-7) — no-op'd so the supervisor tests neither hit
+        # the DB nor delay the children spawning within their timing window.
+        return 0
+
+    monkeypatch.setattr(ingest, "reap_stale_runs", fake_reap)
+
     async def fake_daily():
         started.append("daily")
         await asyncio.Event().wait()
@@ -1982,3 +1989,104 @@ async def test_careem_empty_payouts_notes_channel_limit(monkeypatch):
     assert result.payouts == []
     assert result.truncation_note is not None
     assert "Tax Invoice" in result.truncation_note
+
+
+# ── F-AGG-7: an uncapped Retry-After must not hold the sweep ───────────────────
+class _Resp:
+    def __init__(self, status_code, headers=None):
+        self.status_code = status_code
+        self.headers = headers or {}
+
+
+def _cap_test_client(monkeypatch):
+    """A Careem client wired for the httpx path with no real network or throttle."""
+    client = CareemClient()
+    monkeypatch.setattr(client, "uses_tls_impersonation", False)
+    monkeypatch.setattr(client, "build_headers", lambda session, headers=None: {})
+    return client
+
+
+async def test_retry_after_beyond_cap_raises_unavailable(monkeypatch):
+    """A `Retry-After` longer than the 30s cap is treated as unavailable rather than
+    slept on — an uncapped wait is what idled the sweep (and, before F-AGG-7, a
+    pooled connection) for minutes and killed the run."""
+    from app.services.providers import aggregator_base as ab
+
+    client = _cap_test_client(monkeypatch)
+
+    async def fake_httpx(*a, **k):
+        return _Resp(429, {"Retry-After": "120"})
+
+    slept: list[float] = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(client, "_httpx_request", fake_httpx)
+    monkeypatch.setattr(ab.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(ab.AggregatorUnavailableError):
+        await client.request_raw(
+            LoadedSession(channel="careem", account_ref=""), "GET", "https://x/y"
+        )
+    assert slept == []  # bailed BEFORE waiting, not after a 120s sleep
+
+
+async def test_retry_after_within_cap_sleeps_once_and_retries(monkeypatch):
+    """A `Retry-After` at/under the cap is honoured: the call sleeps that long once
+    and retries, so the cap changes only the pathological long waits."""
+    from app.services.providers import aggregator_base as ab
+
+    client = _cap_test_client(monkeypatch)
+    calls = {"n": 0}
+
+    async def fake_httpx(*a, **k):
+        calls["n"] += 1
+        return _Resp(429, {"Retry-After": "5"}) if calls["n"] == 1 else _Resp(200)
+
+    slept: list[float] = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(client, "_httpx_request", fake_httpx)
+    monkeypatch.setattr(ab.asyncio, "sleep", fake_sleep)
+
+    resp = await client.request_raw(
+        LoadedSession(channel="careem", account_ref=""), "GET", "https://x/y"
+    )
+    assert resp.status_code == 200
+    assert calls["n"] == 2  # retried after the sub-cap wait
+    assert 5.0 in slept  # honoured the Retry-After
+    assert all(s <= ab._RETRY_AFTER_MAX_SECONDS for s in slept)  # nothing over the cap
+
+
+# ── F-AGG-9: both writers spell aggregator_channel as the canonical code ───────
+def test_canonical_channel_code_folds_every_spelling_to_one_code():
+    """The promotion label, the aggregator channel constant and every GrubTech alias
+    all collapse to the one courier-catalog code stored on orders.aggregator_channel."""
+    from app.services.aggregators import reconcile as rec
+
+    assert rec.canonical_channel_code("noon") == "noon_food"  # channel constant
+    assert rec.canonical_channel_code("Noon Food") == "noon_food"  # promotion label
+    assert rec.canonical_channel_code("Noon") == "noon_food"  # GrubTech raw
+    assert rec.canonical_channel_code("Careem Now") == "careem"
+    assert rec.canonical_channel_code("Careem") == "careem"
+    assert rec.canonical_channel_code("Keeta 2.0") == "keeta"
+    assert rec.canonical_channel_code("deliveroo") == "deliveroo"
+    # An unknown channel is kept verbatim (the `or raw` half), never dropped.
+    assert rec.canonical_channel_code("SomethingNew") == "SomethingNew"
+
+
+def test_channel_match_values_cover_the_code_and_the_old_labels():
+    """The MM-order convergence lookups match the canonical code (what both writers
+    now store) AND the historical display labels (rows written before the backfill)."""
+    from app.services.aggregators import reconcile as rec
+
+    by_code = rec.aggregator_channel_match_values("noon")
+    assert "noon_food" in by_code  # the code both writers now store
+    assert "Noon Food" in by_code and "Noon" in by_code  # pre-backfill spellings
+
+    by_name = rec.aggregator_channel_match_values_for_name("Careem Now")
+    assert "careem" in by_name  # canonical code
+    assert "Careem" in by_name  # display label

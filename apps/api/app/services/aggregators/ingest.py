@@ -846,6 +846,69 @@ async def _new_run(
     return run
 
 
+async def _open_run(
+    channel: str,
+    mode: str,
+    *,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
+    """Insert a 'running' run row on its OWN committed session and return its id.
+
+    F-AGG-7: the scheduled sweep opens the run row here and commits immediately, so
+    the pooled connection is released BEFORE the minutes-long marketplace fetch —
+    rather than flushing the INSERT and then sitting idle-in-transaction on that
+    connection for the whole pull. The row reads 'running' meanwhile; a later fresh
+    session finalises it, and `reap_stale_runs` sweeps one orphaned by a crash.
+    """
+    async with AsyncSessionFactory() as db:
+        run = await _new_run(db, channel, mode, from_date=from_date, to_date=to_date)
+        await db.commit()
+        return run.id
+
+
+#: A run left 'running' longer than this was orphaned — its process died mid-pull
+#: (a crash, an OOM, a container recreate) and no fresh session ever finalised it.
+#: Two prod rows sat 'running' since 2026-08-30 this way. Comfortably longer than
+#: any honest sweep, which the 30s Retry-After cap and per-call timeouts bound.
+_STALE_RUN_AFTER = timedelta(hours=2)
+
+
+async def reap_stale_runs() -> int:
+    """Fail runs stuck 'running' past `_STALE_RUN_AFTER`. Returns rows reaped.
+
+    Called once at scheduler-leadership acquisition (boot). A run row is opened and
+    committed up front (`_open_run`) and finalised on a separate session, so a
+    process that dies between the two leaves a row 'running' forever — it never
+    reflects a live pull, only a dead one. Reaping them on boot keeps the runs
+    trail honest and stops a stuck row from masking a channel's real health.
+    Never raises: a reap failure must not stop the scheduler coming up.
+    """
+    cutoff = utcnow() - _STALE_RUN_AFTER
+    try:
+        async with AsyncSessionFactory() as db:
+            result = await db.execute(
+                sql_update(AggregatorSyncRun)
+                .where(
+                    AggregatorSyncRun.status == RUN_RUNNING,
+                    AggregatorSyncRun.started_at < cutoff,
+                )
+                .values(
+                    status=RUN_FAILED,
+                    finished_at=utcnow(),
+                    error="reaped: stuck 'running' > 2h (process died mid-run)",
+                )
+            )
+            await db.commit()
+            reaped = int(result.rowcount or 0)
+    except Exception:  # noqa: BLE001 — a reap failure must not stop scheduler boot
+        logger.exception("aggregator reap_stale_runs failed")
+        return 0
+    if reaped:
+        logger.warning("aggregator: reaped %d stale 'running' sync run(s)", reaped)
+    return reaped
+
+
 #: One-shot backfill window when bootstrapping a channel for the first time — an
 #: adhoc `sweep_channel_once` can pass this to widen the ordinary daily lookback.
 _BACKFILL_LOOKBACK_DAYS = 365
@@ -907,32 +970,43 @@ def _sweep_window(
 _SYSTEMIC_DB_ERRORS = _isolation._SYSTEMIC_DB_ERRORS
 
 
-async def _fetch_and_persist(
-    db: AsyncSession,
-    channel: str,
+async def _fetch_channel_mode(
     provider: BaseAggregatorClient,
     mode: str,
     session,
     *,
     since: datetime,
     until: datetime,
-) -> tuple[int, str | None, dict]:
-    """Fetch one channel/mode for a window and persist it. No run bookkeeping.
+) -> SalesResult | FinanceResult:
+    """Fetch one channel/mode for a window — NETWORK ONLY, no DB session held.
 
-    Returns (records_written, truncation_note, detail) where detail breaks the
-    write down by kind ({"orders": n} for sales, {"statements": n, "payouts": m,
-    "invoices": k} for finance). Raises AggregatorAuthError /
-    AggregatorUnavailableError for the caller to record on the run row. Shared by
-    the daily `_sweep_channel` and the ranged `run_range`, so both take the exact
-    same idempotent upsert path (every write is an on-conflict upsert on a
-    channel-scoped natural key — re-running any window never double-counts).
+    Split from persistence (F-AGG-7): the scheduled sweep awaits this minutes-long
+    marketplace pull holding NO pooled connection, then persists what it got on a
+    fresh session. Raises AggregatorAuthError / AggregatorUnavailableError for the
+    caller to record on the run row.
     """
     if mode == RUN_MODE_SALES:
-        result: SalesResult = await provider.fetch_sales(
-            session, since=since, until=until
-        )
+        return await provider.fetch_sales(session, since=since, until=until)
+    return await provider.fetch_finance(session, since=since, until=until)
+
+
+async def _persist_channel_mode(
+    db: AsyncSession,
+    channel: str,
+    mode: str,
+    result: SalesResult | FinanceResult,
+) -> tuple[int, str | None, dict]:
+    """Persist an already-fetched result. No network, no run bookkeeping.
+
+    Returns (records_written, truncation_note, detail) where detail breaks the
+    write down by kind ({"orders": n} for sales, {"statements": n, "payouts": m}
+    for finance). Every write is an idempotent on-conflict upsert on a
+    channel-scoped natural key, so re-running any window never double-counts.
+    """
+    if mode == RUN_MODE_SALES:
+        sales: SalesResult = result  # type: ignore[assignment]
         written = 0
-        for order in result.orders:
+        for order in sales.orders:
             # One malformed order must not abort the whole channel's sweep and roll
             # back every good order with it — isolate it, like the reconcile/promote
             # passes and the Keeta push path already do. A bare try/except CANNOT do
@@ -958,10 +1032,8 @@ async def _fetch_and_persist(
                     channel,
                     order.external_order_id,
                 )
-        return written, result.truncation_note, {"orders": written}
-    finance: FinanceResult = await provider.fetch_finance(
-        session, since=since, until=until
-    )
+        return written, sales.truncation_note, {"orders": written}
+    finance: FinanceResult = result  # type: ignore[assignment]
     for statement in finance.statements:
         await _upsert_statement(db, channel, statement)
     for payout in finance.payouts:
@@ -972,6 +1044,28 @@ async def _fetch_and_persist(
     written = len(finance.statements) + len(finance.payouts)
     detail = {"statements": len(finance.statements), "payouts": len(finance.payouts)}
     return written, finance.truncation_note, detail
+
+
+async def _fetch_and_persist(
+    db: AsyncSession,
+    channel: str,
+    provider: BaseAggregatorClient,
+    mode: str,
+    session,
+    *,
+    since: datetime,
+    until: datetime,
+) -> tuple[int, str | None, dict]:
+    """Fetch then persist on ONE session — kept for the ranged backfill
+    (`run_range`), which holds a single session across both modes and is a manual,
+    bounded operation. The scheduled sweep (`_sweep_channel`) instead splits these
+    two phases across separate sessions so it holds no pooled connection across the
+    minutes-long fetch (F-AGG-7).
+    """
+    result = await _fetch_channel_mode(
+        provider, mode, session, since=since, until=until
+    )
+    return await _persist_channel_mode(db, channel, mode, result)
 
 
 def _retrieved_from_detail(mode: str, detail: dict) -> dict:
@@ -1071,8 +1165,42 @@ async def _await_reauth(
     return None
 
 
+async def _finalize_run_status(
+    run_id: int,
+    *,
+    status: str,
+    error: str | None = None,
+    stats: dict | None = None,
+    channel: str | None = None,
+    record_success: bool = False,
+    mark_bootstrap_error: str | None = None,
+) -> None:
+    """Stamp a run row's terminal state on a FRESH session (F-AGG-7).
+
+    The run row is opened+committed up front on its own session, so it is finalised
+    here on another — never on a connection held across the marketplace fetch. This
+    is also where the two side-effects a terminal state carries live: crediting the
+    session's `last_success_at`, and flagging it `needs_bootstrap` on an auth death.
+    """
+    async with AsyncSessionFactory() as db:
+        run = await db.get(AggregatorSyncRun, run_id)
+        if run is not None:
+            run.status = status
+            run.finished_at = utcnow()
+            if error is not None:
+                run.error = error[:2000]
+            if stats is not None:
+                run.stats = stats
+        if mark_bootstrap_error is not None and channel is not None:
+            await session_store.mark_needs_bootstrap(
+                db, channel, error=mark_bootstrap_error
+            )
+        if record_success and channel is not None:
+            await session_store.record_success(db, channel)
+        await db.commit()
+
+
 async def _sweep_channel(
-    db: AsyncSession,
     channel: str,
     provider: BaseAggregatorClient,
     mode: str,
@@ -1084,6 +1212,14 @@ async def _sweep_channel(
 ) -> int:
     """One channel's sweep for one mode. Returns records written; 0 on skip.
 
+    Structured as open_run → fetch (sessionless) → persist_and_close (F-AGG-7): the
+    run row is opened and committed on its own session, the minutes-long marketplace
+    fetch holds NO pooled connection, and the result is persisted and the run
+    finalised on a fresh session. Before this the sweep flushed the run INSERT and
+    then awaited the whole fetch with that transaction open — minutes
+    idle-in-transaction on a pooled connection, which (with a long uncapped
+    Retry-After) exhausted the pool on 2026-08-30.
+
     With `from_date`/`to_date` (Dubai business dates) it sweeps that explicit
     inclusive range; otherwise the Dubai-calendar lookback window (daily default).
 
@@ -1091,27 +1227,18 @@ async def _sweep_channel(
     `AggregatorAuthError` mid-pull — flags the session and waits for the worker's
     reauth daemon to bring it back, then retries once, instead of skipping.
     """
-    session = await _session_for(db, channel, provider)
+    # Load (and, for a password channel, mint) the session on its OWN short-lived
+    # session, then release it — nothing is held across the fetch. `prepare_session`
+    # can write a freshly-minted token (Deliveroo), so commit rather than discard it.
+    async with AsyncSessionFactory() as load_db:
+        session = await _session_for(load_db, channel, provider)
+        await load_db.commit()
     if session is None:
-        # Release this session's pooled connection BEFORE the up-to-360s reauth
-        # wait — otherwise `db` sits idle-in-transaction holding a connection for
-        # the whole wait, and several such waits at once exhaust the pool and wedge
-        # the API (the 2026-08-30 incident). `db` re-acquires a connection on its
-        # next statement.
-        #
-        # This used to say "`_session_for` only read, so a rollback loses nothing",
-        # and for Deliveroo that was false: `prepare_session` performs a real login
-        # and the rollback discarded the token it had just minted, so the channel
-        # re-authenticated on every pass and kept 401-ing on the dead one it had
-        # stored. A provider that mints credentials now persists them on its own
-        # committed session (`deliveroo_provider._persist_minted`), so the rollback
-        # genuinely loses nothing — by construction, not by assumption.
-        await db.rollback()
         session = await _await_reauth(channel, provider)
         if session is None:
             return 0
 
-    run = await _new_run(db, channel, mode, from_date=from_date, to_date=to_date)
+    run_id = await _open_run(channel, mode, from_date=from_date, to_date=to_date)
     since, until = _sweep_window(
         utcnow(),
         from_date=from_date,
@@ -1122,50 +1249,68 @@ async def _sweep_channel(
     attempted_reauth = False
     while True:
         try:
-            written, truncation, detail = await _fetch_and_persist(
-                db, channel, provider, mode, session, since=since, until=until
+            # NETWORK ONLY — no DB session held across this pull.
+            fetched = await _fetch_channel_mode(
+                provider, mode, session, since=since, until=until
             )
             break
         except AggregatorAuthError as exc:
             # Died mid-pull. Trigger reauth and retry once before giving up; the
-            # upserts are idempotent, so re-fetching from the start is safe.
+            # upserts are idempotent, so re-fetching from the start is safe. No DB
+            # connection is held across the up-to-360s reauth wait now — the run row
+            # was already committed by `_open_run` and reads 'running' meanwhile.
             if not attempted_reauth:
                 attempted_reauth = True
-                # Commit what we have (the run row, any orders persisted so far)
-                # to RELEASE the pooled connection before the up-to-360s reauth
-                # wait — holding it idle-in-transaction for the wait is what
-                # exhausted the pool on 2026-08-30. `run` stays usable after commit
-                # (expire_on_commit=False); the row reads as `running` meanwhile.
-                await db.commit()
                 fresh = await _await_reauth(channel, provider)
                 if fresh is not None:
                     session = fresh
                     continue
-            run.status = RUN_FAILED
-            run.error = str(exc)[:2000]
-            run.finished_at = utcnow()
-            await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
+            await _finalize_run_status(
+                run_id,
+                status=RUN_FAILED,
+                error=str(exc),
+                channel=channel,
+                mark_bootstrap_error=str(exc),
+            )
             logger.warning("aggregator %s %s: session dead — %s", channel, mode, exc)
             return 0
         except AggregatorUnavailableError as exc:
-            run.status = RUN_FAILED
-            run.error = str(exc)[:2000]
-            run.finished_at = utcnow()
+            await _finalize_run_status(run_id, status=RUN_FAILED, error=str(exc))
             logger.warning("aggregator %s %s unavailable: %s", channel, mode, exc)
             return 0
 
-    run.status = RUN_COMPLETED
-    run.finished_at = utcnow()
-    run.stats = {
-        "written": written,
-        "from": since.isoformat(),
-        "to": until.isoformat(),
-        **_retrieved_from_detail(mode, detail),
-    }
+    # Persist what we fetched and finalise the run on a FRESH session.
+    try:
+        async with AsyncSessionFactory() as db:
+            written, truncation, detail = await _persist_channel_mode(
+                db, channel, mode, fetched
+            )
+            run = await db.get(AggregatorSyncRun, run_id)
+            if run is not None:
+                run.status = RUN_COMPLETED
+                run.finished_at = utcnow()
+                run.stats = {
+                    "written": written,
+                    "from": since.isoformat(),
+                    "to": until.isoformat(),
+                    **_retrieved_from_detail(mode, detail),
+                }
+                if truncation:
+                    run.stats["truncation"] = truncation
+            await session_store.record_success(db, channel)
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 — record on the run, then skip this channel
+        # A systemic persist error (dead connection, schema mismatch) rolled the
+        # persist session back; mark the run FAILED honestly rather than leave it
+        # 'running' for the reaper, and return 0 so one channel does not stop the rest.
+        await _finalize_run_status(
+            run_id, status=RUN_FAILED, error=f"persist failed: {exc}"
+        )
+        logger.exception("aggregator %s %s persist failed", channel, mode)
+        return 0
+
     if truncation:
-        run.stats["truncation"] = truncation
         logger.info("aggregator %s %s truncated: %s", channel, mode, truncation)
-    await session_store.record_success(db, channel)
     return written
 
 
@@ -1183,19 +1328,17 @@ async def sweep_channel_once(
     provider = PROVIDERS.get(channel)
     if provider is None:
         raise ValueError(f"unknown or non-httpx aggregator channel: {channel}")
-    async with AsyncSessionFactory() as db:
-        written = await _sweep_channel(
-            db,
-            channel,
-            provider,
-            mode,
-            lookback_days=lookback_days,
-            lookback_hours=lookback_hours,
-            from_date=from_date,
-            to_date=to_date,
-        )
-        await db.commit()
-        return written
+    # `_sweep_channel` now manages its own sessions (open_run / persist_and_close),
+    # so there is no outer session to hold or commit here (F-AGG-7).
+    return await _sweep_channel(
+        channel,
+        provider,
+        mode,
+        lookback_days=lookback_days,
+        lookback_hours=lookback_hours,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
 
 #: "mmBATCH" + 9 — one lock for the whole ranged rerun, so two manual triggers
@@ -1595,16 +1738,16 @@ async def _sweep_all(
         if not mine:
             return 0
         touched = 0
-        async with AsyncSessionFactory() as db:
-            for channel, provider in PROVIDERS.items():
-                try:
-                    touched += await _sweep_channel(
-                        db, channel, provider, mode, lookback_hours=lookback_hours
-                    )
-                    await db.commit()
-                except Exception:  # noqa: BLE001 — one channel must not stop the rest
-                    await db.rollback()
-                    logger.exception("aggregator %s %s sweep failed", channel, mode)
+        # No outer session: each `_sweep_channel` opens/commits its run row and
+        # persists on its own short-lived sessions, holding no connection across the
+        # marketplace fetch (F-AGG-7).
+        for channel, provider in PROVIDERS.items():
+            try:
+                touched += await _sweep_channel(
+                    channel, provider, mode, lookback_hours=lookback_hours
+                )
+            except Exception:  # noqa: BLE001 — one channel must not stop the rest
+                logger.exception("aggregator %s %s sweep failed", channel, mode)
         return touched
 
 
@@ -2494,6 +2637,10 @@ async def run_aggregator_schedulers_forever() -> None:
                     continue
                 announced_standby = False
                 logger.info("aggregator scheduler: leadership acquired on this slot")
+                # Boot housekeeping: fail any run row a dead process left stuck
+                # 'running' (F-AGG-7). Never raises, so it cannot stop the schedulers
+                # coming up.
+                await reap_stale_runs()
                 # Late import: the catalog sweep lives in its own module and is a
                 # peer scheduler, not part of the ingest core — a top-level import
                 # would couple ingest to the whole catalog-sync graph.
