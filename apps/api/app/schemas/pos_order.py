@@ -40,7 +40,12 @@ class OpenOrderRequest(BaseModel):
     customer_name: str | None = Field(None, max_length=150)
     customer_phone: str | None = Field(None, max_length=30)
     notes: str | None = None
-    source: Literal["cashier", "online", "api", "call_center"] = "cashier"
+    #: The register opens counter checks only. It used to accept `online`/`api`/
+    #: `call_center` here, which let a terminal mint a `source="online"` check —
+    #: an order the close guard then treated as prepaid and settled for free, and
+    #: that the counter-check guards let it re-price. A website or marketplace
+    #: order becomes a POS check through an `attach_*` path, never this route.
+    source: Literal["cashier"] = "cashier"
     #: Ahead orders — a cake wanted at 4pm tomorrow.
     due_at: datetime | None = None
     #: Which delivery zone the address falls in.

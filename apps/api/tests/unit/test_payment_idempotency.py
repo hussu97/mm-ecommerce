@@ -5,9 +5,9 @@ A retried payment is not a second payment.
 timeout. A payment the server genuinely took can time out on the way back, and
 the cashier, looking at a check that still reads unpaid, takes the money again.
 
-The only guard was `amount > outstanding`, which covers a single tender and
-nothing else: on a split payment the replayed first half is a legitimately
-smaller amount against a legitimately lower balance, so it passes cleanly.
+The `amount > outstanding` guard covers a single tender; the idempotency key
+covers a split. `record_payment` now also locks the order row and re-reads it
+through `get_order` before pricing (F-POS-6), so these mock that re-read.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.exceptions import ConflictError
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models.pos_order import OrderPayment
 from app.services.pos import pos_order_service
 
@@ -32,6 +32,7 @@ def _order(order_id: uuid.UUID) -> SimpleNamespace:
     return SimpleNamespace(
         id=order_id,
         order_number="POS-B001-2026-08-06-0042",
+        pos_status="active",
         balance_due=Decimal("100.00"),
         business_date="2026-08-06",
         till_id=None,
@@ -39,13 +40,38 @@ def _order(order_id: uuid.UUID) -> SimpleNamespace:
     )
 
 
+class _Nested:
+    """A stand-in for `db.begin_nested()`'s async context manager."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 def _db_returning(existing: OrderPayment | None):
-    db = AsyncMock()
-    db.add = MagicMock()
+    db = SimpleNamespace()
     result = MagicMock()
     result.scalars.return_value.first.return_value = existing
     db.execute = AsyncMock(return_value=result)
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.refresh = AsyncMock()
+    db.begin_nested = MagicMock(return_value=_Nested())
     return db
+
+
+@pytest.fixture
+def _reread_returns_the_order(monkeypatch):
+    """Make the post-lock `get_order` re-read hand back the order under test."""
+
+    def _install(order):
+        monkeypatch.setattr(
+            pos_order_service, "get_order", AsyncMock(return_value=order)
+        )
+
+    return _install
 
 
 class TestPaymentIdempotency:
@@ -93,27 +119,26 @@ class TestPaymentIdempotency:
                 idempotency_key=KEY,
             )
 
-    async def test_no_key_still_reaches_the_payment_method_lookup(self):
+    async def test_no_key_still_reaches_the_payment_method_lookup(
+        self, _reread_returns_the_order
+    ):
         """
-        A client that sends no key behaves exactly as before — the guard is
-        opt-in, so nothing that predates it changes.
+        A client that sends no key behaves exactly as before once past the new
+        row lock — the guard is opt-in, so the payment-method lookup is reached.
         """
+        order = _order(uuid.uuid4())
+        _reread_returns_the_order(order)
         db = _db_returning(None)
         db.get = AsyncMock(return_value=None)  # payment method not found
-
-        from app.core.exceptions import BadRequestError
 
         with pytest.raises(BadRequestError, match="Payment method not available"):
             await pos_order_service.record_payment(
                 db,
-                order=_order(uuid.uuid4()),
+                order=order,
                 user=SimpleNamespace(id=uuid.uuid4()),
                 payment_method_id=uuid.uuid4(),
                 amount=Decimal("50.00"),
             )
-        assert db.execute.call_count == 0, (
-            "no key was sent, so no idempotency lookup should have happened"
-        )
 
 
 class TestPaymentMethodStamp:
@@ -128,9 +153,10 @@ class TestPaymentMethodStamp:
             is_active=True,
         )
 
-    async def test_a_card_payment_stamps_the_order(self):
+    async def test_a_card_payment_stamps_the_order(self, _reread_returns_the_order):
         order = _order(uuid.uuid4())
         order.payment_method = ""
+        _reread_returns_the_order(order)
         db = _db_returning(None)
         method = self._card()
         db.get = AsyncMock(return_value=method)
@@ -144,9 +170,12 @@ class TestPaymentMethodStamp:
         )
         assert order.payment_method == "card"
 
-    async def test_a_second_tender_of_another_type_marks_mixed(self):
+    async def test_a_second_tender_of_another_type_marks_mixed(
+        self, _reread_returns_the_order
+    ):
         order = _order(uuid.uuid4())
         order.payment_method = "cash"  # a cash tender already recorded
+        _reread_returns_the_order(order)
         db = _db_returning(None)
         method = self._card()
         db.get = AsyncMock(return_value=method)
@@ -160,10 +189,11 @@ class TestPaymentMethodStamp:
         )
         assert order.payment_method == "mixed"
 
-    async def test_a_refund_does_not_change_the_tender(self):
+    async def test_a_refund_does_not_change_the_tender(self, _reread_returns_the_order):
         order = _order(uuid.uuid4())
         order.payment_method = "card"
         order.payments = [SimpleNamespace(amount=Decimal("100.00"), is_refund=False)]
+        _reread_returns_the_order(order)
         db = _db_returning(None)
         method = self._card()
         db.get = AsyncMock(return_value=method)

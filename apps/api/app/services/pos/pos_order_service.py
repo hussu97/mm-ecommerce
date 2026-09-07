@@ -29,6 +29,7 @@ from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
+from app.models.marketing import Discount
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_method import PaymentMethod, PaymentMethodTypeEnum
@@ -231,6 +232,56 @@ def _assert_open(order: Order) -> None:
         raise ConflictError(
             f"Order is {order.pos_status} and can no longer be modified"
         )
+
+
+def _assert_counter_check(order: Order) -> None:
+    """
+    Refuse a register re-pricing of an order priced by another channel.
+
+    `recalculate` is the single writer of money on an order and it overwrites
+    subtotal, discount, charges, VAT and total from the lines it sees — which is
+    exactly right for a counter check and destructive for a website or
+    marketplace order, whose delivery fee and web promo discount live nowhere in
+    the POS line/charge model. An attached online order sits `pos_status in
+    (pending, active)`, so it passes `_assert_open`; every mutation that leads to
+    a re-price pairs that with this, so the till can look at such an order but
+    never re-price it.
+
+    Only `cashier` orders are the register's to price. `online`, `aggregator`,
+    `api` and `call_center` orders are all priced by whoever rang them up.
+    """
+    if order.source != OrderSourceEnum.CASHIER.value:
+        raise ConflictError(
+            "A website or marketplace order is priced by its own channel and "
+            "cannot be re-priced at the till"
+        )
+
+
+def _settled_externally(order: Order) -> bool:
+    """
+    An online/aggregator check is prepaid at its own channel and never writes an
+    `OrderPayment`, so its `balance_due` is the whole total for its entire life.
+    Only `close_order` consults this, and it only runs on POS orders, so a
+    non-`cashier` source here means the order reached the register through an
+    `attach_*` path — the only way a website or marketplace order becomes a POS
+    check now that the open route refuses to mint one. That is what the close
+    guard treats as already settled.
+    """
+    return order.source in (
+        OrderSourceEnum.ONLINE.value,
+        OrderSourceEnum.AGGREGATOR.value,
+    )
+
+
+def _close_balance_blocked(order: Order) -> bool:
+    """
+    The positive close guard: a check that still owes money cannot close, unless
+    it settled at its own channel. `balance_due` is `total` minus the
+    `OrderPayment` rows a cashier records at the till, so it asks the right
+    question of a `cashier` check and the wrong one of an order paid at the
+    gateway or by the marketplace — see `_settled_externally`.
+    """
+    return order.balance_due > 0 and not _settled_externally(order)
 
 
 def _net_paid(order: Order) -> Decimal:
@@ -644,6 +695,7 @@ async def add_item(
     weight: Decimal | None = None,
 ) -> OrderItem:
     _assert_open(order)
+    _assert_counter_check(order)
     if quantity < 1:
         raise BadRequestError("Quantity must be at least 1")
 
@@ -796,6 +848,7 @@ async def void_item(
     reason_id: uuid.UUID | None = None,
 ) -> Order:
     _assert_open(order)
+    _assert_counter_check(order)
     item = next((i for i in order.items if i.id == item_id), None)
     if item is None:
         raise NotFoundError("Order item not found")
@@ -820,6 +873,7 @@ async def return_item(
     reason_id: uuid.UUID | None = None,
 ) -> Order:
     """Return part or all of a line after the order is closed."""
+    _assert_counter_check(order)
     item = next((i for i in order.items if i.id == item_id), None)
     if item is None:
         raise NotFoundError("Order item not found")
@@ -854,6 +908,36 @@ async def apply_discount(
     reference_id: uuid.UUID | None = None,
 ) -> Order:
     _assert_open(order)
+    _assert_counter_check(order)
+
+    # Authority. An `open` discount is typed at the till (and gated on
+    # `pos.discounts.open`); anything else must name the configured row it comes
+    # from and take its name, kind and value FROM that row — the way
+    # `apply_charge` does for a `charge_id`. Without this a cashier could label a
+    # typed-in discount `predefined` to sidestep the open-discount permission, or
+    # send `promotion` to forge a row the engine and the reports read as
+    # auto-managed. `promotion` is the engine's alone and is refused here.
+    if source == DiscountSourceEnum.PROMOTION.value:
+        raise BadRequestError(
+            "A promotion is applied by the register itself and cannot be set "
+            "at the till"
+        )
+    if source != DiscountSourceEnum.OPEN.value:
+        if reference_id is None:
+            raise BadRequestError(
+                "A predefined discount must name the discount to apply"
+            )
+        configured = await db.get(Discount, reference_id)
+        if (
+            configured is None
+            or configured.deleted_at is not None
+            or not configured.is_active
+        ):
+            raise BadRequestError("Discount not found")
+        name = configured.name
+        is_percentage = bool(configured.is_percentage)
+        value = Decimal(str(configured.amount))
+
     if is_percentage and not (0 < value <= 1):
         raise BadRequestError("Percentage discounts are fractions between 0 and 1")
     if not is_percentage and value <= 0:
@@ -887,6 +971,7 @@ async def remove_discount(
     db: AsyncSession, *, order: Order, discount_id: uuid.UUID
 ) -> Order:
     _assert_open(order)
+    _assert_counter_check(order)
     discount = next((d for d in order.order_discounts if d.id == discount_id), None)
     if discount is None:
         raise NotFoundError("Discount not found on this order")
@@ -905,6 +990,7 @@ async def apply_charge(
     value: Decimal = Decimal("0"),
 ) -> Order:
     _assert_open(order)
+    _assert_counter_check(order)
 
     if charge_id is not None:
         charge = await db.get(Charge, charge_id)
@@ -1224,6 +1310,42 @@ def _ticket_notes(item: OrderItem) -> str | None:
 # ─── Payment and close ────────────────────────────────────────────────────────
 
 
+async def _replayed_payment(
+    db: AsyncSession, order: Order, idempotency_key: str | None
+) -> OrderPayment | None:
+    """
+    The payment a given idempotency key already produced, or `None`.
+
+    Raises if the key was used on a different order — the same key naming two
+    checks is a client bug, not a replay to wave through.
+    """
+    if not idempotency_key:
+        return None
+    existing = (
+        (
+            await db.execute(
+                select(OrderPayment).where(
+                    OrderPayment.idempotency_key == idempotency_key
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is None:
+        return None
+    if existing.order_id != order.id:
+        raise ConflictError(
+            "This idempotency key was already used on a different order"
+        )
+    logger.info(
+        "Replayed payment %s on order %s — returning the original",
+        idempotency_key,
+        order.order_number,
+    )
+    return existing
+
+
 async def record_payment(
     db: AsyncSession,
     *,
@@ -1241,33 +1363,40 @@ async def record_payment(
     # A retry of a payment the server already took is not a second payment.
     # `RegisterModel.pay` is three calls over a 15-second timeout, so a
     # successful write can time out on the way back and the cashier — looking at
-    # a check that still reads unpaid — takes the money again. The
-    # `amount > outstanding` guard below stops that for a single tender and does
-    # nothing for a split, where the second half is legitimately smaller against
-    # a legitimately lower balance.
-    if idempotency_key:
-        existing = (
-            (
-                await db.execute(
-                    select(OrderPayment).where(
-                        OrderPayment.idempotency_key == idempotency_key
-                    )
-                )
-            )
-            .scalars()
-            .first()
-        )
-        if existing is not None:
-            if existing.order_id != order.id:
-                raise ConflictError(
-                    "This idempotency key was already used on a different order"
-                )
-            logger.info(
-                "Replayed payment %s on order %s — returning the original",
-                idempotency_key,
-                order.order_number,
-            )
-            return existing
+    # a check that still reads unpaid — takes the money again. Looked up first as
+    # a cheap short-circuit, and AGAIN under the lock below: a racing terminal's
+    # payment may only commit while this one waits for the row, and by then the
+    # balance has already dropped, so the outstanding guard would raise on a
+    # replay instead of returning the original.
+    replay = await _replayed_payment(db, order, idempotency_key)
+    if replay is not None:
+        return replay
+
+    # Serialise concurrent tenders on this check. `outstanding` below is read
+    # from the order's own payment collection, so two terminals that both read
+    # an unpaid check each take the full amount and the shop is overpaid. The
+    # row lock makes the second caller wait for the first to commit; re-reading
+    # through `get_order` (populate_existing) then gives it a balance that
+    # already reflects the first payment, and the `amount > outstanding` guard
+    # turns it back.
+    await db.execute(select(Order.id).where(Order.id == order.id).with_for_update())
+    order = await get_order(db, order.id)
+
+    # Re-check the idempotency key now the lock is held: a replay that raced the
+    # winner would have found nothing above, waited for the row, and must return
+    # the winner rather than fall through to the outstanding guard on a balance
+    # the winner already reduced.
+    replay = await _replayed_payment(db, order, idempotency_key)
+    if replay is not None:
+        return replay
+
+    # A voided or closed check is not something a cashier may take money into —
+    # `void_order` marks the check void but leaves its `balance_due` positive, so
+    # without this the drawer would happily accept cash against a cancelled sale.
+    # A refund is the one payment that must still be allowed once a check is
+    # settled, so it is exempt.
+    if not is_refund:
+        _assert_open(order)
 
     method = await db.get(PaymentMethod, payment_method_id)
     if method is None or method.deleted_at is not None or not method.is_active:
@@ -1308,6 +1437,37 @@ async def record_payment(
         recorded_at=utcnow(),
     )
     db.add(payment)
+
+    # Two calls carrying the same idempotency key can both clear the pre-check
+    # above before either has flushed, and the partial unique index on
+    # `idempotency_key` catches the loser. Take the insert in a savepoint so that
+    # loss aborts only this write, then hand back the winner's row — a replayed
+    # payment returns the original rather than raising (this folds in F-POS-11).
+    try:
+        async with db.begin_nested():
+            await db.flush()
+    except IntegrityError:
+        if idempotency_key:
+            winner = (
+                (
+                    await db.execute(
+                        select(OrderPayment).where(
+                            OrderPayment.idempotency_key == idempotency_key
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if winner is not None:
+                logger.info(
+                    "Payment %s raced its own idempotency key on order %s — "
+                    "returning the winner",
+                    idempotency_key,
+                    order.order_number,
+                )
+                return winner
+        raise
 
     # Stamp the order's tender so the console and reports read true — a counter
     # order used to leave `payment_method` empty ("unknown") even though the
@@ -1353,17 +1513,20 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
     order = await get_order(db, order.id)
     _assert_open(order)
 
-    # The balance guard is the counter's, and only the counter's. `balance_due`
-    # is `total` minus the `OrderPayment` rows a cashier records at the till, so
-    # it asks the right question of a `cashier` check and the wrong one of an
-    # order that settled somewhere else. An `online` order is paid at the gateway
-    # and an aggregator order by the marketplace, and neither writes an
-    # `OrderPayment` — so their `balance_due` is the whole total forever, and
-    # blocking on it here is exactly why an online check could never close: it
-    # sat `active` until this line was taught that a prepaid order owes the till
-    # nothing. Collecting a store-pickup order (`mark_collected`) closes its
-    # check through here, so the guard has to know the difference.
-    if order.source == OrderSourceEnum.CASHIER.value and order.balance_due > 0:
+    # The balance guard is POSITIVE: a check that still owes money does not
+    # close. The one exception is an order that settled at its own channel — an
+    # `online` order paid at the gateway, an `aggregator` order paid to the
+    # marketplace — neither of which writes an `OrderPayment`, so `balance_due`
+    # is the whole total for its entire life and blocking on it is exactly why an
+    # online check could never close. `_close_balance_blocked` folds both facts
+    # in: it blocks a `cashier` check with money still owed, and lets an
+    # externally-settled online/aggregator order (reached through an `attach_*`
+    # path) through. Phrasing it the other way round — "only block a cashier
+    # check" — is what let a register mint a `source="online"` check and close it
+    # for free; the schema now also refuses to open a non-cashier check.
+    # Collecting a store-pickup order (`mark_collected`) closes through here, so
+    # the guard has to know the difference.
+    if _close_balance_blocked(order):
         raise ConflictError(f"Order still has {order.balance_due} outstanding")
 
     order.pos_status = PosOrderStatusEnum.CLOSED.value
@@ -1475,7 +1638,12 @@ async def void_order(
 
     await _release_table(db, order)
     await db.flush()
-    return await get_order(db, order.id)
+    # Re-price with every line now void: the check's `balance_due` used to stay
+    # at the full total after a void, which is a positive balance held against a
+    # cancelled sale. `recalculate` reprices from the (now empty) live lines, so
+    # the voided check owes nothing — belt to the `_assert_open` guard's braces
+    # on `record_payment`.
+    return await recalculate(db, order)
 
 
 async def split_order(
@@ -1496,6 +1664,7 @@ async def split_order(
     The cashier re-applies them to whichever check should bear them.
     """
     _assert_open(order)
+    _assert_counter_check(order)
     if order.payments:
         raise ConflictError("Take the split before any payment is recorded")
 
