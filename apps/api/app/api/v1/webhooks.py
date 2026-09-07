@@ -257,10 +257,11 @@ async def noon_send_webhook(
 # dashboard — so the token is the whole of the check, and it is enforced rather
 # than merely recorded.
 #
-# That is the deliberate difference from the noon Send routes above.
-# `NOON_SEND_ENFORCE_WEBHOOK_KEY` is false in production, because enforcing it
-# once dropped every status update for a live trial when noon's staging side
-# turned out to send a key no screen of ours had produced. Slider's token is one
+# The noon Send routes above were initially left unenforced, because enforcing
+# `NOON_SEND_ENFORCE_WEBHOOK_KEY` once dropped every status update for a live
+# trial when noon's staging side turned out to send a key no screen of ours had
+# produced. The production fingerprints have since been verified to match
+# (2026-09-07), so that endpoint is now enforced too. Slider's token is one
 # we set on both sides ourselves, so there is no such asymmetry to be caught by
 # — and an unenforced token on an endpoint that moves orders to `delivered` is
 # an open endpoint.
