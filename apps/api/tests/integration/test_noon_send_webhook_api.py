@@ -39,39 +39,43 @@ def webhook_key(monkeypatch):
 
 class TestAuthentication:
     """
-    The key is recorded and not enforced.
+    The key is now enforced.
 
-    noon Send does not sign requests, and the key their staging side sends is
-    not the one we configured — it is a value no screen of ours produced.
-    Refusing on a mismatch dropped every status update for the trial:
-    `assigned` and `picked_up` both arrived, two seconds after noon's own
-    records show them, and both were thrown away with a warning nobody was
-    watching. Two hours were spent concluding they had never been sent.
-
-    So every push is acted on, and every push is logged with a fingerprint of
-    the key it carried next to a fingerprint of ours. When those agree, this can
-    go back to comparing them.
+    noon Send does not sign requests, so the shared key in `X-API-Key` is the
+    entire boundary. Enforcing it was held off at first because noon's staging
+    side sent a key no screen of ours had produced, and refusing on a mismatch
+    dropped every status update for the trial — so for a while every push was
+    merely recorded, with a fingerprint of the key it carried logged next to a
+    fingerprint of ours. Those fingerprints have since been verified to match in
+    production (2026-09-07), so a push whose key does not match is acknowledged
+    (still 200 — these endpoints must never fail) but acted on by nothing.
     """
 
-    async def test_a_push_without_a_key_is_accepted(self, client):
+    async def test_a_push_without_a_key_is_refused(self, client):
         response = await client.post(STATUS_URL, json=PUSH)
         assert response.status_code == 200
-        assert "error" not in response.json()
+        assert response.json().get("error") == "unauthorised"
 
-    async def test_a_push_with_an_unrecognised_key_is_still_acted_on(self, client):
-        """The case that cost us the trial's first two status updates."""
+    async def test_a_push_with_an_unrecognised_key_is_refused(self, client):
+        """The key noon's staging side sent during the trial is not ours."""
         response = await client.post(
             STATUS_URL, json=PUSH, headers={"X-API-Key": "noons-own-key"}
         )
         assert response.status_code == 200
-        assert "error" not in response.json()
+        assert response.json().get("error") == "unauthorised"
 
     async def test_the_tracking_endpoint_follows_the_same_rule(self, client):
         body = {"order_nr": "X", "da_details": {"location": {"latitude": "252017557"}}}
         for headers in ({}, {"X-API-Key": "noons-own-key"}):
             response = await client.post(TRACKING_URL, json=body, headers=headers)
             assert response.status_code == 200
-            assert "error" not in response.json()
+            assert response.json().get("error") == "unauthorised"
+
+    async def test_a_push_with_the_configured_key_is_acted_on(self, client):
+        """The matching key passes the guard (the task is unknown here)."""
+        response = await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": KEY})
+        assert response.status_code == 200
+        assert "error" not in response.json()
 
     async def test_the_key_is_never_logged_in_full(self):
         """
@@ -93,15 +97,15 @@ class TestAuthentication:
 
 class TestTheTaskNumberIsTheRemainingGuard:
     """
-    What is left protecting these endpoints once a keyless push is accepted.
+    The second guard behind the key.
 
     Acting on a push requires naming a task we already dispatched — sixteen
-    characters we never publish. Anything else is acknowledged and ignored, so
-    a stranger who finds the URL can make no order move.
+    characters we never publish. Even an authenticated push naming a task we do
+    not hold is acknowledged and ignored, so no order moves.
     """
 
     async def test_a_push_for_a_task_we_do_not_hold_moves_nothing(self, client):
-        response = await client.post(STATUS_URL, json=PUSH)
+        response = await client.post(STATUS_URL, json=PUSH, headers={"X-API-Key": KEY})
         assert response.status_code == 200
         assert response.json().get("matched") is not True
 
