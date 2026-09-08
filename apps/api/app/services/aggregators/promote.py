@@ -197,6 +197,41 @@ def _target_status(channel: str, raw: str | None) -> OrderStatusEnum | None:
     return _STATUS_MAPS.get(channel, {}).get(raw.strip().lower())
 
 
+def _provider_cancelled_but_paid(agg: AggregatorOrder) -> bool:
+    """A marketplace cancellation the ledger still PAYS us for — not the shop's.
+
+    Keeta (and, by the same money test, any channel) cancels an order at its own
+    customer-service desk after it was made and handed over, and still owes the
+    restaurant its net: `net_payable` stays POSITIVE, the marketplace eats the
+    customer's refund, and no cancellation fee is charged back. That is money we
+    earned — the opposite of a MERCHANT cancellation (item unavailable, the shop
+    rejected it) which pays nothing.
+
+    The sign of `net_payable` is the honest, channel-agnostic divider — it is
+    literally "did we still get the net amount" — so a cancelled order the ledger
+    still pays out on is a provider cancellation we keep. It should read
+    `delivered` (its revenue counts) with the cancellation recorded, not vanish
+    from the books as `cancelled`. `net_payable` is populated from the order's own
+    fee breakdown at scrape time, so it is known when this runs.
+    """
+    if _target_status(agg.channel, agg.status) != OrderStatusEnum.CANCELLED:
+        return False
+    return money(agg.net_payable or Decimal("0")) > 0
+
+
+def _cancel_reason(agg: AggregatorOrder) -> str | None:
+    """A short, humanised reason the marketplace cancelled, for display only.
+
+    Keeta exposes `orderCancelSceneDesc` ("Customer service", "Item unavailable");
+    other channels don't carry one on the scrape, so this is best-effort and never
+    invented. Kept to the `aggregator_cancel_reason` column width.
+    """
+    reason = (agg.raw or {}).get("orderCancelSceneDesc")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()[:60]
+    return None
+
+
 async def _order_number(db: AsyncSession) -> str:
     """`AGG-YYYYMMDD-NNN` — the aggregator series, shared with the GrubOps ingest
     so promoted and GrubOps orders read alike and never collide with MM-/POS-."""
@@ -630,15 +665,37 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
         target = OrderStatusEnum.CONFIRMED
 
     if target == OrderStatusEnum.CANCELLED:
-        with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, target)):
-            await order_lifecycle.transition(
-                db,
-                order,
-                target,
-                extra_from=_CANCEL_EXTRA_FROM,
-                on_invalid="skip",
+        # Record the marketplace's own cancellation reason regardless of what we
+        # do with the status — it is display-only and true either way.
+        reason = _cancel_reason(agg)
+        if reason:
+            order.aggregator_cancel_reason = reason
+
+        if _provider_cancelled_but_paid(agg):
+            # Paid despite the cancellation: the marketplace cancelled at its own
+            # desk and still owes us the net (net_payable > 0). That is a sale we
+            # KEEP, not a lost one — book it `delivered` so its revenue counts,
+            # with the cancellation recorded above, instead of dropping it as
+            # `cancelled`. Falls through to the ladder climb below.
+            logger.info(
+                "promote %s %s: marketplace-cancelled but net_payable=%s>0 (%s) "
+                "— booking delivered, revenue kept",
+                agg.channel,
+                agg.external_order_id,
+                agg.net_payable,
+                reason or "?",
             )
-        return
+            target = OrderStatusEnum.DELIVERED
+        else:
+            with acting_as(StatusSourceEnum.AGGREGATOR, at=_rung_at(agg, target)):
+                await order_lifecycle.transition(
+                    db,
+                    order,
+                    target,
+                    extra_from=_CANCEL_EXTRA_FROM,
+                    on_invalid="skip",
+                )
+            return
 
     if target not in _LADDER:
         return
