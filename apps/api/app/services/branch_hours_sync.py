@@ -148,24 +148,46 @@ async def _push_weekly_to_channel(
         logger.debug("branch-hours weekly push skipped for %s: %s", channel, exc)
         return
     except Exception as exc:  # noqa: BLE001 — a dead session/portal, not a bug
-        # Use the same durable recovery signal as sales ingest. Careem cannot
-        # safely refresh a dead console session server-side, so this wakes the
-        # headed-login worker instead of repeating an hourly 401 forever.
+        # An auth 401 means the portal session is dead. Use the same durable
+        # recovery signal as sales ingest — Careem cannot safely refresh a dead
+        # console session server-side, so this wakes the headed-login worker
+        # instead of repeating an hourly 401 forever.
+        #
+        # Alert Sentry only on the *transition* to dead, not on every hourly tick
+        # of a session we already know is down. Careem's console session dies for
+        # hours at a stretch; without this the loop re-fired `capture_issue` +
+        # `capture_exc` for every branch, every hour, until the worker
+        # re-bootstrapped it — the intermittent "hours sync is broken" noise.
+        # The `failed` row is still recorded every time (the admin panel and the
+        # worker's heal trigger both read it); only the repeat alert is dropped.
+        alert = True
         if isinstance(exc, AggregatorAuthError):
+            prior_status = await session_store.status_for(db, channel)
+            already_known_dead = (
+                prior_status is not None and prior_status != session_store.SESSION_LIVE
+            )
+            alert = not already_known_dead
             await session_store.mark_needs_bootstrap(db, channel, error=str(exc))
         logger.warning("branch-hours weekly push failed for %s: %s", channel, exc)
-        tags = {
-            "channel": channel,
-            "branch_id": str(branch.id),
-            "op": "push_weekly_hours",
-        }
-        alerting.capture_issue(
-            f"branch-hours weekly push failed: {channel}",
-            level="warning",
-            fingerprint=["branch-hours-sync", channel, "weekly-push"],
-            tags={**tags, "dry_run": str(dry)},
-        )
-        alerting.capture_exc(exc, tags=tags)
+        if alert:
+            tags = {
+                "channel": channel,
+                "branch_id": str(branch.id),
+                "op": "push_weekly_hours",
+            }
+            alerting.capture_issue(
+                f"branch-hours weekly push failed: {channel}",
+                level="warning",
+                fingerprint=["branch-hours-sync", channel, "weekly-push"],
+                tags={**tags, "dry_run": str(dry)},
+            )
+            alerting.capture_exc(exc, tags=tags)
+        else:
+            logger.debug(
+                "branch-hours: %s session already needs bootstrap; "
+                "recording failure without re-alerting",
+                channel,
+            )
         await _record_run(
             db,
             branch=branch,

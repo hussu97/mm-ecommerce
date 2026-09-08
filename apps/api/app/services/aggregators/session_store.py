@@ -299,6 +299,20 @@ async def _row(
     )
 
 
+async def status_for(
+    db: AsyncSession, channel: str, account_ref: str = ""
+) -> str | None:
+    """A channel's session status without decrypting the blob.
+
+    For callers that only need to know whether a session is live — e.g. to
+    decide whether a failure is news or a repeat of a known-dead one — reading
+    the status column is enough and avoids a Fernet round-trip over the cookies
+    and tokens. None means the channel was never bootstrapped.
+    """
+    row = await _row(db, channel, account_ref)
+    return row.status if row else None
+
+
 async def load(
     db: AsyncSession, channel: str, account_ref: str = ""
 ) -> LoadedSession | None:

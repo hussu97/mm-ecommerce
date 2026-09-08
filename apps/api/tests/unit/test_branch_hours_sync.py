@@ -236,6 +236,66 @@ async def test_auth_failure_marks_session_for_headed_recovery(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_repeat_auth_failure_on_dead_session_does_not_realert(monkeypatch):
+    # Careem's console session dies for hours; the loop keeps trying every hour.
+    # A 401 on a session we already flagged needs_bootstrap must still record a
+    # failed row and re-mark it, but must NOT re-fire Sentry every tick — that is
+    # the intermittent "hours sync broken" noise the suppression fixes.
+    async def dead_session(*_args, **_kwargs):
+        raise AggregatorAuthError("careem returned 401")
+
+    monkeypatch.setattr(hours_writers, "push_weekly_hours", dead_session)
+    monkeypatch.setattr(
+        branch_hours_sync.session_store,
+        "status_for",
+        AsyncMock(return_value="needs_bootstrap"),
+    )
+    marked = AsyncMock()
+    monkeypatch.setattr(branch_hours_sync.session_store, "mark_needs_bootstrap", marked)
+    capture_issue = MagicMock()
+    capture_exc = MagicMock()
+    monkeypatch.setattr(branch_hours_sync.alerting, "capture_issue", capture_issue)
+    monkeypatch.setattr(branch_hours_sync.alerting, "capture_exc", capture_exc)
+
+    db = _sync_db()
+    await branch_hours_sync._push_weekly_to_channel(db, _branch(), "careem", _SCHED)
+
+    # Still recorded and re-marked for the worker + admin panel …
+    marked.assert_awaited_once_with(db, "careem", error="careem returned 401")
+    assert _rows(db)[0].status == "failed"
+    # … but no repeat alert, because the session was already known dead.
+    capture_issue.assert_not_called()
+    capture_exc.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_first_auth_failure_on_live_session_alerts(monkeypatch):
+    # The transition from a usable session to a dead one is news — alert once.
+    async def dead_session(*_args, **_kwargs):
+        raise AggregatorAuthError("careem returned 401")
+
+    monkeypatch.setattr(hours_writers, "push_weekly_hours", dead_session)
+    monkeypatch.setattr(
+        branch_hours_sync.session_store,
+        "status_for",
+        AsyncMock(return_value=branch_hours_sync.session_store.SESSION_LIVE),
+    )
+    monkeypatch.setattr(
+        branch_hours_sync.session_store, "mark_needs_bootstrap", AsyncMock()
+    )
+    capture_issue = MagicMock()
+    capture_exc = MagicMock()
+    monkeypatch.setattr(branch_hours_sync.alerting, "capture_issue", capture_issue)
+    monkeypatch.setattr(branch_hours_sync.alerting, "capture_exc", capture_exc)
+
+    db = _sync_db()
+    await branch_hours_sync._push_weekly_to_channel(db, _branch(), "careem", _SCHED)
+
+    capture_issue.assert_called_once()
+    capture_exc.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_foodics_daily_push_dry_run(monkeypatch):
     import app.core.config as cfg
 
