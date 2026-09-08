@@ -37,7 +37,19 @@ const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 let stripePromise: Promise<Stripe | null> | null = null;
 function getStripe(): Promise<Stripe | null> {
   if (!PUBLISHABLE_KEY) return Promise.resolve(null);
-  if (!stripePromise) stripePromise = loadStripe(PUBLISHABLE_KEY);
+  if (!stripePromise) {
+    // `loadStripe` *rejects* when js.stripe.com will not load — an ad blocker or
+    // privacy extension refusing it, a flaky network, an enforced CSP. That is
+    // not an error to shout about: it just means this browser cannot do Apple
+    // Pay, the same as a device that has never set it up. So swallow it to
+    // `null` (callers already treat null as "no Stripe" and keep the option
+    // hidden) rather than letting an unhandled rejection reach Sentry — and do
+    // not cache the failure, so a later checkout mount can try again.
+    stripePromise = loadStripe(PUBLISHABLE_KEY).catch(() => {
+      stripePromise = null;
+      return null;
+    });
+  }
   return stripePromise;
 }
 
