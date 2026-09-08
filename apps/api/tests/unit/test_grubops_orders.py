@@ -8,6 +8,7 @@ lifecycle ladder, the write-back gate, and the loop's change detector.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -973,3 +974,97 @@ async def test_adopting_a_promotion_gapfill_rebuilds_the_lines_from_the_push():
         c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], OrderTax)
     ]
     assert len(added_taxes) == 1
+
+
+# ── sweep_once: a savepoint + commit per order, per-sweep durability (F-AGG-18) ─
+
+
+class _RecordingSession:
+    """A stand-in for the lock's session that records the transaction calls the
+    sweep makes, and gives `begin_nested()` a real savepoint context that does
+    NOT swallow the exception it wraps."""
+
+    def __init__(self):
+        self.commits = 0
+        self.rollbacks = 0
+        self.savepoints = 0
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+    def begin_nested(self):
+        outer = self
+
+        class _Savepoint:
+            async def __aenter__(self_inner):
+                outer.savepoints += 1
+                return self_inner
+
+            async def __aexit__(self_inner, *_exc):
+                return False  # never suppress — a bad order must reach the try
+
+        return _Savepoint()
+
+
+def _wire_sweep(monkeypatch, db, *, summaries, ingest):
+    @asynccontextmanager
+    async def fake_held(*_a, **_k):
+        yield db
+
+    monkeypatch.setattr(loop.grubops_orders_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(loop.advisory_lock, "held_session", fake_held)
+    monkeypatch.setattr(loop.provider, "list_orders", AsyncMock(return_value=summaries))
+    monkeypatch.setattr(loop, "_ingest_one", ingest)
+    # Housekeeping sweeps are covered on their own; here they are quiet no-ops.
+    monkeypatch.setattr(
+        loop.grubops_orders_service, "sweep_open_orders", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        loop.foodics_orders_service, "sweep_pending_pushouts", AsyncMock(return_value=0)
+    )
+    monkeypatch.setattr(
+        loop.grubops_orders_service, "sweep_auto_close", AsyncMock(return_value=0)
+    )
+
+
+@pytest.mark.asyncio
+async def test_sweep_commits_each_order_in_its_own_savepoint(monkeypatch):
+    db = _RecordingSession()
+    summaries = [{"orderId": "o1"}, {"orderId": "o2"}, {"orderId": "o3"}]
+    _wire_sweep(
+        monkeypatch, db, summaries=summaries, ingest=AsyncMock(return_value=True)
+    )
+
+    touched = await loop.sweep_once()
+
+    assert touched == 3
+    assert db.savepoints == 3, "one savepoint per order"
+    assert db.commits == 3 + 3, "a commit per order plus one per housekeeping sweep"
+    assert db.rollbacks == 0
+
+
+@pytest.mark.asyncio
+async def test_sweep_isolates_a_poison_order_and_finishes_the_rest(monkeypatch):
+    db = _RecordingSession()
+    summaries = [{"orderId": "o1"}, {"orderId": "o2"}, {"orderId": "o3"}]
+
+    async def ingest(_db, summary):
+        if summary["orderId"] == "o2":
+            raise RuntimeError("aborted the transaction")
+        return True
+
+    _wire_sweep(monkeypatch, db, summaries=summaries, ingest=ingest)
+
+    touched = await loop.sweep_once()
+
+    # o1 and o3 still ingested and committed; o2 rolled back to its savepoint and
+    # did not poison them, and never counted.
+    assert touched == 2
+    assert db.savepoints == 3
+    assert db.commits == 2 + 3, (
+        "o1 and o3 committed, plus the three housekeeping sweeps"
+    )
+    assert db.rollbacks == 1, "only the poison order rolled back"

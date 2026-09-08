@@ -117,53 +117,71 @@ async def sweep_once() -> int:
         seen_ids: set[str] = set()
         for summary in summaries:
             seen_ids.add(str(summary.get("orderId")))
-            # Per order, so one malformed payload does not end the pass.
+            # A SAVEPOINT and a commit per order (F-AGG-18). The whole sweep used
+            # to accumulate every order's ingest in one transaction committed only
+            # at the end, so a single order whose write aborted the transaction (a
+            # constraint hit, a `get_order` shape the ingest choked on) poisoned it
+            # for every later order AND the final commit — one bad order lost the
+            # whole tick. The savepoint rolls back just this order and leaves the
+            # transaction usable; the commit makes it durable, so nothing after it
+            # — another order or the housekeeping below — can undo it. (Committing
+            # is safe here: `held_session` keeps the SESSION-level advisory lock on
+            # its own connection across every commit.) One malformed payload still
+            # does not end the pass.
             try:
-                if await _ingest_one(db, summary):
+                async with db.begin_nested():
+                    spent = await _ingest_one(db, summary)
+                await db.commit()
+                if spent:
                     touched += 1
             except Exception:  # noqa: BLE001 — one bad order must not stop the rest
                 logger.exception(
                     "GrubOps: failed to ingest order %s",
                     summary.get("orderId"),
                 )
+                await db.rollback()
                 continue
 
         # Re-poll open orders the summary window has dropped — an order that
         # lingered at arrived_at_pos and was then cancelled or completed
-        # aggregator-side, which the loop above can no longer see. Its own try
-        # so a re-poll failure cannot lose the ingest work just committed.
+        # aggregator-side, which the loop above can no longer see. Each
+        # housekeeping sweep commits on success and rolls back on failure, on its
+        # own, so one sweep's failure cannot poison or discard another's work.
         try:
             repolled = await grubops_orders_service.sweep_open_orders(db, seen_ids)
+            await db.commit()
             if repolled:
                 logger.info("GrubOps re-polled %s aged-out order(s)", repolled)
                 touched += repolled
         except Exception:  # noqa: BLE001 — housekeeping must not end the tick
             logger.exception("GrubOps: open-order re-poll sweep failed")
+            await db.rollback()
 
         # Re-fire any packed/delivered/cancelled push to Foodics the immediate
         # mirror-out never landed — a Foodics id not yet ingested at pack time,
-        # a token blip, a task dropped on a restart. Runs each tick here
-        # because this is where the Foodics id is learned. Its own try so a
-        # sweep failure cannot lose the ingest work just committed.
+        # a token blip, a task dropped on a restart. Runs each tick here because
+        # this is where the Foodics id is learned.
         try:
             repushed = await foodics_orders_service.sweep_pending_pushouts(db)
+            await db.commit()
             if repushed:
                 logger.info("Foodics re-pushed %s stuck status(es)", repushed)
                 touched += repushed
         except Exception:  # noqa: BLE001 — housekeeping must not end the tick
             logger.exception("Foodics: mirror-out retry sweep failed")
+            await db.rollback()
 
-        # Close out any packed aggregator order past its window. Its own
-        # try so a sweep failure cannot lose the ingest work just committed.
+        # Close out any packed aggregator order past its window.
         try:
             closed = await grubops_orders_service.sweep_auto_close(db)
+            await db.commit()
             if closed:
                 logger.info("GrubOps auto-closed %s packed order(s)", closed)
                 touched += closed
         except Exception:  # noqa: BLE001 — housekeeping must not end the tick
             logger.exception("GrubOps: auto-close sweep failed")
+            await db.rollback()
 
-        await db.commit()
         return touched
 
 
