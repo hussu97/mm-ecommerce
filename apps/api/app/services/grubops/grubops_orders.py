@@ -22,7 +22,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.core import advisory_lock, heartbeat
+from app.core import advisory_lock, background, heartbeat
 from app.core.config import settings
 from app.core.database import SchedulerSessionFactory
 from app.models.grubops_order import GrubOpsOrderMap
@@ -175,7 +175,7 @@ async def run_forever() -> None:
     while True:
         try:
             # Sleeps first: boot is busy, and the first orders can wait a tick.
-            await asyncio.sleep(_tick_seconds())
+            await asyncio.sleep(background.jittered(_tick_seconds()))
             await heartbeat.beat("grubops_orders")
             touched = await sweep_once()
             if touched:

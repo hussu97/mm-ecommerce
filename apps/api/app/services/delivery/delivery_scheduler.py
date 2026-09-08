@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.core import advisory_lock, heartbeat
+from app.core import advisory_lock, background, heartbeat
 from app.core.database import SchedulerSessionFactory
 from app.services.couriers import courier_service
 from app.services.delivery import arrival_service, driver_routing, driver_tracking
@@ -151,7 +151,7 @@ async def run_forever() -> None:
     logger.info("Delivery scheduler started (every %ss)", _TICK_SECONDS)
     while True:
         try:
-            await asyncio.sleep(_TICK_SECONDS)
+            await asyncio.sleep(background.jittered(_TICK_SECONDS))
             await heartbeat.beat("delivery_scheduler")
             await sweep_once()
         except asyncio.CancelledError:

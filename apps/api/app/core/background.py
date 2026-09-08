@@ -20,10 +20,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 
 from app.core import alerting
 
 logger = logging.getLogger("mm.api")
+
+
+def jittered(seconds: float, *, frac: float = 0.15) -> float:
+    """`seconds` nudged by up to ±`frac`, so fixed-interval loops de-synchronise.
+
+    The background loops each `asyncio.sleep(TICK)` on a constant interval, so
+    several of them started at the same boot instant wake in the same window
+    forever — and each sweep takes TWO scheduler connections (its advisory-lock
+    connection plus its session), so a handful waking together is all it takes to
+    drain the six-slot scheduler pool and spray `QueuePool ... timed out` across
+    every unrelated sweep at once. A little noise on each sleep keeps their
+    wakeups drifting apart instead of locking in phase. Timing-only: it cannot
+    change what a sweep does, only when, so it is safe on every loop.
+    """
+    return seconds * (1.0 + random.uniform(-frac, frac))
 
 #: Holds references to tasks spawned via `spawn_tracked` so the loop's weak
 #: reference cannot let one be collected before it finishes.
