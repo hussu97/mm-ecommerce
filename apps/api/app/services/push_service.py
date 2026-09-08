@@ -149,7 +149,9 @@ async def _send_to_branch(
             logger.warning("APNs refused the whole send: %s", result)
             continue
         if isinstance(result, BaseException):  # pragma: no cover — defensive
-            logger.warning("Unexpected error pushing to %s…: %s", row.token[:12], result)
+            logger.warning(
+                "Unexpected error pushing to %s…: %s", row.token[:12], result
+            )
             continue
         if result.delivered:
             delivered += 1

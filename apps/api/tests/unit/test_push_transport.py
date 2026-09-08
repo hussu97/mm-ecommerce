@@ -53,9 +53,7 @@ async def test_send_to_branch_gathers_all_and_retires_dead_tokens(monkeypatch):
         return ApnsResult(token=token, delivered=True)
 
     monkeypatch.setattr(push_service, "is_enabled", lambda: True)
-    monkeypatch.setattr(
-        push_service, "tokens_for_branch", AsyncMock(return_value=rows)
-    )
+    monkeypatch.setattr(push_service, "tokens_for_branch", AsyncMock(return_value=rows))
     send = AsyncMock(side_effect=fake_send)
     monkeypatch.setattr(push_service.provider, "send", send)
 
