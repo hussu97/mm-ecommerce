@@ -45370,7 +45370,7 @@
     },
     "/api/v1/inventory/levels": {
       "get": {
-        "description": "The inventory levels report: what is on hand and what needs reordering.",
+        "description": "The inventory levels report: what is on hand and what needs reordering.\n\n`search` (item name or SKU), `category_id` and `below_minimum_only` filter in\nSQL, before the `limit`, so a search matches across the whole estate rather\nthan only whichever rows fit the first page \u2014 the On-Hand tab's search and\ncategory filter, and the below-minimum view, are all correct past 500 items.",
         "operationId": "list_levels_api_v1_inventory_levels_get",
         "parameters": [
           {
@@ -45405,6 +45405,39 @@
                 }
               ],
               "title": "Warehouse Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
             }
           },
           {

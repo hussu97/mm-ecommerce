@@ -6,7 +6,7 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -314,12 +314,20 @@ pos_manager_read_router = APIRouter()
 async def list_levels(
     branch_id: uuid.UUID | None = None,
     warehouse_id: uuid.UUID | None = None,
+    category_id: uuid.UUID | None = None,
+    search: str | None = None,
     below_minimum_only: bool = False,
     limit: int = Query(500, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("reports.inventory")),
 ):
-    """The inventory levels report: what is on hand and what needs reordering."""
+    """The inventory levels report: what is on hand and what needs reordering.
+
+    `search` (item name or SKU), `category_id` and `below_minimum_only` filter in
+    SQL, before the `limit`, so a search matches across the whole estate rather
+    than only whichever rows fit the first page — the On-Hand tab's search and
+    category filter, and the below-minimum view, are all correct past 500 items.
+    """
 
     # Always carry the warehouse and its branch: a level is one row per
     # (item, warehouse), so without the branch the same item shows once per
@@ -341,13 +349,22 @@ async def list_levels(
         stmt = stmt.where(Warehouse.branch_id == branch_id)
     elif not (user.is_admin or (user.role and user.role.is_super_admin)):
         stmt = stmt.where(Warehouse.branch_id.in_(access_service.branch_ids_for(user)))
+    if category_id:
+        stmt = stmt.where(InventoryItem.category_id == category_id)
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(InventoryItem.name.ilike(like), InventoryItem.sku.ilike(like))
+        )
+    if below_minimum_only:
+        # Numeric columns; the SQL comparison matches the per-row Decimal check
+        # below, and applying it here means the limit counts only short items.
+        stmt = stmt.where(InventoryLevel.quantity < InventoryItem.minimum_level)
     stmt = stmt.order_by(Branch.name, InventoryItem.name).limit(limit)
 
     payload: list[InventoryLevelResponse] = []
     for level, item, warehouse_row, branch_row in (await db.execute(stmt)).all():
         below = Decimal(str(level.quantity)) < Decimal(str(item.minimum_level))
-        if below_minimum_only and not below:
-            continue
         row = InventoryLevelResponse.model_validate(level)
         row.item_name = item.name
         row.item_sku = item.sku

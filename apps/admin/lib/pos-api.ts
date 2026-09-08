@@ -198,8 +198,13 @@ export const inventoryApi = {
   updateItem: (id: string, d: Record<string, unknown>) => api.put<InventoryItem>(`/inventory/items/${id}`, d),
   removeItem: (id: string) => api.delete<void>(`/inventory/items/${id}`),
 
-  levels: (params?: { branch_id?: string; warehouse_id?: string; below_minimum_only?: boolean }) =>
-    api.get<InventoryLevel[]>(`/inventory/levels${buildQs(params)}`),
+  levels: (params?: {
+    branch_id?: string;
+    warehouse_id?: string;
+    category_id?: string;
+    search?: string;
+    below_minimum_only?: boolean;
+  }) => api.get<InventoryLevel[]>(`/inventory/levels${buildQs(params)}`),
 
   warehouses: (branchId?: string) => api.get<Warehouse[]>(`/inventory/warehouses${buildQs({ branch_id: branchId })}`),
   createWarehouse: (d: Record<string, unknown>) => api.post<Warehouse>('/inventory/warehouses', d),

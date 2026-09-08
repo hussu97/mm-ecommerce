@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   branchesApi,
   inventoryApi,
+  posReportsApi,
   type BranchInventorySettings,
   type ReportTemplate,
   type ShiftInventoryReport,
@@ -15,12 +16,14 @@ import type {
   InventoryCategory,
   InventoryItem,
   InventoryLevel, InventoryTransaction,
+  InventoryValuation,
   Supplier,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner, TabBar } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
@@ -328,19 +331,46 @@ function LevelSortHeader({
 function LevelsTab() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState('');
+  const [categories, setCategories] = useState<InventoryCategory[]>([]);
+  const [categoryId, setCategoryId] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim(), 300);
   const [levels, setLevels] = useState<InventoryLevel[]>([]);
+  const [valuation, setValuation] = useState<InventoryValuation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [belowOnly, setBelowOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
 
   useEffect(() => {
     void branchesApi.list().then(setBranches).catch(() => setBranches([]));
+    void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
   }, []);
+
+  // The headline stock value is computed server-side over EVERY level, branch-
+  // scoped, rather than reduced on the client over the capped levels page — which
+  // silently under-counted once a branch passed 500 items (F-ADM-1). It is the
+  // worth of what is on the shelves, so it does not narrow with the search or
+  // category filter below.
+  useEffect(() => {
+    let cancelled = false;
+    void posReportsApi
+      .inventoryValuation(branchId || undefined)
+      .then((v) => { if (!cancelled) setValuation(v); })
+      .catch(() => { if (!cancelled) setValuation(null); });
+    return () => { cancelled = true; };
+  }, [branchId]);
 
   useEffect(() => {
     let cancelled = false;
     inventoryApi
-      .levels({ branch_id: branchId || undefined, below_minimum_only: belowOnly })
+      .levels({
+        branch_id: branchId || undefined,
+        category_id: categoryId || undefined,
+        search: search || undefined,
+        below_minimum_only: belowOnly,
+      })
       .then((rows) => {
         if (!cancelled) {
           setLevels(rows);
@@ -356,9 +386,15 @@ function LevelsTab() {
     return () => {
       cancelled = true;
     };
-  }, [branchId, belowOnly]);
+  }, [branchId, belowOnly, categoryId, search]);
 
-  const totalValue = levels.reduce((sum, l) => sum + Number(l.total_value ?? 0), 0);
+  // Back to the first page whenever a filter changes the result set.
+  useEffect(() => {
+    setPage(1);
+  }, [branchId, belowOnly, categoryId, search]);
+
+  const totalValue = valuation?.total_value ?? 0;
+  const isFiltered = Boolean(search || categoryId || belowOnly);
 
   // Default to branch then item (the server already returns that order); the
   // headers let a manager re-sort by any unit column without losing the branch
@@ -397,6 +433,8 @@ function LevelsTab() {
     if (c === 0) c = String(a.item_name ?? '').localeCompare(String(b.item_name ?? ''));
     return sortDir === 'asc' ? c : -c;
   });
+  const pageCount = Math.max(1, Math.ceil(sorted.length / perPage));
+  const paged = sorted.slice((page - 1) * perPage, page * perPage);
 
   return (
     <div className="p-6 max-w-[1400px]">
@@ -408,6 +446,21 @@ function LevelsTab() {
           options={branches.map((b) => ({ value: b.id, label: b.name }))}
           placeholder="All branches"
           className="w-56"
+        />
+        <Select
+          label="Category"
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          options={categories.map((c) => ({ value: c.id, label: c.name }))}
+          placeholder="All categories"
+          className="w-56"
+        />
+        <Input
+          label="Search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Item name or SKU"
+          className="w-64"
         />
         <label className="flex items-center gap-2 pb-2 text-sm font-body">
           <input
@@ -438,11 +491,13 @@ function LevelsTab() {
         </div>
       ) : levels.length === 0 ? (
         <p className="py-16 text-center text-sm text-gray-400 font-body">
-          No stock recorded yet. Receive a purchase order to get started.
+          {isFiltered
+            ? 'No items match these filters.'
+            : 'No stock recorded yet. Receive a purchase order to get started.'}
         </p>
       ) : (
         <DataTable<InventoryLevel>
-          rows={sorted}
+          rows={paged}
           rowKey={(l) => l.id}
           columns={[
             {
@@ -506,6 +561,21 @@ function LevelsTab() {
               render: (l) => (l.is_below_minimum ? <Badge variant="danger">Reorder</Badge> : '—'),
             },
           ]}
+        />
+      )}
+
+      {!loading && sorted.length > 0 && (
+        <Pagination
+          page={page}
+          pages={pageCount}
+          total={sorted.length}
+          perPage={perPage}
+          onPageChange={setPage}
+          onPerPageChange={(n) => {
+            setPerPage(n);
+            setPage(1);
+          }}
+          label="items"
         />
       )}
     </div>

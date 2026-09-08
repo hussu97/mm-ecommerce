@@ -3759,6 +3759,11 @@ export interface paths {
         /**
          * List Levels
          * @description The inventory levels report: what is on hand and what needs reordering.
+         *
+         *     `search` (item name or SKU), `category_id` and `below_minimum_only` filter in
+         *     SQL, before the `limit`, so a search matches across the whole estate rather
+         *     than only whichever rows fit the first page — the On-Hand tab's search and
+         *     category filter, and the below-minimum view, are all correct past 500 items.
          */
         get: operations["list_levels_api_v1_inventory_levels_get"];
         put?: never;
@@ -26624,6 +26629,8 @@ export interface operations {
             query?: {
                 branch_id?: string | null;
                 warehouse_id?: string | null;
+                category_id?: string | null;
+                search?: string | null;
                 below_minimum_only?: boolean;
                 limit?: number;
             };
