@@ -41,7 +41,11 @@ down_revision: Union[str, None] = "217_product_labels"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-PRODUCT_SLUG = "lotus-cookie-melt"
+# The Lotus Cookie Melt ships in two sizes. "The big one" — the 500g — is the
+# flagship the hero leads to and the one that rides the bestseller rail and cart
+# carousel. Both sizes wear the launch's "Website Exclusive" badge.
+FLAGSHIP_SLUG = "lotus-cookie-melt-500-grams"
+EXCLUSIVE_SLUGS = ("lotus-cookie-melt-500-grams", "lotus-cookie-melt-250-grams")
 BANNERS = "/images/banners"
 
 # The lead slide, per locale. `cta_href` is filled at run time from the product's
@@ -72,7 +76,7 @@ SLIDES = {"en": SLIDE_EN, "ar": SLIDE_AR}
 
 
 def _pdp_href(conn) -> str | None:
-    """`/<category-slug>/<product-slug>` for Lotus, or None if it isn't there."""
+    """`/<category-slug>/<flagship-slug>`, or None if the 500g isn't there."""
     row = conn.execute(
         sa.text(
             """
@@ -82,11 +86,11 @@ def _pdp_href(conn) -> str | None:
             WHERE p.slug = :slug
             """
         ),
-        {"slug": PRODUCT_SLUG},
+        {"slug": FLAGSHIP_SLUG},
     ).fetchone()
     if row is None or not row[0]:
         return None
-    return f"/{row[0]}/{PRODUCT_SLUG}"
+    return f"/{row[0]}/{FLAGSHIP_SLUG}"
 
 
 def upgrade() -> None:
@@ -98,10 +102,30 @@ def upgrade() -> None:
         return
 
     # ── Merchandising, each part guarded so it never overrides an admin edit ──
-    # Labels become the existing set plus website_exclusive (the launch badge)
-    # and bestseller (so Lotus rides the homepage rail + empty-cart carousel),
-    # rebuilt in canonical priority order and idempotent. is_cart_addon and
-    # display_order are only nudged while still at their defaults.
+    # Both sizes wear website_exclusive. Rebuilt in canonical priority order and
+    # idempotent (a second run adds nothing), keeping any label an admin already
+    # set.
+    conn.execute(
+        sa.text(
+            """
+            UPDATE products SET
+                labels = ARRAY(
+                    SELECT l
+                    FROM unnest(
+                        ARRAY['website_exclusive','bestseller','new','limited']::varchar[]
+                    ) AS l
+                    WHERE l = ANY(labels) OR l = 'website_exclusive'
+                ),
+                updated_at = NOW()
+            WHERE slug = ANY(:slugs)
+            """
+        ),
+        {"slugs": list(EXCLUSIVE_SLUGS)},
+    )
+
+    # The flagship additionally rides the bestseller rail + cart tray and leads
+    # its category. bestseller is added on top of website_exclusive; cart-addon
+    # and display_order are only nudged while still at their defaults.
     conn.execute(
         sa.text(
             """
@@ -119,7 +143,7 @@ def upgrade() -> None:
             WHERE slug = :slug
             """
         ),
-        {"slug": PRODUCT_SLUG},
+        {"slug": FLAGSHIP_SLUG},
     )
 
     # ── Lead hero slide, inserted at index 0 if not already present ────────────
@@ -153,9 +177,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove the Lotus lead slide and back out the label.
+    """Remove the Lotus lead slide and back out the website_exclusive label.
 
-    Leaves `is_featured` / `is_cart_addon` / `display_order` as they are: by the
+    Leaves `bestseller` / `is_cart_addon` / `display_order` as they are: by the
     time anyone downgrades, those may reflect deliberate merchandising, and this
     migration cannot tell its own write apart from a later human one.
     """
@@ -165,9 +189,9 @@ def downgrade() -> None:
     conn.execute(
         sa.text(
             "UPDATE products SET labels = array_remove(labels, 'website_exclusive'), "
-            "updated_at = NOW() WHERE slug = :slug"
+            "updated_at = NOW() WHERE slug = ANY(:slugs)"
         ),
-        {"slug": PRODUCT_SLUG},
+        {"slugs": list(EXCLUSIVE_SLUGS)},
     )
 
     if href is None:
