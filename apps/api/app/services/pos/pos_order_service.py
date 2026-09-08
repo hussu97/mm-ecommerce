@@ -1534,6 +1534,17 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
         raise ConflictError(f"Order still has {order.balance_due} outstanding")
 
     order.pos_status = PosOrderStatusEnum.CLOSED.value
+    # Stamp the close time in the SAME breath as `pos_status='closed'`, before
+    # the transitions below. `ck_orders_closed_has_closed_at` (migration 141)
+    # rejects any row that is `closed` with a null `closed_at`, and the CONFIRMED
+    # transition runs the inventory acceptance whose first SELECT triggers a
+    # SQLAlchemy autoflush. Setting `closed_at` only after the transitions let
+    # that autoflush write the half-finished `(closed, null)` row, the constraint
+    # rejected it, and the whole close rolled back — leaving every counter sale
+    # stranded at `created` (paid, no receipt) from the day the constraint and
+    # branch inventory shipped together. The two must move as one.
+    order.closer_id = user.id
+    order.closed_at = utcnow()
     # A counter sale lives at `created` until the till settles it; closing is
     # its confirmation. `on_invalid="skip"` covers the other thing a register
     # closes: an online order being handed over, which is already `confirmed`
@@ -1567,8 +1578,6 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
                 db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
             )
 
-    order.closer_id = user.id
-    order.closed_at = utcnow()
     for item in order.items:
         if item.status == OrderItemStatusEnum.ACTIVE.value:
             item.status = OrderItemStatusEnum.CLOSED.value
