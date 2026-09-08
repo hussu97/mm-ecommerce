@@ -189,6 +189,24 @@ def test_provider_cancelled_but_paid_is_decided_by_net_payable_sign():
     assert not promote._provider_cancelled_but_paid(
         _agg(status="completed", net_payable=Decimal("37.42"))
     )
+    # A MERCHANT-initiated cancellation is OUR fault — a lost sale, not revenue —
+    # even when the provisional net_payable is still positive. It stays cancelled.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("26.20"),
+            raw={"orderCancelSceneDesc": "Merchant"},
+        )
+    )
+    # Marketplace ("Customer service") and customer ("User") cancellations are not
+    # ours — those we were paid for we keep.
+    assert promote._provider_cancelled_but_paid(
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("26.20"),
+            raw={"orderCancelSceneDesc": "User"},
+        )
+    )
 
 
 def test_cancel_reason_reads_keeta_scene_desc():

@@ -49,7 +49,10 @@ from app.models.aggregator import AggregatorOrder
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import PosOrderStatusEnum
-from app.services.aggregators.promote import _target_status
+from app.services.aggregators.promote import (
+    _provider_cancelled_but_paid,
+    _target_status,
+)
 from app.services.orders import order_lifecycle
 
 
@@ -71,6 +74,9 @@ async def _stuck(db) -> list[tuple[Order, AggregatorOrder]]:
         (order, agg)
         for order, agg in rows
         if _target_status(agg.channel, agg.status) == OrderStatusEnum.CANCELLED
+        # A provider cancellation the ledger still paid us for is deliberately
+        # delivered (its net_payable is revenue we kept) — never re-cancel it here.
+        and not _provider_cancelled_but_paid(agg)
     ]
 
 

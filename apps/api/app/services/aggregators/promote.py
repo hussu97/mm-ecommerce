@@ -216,7 +216,27 @@ def _provider_cancelled_but_paid(agg: AggregatorOrder) -> bool:
     """
     if _target_status(agg.channel, agg.status) != OrderStatusEnum.CANCELLED:
         return False
-    return money(agg.net_payable or Decimal("0")) > 0
+    if money(agg.net_payable or Decimal("0")) <= 0:
+        return False
+    # A MERCHANT-initiated cancellation is the shop saying no — a lost sale we
+    # caused, not a provider cancellation we were paid for. Keeta still shows a
+    # positive `net_payable` on one (the order's provisional fee breakdown, before
+    # the statement claws it back), so the money test alone would wrongly book our
+    # own cancellation as delivered. `orderCancelSceneDesc` names the party —
+    # "Customer service" / "User" (marketplace or customer) vs "Merchant" (us) —
+    # so a merchant cancellation stays cancelled whatever the provisional net says.
+    return not _cancelled_by_merchant(agg)
+
+
+def _cancelled_by_merchant(agg: AggregatorOrder) -> bool:
+    """Whether the merchant (the shop) is the party that cancelled — our fault.
+
+    Keeta's `orderCancelSceneDesc` is the humanised party: "Merchant" means the
+    shop cancelled (item unavailable, rejected), as opposed to "Customer service"
+    (the marketplace) or "User" (the customer). Only the merchant case is ours.
+    """
+    scene = (agg.raw or {}).get("orderCancelSceneDesc")
+    return isinstance(scene, str) and scene.strip().lower() == "merchant"
 
 
 def _cancel_reason(agg: AggregatorOrder) -> str | None:
