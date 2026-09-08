@@ -71,12 +71,31 @@ describe('getTranslations', () => {
     await expect(getTranslations('en')).resolves.toEqual(fresh);
   });
 
-  it('still throws during the production build phase, so the build fails loudly', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
+  it('still throws during the production build phase after exhausting retries, so a real outage fails the build loudly', async () => {
+    const fetchMock = vi.fn(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
     const { getTranslations } = await loadServer({ hasApi: true, isBuild: true });
 
     await expect(getTranslations('en')).rejects.toThrow(/translations/);
-  });
+    // One attempt plus the retries — a persistent fault is not papered over.
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+  }, 15000);
+
+  it('rides out a transient blip during the build: a 503 then a 200 resolves, not fails', async () => {
+    const fresh = { hello: 'مرحبا' };
+    let n = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ++n === 1
+          ? new Response('', { status: 503 })
+          : new Response(JSON.stringify(fresh), { status: 200 }),
+      ),
+    );
+    const { getTranslations } = await loadServer({ hasApi: true, isBuild: true });
+
+    await expect(getTranslations('ar')).resolves.toEqual(fresh);
+  }, 15000);
 
   it('returns {} when there is no API configured at all (CI), build or not', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
