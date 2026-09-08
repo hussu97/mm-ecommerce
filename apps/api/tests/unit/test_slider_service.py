@@ -1234,3 +1234,92 @@ async def test_a_delivery_slider_will_not_talk_about_says_so(booked, monkeypatch
     result = await slider_service.refresh(db, db.delivery.order_id)
     assert "Could not read the delivery" in result.last_error
     assert result.courier_status == "in_transit"
+
+
+# ── the rider's live position, carried inline on every push ───────────────────
+
+
+def _webhook_wiring(monkeypatch):
+    """Stub apply_webhook's heavy collaborators, capturing the position calls.
+
+    Returns the list every `record_position` call appends (latitude, longitude).
+    `record` reports no new driver, so the announce/route path stays out of the
+    way — this is about the position, which is captured on EVERY push regardless.
+    """
+    from types import SimpleNamespace
+
+    positions: list[tuple] = []
+
+    async def _record(db, delivery, driver, *, at=None):
+        return SimpleNamespace(is_new_driver=False)
+
+    async def _record_position(db, delivery, *, latitude, longitude, at=None):
+        positions.append((latitude, longitude))
+        delivery.driver_latitude = latitude
+        delivery.driver_longitude = longitude
+
+    async def _noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(slider_service.driver_assignment, "record", _record)
+    monkeypatch.setattr(
+        slider_service.driver_assignment, "record_position", _record_position
+    )
+    monkeypatch.setattr(slider_service, "_advance_order", _noop)
+    return positions
+
+
+@pytest.mark.asyncio
+async def test_a_webhook_captures_the_riders_live_position(monkeypatch):
+    """Slider puts `driver_info.latitude/longitude` on every push — apply_webhook
+    must record it, where before it was dropped (Lalamove has to be polled for
+    the same thing)."""
+    positions = _webhook_wiring(monkeypatch)
+    delivery = _row()
+    payload = {
+        "status": "in_transit",
+        "order_number": 80639402,
+        "driver_info": {
+            "name": "Muhammad Uzair",
+            "phone_number": "+971568343593",
+            "latitude": 25.1950976,
+            "longitude": 55.4170007,
+        },
+    }
+    await slider_service.apply_webhook(_Db(delivery), payload, delivery)
+    assert positions == [(25.1950976, 55.4170007)]
+    assert delivery.driver_latitude == 25.1950976
+
+
+@pytest.mark.asyncio
+async def test_a_driverless_push_records_no_position(monkeypatch):
+    """The early `rider_assigned`/`searching_rider` pushes carry no `driver_info`;
+    a half-known position is not a place, so nothing is recorded."""
+    positions = _webhook_wiring(monkeypatch)
+    delivery = _row()
+    await slider_service.apply_webhook(
+        _Db(delivery),
+        {"status": "rider_assigned", "order_number": 80639402},
+        delivery,
+    )
+    # record_position is still CALLED (with None/None); it drops the pair itself.
+    assert positions == [(None, None)]
+    assert delivery.driver_latitude is None
+
+
+@pytest.mark.asyncio
+async def test_at_dropoff_is_recognised_and_its_position_kept(monkeypatch):
+    """`at_dropoff` sits between in_transit and delivered. An order already at
+    in_transit must ACCEPT it (and its position) rather than drop it as an
+    out-of-order unknown status, as happened before it was ranked."""
+    positions = _webhook_wiring(monkeypatch)
+    delivery = _row()
+    delivery.courier_status = "in_transit"
+    payload = {
+        "status": "at_dropoff",
+        "order_number": 80639402,
+        "driver_info": {"latitude": 25.19498, "longitude": 55.4174857},
+    }
+    await slider_service.apply_webhook(_Db(delivery), payload, delivery)
+    assert delivery.courier_status == "at_dropoff"  # not dropped
+    assert positions == [(25.19498, 55.4174857)]

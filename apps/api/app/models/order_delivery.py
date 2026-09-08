@@ -140,6 +140,12 @@ class SliderStatusEnum(str, enum.Enum):
     AT_PICKUP = "at_pickup"
     PICKED_UP = "picked_up"
     IN_TRANSIT = "in_transit"
+    #: The rider has reached the customer's door and is about to hand over — the
+    #: "arriving now" moment. Slider sends it (with the rider's position and an
+    #: `estimated_delivery_time`) between `in_transit` and `delivered`; unlisted,
+    #: it ranked -1 and every one was dropped as out-of-order, losing the signal
+    #: and the position it carried.
+    AT_DROPOFF = "at_dropoff"
     DELIVERED = "delivered"
     RETURN_TRIP_STARTED = "return_trip_started"
     CANCELLED = "cancelled"
@@ -167,11 +173,12 @@ SLIDER_STATUS_RANK: dict[str, int] = {
     SliderStatusEnum.AT_PICKUP.value: 3,
     SliderStatusEnum.PICKED_UP.value: 4,
     SliderStatusEnum.IN_TRANSIT.value: 5,
+    SliderStatusEnum.AT_DROPOFF.value: 6,
     # The three ways it ends sit together at the top: none of them may be undone
     # by a late push describing something that happened earlier.
-    SliderStatusEnum.DELIVERED.value: 6,
-    SliderStatusEnum.RETURN_TRIP_STARTED.value: 6,
-    SliderStatusEnum.CANCELLED.value: 6,
+    SliderStatusEnum.DELIVERED.value: 7,
+    SliderStatusEnum.RETURN_TRIP_STARTED.value: 7,
+    SliderStatusEnum.CANCELLED.value: 7,
 }
 
 #: Terminal, and the parcel never reached the customer. Both need a human: the
