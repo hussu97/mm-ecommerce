@@ -98,23 +98,51 @@ const lastKnownGood: Record<string, Record<string, string>> = { ...SEED_TRANSLAT
  * is; an admin genuinely clearing every string is not a fault this should
  * paper over).
  */
+/**
+ * The prerender pass makes ONE fetch per locale (React `cache` + the Next data
+ * cache dedupe it across every product/category page), and it throws to fail the
+ * build rather than ship a page with no translations. But a single momentary API
+ * blip — the request pool shedding a 503 under load, or a blue/green container
+ * cutover mid-build — then takes the whole export down over a fault that is gone
+ * a second later. So during the build ONLY, retry a transient failure a few times
+ * before giving up; a genuine outage still exhausts the retries and fails the
+ * build, exactly as intended. Runtime keeps its single attempt and its
+ * `lastKnownGood` fallback (a request in flight must not wait on retries).
+ */
+const BUILD_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchTranslations(locale: string): Promise<Record<string, string>> {
+  const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
+    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.i18n] },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    throw new Error(`translations ${locale}: HTTP ${res.status}`);
+  }
+  return (await res.json()) as Record<string, string>;
+}
+
 export const getTranslations = cache(
   async (locale: string): Promise<Record<string, string>> => {
-    try {
-      const res = await fetch(`${RSC_API_BASE}/i18n/translations/${locale}`, {
-        next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.i18n] },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) {
-        throw new Error(`translations ${locale}: HTTP ${res.status}`);
+    // Only the build-with-a-real-API case retries: at runtime a request must not
+    // wait, and with no API configured (CI) there is nothing to retry.
+    const retries = IS_BUILD_PHASE && HAS_REMOTE_API ? BUILD_RETRY_DELAYS_MS : [];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const data = await fetchTranslations(locale);
+        lastKnownGood[locale] = data;
+        return data;
+      } catch (err) {
+        if (attempt < retries.length) {
+          await sleep(retries[attempt]);
+          continue;
+        }
+        if (!HAS_REMOTE_API) return {};
+        if (IS_BUILD_PHASE) throw err;
+        return lastKnownGood[locale] ?? SEED_TRANSLATIONS.en;
       }
-      const data = (await res.json()) as Record<string, string>;
-      lastKnownGood[locale] = data;
-      return data;
-    } catch (err) {
-      if (!HAS_REMOTE_API) return {};
-      if (IS_BUILD_PHASE) throw err;
-      return lastKnownGood[locale] ?? SEED_TRANSLATIONS.en;
     }
   },
 );
