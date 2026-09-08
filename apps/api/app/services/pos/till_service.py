@@ -223,6 +223,12 @@ async def add_drawer_operation(
     order_id: uuid.UUID | None = None,
     notes: str | None = None,
 ) -> DrawerOperation:
+    # Lock the till row for the life of the transaction so a drawer write and a
+    # concurrent close serialise on it (F-POS-23): a payment committing between a
+    # close's `estimated_cash` snapshot and its commit otherwise left the shift's
+    # variance computed against a drawer total that was already stale. Re-reads
+    # `status` under the lock too, so a close that won the race is seen here.
+    await db.refresh(till, with_for_update=True)
     if till.status != TillStatusEnum.OPEN.value:
         raise ConflictError("Cannot record drawer operations on a closed till")
     if op_type not in DRAWER_SIGN:
@@ -284,6 +290,11 @@ async def close_till(
     closing_amount: Decimal,
     notes: str | None = None,
 ) -> Till:
+    # Lock the till row before reading the ledger or flipping the status, so a
+    # payment's `add_drawer_operation` cannot commit between the `estimated_cash`
+    # snapshot below and this close's commit and leave the variance stale
+    # (F-POS-23). The two now serialise on the same row lock.
+    await db.refresh(till, with_for_update=True)
     if till.status != TillStatusEnum.OPEN.value:
         raise ConflictError("This till is already closed")
 

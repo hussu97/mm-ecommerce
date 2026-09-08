@@ -1425,10 +1425,27 @@ async def record_payment(
     tendered_amount = money(tendered if tendered is not None else amount)
     change = money(max(tendered_amount - amount, Decimal("0")))
 
+    # Which drawer this tender lands in. Cash MUST reach a drawer or the till
+    # cannot reconcile, so a cash tender with no till falls back to the cashier's
+    # own open drawer and is refused when there is none — a cash payment that
+    # silently skipped the ledger left the till short and the money unaccounted
+    # (F-POS-15; prod had 6 such NULL-till cash rows). Non-cash tenders keep the
+    # old behaviour: the passed till, else the order's.
+    drawer = till
+    if method.type == PaymentMethodTypeEnum.CASH.value and drawer is None:
+        drawer = await till_service.get_open_till(
+            db, user_id=user.id, branch_id=order.branch_id
+        )
+        if drawer is None:
+            raise ConflictError(
+                "A cash payment needs an open till. Open a drawer, or record the "
+                "tender on the till it belongs to."
+            )
+
     payment = OrderPayment(
         order_id=order.id,
         payment_method_id=method.id,
-        till_id=till.id if till else order.till_id,
+        till_id=drawer.id if drawer else order.till_id,
         user_id=user.id,
         amount=amount,
         tendered=tendered_amount,
@@ -1489,10 +1506,12 @@ async def record_payment(
     # and takes `change` back, and tendered - change == amount by construction.
     # Recording amount - change would understate every over-tendered sale and
     # can even go negative.
-    if method.type == PaymentMethodTypeEnum.CASH.value and till is not None:
+    if method.type == PaymentMethodTypeEnum.CASH.value:
+        # `drawer` is guaranteed above: a cash tender either carries a till or
+        # resolves the cashier's open one, or the payment was refused.
         await till_service.add_drawer_operation(
             db,
-            till=till,
+            till=drawer,
             user=user,
             op_type=(
                 DrawerOperationTypeEnum.RETURN.value

@@ -12,7 +12,12 @@ from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
 from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.permissions import ensure, require
 from app.models import (
     Branch,
@@ -204,7 +209,11 @@ async def _load(db: AsyncSession, order_id: uuid.UUID) -> Order:
 
 
 async def _resolve_till(
-    db: AsyncSession, till_id: uuid.UUID | None, order: Order | None = None
+    db: AsyncSession,
+    till_id: uuid.UUID | None,
+    order: Order | None = None,
+    *,
+    user: User,
 ) -> Till | None:
     target = till_id or (order.till_id if order else None)
     if target is None:
@@ -212,6 +221,13 @@ async def _resolve_till(
     till = await db.get(Till, target)
     if till is None:
         raise NotFoundError("Till not found")
+    # A cashier may only ring money into their own drawer; admins may touch any.
+    # Without this a terminal could pass another cashier's `till_id` and post a
+    # sale (or a payment) into their drawer (F-POS-14). Ownership is a property of
+    # the row, so it is checked here rather than by `require()` — the same rule
+    # and wording as `tills._assert_can_touch`.
+    if till.user_id != user.id and not user.is_admin:
+        raise ForbiddenError("This till belongs to another user")
     return till
 
 
@@ -260,7 +276,7 @@ async def open_order(
     user: User = Depends(require("pos.register.access")),
 ):
     branch = await crud_service.get_or_404(db, Branch, data.branch_id)
-    till = await _resolve_till(db, data.till_id)
+    till = await _resolve_till(db, data.till_id, user=user)
     order = await pos_order_service.open_order(
         db,
         branch=branch,
@@ -464,7 +480,7 @@ async def record_payment(
         # whether money is going out rather than in.
         ensure(user, "pos.payment.refund")
     order = await _load(db, order_id)
-    till = await _resolve_till(db, data.till_id, order)
+    till = await _resolve_till(db, data.till_id, order, user=user)
     await pos_order_service.record_payment(
         db,
         order=order,

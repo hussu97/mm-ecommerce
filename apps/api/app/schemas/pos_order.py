@@ -7,9 +7,10 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.courier import CourierBadge
+from app.schemas.pos.charges import percentage_is_fraction
 
 OrderTypeLiteral = Literal["pickup", "delivery"]
 
@@ -117,6 +118,10 @@ class ApplyChargeRequest(BaseModel):
     name: str | None = Field(None, max_length=100)
     type: Literal["percentage", "fixed", "open"] = "fixed"
     value: Decimal = Field(Decimal("0"), ge=0)
+
+    # A percentage is a fraction (0.10 = 10%); `value: 10` would be 1000% applied
+    # as base*10 (F-POS-21). Same rule the managed `ChargeCreate`/`ChargeUpdate` use.
+    _percentage_within_range = field_validator("value")(percentage_is_fraction)
 
 
 class PaymentRequest(BaseModel):

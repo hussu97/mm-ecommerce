@@ -12,6 +12,19 @@ from pydantic import BaseModel, Field, field_validator
 from ._base import OrderTypeLiteral, ORMModel, Translations
 
 
+def percentage_is_fraction(v: Decimal | None, info) -> Decimal | None:
+    """A percentage `value` is a FRACTION — 0.10 for 10%, never a whole percent.
+
+    `value: 10` on a percentage charge is 1000%, and `pos_pricing` applies it
+    verbatim as `base * value`, so the guard belongs at the boundary every writer
+    of a charge shares (F-POS-21). Shared by `ChargeCreate`, `ChargeUpdate` and the
+    register's `ApplyChargeRequest` so an open counter charge cannot slip past it.
+    """
+    if v is not None and info.data.get("type") == "percentage" and v > 1:
+        raise ValueError("percentage charges are fractions, e.g. 0.10 for 10%")
+    return v
+
+
 class ChargeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     name_localized: str | None = Field(None, max_length=100)
@@ -24,12 +37,7 @@ class ChargeCreate(BaseModel):
     tax_group_id: UUID | None = None
     is_active: bool = True
 
-    @field_validator("value")
-    @classmethod
-    def _percentage_within_range(cls, v: Decimal, info) -> Decimal:
-        if info.data.get("type") == "percentage" and v > 1:
-            raise ValueError("percentage charges are fractions, e.g. 0.10 for 10%")
-        return v
+    _percentage_within_range = field_validator("value")(percentage_is_fraction)
 
 
 class ChargeUpdate(BaseModel):
@@ -43,6 +51,8 @@ class ChargeUpdate(BaseModel):
     order_types: list[OrderTypeLiteral] | None = None
     tax_group_id: UUID | None = None
     is_active: bool | None = None
+
+    _percentage_within_range = field_validator("value")(percentage_is_fraction)
 
 
 class ChargeResponse(ORMModel):
