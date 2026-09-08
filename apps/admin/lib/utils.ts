@@ -29,6 +29,28 @@ export function formatCurrency(amount: number | string | null | undefined): stri
 }
 
 /**
+ * The one quantity formatter for the whole console: drops trailing zeros so a
+ * stock figure reads "8.375" and "1", not "8.37500000".
+ *
+ * Inventory quantities are stored as high-scale numerics (the stock ledger is
+ * `Numeric(20, 8)`, reports `Numeric(20, 6)`) and serialise to strings with the
+ * full scale, so rendering the raw value fills every cell with trailing zeros.
+ * The trim is lossless — a fixed-scale decimal only ever loses zeros — so this
+ * shows the real figure, unlike a rounded `toFixed`. This replaced the local
+ * `trimQty` in `RecipeEditor` so quantities read the same on every screen.
+ */
+export function formatQuantity(value: number | string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—';
+  // A string from the API carries an exact fixed-scale decimal, so trim it as
+  // text and stay lossless. A JS number is a computed figure (a running net, a
+  // difference) that can carry float noise — round to the ledger's 8-place
+  // scale first so the trim isn't defeated by "2.9999999999996".
+  const s = typeof value === 'number' ? value.toFixed(8) : String(value);
+  if (!s.includes('.')) return s;
+  return s.replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/**
  * The shop's clock, and the only one the admin ever shows.
  *
  * Everything is stored in UTC and every person reading this screen is standing

@@ -1,7 +1,7 @@
 'use client';
 
 import { posReportsApi } from '@/lib/pos-api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatQuantity } from '@/lib/utils';
 import { Panel, Stat, useReport, windowKey } from './_shared';
 import type { CostOfGoods, InventoryValuation } from '@/lib/pos-types';
 import type { Window } from '../report-window';
@@ -62,10 +62,10 @@ export function InventoryTab({ window, branchId }: { window: Window; branchId: s
                         </td>
                         <td className="px-3 py-2 font-medium">{row.name}</td>
                         <td className="px-3 py-2 text-right">
-                          {row.quantity} <span className="text-xs text-gray-400">{row.unit}</span>
+                          {formatQuantity(row.quantity)} <span className="text-xs text-gray-400">{row.unit}</span>
                         </td>
-                        <td className="px-3 py-2 text-right text-gray-500">{row.minimum_level}</td>
-                        <td className="px-3 py-2 text-right font-medium">{row.shortfall}</td>
+                        <td className="px-3 py-2 text-right text-gray-500">{formatQuantity(row.minimum_level)}</td>
+                        <td className="px-3 py-2 text-right font-medium">{formatQuantity(row.shortfall)}</td>
                       </tr>
                     ))}
                   </tbody>

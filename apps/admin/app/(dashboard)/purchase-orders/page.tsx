@@ -13,7 +13,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatQuantity } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
   PurchaseOrderStatus,
@@ -356,7 +356,7 @@ function ReceiveOrder({
   onSaved: () => void;
 }) {
   const [quantities, setQuantities] = useState<Record<string, string>>(() =>
-    Object.fromEntries(order.items.map((i) => [i.id, String(i.outstanding_quantity)])),
+    Object.fromEntries(order.items.map((i) => [i.id, formatQuantity(i.outstanding_quantity)])),
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -407,8 +407,8 @@ function ReceiveOrder({
                 <span className="font-medium">{item.item_name}</span>{' '}
                 <code className="text-xs text-gray-400">{item.item_sku}</code>
               </td>
-              <td className="py-2 text-right">{Number(item.quantity)}</td>
-              <td className="py-2 text-right text-gray-500">{Number(item.received_quantity)}</td>
+              <td className="py-2 text-right">{formatQuantity(item.quantity)}</td>
+              <td className="py-2 text-right text-gray-500">{formatQuantity(item.received_quantity)}</td>
               <td className="py-2 pl-2">
                 <Input
                   type="number"

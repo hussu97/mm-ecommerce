@@ -21,7 +21,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner, TabBar } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
 type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'submissions' | 'suppliers' | 'categories' | 'integrity';
@@ -473,7 +473,7 @@ function LevelsTab() {
               ),
               render: (l) => (
                 <>
-                  {Number(l.quantity)}{' '}
+                  {formatQuantity(l.quantity)}{' '}
                   <span className="text-xs text-gray-400">{l.ingredient_unit}</span>
                 </>
               ),
@@ -481,12 +481,12 @@ function LevelsTab() {
             {
               header: 'Min',
               className: 'text-right',
-              render: (l) => <span className="text-gray-500">{Number(l.minimum_level ?? 0)}</span>,
+              render: (l) => <span className="text-gray-500">{formatQuantity(l.minimum_level ?? 0)}</span>,
             },
             {
               header: 'Par',
               className: 'text-right',
-              render: (l) => <span className="text-gray-500">{Number(l.par_level ?? 0)}</span>,
+              render: (l) => <span className="text-gray-500">{formatQuantity(l.par_level ?? 0)}</span>,
             },
             {
               header: 'Avg cost',
@@ -629,7 +629,7 @@ function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
     { header: 'Reference', priority: 'primary', render: (row) => row.reference },
     { header: 'Type', render: (row) => row.type.replaceAll('_', ' ') },
     { header: 'Source', render: (row) => row.source_type ? `${row.source_type} · ${row.source_id ?? ''}` : 'Manual' },
-    { header: 'Movements', render: (row) => <div className="space-y-1">{row.items.map((line) => <div key={line.id} className="text-xs"><span className={Number(line.signed_quantity) < 0 ? 'text-red-600' : 'text-green-700'}>{Number(line.signed_quantity) > 0 ? '+' : ''}{line.signed_quantity ?? line.quantity}</span> {line.item_name} <span className="text-gray-400">→ {line.balance_after_quantity ?? '—'}</span></div>)}</div> },
+    { header: 'Movements', render: (row) => <div className="space-y-1">{row.items.map((line) => <div key={line.id} className="text-xs"><span className={Number(line.signed_quantity) < 0 ? 'text-red-600' : 'text-green-700'}>{Number(line.signed_quantity) > 0 ? '+' : ''}{formatQuantity(line.signed_quantity ?? line.quantity)}</span> {line.item_name} <span className="text-gray-400">→ {formatQuantity(line.balance_after_quantity)}</span></div>)}</div> },
     { header: 'Posted', render: (row) => row.posted_at ? new Date(row.posted_at).toLocaleString() : '—' },
   ]} /></div>;
 }
@@ -661,7 +661,7 @@ function CountsTab() {
         level.item_sku,
         level.item_name,
         'ingredient',
-        level.quantity,
+        formatQuantity(level.quantity),
         '',
         '',
       ]),
@@ -746,9 +746,9 @@ function CountsTab() {
           <DataTable rows={preview.rows} rowKey={(row) => `${row.sku}-${row.counted_quantity}-${row.errors.join('|')}`} columns={[
             { header: 'SKU', priority: 'secondary', render: (row) => <code className="text-xs">{row.sku}</code> },
             { header: 'Item', priority: 'primary', render: (row) => row.item_name ?? 'Unknown item' },
-            { header: 'Expected', className: 'text-right', render: (row) => row.expected_quantity ?? '—' },
-            { header: 'Counted', className: 'text-right', render: (row) => row.counted_quantity },
-            { header: 'Delta', className: 'text-right', render: (row) => <span className={Number(row.delta_quantity) === 0 ? 'text-gray-500' : Number(row.delta_quantity) < 0 ? 'text-red-700' : 'text-green-700'}>{row.delta_quantity ?? '—'} {row.unit}</span> },
+            { header: 'Expected', className: 'text-right', render: (row) => formatQuantity(row.expected_quantity) },
+            { header: 'Counted', className: 'text-right', render: (row) => formatQuantity(row.counted_quantity) },
+            { header: 'Delta', className: 'text-right', render: (row) => <span className={Number(row.delta_quantity) === 0 ? 'text-gray-500' : Number(row.delta_quantity) < 0 ? 'text-red-700' : 'text-green-700'}>{formatQuantity(row.delta_quantity)} {row.unit}</span> },
             { header: 'Validation', render: (row) => row.errors.length ? <span className="text-red-700">{row.errors.join('; ')}</span> : <Badge variant="success">Ready</Badge> },
             { header: 'Remark', render: (row) => row.remark ?? '—' },
           ]} />
@@ -1068,6 +1068,6 @@ function IntegrityTab() {
   useEffect(() => { setChecked(false); setRows([]); if (branchId) void inventoryApi.branchSettings(branchId).then(setSettings); else setSettings(null); }, [branchId]);
   const saveSettings = async () => { if (!settings) return; setLoading(true); try { setSettings(await inventoryApi.updateBranchSettings(settings.branch_id, settings)); } finally { setLoading(false); } };
   return <div className="p-6 max-w-5xl space-y-4"><BranchFilter value={branchId} onChange={setBranchId} />{settings && <div className="border border-gray-200 p-4 space-y-3"><div><h3 className="font-medium text-gray-800">Branch inventory rollout</h3><p className="text-xs text-gray-500">Inventory and sales consumption cannot be enabled until a manager-approved opening count records the go-live watermark.</p></div><div className="flex flex-wrap gap-5 text-sm"><label className="flex gap-2"><input type="checkbox" checked={settings.inventory_enabled} disabled={!settings.go_live_at} onChange={(event) => setSettings({ ...settings, inventory_enabled: event.target.checked })} />Inventory enabled</label><label className="flex gap-2"><input type="checkbox" checked={settings.sales_consumption_enabled} disabled={!settings.go_live_at} onChange={(event) => setSettings({ ...settings, sales_consumption_enabled: event.target.checked })} />Sales consumption</label><label className="flex gap-2"><input type="checkbox" checked={settings.production_enabled} onChange={(event) => setSettings({ ...settings, production_enabled: event.target.checked })} />Production</label><label className="flex gap-2"><input type="checkbox" checked={settings.validation_mode} onChange={(event) => setSettings({ ...settings, validation_mode: event.target.checked })} />Validation mode</label><label className="flex gap-2"><input type="checkbox" checked={settings.allow_negative_stock} onChange={(event) => setSettings({ ...settings, allow_negative_stock: event.target.checked })} />Allow negative</label></div><div className="flex items-center justify-between text-xs text-gray-500"><span>{settings.go_live_at ? `Opening count posted ${new Date(settings.go_live_at).toLocaleString()} · sequence ${settings.go_live_sequence}` : 'Awaiting opening count'}</span><Button size="sm" onClick={() => void saveSettings()} loading={loading}>Save settings</Button></div></div>}<div className="flex gap-2"><Button onClick={() => void check()} loading={loading} disabled={!branchId}>Preview ledger drift</Button><Button variant="outline" onClick={() => void check(true)} disabled={!branchId || loading}>Rebuild cache</Button></div><p className="text-sm text-gray-500">Rebuild replays closed ledger rows in posting-sequence order under the branch inventory lock.</p>{checked && rows.length === 0 ? <div className="border border-green-200 bg-green-50 p-4 text-sm text-green-800">No projection drift found.</div> : rows.length > 0 ? <DataTable rows={rows} rowKey={(row) => row.item_id} columns={[
-    { header: 'Item', render: (row) => row.item_id }, { header: 'Cached qty', render: (row) => row.cached_quantity }, { header: 'Ledger qty', render: (row) => row.ledger_quantity }, { header: 'Cached cost', render: (row) => row.cached_average_cost }, { header: 'Ledger cost', render: (row) => row.ledger_average_cost },
+    { header: 'Item', render: (row) => row.item_id }, { header: 'Cached qty', render: (row) => formatQuantity(row.cached_quantity) }, { header: 'Ledger qty', render: (row) => formatQuantity(row.ledger_quantity) }, { header: 'Cached cost', render: (row) => row.cached_average_cost }, { header: 'Ledger cost', render: (row) => row.ledger_average_cost },
   ]} /> : null}</div>;
 }

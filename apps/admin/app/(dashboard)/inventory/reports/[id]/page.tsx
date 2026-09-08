@@ -7,7 +7,7 @@ import { inventoryApi, type ReportSave, type ShiftInventoryReport } from '@/lib/
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Spinner } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 
 type ReportLine = ShiftInventoryReport['lines'][number];
 type GridColumn = { key: string; label: string; role: string; source: string; posts: string | null; editable: boolean };
@@ -75,7 +75,10 @@ export default function ReportDetailPage() {
     for (const line of report.lines) {
       const row: Record<string, string> = {};
       for (const col of columns) {
-        if (col.editable) row[col.key] = lineValue(line, col.key);
+        if (col.editable) {
+          const raw = lineValue(line, col.key);
+          row[col.key] = raw ? formatQuantity(raw) : '';
+        }
       }
       seed[line.item_id] = row;
       seedReasons[line.item_id] = line.override_reason ?? '';
@@ -113,12 +116,13 @@ export default function ReportDetailPage() {
     return total;
   };
   const cellDisplay = (line: ReportLine, col: GridColumn): string => {
-    if (col.role === 'net') return String(editing ? liveNet(line) : num(line.expected_quantity));
+    if (col.role === 'net') return formatQuantity(editing ? liveNet(line) : num(line.expected_quantity));
     if (col.role === 'difference') {
-      if (editing) return String(cellNumber(line, 'entered_quantity') - liveNet(line));
-      return line.variance_quantity == null ? '—' : String(num(line.variance_quantity));
+      if (editing) return formatQuantity(cellNumber(line, 'entered_quantity') - liveNet(line));
+      return line.variance_quantity == null ? '—' : formatQuantity(num(line.variance_quantity));
     }
-    return lineValue(line, col.key) || '0';
+    const raw = lineValue(line, col.key);
+    return raw ? formatQuantity(raw) : '0';
   };
 
   const save = async () => {

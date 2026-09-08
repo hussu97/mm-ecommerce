@@ -7,6 +7,7 @@ import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { ApiError } from '@/lib/api';
 import { inventoryApi, type RecipeVersion, type VersionedRecipe } from '@/lib/pos-api';
 import type { InventoryItem } from '@/lib/pos-types';
+import { formatQuantity } from '@/lib/utils';
 
 type OwnerKind = 'product' | 'modifier_option' | 'inventory_item';
 
@@ -31,17 +32,10 @@ interface EditLine {
   source_metadata: Record<string, unknown>;
 }
 
-/** Drop trailing zeros so a quantity reads "8.375" and "1", not "8.37500000". */
-function trimQty(value: string | number): string {
-  const s = String(value);
-  if (!s.includes('.')) return s;
-  return s.replace(/0+$/, '').replace(/\.$/, '');
-}
-
 function toEditLine(line: RecipeVersion['lines'][number]): EditLine {
   return {
     item_id: line.item_id,
-    quantity: trimQty(line.quantity),
+    quantity: formatQuantity(line.quantity),
     ingredient_unit: line.ingredient_unit,
     yield_percentage: String(line.yield_percentage),
     inactive_in_order_types: line.inactive_in_order_types,

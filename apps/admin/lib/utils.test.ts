@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cn, slugify, formatCurrency, formatDate } from './utils';
+import { cn, slugify, formatCurrency, formatDate, formatQuantity } from './utils';
 
 describe('cn', () => {
   it('joins class strings', () => {
@@ -58,6 +58,35 @@ describe('formatCurrency', () => {
   it('treats null and undefined as zero (the shape money() accepted)', () => {
     expect(formatCurrency(null)).toBe('AED 0.00');
     expect(formatCurrency(undefined)).toBe('AED 0.00');
+  });
+});
+
+describe('formatQuantity', () => {
+  it('drops the trailing zeros of a high-scale ledger string', () => {
+    expect(formatQuantity('8.37500000')).toBe('8.375');
+    expect(formatQuantity('1.000000')).toBe('1');
+    expect(formatQuantity('12.500000')).toBe('12.5');
+  });
+
+  it('leaves an integer string untouched', () => {
+    expect(formatQuantity('42')).toBe('42');
+  });
+
+  it('keeps a fractional string lossless (no rounding)', () => {
+    expect(formatQuantity('0.00000010')).toBe('0.0000001');
+  });
+
+  it('rounds a computed number to the ledger scale before trimming', () => {
+    // 0.1 + 0.2 carries float noise; the figure a running net produces.
+    expect(formatQuantity(0.1 + 0.2)).toBe('0.3');
+    expect(formatQuantity(5)).toBe('5');
+    expect(formatQuantity(-2.5)).toBe('-2.5');
+  });
+
+  it('shows an em dash for a missing value', () => {
+    expect(formatQuantity(null)).toBe('—');
+    expect(formatQuantity(undefined)).toBe('—');
+    expect(formatQuantity('')).toBe('—');
   });
 });
 
