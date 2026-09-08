@@ -36,6 +36,7 @@ def _agg(**over):
         payment_fee=None,
         status="40",
         placed_at=None,
+        accepted_at=None,
         delivered_at=None,
         business_date="2026-08-27",
         mm_order_id=None,
@@ -48,6 +49,8 @@ def _agg(**over):
         driver_status=None,
         cancellation_fee=None,
         marketing_fee=None,
+        net_payable=None,
+        raw=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -165,6 +168,84 @@ def test_keeta_status_codes_map():
     assert promote._target_status("keeta", "50") == OrderStatusEnum.CANCELLED
     assert promote._target_status("keeta", "") is None
     assert promote._target_status("keeta", "99") is None  # unknown → indeterminate
+
+
+def test_provider_cancelled_but_paid_is_decided_by_net_payable_sign():
+    # Cancelled at the marketplace but the ledger still pays the net → we keep it.
+    assert promote._provider_cancelled_but_paid(
+        _agg(status="cancelled", net_payable=Decimal("37.42"))
+    )
+    assert promote._provider_cancelled_but_paid(
+        _agg(status="50", net_payable=Decimal("26.40"))  # legacy raw code
+    )
+    # Cancelled and paid nothing → a real (merchant) cancellation, a lost sale.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(status="cancelled", net_payable=Decimal("0"))
+    )
+    assert not promote._provider_cancelled_but_paid(
+        _agg(status="cancelled", net_payable=None)
+    )
+    # Not a cancellation at all → never in scope.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(status="completed", net_payable=Decimal("37.42"))
+    )
+
+
+def test_cancel_reason_reads_keeta_scene_desc():
+    assert (
+        promote._cancel_reason(_agg(raw={"orderCancelSceneDesc": "Customer service"}))
+        == "Customer service"
+    )
+    assert promote._cancel_reason(_agg(raw={})) is None
+    assert promote._cancel_reason(_agg(raw=None)) is None
+
+
+async def _record_rungs(monkeypatch):
+    """Replace the lifecycle transition with one that advances the order in place
+    and records each rung, so `_drive_status`'s status walk is observable."""
+    rungs: list[OrderStatusEnum] = []
+
+    async def _transition(db, order, rung, **kwargs):
+        rungs.append(rung)
+        order.status = rung
+        return True
+
+    monkeypatch.setattr(promote.order_lifecycle, "transition", _transition)
+    return rungs
+
+
+async def test_drive_status_keeps_a_paid_marketplace_cancellation_delivered(monkeypatch):
+    rungs = await _record_rungs(monkeypatch)
+    order = _mm_order(status=OrderStatusEnum.CREATED, aggregator_cancel_reason=None)
+    agg = _agg(
+        status="cancelled",
+        net_payable=Decimal("37.42"),
+        raw={"orderCancelSceneDesc": "Customer service"},
+    )
+
+    await promote._drive_status(_FakeDB(), order, agg)
+
+    # Booked all the way to delivered (its revenue counts), not cancelled.
+    assert order.status == OrderStatusEnum.DELIVERED
+    assert OrderStatusEnum.CANCELLED not in rungs
+    # And the marketplace cancellation is recorded for display.
+    assert order.aggregator_cancel_reason == "Customer service"
+
+
+async def test_drive_status_still_cancels_an_unpaid_marketplace_cancellation(monkeypatch):
+    rungs = await _record_rungs(monkeypatch)
+    order = _mm_order(status=OrderStatusEnum.CONFIRMED, aggregator_cancel_reason=None)
+    agg = _agg(
+        status="cancelled",
+        net_payable=Decimal("0"),
+        raw={"orderCancelSceneDesc": "Item unavailable"},
+        cancelled_at=None,
+    )
+
+    await promote._drive_status(_FakeDB(), order, agg)
+
+    assert rungs == [OrderStatusEnum.CANCELLED]
+    assert order.aggregator_cancel_reason == "Item unavailable"
 
 
 def test_deliveroo_status_words_map():
@@ -1200,8 +1281,10 @@ async def test_a_marketplace_cancel_outranks_our_bookkeeping(monkeypatch):
         external_order_id="3872488968",
         cancelled_at=None,
         placed_at=datetime(2026, 9, 5, 18, 54, tzinfo=timezone.utc),
+        net_payable=None,
+        raw=None,
     )
-    order = SimpleNamespace(status=OrderStatusEnum.PACKED)
+    order = SimpleNamespace(status=OrderStatusEnum.PACKED, aggregator_cancel_reason=None)
     await promote._drive_status(None, order, agg)
 
     assert calls[0][0] == OrderStatusEnum.CANCELLED
