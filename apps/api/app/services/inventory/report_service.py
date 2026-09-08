@@ -19,6 +19,7 @@ from app.models.branch import Branch
 from app.models.inventory import (
     InventoryCategory,
     InventoryItem,
+    InventoryItemIngredient,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
@@ -39,6 +40,7 @@ from app.models.user import User
 from app.services import email_service
 from app.services.inventory import (
     inventory_service,
+    recipe_service,
     report_columns,
     source_event_service,
     transfer_service,
@@ -56,6 +58,7 @@ _NET_IN_COLUMNS = (
 _NET_OUT_COLUMNS = (
     "sales_consumption_quantity",
     "production_consumption_quantity",
+    "extra_production_consumption_quantity",
     "transfer_out_quantity",
     "waste_quantity",
     "internal_use_quantity",
@@ -446,6 +449,7 @@ def _apply_source_columns(
     expected: Decimal,
     item_movements: dict[str, Decimal],
     through_sequence: int | None,
+    proposed_production_consumption: Decimal = Decimal("0"),
 ) -> None:
     net_movement = sum(item_movements.values(), Decimal("0"))
 
@@ -462,8 +466,21 @@ def _apply_source_columns(
     line.sales_consumption_quantity = moved(
         InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value, outward=True
     )
-    line.production_consumption_quantity = moved(
-        InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value, outward=True
+    # "Used in production" = what the ledger already recorded (posted production) plus
+    # what a sibling production report that has NOT posted yet will draw down once it
+    # is approved (its recipe exploded against the produced-goods entered). The two are
+    # disjoint by posted-status — the moment the sibling posts, its consumption is on
+    # the ledger and it drops out of the proposed figure — so nothing double-counts.
+    # This is what makes the raw-material consumption visible at close instead of
+    # appearing only after production is approved.
+    line.production_consumption_quantity = quantity(
+        moved(
+            InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value, outward=True
+        )
+        + proposed_production_consumption
+    )
+    line.extra_production_consumption_quantity = moved(
+        InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value, outward=True
     )
     line.transfer_out_quantity = moved(
         InventoryTransactionTypeEnum.TRANSFER_SEND.value, outward=True
@@ -475,7 +492,12 @@ def _apply_source_columns(
     line.internal_use_quantity = moved(
         InventoryTransactionTypeEnum.INTERNAL_USE.value, outward=True
     )
-    line.expected_quantity = expected
+    # The proposed production drawdown is not on the ledger, so the current stock
+    # level (``expected``) does not reflect it yet; the anticipated closing is the
+    # level minus what production will consume. Seeding the stored closing this way
+    # keeps it equal to the column-derived net the register and the count recompute
+    # against (opening + Σin − Σout).
+    line.expected_quantity = quantity(expected - proposed_production_consumption)
     line.source_summary = {
         **(line.source_summary or {}),
         "through_sequence": through_sequence,
@@ -488,6 +510,137 @@ def _apply_source_columns(
             for column in (*_NET_IN_COLUMNS, *_NET_OUT_COLUMNS)
         },
     }
+
+
+# The report kinds that draw raw materials down, and the sibling report kinds whose
+# produced goods do the drawing.
+_CONSUMES_PRODUCTION = frozenset(
+    {
+        InventoryReportTypeEnum.RAW_MATERIALS.value,
+        InventoryReportTypeEnum.PACKAGING.value,
+    }
+)
+_PRODUCES_GOODS = frozenset(
+    {
+        InventoryReportTypeEnum.PRODUCTION.value,
+        InventoryReportTypeEnum.FINISHED_GOODS.value,
+    }
+)
+# A sibling production report still heading for the ledger (its consumption will post
+# on approval) but not there yet. POSTED is already on the ledger; SKIPPED/REJECTED/
+# DEFERRED are not going to post this close, so their produced goods are not
+# anticipated.
+_UNPOSTED_STATUSES = frozenset(
+    {
+        ShiftInventoryReportStatusEnum.OUTSTANDING.value,
+        ShiftInventoryReportStatusEnum.DRAFT.value,
+        ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value,
+        ShiftInventoryReportStatusEnum.APPROVED.value,
+    }
+)
+
+
+async def _proposed_production_consumption(
+    db: AsyncSession, report: ShiftInventoryReport
+) -> dict[uuid.UUID, Decimal]:
+    """Raw material a not-yet-posted sibling production report will consume.
+
+    The raw-material report must show the production drawdown at close, but that
+    consumption only reaches the ledger when the production report is approved. For
+    every production/finished-goods report in the same branch and business day that
+    has not posted yet, explode the produced goods it has entered through the recipe —
+    the same bill of materials ``produce()`` posts — and return the per-ingredient
+    total. Scoped to *unposted* siblings, so the instant production posts, its
+    consumption is on the ledger and drops out of this figure: no double count.
+
+    The delta over each produced line's prefilled amount mirrors what ``produce()``
+    actually posts (only ``entered − prefilled`` is produced), and the net consumed
+    (``gross − planned_waste``) mirrors what lands as CONSUMPTION_FROM_PRODUCTION —
+    the ledger column this figure augments — with the planned yield loss posting
+    separately as production waste.
+    """
+    report_type = (report.template_snapshot or {}).get("report_type")
+    if report_type not in _CONSUMES_PRODUCTION:
+        return {}
+    siblings = (
+        (
+            await db.execute(
+                select(ShiftInventoryReport)
+                .options(selectinload(ShiftInventoryReport.lines))
+                .where(
+                    ShiftInventoryReport.branch_id == report.branch_id,
+                    ShiftInventoryReport.business_date == report.business_date,
+                    ShiftInventoryReport.id != report.id,
+                    ShiftInventoryReport.status.in_(_UNPOSTED_STATUSES),
+                )
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    producing = [
+        sibling
+        for sibling in siblings
+        if (sibling.template_snapshot or {}).get("report_type") in _PRODUCES_GOODS
+    ]
+    if not producing:
+        return {}
+    catalog = await recipe_service.load_active_catalog(db)
+    proposed: dict[uuid.UUID, Decimal] = {}
+
+    def add(ingredient_id: uuid.UUID, consumed: Decimal) -> None:
+        if consumed <= 0:
+            return
+        proposed[ingredient_id] = quantity(
+            proposed.get(ingredient_id, Decimal("0")) + consumed
+        )
+
+    for sibling in producing:
+        for line in sibling.lines:
+            summary = line.source_summary or {}
+            if "production_quantity" not in summary.get("entered_columns", []):
+                continue
+            entered = quantity(line.production_quantity or 0)
+            prefilled = quantity(
+                Decimal(
+                    str((summary.get("prefilled") or {}).get("production_quantity", 0))
+                )
+            )
+            delta = quantity(entered - prefilled)
+            if delta <= 0:
+                continue
+            try:
+                expanded, _ = await recipe_service.expand_owner(
+                    db,
+                    kind="inventory_item",
+                    owner_id=line.item_id,
+                    multiplier=delta,
+                    catalog=catalog,
+                )
+            except NotFoundError:
+                expanded = None
+            if expanded is not None:
+                for ingredient_id, exp in expanded.items():
+                    add(ingredient_id, quantity(exp.quantity - exp.planned_waste))
+            else:
+                legacy = (
+                    (
+                        await db.execute(
+                            select(InventoryItemIngredient).where(
+                                InventoryItemIngredient.parent_item_id == line.item_id
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for ingredient in legacy:
+                    add(
+                        ingredient.item_id,
+                        quantity(Decimal(str(ingredient.quantity)) * delta),
+                    )
+    return proposed
 
 
 async def _category_map(
@@ -569,6 +722,7 @@ async def _create_report(
     db.add(report)
     await db.flush()
     movements = await _movement_totals(db, report, through_sequence=base_sequence)
+    proposed = await _proposed_production_consumption(db, report)
     # One lookup of the item categories the report touches, so each line carries
     # its category name and the category's display order. The register groups the
     # count by category and the admin review shows the same grouping — both read
@@ -608,6 +762,7 @@ async def _create_report(
             expected=expected,
             item_movements=movements.get(item.id, {}),
             through_sequence=base_sequence,
+            proposed_production_consumption=proposed.get(item.id, Decimal("0")),
         )
         db.add(report_line)
     await db.flush()
@@ -628,6 +783,7 @@ async def refresh_report(
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
     latest = await current_sequence(db, report.branch_id)
     movements = await _movement_totals(db, report, through_sequence=latest)
+    proposed = await _proposed_production_consumption(db, report)
     moved = set(
         (
             await db.execute(
@@ -662,6 +818,7 @@ async def refresh_report(
             expected=expected,
             item_movements=movements.get(line.item_id, {}),
             through_sequence=latest,
+            proposed_production_consumption=proposed.get(line.item_id, Decimal("0")),
         )
         line.source_summary = {
             **line.source_summary,

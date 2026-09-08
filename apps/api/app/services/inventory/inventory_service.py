@@ -108,6 +108,7 @@ REFERENCE_PREFIX = {
     InventoryTransactionTypeEnum.INVENTORY_COUNT.value: "CNT",
     InventoryTransactionTypeEnum.OPENING_BALANCE.value: "OPN",
     InventoryTransactionTypeEnum.INTERNAL_USE.value: "INT",
+    InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value: "EPU",
 }
 
 

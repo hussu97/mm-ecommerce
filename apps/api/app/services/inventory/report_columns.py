@@ -94,6 +94,17 @@ _SOLD = ColumnSpec("sales_consumption_quantity", "Sold", ROLE_OUT, SOURCE_LEDGER
 _PRODUCTION_USE = ColumnSpec(
     "production_consumption_quantity", "Used in production", ROLE_OUT, SOURCE_LEDGER
 )
+# An additional, shop-entered production drawdown for raw material the recipe does
+# not account for (off-recipe use, or producing a good with no item/recipe). It
+# subtracts independently of _PRODUCTION_USE and posts its own EXTRA_PRODUCTION_USE
+# movement — never a comparison against the recipe figure.
+_EXTRA_PRODUCTION_USE = ColumnSpec(
+    "extra_production_consumption_quantity",
+    "Extra production use",
+    ROLE_OUT,
+    SOURCE_ENTERED,
+    TX.EXTRA_PRODUCTION_USE.value,
+)
 _TRANSFER_OUT = ColumnSpec(
     "transfer_out_quantity",
     "Transfer out",
@@ -147,6 +158,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _RECEIVED,
         _TRANSFER_IN,
         _PRODUCTION_USE,
+        _EXTRA_PRODUCTION_USE,
         _SOLD,
         _INTERNAL,
         _WASTE,
@@ -165,6 +177,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _RECEIVED,
         _TRANSFER_IN,
         _PRODUCTION_USE,
+        _EXTRA_PRODUCTION_USE,
         _SOLD,
         _INTERNAL,
         _TRANSFER_OUT,

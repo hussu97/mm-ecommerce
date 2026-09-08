@@ -60,6 +60,7 @@ def test_editable_columns_are_only_the_entered_movements_and_carry_a_posting() -
     assert keys == {
         "purchasing_quantity",
         "transfer_in_quantity",
+        "extra_production_consumption_quantity",
         "internal_use_quantity",
         "waste_quantity",
         "transfer_out_quantity",
@@ -67,6 +68,9 @@ def test_editable_columns_are_only_the_entered_movements_and_carry_a_posting() -
     # Never the derived ends, the physical count, or the ledger-filled columns.
     assert "entered_quantity" not in keys
     assert "sales_consumption_quantity" not in keys
+    # The recipe-derived production drawdown stays ledger-filled and non-editable;
+    # only the extra, off-recipe drawdown beside it is typed.
+    assert "production_consumption_quantity" not in keys
     assert "opening_quantity" not in keys
     for column in editable:
         assert column.posts is not None, f"{column.key} must name the movement it posts"
@@ -83,6 +87,24 @@ def test_packaging_subtracts_the_consumption_it_actually_incurs() -> None:
     assert cols["sales_consumption_quantity"].editable is False
     assert cols["production_consumption_quantity"].role == rc.ROLE_OUT
     assert cols["production_consumption_quantity"].source == rc.SOURCE_LEDGER
+
+
+def test_extra_production_use_is_an_editable_deduction_beside_the_recipe_figure() -> (
+    None
+):
+    # The recipe-derived "Used in production" stays ledger-filled and read-only; the
+    # new "Extra production use" is a separate, shop-typed OUT deduction for off-recipe
+    # consumption, posting its own EXTRA_PRODUCTION_USE movement.
+    for report_type in ("raw_materials", "packaging"):
+        cols = _by_key(report_type)
+        assert "extra_production_consumption_quantity" in cols, report_type
+        extra = cols["extra_production_consumption_quantity"]
+        assert extra.role == rc.ROLE_OUT
+        assert extra.source == rc.SOURCE_ENTERED
+        assert extra.editable is True
+        assert extra.posts == TX.EXTRA_PRODUCTION_USE.value
+        # It sits right after the recipe figure, which remains non-editable.
+        assert cols["production_consumption_quantity"].editable is False
 
 
 def test_serialisation_exposes_editable_flag_for_the_grid() -> None:

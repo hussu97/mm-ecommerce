@@ -17424,6 +17424,8 @@ export interface components {
             entered_quantity: string | null;
             /** Expected Quantity */
             expected_quantity: string;
+            /** Extra Production Consumption Quantity */
+            extra_production_consumption_quantity: string;
             /**
              * Id
              * Format: uuid

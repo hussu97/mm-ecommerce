@@ -72,6 +72,11 @@ class InventoryTransactionTypeEnum(str, enum.Enum):
     INVENTORY_COUNT = "inventory_count"
     OPENING_BALANCE = "opening_balance"
     INTERNAL_USE = "internal_use"
+    # Raw material consumed in production beyond what a recipe captures — off-recipe
+    # usage, or producing a good that has no item/recipe in the system. Entered by
+    # the shop on the raw-materials/packaging report as an extra deduction, distinct
+    # from the recipe-driven CONSUMPTION_FROM_PRODUCTION so it stays reportable apart.
+    EXTRA_PRODUCTION_USE = "extra_production_use"
 
 
 #: Direction each transaction type moves stock in the branch it is posted to.
@@ -93,6 +98,7 @@ TRANSACTION_SIGN: dict[str, int] = {
     InventoryTransactionTypeEnum.INVENTORY_COUNT.value: 1,
     InventoryTransactionTypeEnum.OPENING_BALANCE.value: 1,
     InventoryTransactionTypeEnum.INTERNAL_USE.value: -1,
+    InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value: -1,
     InventoryTransactionTypeEnum.COST_ADJUSTMENT.value: 0,
 }
 

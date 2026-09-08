@@ -26611,6 +26611,11 @@
             "title": "Expected Quantity",
             "type": "string"
           },
+          "extra_production_consumption_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Extra Production Consumption Quantity",
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -26721,6 +26726,7 @@
           "production_quantity",
           "sales_consumption_quantity",
           "production_consumption_quantity",
+          "extra_production_consumption_quantity",
           "transfer_out_quantity",
           "waste_quantity",
           "internal_use_quantity",

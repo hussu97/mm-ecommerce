@@ -566,6 +566,14 @@ class ShiftInventoryReportLine(Base, UUIDMixin):
     internal_use_quantity: Mapped[Any] = mapped_column(
         Numeric(20, 6), nullable=False, server_default="0"
     )
+    #: Raw material consumed in production beyond the recipe (off-recipe use, or
+    #: producing a good not set up in the system). Shop-entered on the
+    #: raw-materials/packaging report; posts an EXTRA_PRODUCTION_USE movement. It
+    #: is an additional deduction, independent of the recipe-derived
+    #: ``production_consumption_quantity``.
+    extra_production_consumption_quantity: Mapped[Any] = mapped_column(
+        Numeric(20, 6), nullable=False, server_default="0"
+    )
     expected_quantity: Mapped[Any] = mapped_column(
         Numeric(20, 6), nullable=False, server_default="0"
     )

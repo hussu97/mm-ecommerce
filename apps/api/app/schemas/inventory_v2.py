@@ -253,6 +253,7 @@ class ShiftReportLineResponse(ORMModel):
     production_quantity: Decimal
     sales_consumption_quantity: Decimal
     production_consumption_quantity: Decimal
+    extra_production_consumption_quantity: Decimal
     transfer_out_quantity: Decimal
     waste_quantity: Decimal
     internal_use_quantity: Decimal
