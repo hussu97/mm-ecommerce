@@ -19,6 +19,7 @@ skipped from then on.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -121,23 +122,35 @@ async def _send_to_branch(
         logger.info("APNs is not configured; not notifying branch %s", branch_id)
         return 0
 
-    delivered = 0
-    for row in await tokens_for_branch(db, branch_id):
-        try:
-            result = await provider.send(
-                token=row.token,
-                bundle_id=row.bundle_id,
-                payload=payload,
-                sandbox=row.is_sandbox,
-                collapse_id=collapse_id,
-            )
-        except ApnsError as exc:  # configuration, not delivery
-            logger.warning("APNs refused the whole send: %s", exc)
-            return delivered
-        except Exception:  # pragma: no cover — defensive
-            logger.exception("Unexpected error pushing to %s…", row.token[:12])
-            continue
+    rows = await tokens_for_branch(db, branch_id)
+    if not rows:
+        return 0
 
+    # Every register on a branch at once, over the provider's one pooled HTTP/2
+    # client, rather than a round-trip per token in series (F-POS-12). Dead-token
+    # revocation is applied afterwards, on the caller's session, so the write
+    # ordering is unchanged — only the network waits overlap.
+    async def _send(row: DevicePushToken):
+        return await provider.send(
+            token=row.token,
+            bundle_id=row.bundle_id,
+            payload=payload,
+            sandbox=row.is_sandbox,
+            collapse_id=collapse_id,
+        )
+
+    results = await asyncio.gather(
+        *(_send(row) for row in rows), return_exceptions=True
+    )
+
+    delivered = 0
+    for row, result in zip(rows, results):
+        if isinstance(result, ApnsError):  # configuration, not delivery
+            logger.warning("APNs refused the whole send: %s", result)
+            continue
+        if isinstance(result, BaseException):  # pragma: no cover — defensive
+            logger.warning("Unexpected error pushing to %s…: %s", row.token[:12], result)
+            continue
         if result.delivered:
             delivered += 1
         elif result.dead:

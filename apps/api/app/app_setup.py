@@ -323,6 +323,12 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
             # made `docker stop -t 30` take 40s per colour on every deploy.
             with suppress(asyncio.CancelledError, TimeoutError):
                 await asyncio.wait_for(task, timeout=8)
+        # Close the reused APNs HTTP/2 client (F-POS-12) so its connection is
+        # released cleanly rather than on GC after the loop is gone.
+        from app.services.providers import apns_provider
+
+        with suppress(Exception):
+            await apns_provider.provider.aclose()
         logger.info("%s shutting down", service)
 
     return lifespan

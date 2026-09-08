@@ -88,6 +88,25 @@ class ApnsClient:
     def __init__(self) -> None:
         self._jwt: str | None = None
         self._jwt_minted_at: float = 0.0
+        self._client: httpx.AsyncClient | None = None
+
+    def _http(self) -> httpx.AsyncClient:
+        """A reused HTTP/2 client. Building a fresh `AsyncClient` per token meant a
+        new TLS handshake and connection for every register on a busy branch —
+        most of a multi-terminal push's latency (F-POS-12). One pooled client
+        multiplexes every token over one kept-alive HTTP/2 connection. Lazily
+        created so it binds to the running loop, and rebuilt if it was closed."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                http2=True, timeout=settings.APNS_TIMEOUT_SECONDS
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the pooled client on shutdown."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
 
     @property
     def is_configured(self) -> bool:
@@ -162,12 +181,9 @@ class ApnsClient:
             headers["apns-collapse-id"] = collapse_id[:64]
 
         try:
-            async with httpx.AsyncClient(
-                http2=True, timeout=settings.APNS_TIMEOUT_SECONDS
-            ) as client:
-                response = await client.post(
-                    f"{host}/3/device/{token}", json=payload, headers=headers
-                )
+            response = await self._http().post(
+                f"{host}/3/device/{token}", json=payload, headers=headers
+            )
         except httpx.HTTPError as exc:
             logger.warning("APNs unreachable for %s…: %s", token[:12], exc)
             return ApnsResult(token=token, delivered=False, reason=str(exc))
