@@ -26,6 +26,11 @@ async function loadCatalogue(opts: { hasApi: boolean; isBuild: boolean }) {
   vi.resetModules();
   vi.stubEnv('NEXT_PUBLIC_API_URL', opts.hasApi ? 'https://api.example.com' : '');
   vi.stubEnv('NEXT_PHASE', opts.isBuild ? 'phase-production-build' : '');
+  // Fire the build-time retry backoff instantly so the retry path is fast to test.
+  vi.stubGlobal('setTimeout', (fn: () => void) => {
+    fn();
+    return 0 as unknown as ReturnType<typeof setTimeout>;
+  });
   return import('./catalogue');
 }
 
@@ -49,6 +54,23 @@ describe('getCategories', () => {
     const { getCategories } = await loadCatalogue({ hasApi: true, isBuild: true });
 
     await expect(getCategories()).rejects.toThrow(/categories/);
+  });
+
+  it('retries a transient 5xx during the build and succeeds — a cutover blip does not fail the build', async () => {
+    // Two 503s (the API mid blue/green cutover) then the real list.
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      call += 1;
+      if (call < 3) return new Response('', { status: 503 });
+      return new Response(JSON.stringify([{ slug: 'cakes', is_active: true, display_order: 1 }]), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { getCategories } = await loadCatalogue({ hasApi: true, isBuild: true });
+
+    await expect(getCategories()).resolves.toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('returns [] when there is no API configured at all (CI), build or not', async () => {

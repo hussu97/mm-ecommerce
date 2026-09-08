@@ -11,6 +11,20 @@ import type { Category } from '@/lib/types';
 const IS_BUILD_PHASE = process.env.NEXT_PHASE === 'phase-production-build';
 
 /**
+ * A `next build` prerenders every product and category page against a live API,
+ * and that API may be mid-deploy: a blue/green cutover serves a few seconds of
+ * 5xx while the new colour drains in. A single failed fetch used to abort the
+ * whole build (`categories: HTTP 503`). So the build — and only the build, a
+ * runtime request must not make a visitor wait out an outage — retries a
+ * transient failure with backoff long enough to outlast a cutover before it
+ * gives up. Mirrors the same guard `getTranslations` already carries; categories
+ * was the one build fetch that never got it.
+ */
+const BUILD_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
  * The category list.
  *
  * Two caches, doing two different jobs. `React.cache` collapses the several
@@ -41,19 +55,33 @@ const IS_BUILD_PHASE = process.env.NEXT_PHASE === 'phase-production-build';
  * return `[]` for every other failure, including one where `HAS_REMOTE_API`
  * is false — that is CI, which never had a build to protect here either.
  */
+async function fetchCategories(): Promise<Category[]> {
+  const res = await fetch(`${RSC_API_BASE}/categories`, {
+    next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    throw new Error(`categories: HTTP ${res.status}`);
+  }
+  return (await res.json()) as Category[];
+}
+
 export const getCategories = cache(async (): Promise<Category[]> => {
-  try {
-    const res = await fetch(`${RSC_API_BASE}/categories`, {
-      next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      throw new Error(`categories: HTTP ${res.status}`);
+  // Only the build both retries and, in the end, throws. At runtime a single
+  // attempt then `[]` keeps the page up during an outage (the trade explained
+  // above); with no API it is CI, which has no build to protect either.
+  const retries = IS_BUILD_PHASE && HAS_REMOTE_API ? BUILD_RETRY_DELAYS_MS : [];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchCategories();
+    } catch (err) {
+      if (attempt < retries.length) {
+        await sleep(retries[attempt]);
+        continue;
+      }
+      if (IS_BUILD_PHASE && HAS_REMOTE_API) throw err;
+      return [];
     }
-    return (await res.json()) as Category[];
-  } catch (err) {
-    if (HAS_REMOTE_API && IS_BUILD_PHASE) throw err;
-    return [];
   }
 });
 
