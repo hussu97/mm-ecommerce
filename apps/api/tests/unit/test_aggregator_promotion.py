@@ -214,7 +214,9 @@ async def _record_rungs(monkeypatch):
     return rungs
 
 
-async def test_drive_status_keeps_a_paid_marketplace_cancellation_delivered(monkeypatch):
+async def test_drive_status_keeps_a_paid_marketplace_cancellation_delivered(
+    monkeypatch,
+):
     rungs = await _record_rungs(monkeypatch)
     order = _mm_order(status=OrderStatusEnum.CREATED, aggregator_cancel_reason=None)
     agg = _agg(
@@ -232,7 +234,9 @@ async def test_drive_status_keeps_a_paid_marketplace_cancellation_delivered(monk
     assert order.aggregator_cancel_reason == "Customer service"
 
 
-async def test_drive_status_still_cancels_an_unpaid_marketplace_cancellation(monkeypatch):
+async def test_drive_status_still_cancels_an_unpaid_marketplace_cancellation(
+    monkeypatch,
+):
     rungs = await _record_rungs(monkeypatch)
     order = _mm_order(status=OrderStatusEnum.CONFIRMED, aggregator_cancel_reason=None)
     agg = _agg(
@@ -1284,7 +1288,9 @@ async def test_a_marketplace_cancel_outranks_our_bookkeeping(monkeypatch):
         net_payable=None,
         raw=None,
     )
-    order = SimpleNamespace(status=OrderStatusEnum.PACKED, aggregator_cancel_reason=None)
+    order = SimpleNamespace(
+        status=OrderStatusEnum.PACKED, aggregator_cancel_reason=None
+    )
     await promote._drive_status(None, order, agg)
 
     assert calls[0][0] == OrderStatusEnum.CANCELLED

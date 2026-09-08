@@ -41,6 +41,7 @@ def jittered(seconds: float, *, frac: float = 0.15) -> float:
     """
     return seconds * (1.0 + random.uniform(-frac, frac))
 
+
 #: Holds references to tasks spawned via `spawn_tracked` so the loop's weak
 #: reference cannot let one be collected before it finishes.
 _TASKS: set[asyncio.Task] = set()
