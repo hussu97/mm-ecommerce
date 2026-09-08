@@ -133,11 +133,7 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "out_of_stock", "Out of Stock"),
     ("product", "select_short", "Select"),
     ("product", "you_may_also_like", "You May Also Like"),
-    (
-        "product",
-        "website_exclusive_note",
-        "Only on our website — you won’t find this on the delivery apps.",
-    ),
+    ("product", "website_exclusive_note", "Only on our website"),
     ("product", "recently_viewed", "Recently Viewed"),
     # cart
     ("cart", "title", "My Cart"),
@@ -921,11 +917,7 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "out_of_stock", "نفذ من المخزون"),
     ("product", "select_short", "اختر"),
     ("product", "you_may_also_like", "قد يعجبك أيضاً"),
-    (
-        "product",
-        "website_exclusive_note",
-        "حصري على موقعنا — لن تجده على تطبيقات التوصيل.",
-    ),
+    ("product", "website_exclusive_note", "حصري على موقعنا"),
     ("product", "recently_viewed", "شاهدت مؤخراً"),
     # cart
     ("cart", "title", "سلة التسوق"),

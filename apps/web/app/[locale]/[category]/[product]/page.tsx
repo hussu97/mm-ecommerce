@@ -370,13 +370,18 @@ export default async function ProductDetailPage({
             </div>
 
             {badgeVariant === 'website_exclusive' && (
-              <p className="font-body text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-sm px-3 py-2">
-                {withFallback(
-                  t,
-                  'product.website_exclusive_note',
-                  'Only on our website — you won’t find this on the delivery apps.',
-                )}
-              </p>
+              <div className="flex items-center gap-2.5 border-s-2 border-amber-400 bg-gradient-to-r from-amber-200/75 to-amber-100/30 px-4 py-2.5 text-amber-950">
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 fill-amber-600"
+                >
+                  <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" />
+                </svg>
+                <span className="font-body text-[11px] uppercase tracking-[0.22em]">
+                  {withFallback(t, 'product.website_exclusive_note', 'Only on our website')}
+                </span>
+              </div>
             )}
 
             {productDescription && (
