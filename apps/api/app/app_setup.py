@@ -76,8 +76,32 @@ def configure_observability(*, service: str) -> None:
             settings.SENTRY_TRACES_SAMPLE_RATE if settings.is_production else 1.0
         ),
         send_default_pii=False,
+        before_send=_group_pool_timeouts,
     )
     sentry_sdk.set_tag("service", service)
+
+
+def _group_pool_timeouts(event: dict, hint: dict) -> dict:
+    """Collapse every DB connection-pool timeout into one Sentry issue.
+
+    `QueuePool limit ... reached, connection timed out` is a SqlAlchemy
+    `TimeoutError` raised the instant a request asks the exhausted pool for a
+    connection — so it surfaces at whatever call site happened to need the next
+    connection (inventory, delivery, grubops, an aggregator ingest, an advisory
+    lock, …). Sentry's default fingerprint is exception-type + stack, so one
+    exhaustion event fans out into dozens of near-identical issues, one per call
+    site. They are one fact — the pool ran dry — so give them one fingerprint and
+    Sentry groups them into a single issue whose per-call-site spread stays
+    visible in its tags. The `service` tag still separates api from pos-api.
+
+    Matched on the message rather than the type so a wrapped or re-raised
+    timeout is caught too; every other event is returned untouched.
+    """
+    exc_info = hint.get("exc_info")
+    message = str(exc_info[1]) if exc_info else ""
+    if "QueuePool limit" in message and "connection timed out" in message:
+        event["fingerprint"] = ["db-connection-pool-timeout"]
+    return event
 
 
 def _configure_logging() -> None:
