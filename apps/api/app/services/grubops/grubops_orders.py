@@ -24,7 +24,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core import advisory_lock, background, heartbeat
 from app.core.config import settings
-from app.core.database import SchedulerSessionFactory
 from app.models.grubops_order import GrubOpsOrderMap
 from app.services.foodics import foodics_orders_service
 from app.services.grubops import grubops_orders_service
@@ -92,10 +91,16 @@ async def sweep_once() -> int:
     if not grubops_orders_service.is_enabled():
         return 0
 
-    async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="grubops orders") as mine:
-        if not mine:
+    async with advisory_lock.held_session(
+        _ADVISORY_LOCK_KEY, name="grubops orders"
+    ) as db:
+        if db is None:
             return 0
 
+        # One connection, not two: `held_session` binds this session to the lock's
+        # own connection, so the ingest work no longer books a second scheduler
+        # connection on top of the lock. `list_orders` runs before any DB write
+        # with only that one connection held.
         try:
             summaries = await provider.list_orders(
                 statuses=grubops_orders_service.LIVE_STATUSES
@@ -108,59 +113,58 @@ async def sweep_once() -> int:
             logger.exception("GrubOps: could not list orders")
             summaries = []
 
-        async with SchedulerSessionFactory() as db:
-            touched = 0
-            seen_ids: set[str] = set()
-            for summary in summaries:
-                seen_ids.add(str(summary.get("orderId")))
-                # Per order, so one malformed payload does not end the pass.
-                try:
-                    if await _ingest_one(db, summary):
-                        touched += 1
-                except Exception:  # noqa: BLE001 — one bad order must not stop the rest
-                    logger.exception(
-                        "GrubOps: failed to ingest order %s",
-                        summary.get("orderId"),
-                    )
-                    continue
-
-            # Re-poll open orders the summary window has dropped — an order that
-            # lingered at arrived_at_pos and was then cancelled or completed
-            # aggregator-side, which the loop above can no longer see. Its own try
-            # so a re-poll failure cannot lose the ingest work just committed.
+        touched = 0
+        seen_ids: set[str] = set()
+        for summary in summaries:
+            seen_ids.add(str(summary.get("orderId")))
+            # Per order, so one malformed payload does not end the pass.
             try:
-                repolled = await grubops_orders_service.sweep_open_orders(db, seen_ids)
-                if repolled:
-                    logger.info("GrubOps re-polled %s aged-out order(s)", repolled)
-                    touched += repolled
-            except Exception:  # noqa: BLE001 — housekeeping must not end the tick
-                logger.exception("GrubOps: open-order re-poll sweep failed")
+                if await _ingest_one(db, summary):
+                    touched += 1
+            except Exception:  # noqa: BLE001 — one bad order must not stop the rest
+                logger.exception(
+                    "GrubOps: failed to ingest order %s",
+                    summary.get("orderId"),
+                )
+                continue
 
-            # Re-fire any packed/delivered/cancelled push to Foodics the immediate
-            # mirror-out never landed — a Foodics id not yet ingested at pack time,
-            # a token blip, a task dropped on a restart. Runs each tick here
-            # because this is where the Foodics id is learned. Its own try so a
-            # sweep failure cannot lose the ingest work just committed.
-            try:
-                repushed = await foodics_orders_service.sweep_pending_pushouts(db)
-                if repushed:
-                    logger.info("Foodics re-pushed %s stuck status(es)", repushed)
-                    touched += repushed
-            except Exception:  # noqa: BLE001 — housekeeping must not end the tick
-                logger.exception("Foodics: mirror-out retry sweep failed")
+        # Re-poll open orders the summary window has dropped — an order that
+        # lingered at arrived_at_pos and was then cancelled or completed
+        # aggregator-side, which the loop above can no longer see. Its own try
+        # so a re-poll failure cannot lose the ingest work just committed.
+        try:
+            repolled = await grubops_orders_service.sweep_open_orders(db, seen_ids)
+            if repolled:
+                logger.info("GrubOps re-polled %s aged-out order(s)", repolled)
+                touched += repolled
+        except Exception:  # noqa: BLE001 — housekeeping must not end the tick
+            logger.exception("GrubOps: open-order re-poll sweep failed")
 
-            # Close out any packed aggregator order past its window. Its own
-            # try so a sweep failure cannot lose the ingest work just committed.
-            try:
-                closed = await grubops_orders_service.sweep_auto_close(db)
-                if closed:
-                    logger.info("GrubOps auto-closed %s packed order(s)", closed)
-                    touched += closed
-            except Exception:  # noqa: BLE001 — housekeeping must not end the tick
-                logger.exception("GrubOps: auto-close sweep failed")
+        # Re-fire any packed/delivered/cancelled push to Foodics the immediate
+        # mirror-out never landed — a Foodics id not yet ingested at pack time,
+        # a token blip, a task dropped on a restart. Runs each tick here
+        # because this is where the Foodics id is learned. Its own try so a
+        # sweep failure cannot lose the ingest work just committed.
+        try:
+            repushed = await foodics_orders_service.sweep_pending_pushouts(db)
+            if repushed:
+                logger.info("Foodics re-pushed %s stuck status(es)", repushed)
+                touched += repushed
+        except Exception:  # noqa: BLE001 — housekeeping must not end the tick
+            logger.exception("Foodics: mirror-out retry sweep failed")
 
-            await db.commit()
-            return touched
+        # Close out any packed aggregator order past its window. Its own
+        # try so a sweep failure cannot lose the ingest work just committed.
+        try:
+            closed = await grubops_orders_service.sweep_auto_close(db)
+            if closed:
+                logger.info("GrubOps auto-closed %s packed order(s)", closed)
+                touched += closed
+        except Exception:  # noqa: BLE001 — housekeeping must not end the tick
+            logger.exception("GrubOps: auto-close sweep failed")
+
+        await db.commit()
+        return touched
 
 
 async def run_forever() -> None:

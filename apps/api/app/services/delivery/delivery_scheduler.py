@@ -29,7 +29,6 @@ import asyncio
 import logging
 
 from app.core import advisory_lock, background, heartbeat
-from app.core.database import SchedulerSessionFactory
 from app.services.couriers import courier_service
 from app.services.delivery import arrival_service, driver_routing, driver_tracking
 from app.services.payments import payment_service
@@ -70,68 +69,70 @@ async def sweep_once() -> bool:
     because the work waiting on the next tick is for orders already paid for and
     boxed.
     """
-    async with advisory_lock.held(
+    async with advisory_lock.held_session(
         _ADVISORY_LOCK_KEY, name="delivery scheduler"
-    ) as mine:
-        if not mine:
+    ) as session:
+        if session is None:
             return False
-        async with SchedulerSessionFactory() as session:
-            try:
-                landed = await arrival_service.sweep(session)
-                await session.commit()
-                if landed:
-                    logger.info(
-                        "%s order(s) reached the register: %s",
-                        len(landed),
-                        ", ".join(landed),
-                    )
-            except Exception:  # noqa: BLE001 — never at the others' expense
-                logger.exception("Arrival sweep failed")
-                await session.rollback()
-            try:
-                retried = await courier_service.retry_failed_dispatches(session)
-                await session.commit()
-                if retried:
-                    logger.info("Retried %s failed dispatch(es)", len(retried))
-            except Exception:  # noqa: BLE001
-                logger.exception("Retry sweep failed")
-                await session.rollback()
-            try:
-                # A booking has to exist before anybody can be driving towards it.
-                # Lalamove reports a driver's position exactly once and never
-                # mentions a rider swap, so this is the only thing that keeps
-                # either current — see `driver_tracking`.
-                tracked = await driver_tracking.refresh_live_drivers(session)
-                await session.commit()
-                if tracked:
-                    logger.info("Refreshed %s live driver(s)", tracked)
-            except Exception:  # noqa: BLE001
-                logger.exception("Driver sweep failed")
-                await session.rollback()
-            try:
-                # The backstop under `checkout.session.expired`, for the ones of
-                # it that never arrived. An order left at `created` is not inert:
-                # it holds a redemption of its promo code, a place in the
-                # customer's first-orders count, and any stock the checkout took.
-                expired = await payment_service.expire_stale_checkouts(session)
-                await session.commit()
-                if expired:
-                    logger.info(
-                        "%s abandoned checkout(s) cancelled: %s",
-                        len(expired),
-                        ", ".join(expired),
-                    )
-            except Exception:  # noqa: BLE001
-                logger.exception("Checkout sweep failed")
-                await session.rollback()
+        # One connection, not two: `held_session` binds this session to the lock's
+        # own connection (WP5 F-OPS follow-up), so the sweep no longer books a
+        # second scheduler connection on top of the lock it already holds.
+        try:
+            landed = await arrival_service.sweep(session)
+            await session.commit()
+            if landed:
+                logger.info(
+                    "%s order(s) reached the register: %s",
+                    len(landed),
+                    ", ".join(landed),
+                )
+        except Exception:  # noqa: BLE001 — never at the others' expense
+            logger.exception("Arrival sweep failed")
+            await session.rollback()
+        try:
+            retried = await courier_service.retry_failed_dispatches(session)
+            await session.commit()
+            if retried:
+                logger.info("Retried %s failed dispatch(es)", len(retried))
+        except Exception:  # noqa: BLE001
+            logger.exception("Retry sweep failed")
+            await session.rollback()
+        try:
+            # A booking has to exist before anybody can be driving towards it.
+            # Lalamove reports a driver's position exactly once and never
+            # mentions a rider swap, so this is the only thing that keeps
+            # either current — see `driver_tracking`.
+            tracked = await driver_tracking.refresh_live_drivers(session)
+            await session.commit()
+            if tracked:
+                logger.info("Refreshed %s live driver(s)", tracked)
+        except Exception:  # noqa: BLE001
+            logger.exception("Driver sweep failed")
+            await session.rollback()
+        try:
+            # The backstop under `checkout.session.expired`, for the ones of
+            # it that never arrived. An order left at `created` is not inert:
+            # it holds a redemption of its promo code, a place in the
+            # customer's first-orders count, and any stock the checkout took.
+            expired = await payment_service.expire_stale_checkouts(session)
+            await session.commit()
+            if expired:
+                logger.info(
+                    "%s abandoned checkout(s) cancelled: %s",
+                    len(expired),
+                    ", ".join(expired),
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Checkout sweep failed")
+            await session.rollback()
 
-        # Routes are recomputed OUTSIDE the sweep session, on their own per-item
-        # sessions (WP5, F-OPS-5): Mapbox is a third party, and holding this
-        # connection across a batch of route calls would pin one of the small
-        # scheduler pool's connections for the whole round-trip. Still after the
-        # position sweep, never before — a route computed from last minute's pin
-        # is a minute out of date before anybody reads it — but the positions
-        # have already been committed and the session handed back by now.
+        # Routes are recomputed on their own per-item sessions (WP5, F-OPS-5):
+        # Mapbox is a third party, and a batch of route calls runs with only the
+        # lock's connection held (this sweep session sits idle-committed), never a
+        # second one pinned for the whole round-trip. Still after the position
+        # sweep, never before — a route computed from last minute's pin is a
+        # minute out of date before anybody reads it — but the positions have
+        # already been committed by now.
         try:
             routed = await driver_routing.refresh_routes()
             if routed:

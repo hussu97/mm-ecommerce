@@ -214,32 +214,11 @@ _HTTP_SERVICE_BARE_CALLS = {"_ingest_one", "sync_all"}
 #: call) — no line number, so it survives edits. **It may only shrink.**
 _KNOWN_NESTED_HOLDS = {
     ("app/services/branch_hours_sync.py", "_tick", "sync_all"),
-    (
-        "app/services/delivery/delivery_scheduler.py",
-        "sweep_once",
-        "arrival_service.sweep",
-    ),
-    (
-        "app/services/delivery/delivery_scheduler.py",
-        "sweep_once",
-        "courier_service.retry_failed_dispatches",
-    ),
-    (
-        "app/services/delivery/delivery_scheduler.py",
-        "sweep_once",
-        "driver_tracking.refresh_live_drivers",
-    ),
-    (
-        "app/services/grubops/grubops_orders.py",
-        "sweep_once",
-        "grubops_orders_service.sweep_open_orders",
-    ),
-    (
-        "app/services/grubops/grubops_orders.py",
-        "sweep_once",
-        "foodics_orders_service.sweep_pending_pushouts",
-    ),
-    ("app/services/grubops/grubops_orders.py", "sweep_once", "_ingest_one"),
+    # delivery_scheduler.sweep_once and grubops_orders.sweep_once were dropped
+    # when they moved to `advisory_lock.held_session`: their sweep now runs on the
+    # lock's OWN connection, so there is no separate `SchedulerSessionFactory`
+    # session pinned across the Lalamove / GrubOps round-trips — the whole sweep
+    # holds one connection, the lock's, which it would hold regardless.
 }
 
 
