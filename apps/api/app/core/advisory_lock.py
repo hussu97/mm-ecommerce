@@ -62,7 +62,7 @@ from app.core.database import scheduler_engine as engine
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["held", "held_for_request"]
+__all__ = ["held", "held_session", "held_for_request"]
 
 _ACQUIRE = text("SELECT pg_try_advisory_lock(:key)")
 _ACQUIRE_WAIT = text("SELECT pg_advisory_lock(:key)")
@@ -99,6 +99,70 @@ async def held_for_request(db: AsyncSession, key: int) -> AsyncIterator[None]:
     """
     await db.execute(_ACQUIRE_XACT, {"key": key})
     yield
+
+
+@asynccontextmanager
+async def held_session(
+    key: int, *, name: str, wait: bool = False
+) -> AsyncIterator[AsyncSession | None]:
+    """Hold the lock AND yield a Session on its OWN connection — one, not two.
+
+    `held` pins a whole scheduler connection for the lock, and a sweep then opens a
+    SECOND (its `SchedulerSessionFactory` session) for the work — so every active
+    loop costs two of the six scheduler connections, and a few sweeping together
+    drain the pool (the `QueuePool ... timed out` storm). This yields a Session
+    bound to the very connection the lock lives on, so the lock and all the sweep's
+    DB work share ONE connection.
+
+    `None` is yielded when the lock is not this worker's — the caller returns and
+    waits for the next tick, exactly like `held`'s `False`. Usage mirrors `held`,
+    minus the separate session:
+
+        async with advisory_lock.held_session(KEY, name="x") as db:
+            if db is None:
+                return
+            ...work on db...
+            await db.commit()
+
+    The connection is checked out for the life of the block and never handed back
+    to the pool on a commit — which is what keeps the SESSION-level advisory lock
+    (held on the connection's backend, not its transaction) alive across every
+    `commit()` the sweep makes. `expire_on_commit=False` so objects stay usable
+    after a commit, as `SchedulerSessionFactory` configures. The lock is released
+    and the connection returned only when the block exits.
+    """
+    async with engine.connect() as conn:
+        if wait:
+            await conn.execute(_ACQUIRE_WAIT, {"key": key})
+            got = True
+        else:
+            got = bool(await conn.scalar(_ACQUIRE, {"key": key}))
+        # End the acquire's transaction WITHOUT returning the connection: a
+        # session-level lock outlives this commit and every later one the sweep makes.
+        await conn.commit()
+
+        if not got:
+            yield None
+            return
+
+        session = AsyncSession(bind=conn, expire_on_commit=False)
+        try:
+            yield session
+        finally:
+            # Close the session first (it does not own the connection, so this only
+            # ends its transaction), then release on the SAME connection the lock
+            # was taken on — guaranteed, because that connection never left our hand.
+            await session.close()
+            released = bool(await conn.scalar(_RELEASE, {"key": key}))
+            await conn.commit()
+            if not released:  # pragma: no cover — the bug this module prevents
+                logger.error(
+                    "Advisory lock %s (%s) was not held by the connection "
+                    "releasing it; the sweep may be wedged until this "
+                    "connection is recycled",
+                    key,
+                    name,
+                )
 
 
 @asynccontextmanager
