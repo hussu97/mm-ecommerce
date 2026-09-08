@@ -859,6 +859,10 @@ async def cancel_delivery(db: AsyncSession, order: Order) -> OrderDelivery | Non
 _ORDER_STATUS_FOR: dict[str, OrderStatusEnum] = {
     SliderStatusEnum.PICKED_UP.value: OrderStatusEnum.OUT_FOR_DELIVERY,
     SliderStatusEnum.IN_TRANSIT.value: OrderStatusEnum.OUT_FOR_DELIVERY,
+    # At the door is still out for delivery — it does not advance the order past
+    # where in_transit put it, but recognising it (rather than dropping it as an
+    # unknown status) is what lets its rider position and ETA be captured.
+    SliderStatusEnum.AT_DROPOFF.value: OrderStatusEnum.OUT_FOR_DELIVERY,
     SliderStatusEnum.DELIVERED.value: OrderStatusEnum.DELIVERED,
     SliderStatusEnum.RETURN_TRIP_STARTED.value: OrderStatusEnum.UNDELIVERED,
 }
@@ -1036,18 +1040,32 @@ async def apply_webhook(
 
     # Slider names the rider inline on every push, so unlike noon Send there is
     # no detail call to make. `record` decides whether anything actually moved.
+    info = payload.get("driver_info") or payload.get("driver") or payload.get("rider")
     change = await driver_assignment.record(
         db,
         delivery,
-        driver_assignment.Driver.from_slider(
-            payload.get("driver_info") or payload.get("driver") or payload.get("rider")
-        ),
+        driver_assignment.Driver.from_slider(info),
+        at=updated_at,
+    )
+    # Slider pushes the rider's LIVE position inline on every status webhook —
+    # Lalamove has to be polled for the same thing (`driver_tracking`). Recorded
+    # BEFORE `route_now` below so the driver→kitchen ETA the slip prints has the
+    # position it needs, and kept fresh on every push for the counter's "driver
+    # is N m away" (`driver_proximity`) and the live tracking map. A pair that is
+    # not fully known is dropped inside `record_position`, so the driver-less
+    # early pushes (rider_assigned before anyone accepts) are a no-op here.
+    await driver_assignment.record_position(
+        db,
+        delivery,
+        latitude=(info or {}).get("latitude"),
+        longitude=(info or {}).get("longitude"),
         at=updated_at,
     )
     if change.is_new_driver:
         # Before the announcement, because the register prints a driver slip off
         # this within seconds and a slip is paper: one that goes out with the
-        # ETA missing cannot be corrected.
+        # ETA missing cannot be corrected. The position recorded just above is
+        # what lets `route_now` fill that ETA instead of no-opping.
         await driver_routing.route_now(db, delivery)
         await _announce_rider(db, delivery)
 
