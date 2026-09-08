@@ -147,7 +147,12 @@ export interface Product {
   stock_quantity: number;
   image_urls: string[];
   is_active: boolean;
-  is_featured: boolean;
+  /**
+   * Merchandising badges — any subset of {@link PRODUCT_LABELS}. Successor to the
+   * old `is_featured` boolean: `bestseller` is what the storefront's homepage
+   * rail selects on.
+   */
+  labels: ProductLabel[];
   /**
    * Which channels sell this product. Empty means it is in the catalogue and
    * sold nowhere yet — a real state, not a missing value.
@@ -177,6 +182,23 @@ export type SalesChannel = (typeof SALES_CHANNELS)[number];
 
 export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
   web: 'Website',
+};
+
+/**
+ * Merchandising badges a product can fly, in priority order (the storefront
+ * shows the first one a product carries). Mirrors PRODUCT_LABELS on the API.
+ * `bestseller` replaced the old `is_featured` flag — ticking it here is what
+ * puts a product in the homepage bestsellers rail.
+ */
+export const PRODUCT_LABELS = ['website_exclusive', 'bestseller', 'new', 'limited'] as const;
+
+export type ProductLabel = (typeof PRODUCT_LABELS)[number];
+
+export const PRODUCT_LABEL_LABELS: Record<ProductLabel, string> = {
+  website_exclusive: 'Website Exclusive',
+  bestseller: 'Bestseller (homepage rail)',
+  new: 'New',
+  limited: 'Limited',
 };
 
 export interface ProductListResponse {

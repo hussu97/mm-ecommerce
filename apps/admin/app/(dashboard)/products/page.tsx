@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { productsApi, categoriesApi, bulkApi } from '@/lib/api';
 import type { Category, Product, SalesChannel } from '@/lib/types';
+import { PRODUCT_LABEL_LABELS } from '@/lib/types';
 import { ChannelBadges } from '@/components/products/SalesChannels';
 import { Badge, Button, Input, MultiSelect, Pagination, TabBar, LoadError, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
@@ -343,7 +344,11 @@ export default function ProductsPage() {
               className: 'text-center',
               render: p => (
                 <>
-                  {p.is_featured && <Badge variant="info">Featured</Badge>}
+                  {(p.labels ?? []).map(label => (
+                    <Badge key={label} variant="info">
+                      {PRODUCT_LABEL_LABELS[label] ?? label}
+                    </Badge>
+                  ))}
                   <ChannelBadges channels={p.sales_channels} />
                 </>
               ),

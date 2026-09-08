@@ -55,7 +55,7 @@ function product(
     stock_quantity: 0,
     image_urls: [],
     is_active: true,
-    is_featured: true,
+    labels: ['bestseller'],
     display_order: 0,
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',

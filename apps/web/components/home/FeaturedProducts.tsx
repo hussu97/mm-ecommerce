@@ -11,6 +11,8 @@ import { formatPrice } from '@/lib/utils';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
 import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { ProductBadge } from '@/components/product/ProductBadge';
+import { resolveProductBadge, badgeI18nKey, BADGE_FALLBACK } from '@/lib/product-badge';
+import { withFallback } from '@/lib/i18n/fallback';
 import { Reveal } from './Reveal';
 import type { Product } from '@/lib/types';
 import { Icon } from '@/components/ui/Icon';
@@ -42,6 +44,18 @@ function ProductCard({
   const categorySlug = product.category?.slug ?? 'products';
   const productName = localizedField(product, 'name', product.name, locale);
   const pdpHref = `/${locale}/${categorySlug}/${product.slug}`;
+
+  // Every card in this rail carries `bestseller` (that is how it got here), so
+  // the plain case keeps the admin-authored rail flag (`badge`). A product that
+  // also carries a higher-priority label — the launch item is `website_exclusive`
+  // — flies that instead, with its own styled chip.
+  const badgeVariant = resolveProductBadge(product);
+  const badgeText =
+    badgeVariant === 'bestseller'
+      ? (badge ?? withFallback(t, 'plp.bestseller', 'Bestseller'))
+      : badgeVariant
+        ? withFallback(t, badgeI18nKey(badgeVariant), BADGE_FALLBACK[badgeVariant])
+        : undefined;
 
   // This rail has its own card rather than reusing the listing one, so the
   // click tracking has to be repeated here — the alternative is the homepage
@@ -75,7 +89,9 @@ function ProductCard({
           </div>
         )}
 
-        {badge && <ProductBadge>{badge}</ProductBadge>}
+        {badgeVariant && badgeText && (
+          <ProductBadge variant={badgeVariant}>{badgeText}</ProductBadge>
+        )}
 
         {/* A wash that lifts on hover — the card feels live without moving the
             layout a single pixel. */}

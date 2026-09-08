@@ -27,6 +27,28 @@ SALES_CHANNELS: tuple[str, ...] = ("web",)
 POS_CHANNEL = "pos"
 WEB_CHANNEL = "web"
 
+#: The merchandising labels a product can fly as a corner badge on the storefront.
+#:
+#: Modelled like `sales_channels` — a set spelled out here and held by a database
+#: CHECK constraint, rather than a boolean per badge — so the next label ("new",
+#: "limited") is a value an operator picks, not a migration and a new column.
+#:
+#: `bestseller` lives here too: it replaced the old `is_featured` boolean, which
+#: was one flag under two names (the admin called it "Featured", the storefront
+#: flew "Bestseller"). Folding it in means one uniform notion of a badge — the
+#: featured rail is now "products carrying `bestseller`" — and no second place a
+#: label can be set. See migration 217, which migrates the boolean into this set.
+#:
+#: Order is priority order: when a product carries more than one, the storefront
+#: flies the first of these it has. `website_exclusive` leads so a launch item
+#: reads as exclusive rather than merely popular, ahead of `bestseller`.
+PRODUCT_LABELS: tuple[str, ...] = ("website_exclusive", "bestseller", "new", "limited")
+
+#: The label the homepage rail and the empty-cart carousel are built from — the
+#: successor to `is_featured == True`. Named once so the services that query it
+#: cannot drift from the value the CHECK constraint holds.
+BESTSELLER_LABEL = "bestseller"
+
 
 class Product(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "products"
@@ -75,7 +97,17 @@ class Product(Base, UUIDMixin, TimestampMixin):
         ARRAY(String), nullable=False, default=list, server_default="{}"
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_featured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Merchandising badges this product flies — any subset of `PRODUCT_LABELS`.
+    #:
+    #: An array rather than a flag per badge, guarded by a CHECK constraint (see
+    #: migration 217), so a typo in an import is rejected and a new badge is data
+    #: rather than a column. Empty is the ordinary case. `bestseller` here is what
+    #: the featured rail selects on — it replaced the old `is_featured` boolean.
+    #: The chip the storefront shows is resolved by priority — see
+    #: `resolveProductBadge` on the web side — with `website_exclusive` winning.
+    labels: Mapped[Any] = mapped_column(
+        ARRAY(String), nullable=False, default=list, server_default="{}"
+    )
     is_sold_by_weight: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
@@ -187,3 +219,14 @@ def sells_on(channel: str):
     disagree about what "sold on the web" means.
     """
     return Product.sales_channels.contains([channel])
+
+
+def has_label(label: str):
+    """
+    SQL for "this product flies `label`".
+
+    `@>` rather than `= ANY(...)` for the same reason `sells_on` uses it — the
+    GIN index on `labels` makes the featured rail's "carries `bestseller`" query
+    an index scan rather than a sequential pass over the catalogue.
+    """
+    return Product.labels.contains([label])

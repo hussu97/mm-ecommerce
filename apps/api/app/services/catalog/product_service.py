@@ -10,7 +10,13 @@ from app.core import search as search_text
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.category import Category
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
-from app.models.product import WEB_CHANNEL, Product, sells_on
+from app.models.product import (
+    BESTSELLER_LABEL,
+    WEB_CHANNEL,
+    Product,
+    has_label,
+    sells_on,
+)
 from app.schemas.product import (
     ProductCreate,
     ProductModifierLink,
@@ -216,7 +222,10 @@ async def get_all(
         stmt = stmt.where(search_text.contains(Product.name, search))
 
     if featured is not None:
-        stmt = stmt.where(Product.is_featured == featured)
+        # "Featured" is now "carries the bestseller label" — the flag became a
+        # value in `labels`. `featured=false` means "does not carry it".
+        clause = has_label(BESTSELLER_LABEL)
+        stmt = stmt.where(clause if featured else ~clause)
 
     # Count the matching rows — no ordering, no loaders, nothing to sort.
     count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -272,7 +281,7 @@ async def get_featured(
         select(Product)
         .options(*_product_load_options())
         .where(
-            Product.is_featured == True,  # noqa: E712
+            has_label(BESTSELLER_LABEL),
             *website_product_visibility_clause(branch_id),
         )
         .order_by(Product.display_order, Product.created_at.desc())

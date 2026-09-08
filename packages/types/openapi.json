@@ -21042,11 +21042,6 @@
             "title": "Is Cart Addon",
             "type": "boolean"
           },
-          "is_featured": {
-            "default": false,
-            "title": "Is Featured",
-            "type": "boolean"
-          },
           "is_sold_by_weight": {
             "default": false,
             "title": "Is Sold By Weight",
@@ -21056,6 +21051,19 @@
             "default": false,
             "title": "Is Stock Product",
             "type": "boolean"
+          },
+          "labels": {
+            "items": {
+              "enum": [
+                "website_exclusive",
+                "bestseller",
+                "new",
+                "limited"
+              ],
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
           },
           "name": {
             "maxLength": 200,
@@ -21363,10 +21371,6 @@
             "title": "Is Cart Addon",
             "type": "boolean"
           },
-          "is_featured": {
-            "title": "Is Featured",
-            "type": "boolean"
-          },
           "is_sold_by_weight": {
             "title": "Is Sold By Weight",
             "type": "boolean"
@@ -21374,6 +21378,19 @@
           "is_stock_product": {
             "title": "Is Stock Product",
             "type": "boolean"
+          },
+          "labels": {
+            "items": {
+              "enum": [
+                "website_exclusive",
+                "bestseller",
+                "new",
+                "limited"
+              ],
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
           },
           "name": {
             "title": "Name",
@@ -21490,7 +21507,6 @@
           "stock_quantity",
           "image_urls",
           "is_active",
-          "is_featured",
           "display_order",
           "created_at",
           "updated_at"
@@ -21597,17 +21613,6 @@
             ],
             "title": "Is Cart Addon"
           },
-          "is_featured": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Is Featured"
-          },
           "is_sold_by_weight": {
             "anyOf": [
               {
@@ -21629,6 +21634,26 @@
               }
             ],
             "title": "Is Stock Product"
+          },
+          "labels": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "website_exclusive",
+                    "bestseller",
+                    "new",
+                    "limited"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labels"
           },
           "name": {
             "anyOf": [

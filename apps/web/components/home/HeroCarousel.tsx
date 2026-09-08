@@ -103,17 +103,28 @@ export function HeroCarousel({
   c,
   locale,
   categories = [],
+  liveProductPaths,
 }: {
   c: HeroContent;
   locale: string;
   categories?: Category[];
+  /**
+   * The `/category/product` paths whose product is live on the storefront.
+   * Resolved on the server (see the home page) so a slide leading to a product
+   * that has gone inactive or out of stock — the launch item after its window —
+   * is dropped, just as a dead-category slide is.
+   */
+  liveProductPaths?: ReadonlySet<string>;
 }) {
-  // A slide selling a category the storefront no longer serves is a headline
-  // over a dead end. Dropped — but never down to nothing: the hero is the top
-  // of the page, and an empty one is worse than a generic one, so the shipped
-  // fallback (which points at /all-products) takes over if every slide goes.
+  // A slide selling a category the storefront no longer serves, or a product no
+  // longer live, is a headline over a dead end. Dropped — but never down to
+  // nothing: the hero is the top of the page, and an empty one is worse than a
+  // generic one, so the shipped fallback (which points at /all-products) takes
+  // over if every slide goes.
   const live = liveSlugSet(categories);
-  const configured = slidesFrom(c).filter(s => isLiveLink(s.cta_href, live));
+  const configured = slidesFrom(c).filter(s =>
+    isLiveLink(s.cta_href, live, liveProductPaths),
+  );
   const slides = configured.length > 0 ? configured : FALLBACK_SLIDES;
   const count = slides.length;
   const interval = c.autoplay_ms ?? DEFAULT_AUTOPLAY;

@@ -4,8 +4,11 @@ import { notFound, permanentRedirect } from 'next/navigation';
 import { Breadcrumb } from '@/components/ui';
 import { ProductDetailATC } from './ProductDetailATC';
 import { ProductImageGallery } from './ProductImageGallery';
+import { ProductBadge } from '@/components/product/ProductBadge';
 import { RecentlyViewedProducts } from '@/components/product/RecentlyViewedProducts';
 import type { Product, ProductListResponse } from '@/lib/types';
+import { resolveProductBadge, badgeI18nKey, BADGE_FALLBACK } from '@/lib/product-badge';
+import { withFallback } from '@/lib/i18n/fallback';
 import { localizedField } from '@/lib/i18n/entity';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { RSC_API_BASE } from '@/lib/api-server';
@@ -325,6 +328,13 @@ export default async function ProductDetailPage({
     ],
   };
 
+  // The corner flag follows the product onto its own page — the launch item
+  // reads as "Website Exclusive" here too, with a line saying what that means.
+  const badgeVariant = resolveProductBadge(product);
+  const badgeText = badgeVariant
+    ? withFallback(t, badgeI18nKey(badgeVariant), BADGE_FALLBACK[badgeVariant])
+    : undefined;
+
   return (
     <>
       <script
@@ -342,8 +352,13 @@ export default async function ProductDetailPage({
         />
 
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-12">
-          {/* Images */}
-          <ProductImageGallery images={galleryImages} name={product.name} />
+          {/* Images — the badge floats over the gallery, as it does on the tile */}
+          <div className="relative">
+            <ProductImageGallery images={galleryImages} name={product.name} />
+            {badgeVariant && badgeText && (
+              <ProductBadge variant={badgeVariant}>{badgeText}</ProductBadge>
+            )}
+          </div>
 
           {/* Details + ATC */}
           <div className="flex flex-col gap-6">
@@ -353,6 +368,16 @@ export default async function ProductDetailPage({
               </h1>
               <div className="h-px bg-secondary/40" />
             </div>
+
+            {badgeVariant === 'website_exclusive' && (
+              <p className="font-body text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-sm px-3 py-2">
+                {withFallback(
+                  t,
+                  'product.website_exclusive_note',
+                  'Only on our website — you won’t find this on the delivery apps.',
+                )}
+              </p>
+            )}
 
             {productDescription && (
               <p id="product-description" className="font-body text-sm text-gray-600 leading-relaxed">

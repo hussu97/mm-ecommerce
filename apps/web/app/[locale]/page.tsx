@@ -18,7 +18,8 @@ import { CaterSection, type CaterContent } from '@/components/home/CaterSection'
 import { PromoBanner } from '@/components/layout/PromoBanner';
 import { orderedSections, type HomeLayout, type SectionKey } from '@/lib/home-sections';
 import { BAKERY_BASE, BUSINESS_ID, OG_IMAGE } from '@/lib/schema';
-import { fetchJson } from '@/lib/fetch-json';
+import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
+import { productPathOf } from '@/lib/category-links';
 import { getFeaturedPromo, isAdvertisable, offerHeadline, offerSentence } from '@/lib/offer';
 import { offerPrice } from '@/lib/pricing';
 
@@ -200,6 +201,44 @@ async function getFeaturedProducts(branchId: string | null): Promise<Product[]> 
   return items ?? [];
 }
 
+/**
+ * Which of the hero's product deep-links point at a product that is still live.
+ *
+ * A category slide already disappears with its category; a product slide had no
+ * such check, so a launch banner could outlive the product it sells. Each
+ * product link in the hero is resolved against the storefront product endpoint
+ * — which 404s anything inactive, off the web channel or out of stock, exactly
+ * as the PDP itself resolves — and only the ones that resolve come back, as the
+ * normalised `/category/product` paths `HeroCarousel` filters on. Resolved
+ * estate-wide (no branch), matching how the PDP is prerendered, so a slide and
+ * its destination page agree.
+ */
+async function getLiveHeroProductPaths(hero: HeroContent): Promise<Set<string>> {
+  const paths = new Set<string>();
+  for (const slide of hero.slides ?? []) {
+    for (const href of [slide.cta_href, slide.secondary_href]) {
+      const path = productPathOf(href);
+      if (path) paths.add(path);
+    }
+  }
+
+  const live = new Set<string>();
+  await Promise.all(
+    [...paths].map(async path => {
+      const slug = path.split('/')[2];
+      const product = await fetchJsonOrNull<Product>(
+        `${RSC_API_BASE}/products/${encodeURIComponent(slug)}`,
+        {
+          next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
+          signal: AbortSignal.timeout(8000),
+        },
+      );
+      if (product) live.add(path);
+    }),
+  );
+  return live;
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -276,9 +315,19 @@ export default async function HomePage({
 
   const jsonLd = buildJsonLd(categories, featuredProducts, promo, locale === 'ar' ? 'ar' : 'en');
   const activeCategories = categories.filter(cat => cat.is_active);
+  // Product deep-links in the hero are gated on the product still being live,
+  // the way category slides are gated on their category.
+  const liveHeroProductPaths = await getLiveHeroProductPaths(c.hero ?? {});
 
   const sections: Record<SectionKey, React.ReactNode> = {
-    hero: <HeroCarousel c={c.hero ?? {}} locale={locale} categories={activeCategories} />,
+    hero: (
+      <HeroCarousel
+        c={c.hero ?? {}}
+        locale={locale}
+        categories={activeCategories}
+        liveProductPaths={liveHeroProductPaths}
+      />
+    ),
     usps: <UspMarquee c={c.usps ?? {}} />,
     featured: (
       <FeaturedProducts products={featuredProducts} c={c.featured ?? {}} locale={locale} />

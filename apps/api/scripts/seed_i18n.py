@@ -133,6 +133,11 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "out_of_stock", "Out of Stock"),
     ("product", "select_short", "Select"),
     ("product", "you_may_also_like", "You May Also Like"),
+    (
+        "product",
+        "website_exclusive_note",
+        "Only on our website — you won’t find this on the delivery apps.",
+    ),
     ("product", "recently_viewed", "Recently Viewed"),
     # cart
     ("cart", "title", "My Cart"),
@@ -400,6 +405,9 @@ EN_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("plp", "sort_price_asc", "Price: low to high"),
     ("plp", "sort_price_desc", "Price: high to low"),
     ("plp", "bestseller", "Bestseller"),
+    ("plp", "website_exclusive", "Website Exclusive"),
+    ("plp", "new", "New"),
+    ("plp", "limited", "Limited"),
     ("checkout", "delivery_today", "Today"),
     ("checkout", "delivery_tomorrow", "Tomorrow"),
     # A day with no hour on it. Used where the van is a partner's and naming an
@@ -913,6 +921,11 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("product", "out_of_stock", "نفذ من المخزون"),
     ("product", "select_short", "اختر"),
     ("product", "you_may_also_like", "قد يعجبك أيضاً"),
+    (
+        "product",
+        "website_exclusive_note",
+        "حصري على موقعنا — لن تجده على تطبيقات التوصيل.",
+    ),
     ("product", "recently_viewed", "شاهدت مؤخراً"),
     # cart
     ("cart", "title", "سلة التسوق"),
@@ -1151,6 +1164,9 @@ AR_TRANSLATIONS: list[tuple[str, str, str]] = [
     ("plp", "sort_price_asc", "السعر: من الأقل للأعلى"),
     ("plp", "sort_price_desc", "السعر: من الأعلى للأقل"),
     ("plp", "bestseller", "الأكثر مبيعاً"),
+    ("plp", "website_exclusive", "حصري على الموقع"),
+    ("plp", "new", "جديد"),
+    ("plp", "limited", "لفترة محدودة"),
     ("checkout", "delivery_today", "اليوم"),
     ("checkout", "delivery_tomorrow", "غداً"),
     ("checkout", "delivery_by_day", "{day}"),

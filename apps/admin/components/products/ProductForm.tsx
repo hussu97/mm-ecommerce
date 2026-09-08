@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { categoriesApi, productsApi, modifiersApi, uploadsApi, ApiError } from '@/lib/api';
-import type { Category, Modifier, Product, SalesChannel } from '@/lib/types';
-import { SALES_CHANNELS } from '@/lib/types';
+import type { Category, Modifier, Product, SalesChannel, ProductLabel } from '@/lib/types';
+import { SALES_CHANNELS, PRODUCT_LABELS, PRODUCT_LABEL_LABELS } from '@/lib/types';
 import { SalesChannelPicker } from '@/components/products/SalesChannels';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
@@ -34,7 +34,6 @@ export function ProductForm({ product }: Props) {
     base_price: String(product?.base_price ?? '0'),
     calories: String(product?.calories ?? ''),
     preparation_time: String(product?.preparation_time ?? ''),
-    is_featured: product?.is_featured ?? false,
     is_active: product?.is_active ?? true,
     is_stock_product: product?.is_stock_product ?? false,
     stock_quantity: String(product?.stock_quantity ?? 0),
@@ -50,6 +49,15 @@ export function ProductForm({ product }: Props) {
   const [salesChannels, setSalesChannels] = useState<SalesChannel[]>(
     product ? (product.sales_channels ?? []) : [...SALES_CHANNELS],
   );
+  const [labels, setLabels] = useState<ProductLabel[]>(product?.labels ?? []);
+  const toggleLabel = (label: ProductLabel) =>
+    setLabels(current =>
+      current.includes(label)
+        ? current.filter(l => l !== label)
+        : // keep canonical (priority) order so the stored array reads the same
+          // way the storefront resolves it
+          PRODUCT_LABELS.filter(l => l === label || current.includes(l)),
+    );
   const [translations, setTranslations] = useState<Record<string, Record<string, string>>>(product?.translations ?? {});
   const [imageUrls, setImageUrls] = useState<string[]>(product?.image_urls ?? []);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -149,7 +157,7 @@ export function ProductForm({ product }: Props) {
       calories: form.calories.trim() ? Number(form.calories) : null,
       preparation_time: form.preparation_time.trim() ? Number(form.preparation_time) : null,
       image_urls: imageUrls,
-      is_featured: form.is_featured,
+      labels,
       sales_channels: salesChannels,
       is_active: form.is_active,
       is_stock_product: form.is_stock_product,
@@ -268,16 +276,28 @@ export function ProductForm({ product }: Props) {
         <div className="mt-5 pt-5 border-t border-gray-100">
           <SalesChannelPicker value={salesChannels} onChange={setSalesChannels} />
         </div>
+        <div className="mt-5 pt-5 border-t border-gray-100">
+          <p className="text-xs font-body uppercase tracking-wider text-gray-500 mb-3">
+            Badges
+          </p>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            {PRODUCT_LABELS.map(label => (
+              <label
+                key={label}
+                className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider"
+              >
+                <input
+                  type="checkbox"
+                  checked={labels.includes(label)}
+                  onChange={() => toggleLabel(label)}
+                  className="accent-primary"
+                />
+                {PRODUCT_LABEL_LABELS[label]}
+              </label>
+            ))}
+          </div>
+        </div>
         <div className="flex flex-wrap gap-6 mt-5">
-          <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
-            <input
-              type="checkbox"
-              checked={form.is_featured}
-              onChange={e => setForm(f => ({ ...f, is_featured: e.target.checked }))}
-              className="accent-primary"
-            />
-            Featured
-          </label>
           <label className="flex items-center gap-2 cursor-pointer text-xs font-body text-gray-600 uppercase tracking-wider">
             <input
               type="checkbox"

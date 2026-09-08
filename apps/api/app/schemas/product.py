@@ -7,12 +7,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.product import SALES_CHANNELS
+from app.models.product import PRODUCT_LABELS, SALES_CHANNELS
 
 from .category import CategoryResponse
 from .modifier import ProductModifierResponse
 
 SalesChannel = Literal["web"]
+
+#: The merchandising badges a product can fly. Kept in lockstep with
+#: `PRODUCT_LABELS` on the model — a `Literal` so the admin cannot post a badge
+#: the storefront has no styling or label for. `bestseller` is the successor to
+#: the old `is_featured` boolean and is what the featured rail selects on.
+ProductLabel = Literal["website_exclusive", "bestseller", "new", "limited"]
 
 #: The kinds of text a product can ask a customer for.
 #:
@@ -39,6 +45,19 @@ def _dedupe_channels(value: list[str] | None) -> list[str] | None:
     return [c for c in SALES_CHANNELS if c in value]
 
 
+def _dedupe_labels(value: list[str] | None) -> list[str] | None:
+    """
+    Canonical (priority) order, no repeats — same reasoning as channels.
+
+    Ordering by `PRODUCT_LABELS` here means the stored array already reads
+    highest-priority-first, so the badge the storefront flies is just its first
+    element and the two sides cannot disagree on precedence.
+    """
+    if value is None:
+        return None
+    return [label for label in PRODUCT_LABELS if label in value]
+
+
 class ProductModifierLink(BaseModel):
     modifier_id: UUID
     minimum_options: int = 0
@@ -63,7 +82,9 @@ class ProductCreate(BaseModel):
     is_stock_product: bool = False
     stock_quantity: int = Field(default=0, ge=0)
     image_urls: list[str] = Field(default_factory=list)
-    is_featured: bool = False
+    #: Merchandising badges — any subset of PRODUCT_LABELS. Empty is ordinary.
+    #: `bestseller` here is what puts a product in the homepage rail.
+    labels: list[ProductLabel] = Field(default_factory=list)
     #: Which channels sell this — any subset of ("pos", "web"). Empty means
     #: the item is in the catalogue and not yet sold anywhere, which is a
     #: legitimate draft state rather than an error.
@@ -80,6 +101,7 @@ class ProductCreate(BaseModel):
     )
 
     _canonical_channels = field_validator("sales_channels")(_dedupe_channels)
+    _canonical_labels = field_validator("labels")(_dedupe_labels)
 
 
 class ProductUpdate(BaseModel):
@@ -98,7 +120,7 @@ class ProductUpdate(BaseModel):
     stock_quantity: int | None = Field(None, ge=0)
     image_urls: list[str] | None = None
     is_active: bool | None = None
-    is_featured: bool | None = None
+    labels: list[ProductLabel] | None = None
     sales_channels: list[SalesChannel] | None = None
     #: Free-form nutrition panel: protein, carbs, fat, salt, allergens.
     nutrition: dict | None = None
@@ -108,6 +130,7 @@ class ProductUpdate(BaseModel):
     personalisation_max_length: int | None = Field(None, ge=1, le=500)
 
     _canonical_channels = field_validator("sales_channels")(_dedupe_channels)
+    _canonical_labels = field_validator("labels")(_dedupe_labels)
 
 
 class ProductResponse(BaseModel):
@@ -133,7 +156,10 @@ class ProductResponse(BaseModel):
     stock_quantity: int
     image_urls: list[str]
     is_active: bool
-    is_featured: bool
+    #: Merchandising badges, already in priority order (see `_dedupe_labels`), so
+    #: the storefront flies `labels[0]` when present. Carries `bestseller` where
+    #: the old `is_featured` was true.
+    labels: list[ProductLabel] = Field(default_factory=list)
     sales_channels: list[SalesChannel] = Field(
         default_factory=lambda: list(SALES_CHANNELS)
     )

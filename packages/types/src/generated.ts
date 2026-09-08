@@ -15526,11 +15526,6 @@ export interface components {
              */
             is_cart_addon: boolean;
             /**
-             * Is Featured
-             * @default false
-             */
-            is_featured: boolean;
-            /**
              * Is Sold By Weight
              * @default false
              */
@@ -15540,6 +15535,8 @@ export interface components {
              * @default false
              */
             is_stock_product: boolean;
+            /** Labels */
+            labels?: ("website_exclusive" | "bestseller" | "new" | "limited")[];
             /** Name */
             name: string;
             /** Nutrition */
@@ -15676,12 +15673,12 @@ export interface components {
              * @default false
              */
             is_cart_addon: boolean;
-            /** Is Featured */
-            is_featured: boolean;
             /** Is Sold By Weight */
             is_sold_by_weight: boolean;
             /** Is Stock Product */
             is_stock_product: boolean;
+            /** Labels */
+            labels?: ("website_exclusive" | "bestseller" | "new" | "limited")[];
             /** Name */
             name: string;
             /** Nutrition */
@@ -15748,12 +15745,12 @@ export interface components {
             is_active?: boolean | null;
             /** Is Cart Addon */
             is_cart_addon?: boolean | null;
-            /** Is Featured */
-            is_featured?: boolean | null;
             /** Is Sold By Weight */
             is_sold_by_weight?: boolean | null;
             /** Is Stock Product */
             is_stock_product?: boolean | null;
+            /** Labels */
+            labels?: ("website_exclusive" | "bestseller" | "new" | "limited")[] | null;
             /** Name */
             name?: string | null;
             /** Nutrition */

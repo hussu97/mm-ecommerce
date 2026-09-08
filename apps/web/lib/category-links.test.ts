@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { categorySlugOf, isLiveLink, liveSlugSet } from './category-links';
+import { categorySlugOf, isLiveLink, liveSlugSet, productPathOf } from './category-links';
 
 /**
  * Hiding every product in a category stopped the API returning that category,
@@ -96,5 +96,41 @@ describe('isLiveLink', () => {
 
   it('drops everything when no category is live', () => {
     expect(isLiveLink('/cookies', new Set())).toBe(false);
+  });
+});
+
+describe('productPathOf', () => {
+  it('returns the normalised /category/product path for a product link', () => {
+    expect(productPathOf('/cookiemelt/lotus-cookie-melt')).toBe('/cookiemelt/lotus-cookie-melt');
+    expect(productPathOf('/en/cookiemelt/lotus-cookie-melt')).toBe('/cookiemelt/lotus-cookie-melt');
+    expect(productPathOf('/AR/CookieMelt/Lotus-Cookie-Melt')).toBe('/cookiemelt/lotus-cookie-melt');
+    expect(productPathOf('/cookiemelt/lotus-cookie-melt/?utm=x#top')).toBe('/cookiemelt/lotus-cookie-melt');
+  });
+
+  it('is null for anything that is not a product page', () => {
+    expect(productPathOf('/cookiemelt')).toBeNull(); // a category
+    expect(productPathOf('/account/orders')).toBeNull(); // reserved first segment
+    expect(productPathOf('/a/b/c')).toBeNull(); // too deep
+    expect(productPathOf('https://instagram.com/x/y')).toBeNull(); // external
+    expect(productPathOf(undefined)).toBeNull();
+  });
+});
+
+describe('isLiveLink with product gating', () => {
+  const LIVE_PRODUCTS = new Set(['/cookiemelt/lotus-cookie-melt']);
+
+  it('keeps a product slide only while its product is live', () => {
+    expect(isLiveLink('/cookiemelt/lotus-cookie-melt', LIVE, LIVE_PRODUCTS)).toBe(true);
+    expect(isLiveLink('/en/cookiemelt/lotus-cookie-melt', LIVE, LIVE_PRODUCTS)).toBe(true);
+    expect(isLiveLink('/cookiemelt/retired-cookie-melt', LIVE, LIVE_PRODUCTS)).toBe(false);
+  });
+
+  it('still lets product links pass when no product set is supplied', () => {
+    expect(isLiveLink('/cookiemelt/lotus-cookie-melt', LIVE)).toBe(true);
+  });
+
+  it('still gates categories the same way alongside product gating', () => {
+    expect(isLiveLink('/cookies', LIVE, LIVE_PRODUCTS)).toBe(true);
+    expect(isLiveLink('/desserts', LIVE, LIVE_PRODUCTS)).toBe(false);
   });
 });

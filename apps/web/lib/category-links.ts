@@ -85,18 +85,53 @@ export function categorySlugOf(href: string | undefined | null): string | null {
 }
 
 /**
+ * The product a link points at, as a normalised `/<category>/<product>` path,
+ * or null when it does not point at a product page.
+ *
+ * The mirror image of `categorySlugOf`: a category link is one path segment, a
+ * product link is exactly two, and everything else (an external URL, `/about`,
+ * `/account/orders`) is neither. The first segment being a reserved page rules
+ * it out — `/account/orders` is not a product. Normalised the same way (locale
+ * stripped, lower-cased, query/hash/trailing slash removed) so the string can be
+ * compared against a set of live product paths.
+ */
+export function productPathOf(href: string | undefined | null): string | null {
+  if (!href) return null;
+  if (!href.startsWith('/')) return null;
+
+  const path = href.split('?')[0].split('#')[0].replace(/\/+$/, '');
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length && LOCALES.has(segments[0].toLowerCase())) segments.shift();
+
+  if (segments.length !== 2) return null;
+  const [category, product] = segments.map(s => s.toLowerCase());
+  if (RESERVED_PATHS.has(category)) return null;
+  return `/${category}/${product}`;
+}
+
+/**
  * True when this link is safe to render.
  *
- * Non-category links always pass. A category link passes only while its
- * category is live — which, since the API stopped returning categories with
- * nothing shoppable in them, means "there is something behind this button".
+ * A category link passes only while its category is live. A product link is
+ * left alone unless `liveProductPaths` is supplied — the hero passes it so a
+ * slide selling a product that has gone inactive or out of stock is dropped the
+ * same way a dead category slide is; callers that do not care about product
+ * liveness (the promo bands) omit it and product links pass as before.
+ * Everything else — `/about`, an external campaign URL — always passes.
  */
 export function isLiveLink(
   href: string | undefined | null,
   liveCategorySlugs: ReadonlySet<string>,
+  liveProductPaths?: ReadonlySet<string>,
 ): boolean {
   const slug = categorySlugOf(href);
-  return slug === null || liveCategorySlugs.has(slug);
+  if (slug !== null) return liveCategorySlugs.has(slug);
+
+  if (liveProductPaths) {
+    const product = productPathOf(href);
+    if (product !== null) return liveProductPaths.has(product);
+  }
+  return true;
 }
 
 /** The live slugs, in the shape the checks above want. */

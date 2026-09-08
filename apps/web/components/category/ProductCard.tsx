@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { DeliveryEstimate } from '@/components/product/DeliveryEstimate';
 import { AddToCartControl } from '@/components/product/AddToCartControl';
 import { ProductBadge } from '@/components/product/ProductBadge';
+import { resolveProductBadge, badgeI18nKey, BADGE_FALLBACK } from '@/lib/product-badge';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
 import { localizedField } from '@/lib/i18n/entity';
 import { withFallback } from '@/lib/i18n/fallback';
@@ -65,11 +66,12 @@ export function ProductCard({
   const categorySlug = product.category?.slug;
   const pdpHref = categorySlug ? `/${locale}/${categorySlug}/${product.slug}` : null;
   const productName = localizedField(product, 'name', product.name, locale);
-  // `is_featured` is the flag the admin already sets, and the homepage rail
-  // already flies its "Bestseller" corner on those same products — so the
-  // listing reads it rather than inventing a second notion of a bestseller.
-  const badgeText = product.is_featured
-    ? badge ?? withFallback(t, 'plp.bestseller', 'Bestseller')
+  // One resolver decides which of a product's labels flies here, so every tile
+  // surface (listing, rail, cart carousels) agrees — with `website_exclusive`
+  // winning over `bestseller`. `badge` stays an optional text override.
+  const badgeVariant = resolveProductBadge(product);
+  const badgeText = badgeVariant
+    ? badge ?? withFallback(t, badgeI18nKey(badgeVariant), BADGE_FALLBACK[badgeVariant])
     : undefined;
 
   /**
@@ -114,7 +116,9 @@ export function ProductCard({
               <Icon name="cake" className="text-5xl sm:text-6xl text-secondary" />
             </div>
           )}
-          {badgeText && <ProductBadge>{badgeText}</ProductBadge>}
+          {badgeVariant && badgeText && (
+            <ProductBadge variant={badgeVariant}>{badgeText}</ProductBadge>
+          )}
         </ConditionalLink>
 
         {/* Details */}

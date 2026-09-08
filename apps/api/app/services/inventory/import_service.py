@@ -16,7 +16,7 @@ from app.models.category import Category
 from app.models.inventory import InventoryCategory, InventoryItem
 from app.models.inventory_v2 import RecipeOwnerKindEnum
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
-from app.models.product import Product
+from app.models.product import PRODUCT_LABELS, Product
 from app.schemas.import_data import ImportError, ImportResult
 from app.services.inventory import recipe_service
 
@@ -48,6 +48,20 @@ def _parse_decimal(val: str, default: Decimal = Decimal("0")) -> Decimal:
 
 def _parse_bool(val: str) -> bool:
     return str(val).strip().lower() in ("1", "true", "yes")
+
+
+def _parse_labels(val: str) -> list[str]:
+    """A ``;``-separated labels cell → the known ones, in canonical order.
+
+    Unknown tokens are dropped rather than errored: the CHECK constraint would
+    reject them anyway, and a spreadsheet typo should not fail a whole product
+    row. Canonical order (``PRODUCT_LABELS``) so the stored array reads
+    priority-first, matching what the API writes.
+    """
+    given = {
+        p.strip().lower() for p in str(val).replace(",", ";").split(";") if p.strip()
+    }
+    return [label for label in PRODUCT_LABELS if label in given]
 
 
 def _parse_int(val: str, default: int = 0) -> int:
@@ -318,12 +332,12 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     existing.barcode = barcode
                 if "display_order" in row and str(row["display_order"] or "").strip():
                     existing.display_order = display_order
-                for field in (
-                    "is_featured",
-                    "is_sold_by_weight",
-                ):
-                    if field in row and str(row[field] or "").strip():
-                        setattr(existing, field, _parse_bool(row[field]))
+                if _has(row, "is_sold_by_weight"):
+                    existing.is_sold_by_weight = _parse_bool(row["is_sold_by_weight"])
+                # Labels replace the old is_featured boolean. Only touched when
+                # the column is present, so a partial export never clears badges.
+                if "labels" in row:
+                    existing.labels = _parse_labels(row.get("labels", ""))
                 if image_url:
                     existing.image_urls = [image_url]
                     result.image_urls.append(image_url)
@@ -365,7 +379,7 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     cost=cost,
                     barcode=barcode,
                     display_order=display_order,
-                    is_featured=_parse_bool(row.get("is_featured", "false")),
+                    labels=_parse_labels(row.get("labels", "")),
                     is_sold_by_weight=_parse_bool(
                         row.get("is_sold_by_weight", "false")
                     ),

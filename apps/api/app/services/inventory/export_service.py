@@ -109,7 +109,7 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
             "cost",
             "barcode",
             "display_order",
-            "is_featured",
+            "labels",
             "is_sold_by_weight",
         ]
     )
@@ -142,7 +142,7 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
                 str(r.cost) if r.cost is not None else "",
                 r.barcode or "",
                 str(r.display_order),
-                str(r.is_featured),
+                ";".join(r.labels or []),
                 str(r.is_sold_by_weight),
             ]
         )

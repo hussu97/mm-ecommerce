@@ -74,7 +74,13 @@ export interface Product {
   stock_quantity: number;
   image_urls: string[];
   is_active: boolean;
-  is_featured: boolean;
+  /**
+   * Merchandising badges the product flies — a subset of the known set
+   * ("website_exclusive", "bestseller", "new", "limited"). Successor to the old
+   * `is_featured` boolean: `bestseller` is what the homepage rail selects on.
+   * See `resolveProductBadge` for which one shows when several are set.
+   */
+  labels: string[];
   display_order: number;
   /** Offered in the basket's add-on tray. */
   is_cart_addon?: boolean;
