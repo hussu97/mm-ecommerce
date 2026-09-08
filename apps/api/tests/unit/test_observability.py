@@ -53,6 +53,29 @@ def test_sentry_is_skipped_when_no_dsn_is_configured():
     assert "if not settings.SENTRY_DSN:" in source
 
 
+def test_pool_timeouts_all_share_one_fingerprint():
+    """The QueuePool timeout is one fact — the pool ran dry — however many call
+    sites it surfaces at, so it must collapse into a single Sentry issue rather
+    than fan out one-per-stack-trace."""
+    err = TimeoutError(
+        "QueuePool limit of size 5 overflow 1 reached, connection timed out, "
+        "timeout 30.00"
+    )
+    a = app_setup._group_pool_timeouts({}, {"exc_info": (type(err), err, None)})
+    b = app_setup._group_pool_timeouts({}, {"exc_info": (type(err), err, None)})
+    assert a["fingerprint"] == b["fingerprint"] == ["db-connection-pool-timeout"]
+
+
+def test_other_errors_keep_their_default_grouping():
+    err = ValueError("something unrelated")
+    event = app_setup._group_pool_timeouts({}, {"exc_info": (type(err), err, None)})
+    assert "fingerprint" not in event
+
+
+def test_grouping_survives_an_event_with_no_exception():
+    assert app_setup._group_pool_timeouts({"level": "info"}, {}) == {"level": "info"}
+
+
 def test_production_logs_are_structured_for_cloud_logging():
     source = inspect.getsource(app_setup._configure_logging)
     assert "severity" in source, "GCP reads the level from this field"
