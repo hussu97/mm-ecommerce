@@ -83,6 +83,45 @@ async def test_a_counter_sale_is_confirmed_then_collected(wiring):
     ]
 
 
+async def test_close_time_is_stamped_before_the_status_transitions(wiring):
+    """`closed_at` must be set the instant `pos_status` becomes `closed`, before
+    any transition runs.
+
+    The CONFIRMED transition triggers the inventory acceptance, whose first
+    SELECT autoflushes the order. `ck_orders_closed_has_closed_at` (migration
+    141) rejects a `closed` row with a null `closed_at`, so if the close time
+    were stamped only after the transitions, that autoflush would write a
+    `(closed, null)` row, the constraint would reject it, and the whole close
+    would roll back — which stranded every counter sale at `created` with no
+    receipt. Assert the two move together so the ordering cannot regress.
+    """
+    order_holder, transition = wiring
+    order = _order("cashier")
+    order_holder["order"] = order
+
+    observed: list[tuple[str, object]] = []
+
+    async def _capture(db, ord_, status, **kwargs):
+        # What the DB would see if an autoflush fired at this transition.
+        observed.append((ord_.pos_status, ord_.closed_at))
+
+    transition.side_effect = _capture
+
+    await pos_order_service.close_order(
+        AsyncMock(),
+        order=order,
+        user=SimpleNamespace(id=uuid.uuid4(), email="c@mm.test"),
+    )
+
+    assert observed, "close_order never transitioned the order"
+    for pos_status, closed_at in observed:
+        assert pos_status == "closed"
+        assert closed_at is not None, (
+            "closed_at was null while pos_status was 'closed' at a transition "
+            "point — an autoflush here trips ck_orders_closed_has_closed_at"
+        )
+
+
 async def test_an_online_hand_over_is_not_swept_to_delivered(wiring):
     """A website order closed at the counter is only confirmed — the courier and
     admin own its delivery, and jumping it to delivered here would tell the
