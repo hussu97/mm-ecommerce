@@ -9,12 +9,15 @@ fingerprint onto a request, telling an auth failure (the session is dead, only a
 browser can save it) apart from a provider being slow (retry later), and the
 choice of transport.
 
-**Transport and authenticity.** Careem and Deliveroo have no bot wall, so plain
-`httpx` is enough. Talabat (PerimeterX) and Noon (Akamai) fingerprint the TLS
-ClientHello itself, so a Python client is flagged even with perfect cookies —
-those set `uses_tls_impersonation` and, where `curl_cffi` is installed, go out
-with a Chrome ClientHello. Absent that library the base falls back to `httpx`
-and says so once, rather than failing to import.
+**Transport and authenticity.** Deliveroo has no bot wall, so plain `httpx` is
+enough. Talabat (PerimeterX), Noon (Akamai) and Careem (Cloudflare) fingerprint
+the TLS ClientHello itself, so a Python client is flagged even with perfect
+cookies — those set `uses_tls_impersonation` and, where `curl_cffi` is installed,
+go out with a Chrome ClientHello. Absent that library the base falls back to
+`httpx` and says so once, rather than failing to import. Cloudflare additionally
+rotates a short-lived edge cookie; a channel behind it (Careem) refreshes that in
+place on a 401 rather than reading the rotation as a dead session — see
+`_cf_refresh_and_retry`.
 
 Providers return the channel-neutral DTOs in `services/aggregators/normalized`;
 nothing above this line learns a marketplace's vocabulary.
@@ -65,6 +68,14 @@ _CHROME_UA = (
 _ACCEPT_LANGUAGE = "en-AE,en;q=0.9,ar-AE;q=0.8,ar;q=0.7"
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+#: Cloudflare's short-lived edge cookies. `__cf_bm` (~30 min) is the bot-management
+#: cookie and `cf_clearance` (~1 h, IP-bound) the challenge-clearance one. A
+#: statically-replayed jar carries these long after they expire, and once they do
+#: the Cloudflare edge answers a bare 401 that looks exactly like a dead session.
+#: A channel behind Cloudflare (Careem) refreshes these in-process — see
+#: `_cf_refresh_url` and `_cf_refresh_and_retry`.
+_CLOUDFLARE_COOKIE_NAMES = frozenset({"__cf_bm", "cf_clearance"})
 
 #: Longest a `Retry-After` may hold a call before we give up and treat the channel
 #: as unavailable (F-AGG-7). The header is uncapped and a marketplace can ask for
@@ -193,6 +204,17 @@ class BaseAggregatorClient(ABC):
         a challenge body (PerimeterX, Akamai) overrides this to read the body.
         """
         return getattr(response, "status_code", None) in (401, 403)
+
+    def _cf_refresh_url(self) -> str | None:
+        """Origin to warm Cloudflare's edge cookie on, or None if not fronted.
+
+        A channel behind Cloudflare (Careem) returns this; on a 401 the transport
+        makes one GET here inside the same impersonated session to pick up a fresh
+        `__cf_bm`/`cf_clearance` and retries, rather than treating a routine edge-
+        cookie rotation as a dead session. Every other channel returns None and
+        keeps the old behaviour.
+        """
+        return None
 
     # ── transport ───────────────────────────────────────────────────────────
     async def request_json(
@@ -379,7 +401,7 @@ class BaseAggregatorClient(ABC):
                     data=content,
                 )
         async with curl_requests.AsyncSession() as client:  # type: ignore[union-attr]
-            return await client.request(
+            response = await client.request(
                 method,
                 url,
                 headers=headers,
@@ -391,6 +413,97 @@ class BaseAggregatorClient(ABC):
                 impersonate=self.impersonate_target,
                 timeout=timeout or self._timeout,
             )
+            # A Cloudflare-fronted channel whose edge cookie has rotated answers a
+            # bare 401. Warm a fresh one inside this same session and retry once,
+            # before the caller reads the 401 as a dead session and pays for a
+            # headed re-login. Skipped for uploads — a CurlMime is not reusable.
+            refresh_url = self._cf_refresh_url()
+            if (
+                refresh_url
+                and multipart is None
+                and getattr(response, "status_code", None) in (401, 403)
+            ):
+                retried = await self._cf_refresh_and_retry(
+                    client,
+                    refresh_url,
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    json_body=json_body,
+                    data=data,
+                    cookies=cookies,
+                    timeout=timeout or self._timeout,
+                )
+                if retried is not None:
+                    return retried
+            return response
+
+    async def _cf_refresh_and_retry(
+        self,
+        client: Any,
+        refresh_url: str,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any] | None,
+        json_body: Any | None,
+        data: Any | None,
+        cookies: dict[str, str] | None,
+        timeout: float,
+    ) -> Any | None:
+        """Warm Cloudflare's edge cookie in-session and retry the call once.
+
+        Best effort: a GET to the origin lets the edge re-issue `__cf_bm` /
+        `cf_clearance` into this session's jar; the call is then retried with the
+        stale edge cookies dropped from the replayed jar so the fresh ones win
+        (curl_cffi merges the session jar with per-request cookies). Returns the
+        retried response, or None to fall back to the original 401 — when the
+        edge issues no fresh cookie (a real challenge) or the session is genuinely
+        dead, which still escalates to a headed re-login exactly as before.
+        """
+        try:
+            await client.get(
+                refresh_url,
+                headers=headers,
+                cookies=cookies,
+                impersonate=self.impersonate_target,
+                timeout=timeout,
+            )
+            fresh = {
+                name
+                for name in dict(client.cookies)
+                if name.lower() in _CLOUDFLARE_COOKIE_NAMES
+            }
+            if not fresh:
+                return None
+            retry_cookies = {
+                k: v
+                for k, v in (cookies or {}).items()
+                if k.lower() not in _CLOUDFLARE_COOKIE_NAMES
+            }
+            response = await client.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+                data=data,
+                cookies=retry_cookies,
+                impersonate=self.impersonate_target,
+                timeout=timeout,
+            )
+            if getattr(response, "status_code", None) in (401, 403):
+                return None
+            logger.info(
+                "%s: refreshed Cloudflare edge cookie in-process and recovered a 401",
+                self.channel,
+            )
+            return response
+        except Exception as exc:  # noqa: BLE001 — best effort; fall back to the 401
+            logger.debug("%s: Cloudflare cookie refresh failed: %s", self.channel, exc)
+            return None
 
     def _warn_if_impersonation_wanted(self) -> None:
         global _warned_no_curl

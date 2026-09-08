@@ -257,6 +257,14 @@ class CareemClient(BaseAggregatorClient):
     uses_tls_impersonation = True
     impersonate_target = "chrome"
 
+    def _cf_refresh_url(self) -> str:
+        # Careem's console is Cloudflare-fronted. When the edge cookie rotates
+        # (~1 h) the API answers a bare 401 that is indistinguishable from a dead
+        # session; a GET here re-warms `__cf_bm`/`cf_clearance` so the replayed
+        # bearer keeps working without an hourly headed re-login. See
+        # `aggregator_base._cf_refresh_and_retry`.
+        return "https://partners.careem.com/"
+
     @staticmethod
     def _city_id(session: LoadedSession) -> str:
         """The city id the per-outlet orders endpoint is scoped by.
