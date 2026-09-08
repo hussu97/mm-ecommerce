@@ -338,7 +338,8 @@ export interface Order {
   /** How much has been sent back to the card. Zero on almost every order. */
   refunded_amount: number;
   notes: string | null;
-  admin_notes: string | null;
+  // The internal note is no longer on the order read (F-ORD-10); it comes from
+  // the admin-only `/details` endpoint (OrderAdminDetails.admin_notes).
   created_at: string;
   updated_at: string;
   items: OrderItem[];

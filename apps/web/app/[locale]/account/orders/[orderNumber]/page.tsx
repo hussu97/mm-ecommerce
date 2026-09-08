@@ -120,10 +120,10 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
           watch — the whole of what the server is willing to say about it. */}
       <FulfilmentPanel fulfilment={order.fulfilment} className="mb-6" />
 
-      {isSettled && order.admin_notes && (
+      {isSettled && order.cancellation_reason && (
         <div className="mb-6 bg-red-50 border border-red-200 p-4">
           <p className="text-xs font-medium text-red-700 uppercase tracking-widest mb-1">{t('order.cancellation_note')}</p>
-          <p className="text-sm text-red-600 font-body">{order.admin_notes}</p>
+          <p className="text-sm text-red-600 font-body">{order.cancellation_reason}</p>
         </div>
       )}
 

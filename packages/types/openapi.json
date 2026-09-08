@@ -15739,8 +15739,19 @@
         "type": "object"
       },
       "OrderAdminDetails": {
-        "description": "The admin-only enrichment for the order-details page: the branch, the\nmarketplace payment type, and the unified status timeline. Kept off the\ncustomer-facing `OrderResponse` so widening it never leaks admin context.",
+        "description": "The admin-only enrichment for the order-details page: the branch, the\nmarketplace payment type, the internal note, and the unified status timeline.\nKept off the customer-facing `OrderResponse` so widening it never leaks admin\ncontext.",
         "properties": {
+          "admin_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Notes"
+          },
           "aggregator_payment_type": {
             "anyOf": [
               {
@@ -17383,17 +17394,6 @@
       },
       "OrderResponse": {
         "properties": {
-          "admin_notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Admin Notes"
-          },
           "aggregator_cancel_reason": {
             "anyOf": [
               {
@@ -17470,6 +17470,17 @@
               }
             ],
             "title": "Aggregator Driver Status"
+          },
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
           },
           "courier": {
             "anyOf": [
@@ -17783,7 +17794,6 @@
           "vat_amount",
           "total_excl_vat",
           "notes",
-          "admin_notes",
           "created_at",
           "updated_at"
         ],

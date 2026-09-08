@@ -22,8 +22,8 @@
   </td></tr>
 </table>
 
-{% if order.admin_notes %}
-{{ parts.alert(t('cancelled.why_label'), order.admin_notes) }}
+{% if order.cancellation_reason %}
+{{ parts.alert(t('cancelled.why_label'), order.cancellation_reason) }}
 {% endif %}
 
 {#

@@ -319,7 +319,9 @@ export interface Order {
   payment_failure_reason?: string | null;
   payment_failure_message?: string | null;
   notes: string | null;
-  admin_notes: string | null;
+  // The internal note is never sent to the customer; only its cancellation-note
+  // use survives, as `cancellation_reason` on a settled order (F-ORD-10).
+  cancellation_reason: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItem[];

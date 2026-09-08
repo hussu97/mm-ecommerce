@@ -13837,10 +13837,13 @@ export interface components {
         /**
          * OrderAdminDetails
          * @description The admin-only enrichment for the order-details page: the branch, the
-         *     marketplace payment type, and the unified status timeline. Kept off the
-         *     customer-facing `OrderResponse` so widening it never leaks admin context.
+         *     marketplace payment type, the internal note, and the unified status timeline.
+         *     Kept off the customer-facing `OrderResponse` so widening it never leaks admin
+         *     context.
          */
         OrderAdminDetails: {
+            /** Admin Notes */
+            admin_notes?: string | null;
             /** Aggregator Payment Type */
             aggregator_payment_type?: string | null;
             branch?: components["schemas"]["OrderBranchSummary"] | null;
@@ -14344,8 +14347,6 @@ export interface components {
         };
         /** OrderResponse */
         OrderResponse: {
-            /** Admin Notes */
-            admin_notes: string | null;
             /** Aggregator Cancel Reason */
             aggregator_cancel_reason?: string | null;
             /** Aggregator Channel */
@@ -14360,6 +14361,8 @@ export interface components {
             aggregator_driver_phone?: string | null;
             /** Aggregator Driver Status */
             aggregator_driver_status?: string | null;
+            /** Cancellation Reason */
+            cancellation_reason?: string | null;
             courier?: components["schemas"]["CourierBadge"] | null;
             /**
              * Created At

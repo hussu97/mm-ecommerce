@@ -83,7 +83,7 @@ function fakeOrder(orderNumber: string) {
     payment_provider: 'stripe',
     payment_id: 'pay_1',
     notes: null,
-    admin_notes: null,
+    cancellation_reason: null,
     created_at: '2026-06-05T00:00:00Z',
     updated_at: '2026-06-05T00:00:00Z',
     items: [

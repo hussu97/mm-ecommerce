@@ -97,7 +97,7 @@ export default function OrderDetailPage() {
 
   useEffect(() => {
     ordersApi.get(orderNumber)
-      .then(o => { setOrder(o); setNotes(o.admin_notes ?? ''); })
+      .then(o => { setOrder(o); })
       .catch(() => setError('Order not found.'))
       .finally(() => setLoading(false));
   }, [orderNumber]);
@@ -138,7 +138,9 @@ export default function OrderDetailPage() {
   // courier finally invoicing all move the net, and a stale figure here is
   // worse than none — somebody would price against it.
   useEffect(() => {
-    ordersApi.details(orderNumber).then(setDetails).catch(() => setDetails(null));
+    ordersApi.details(orderNumber)
+      .then(d => { setDetails(d); setNotes(d.admin_notes ?? ''); })
+      .catch(() => setDetails(null));
   }, [orderNumber]);
 
   useEffect(() => {

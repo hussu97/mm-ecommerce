@@ -121,6 +121,19 @@ def _order_load_options():
     ]
 
 
+#: The settled, cancelled-family states on which the internal `admin_notes` is
+#: shown to the customer as the cancellation reason (F-ORD-10). Mirrors the
+#: storefront `SETTLED` set in the account page.
+_CANCELLATION_NOTE_STATUSES = frozenset(
+    {
+        OrderStatusEnum.CANCELLED,
+        OrderStatusEnum.PAYMENT_FAILED,
+        OrderStatusEnum.REFUNDED,
+        OrderStatusEnum.DISPUTED,
+    }
+)
+
+
 async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
     """
     The order as its customer sees it, fulfilment included.
@@ -134,6 +147,12 @@ async def to_response(db: AsyncSession, order: Order) -> OrderResponse:
     await _ensure_items_loaded(db, order)
     reached = await fulfilment_service.reached_at(db, order)
     response = OrderResponse.model_validate(order)
+    # The internal note is surfaced to the customer ONLY as the cancellation
+    # reason on a settled (cancelled-family) order — never on a live one, where it
+    # is an internal note they must not read (F-ORD-10). Mirrors the storefront's
+    # `SETTLED` set for the account page's cancellation note.
+    if order.status in _CANCELLATION_NOTE_STATUSES:
+        response.cancellation_reason = order.admin_notes
     response.email_has_account = await _email_has_account(db, order.email)
     _apply_payment_failure(order, response)
     response.fulfilment = FulfilmentResponse.of(

@@ -216,7 +216,13 @@ class OrderResponse(BaseModel):
     vat_amount: float
     total_excl_vat: float
     notes: str | None
-    admin_notes: str | None
+    # The internal `admin_notes` is NOT here — it would be served to the customer
+    # on every order read (F-ORD-10). Its one legitimate customer-facing use, the
+    # note shown when an order is cancelled/refunded, is carried by
+    # `cancellation_reason` below, which `to_response` fills from `admin_notes`
+    # only for a settled (cancelled-family) order. The raw note lives on the
+    # admin-only `OrderAdminDetails`.
+    cancellation_reason: str | None = None
     created_at: datetime
     updated_at: datetime
     items: list[OrderItemResponse] = []
@@ -504,9 +510,11 @@ class OrderTimelineEntry(BaseModel):
 
 class OrderAdminDetails(BaseModel):
     """The admin-only enrichment for the order-details page: the branch, the
-    marketplace payment type, and the unified status timeline. Kept off the
-    customer-facing `OrderResponse` so widening it never leaks admin context."""
+    marketplace payment type, the internal note, and the unified status timeline.
+    Kept off the customer-facing `OrderResponse` so widening it never leaks admin
+    context."""
 
     branch: OrderBranchSummary | None = None
     aggregator_payment_type: str | None = None
+    admin_notes: str | None = None
     timeline: list[OrderTimelineEntry]

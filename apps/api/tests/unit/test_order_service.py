@@ -298,6 +298,10 @@ def _order_mock(
     o.total_excl_vat = total_excl_vat
     o.notes = None
     o.admin_notes = None
+    # `cancellation_reason` is a derived OrderResponse field `to_response` fills
+    # from `admin_notes` on a settled order; give the mock a real value so
+    # `model_validate` does not read a MagicMock for it (F-ORD-10).
+    o.cancellation_reason = None
     o.created_at = now
     o.updated_at = now
     o.items = []
