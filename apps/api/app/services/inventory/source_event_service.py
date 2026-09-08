@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core import advisory_lock, heartbeat
+from app.core import advisory_lock, background, heartbeat
 from app.core.database import SchedulerSessionFactory
 from app.core.exceptions import AppError, BadRequestError, ConflictError
 from app.core.money import unit_cost
@@ -938,7 +938,7 @@ async def run_sweeper_forever() -> None:
         try:
             # Sleeps FIRST: boot is the busiest moment a process has, and this is
             # recovery work, not anything a customer is waiting on.
-            await asyncio.sleep(_SWEEPER_TICK_SECONDS)
+            await asyncio.sleep(background.jittered(_SWEEPER_TICK_SECONDS))
             await heartbeat.beat("inventory_source_event_sweeper")
             async with advisory_lock.held(
                 _SWEEPER_LEADER_LOCK_KEY, name="inventory source-event sweeper"

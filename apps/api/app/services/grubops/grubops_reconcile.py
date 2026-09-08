@@ -41,7 +41,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import advisory_lock, heartbeat
+from app.core import advisory_lock, background, heartbeat
 from app.core.config import settings
 from app.core.database import SchedulerSessionFactory
 from app.models.branch import Branch
@@ -309,7 +309,7 @@ async def run_forever() -> None:
         try:
             # Sleeps first: boot is the busiest moment a process has, and
             # nothing here is urgent enough to compete with serving requests.
-            await asyncio.sleep(_tick_seconds())
+            await asyncio.sleep(background.jittered(_tick_seconds()))
             await heartbeat.beat("grubops_reconcile")
             pushed = await sweep_once()
             if pushed:
