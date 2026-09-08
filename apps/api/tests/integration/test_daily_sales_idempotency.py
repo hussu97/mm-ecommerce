@@ -52,6 +52,19 @@ async def engine():
     await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+async def _dispose_scheduler_pool():
+    """`_tick` now opens its sessions on the app's module-level `scheduler_engine`
+    (it no longer takes an injected session), which otherwise keeps its pooled
+    connections open past this test's event loop and trips asyncpg's teardown in a
+    later test. Dispose it after each test so the loop closes clean — the same
+    guard `test_advisory_lock_session` uses for `held_session`."""
+    yield
+    from app.core.database import scheduler_engine
+
+    await scheduler_engine.dispose()
+
+
 async def test_a_manual_send_does_not_suppress_the_nightly_send(engine):
     """An `email_logs` row carrying the date — what a manual send writes — must
     NOT make the automatic send think the day is done. Only the journal does."""
@@ -122,21 +135,19 @@ async def test_a_partial_recipient_failure_leaves_the_day_due(engine):
 
     now = datetime(2026, 8, 26, 1, 5, tzinfo=_DUBAI)
 
+    # `_send_business_day` returns the per-recipient outcome list `_tick` journals
+    # on — the loop no longer routes through `send` (it mails with no session held).
     partial = AsyncMock(
-        return_value={
-            "sent": [
-                {"recipient": "a@example.com", "status": "sent", "error": None},
-                {"recipient": "b@example.com", "status": "failed", "error": "550"},
-            ]
-        }
+        return_value=[
+            {"recipient": "a@example.com", "status": "sent", "error": None},
+            {"recipient": "b@example.com", "status": "failed", "error": "550"},
+        ]
     )
     full = AsyncMock(
-        return_value={
-            "sent": [
-                {"recipient": "a@example.com", "status": "sent", "error": None},
-                {"recipient": "b@example.com", "status": "sent", "error": None},
-            ]
-        }
+        return_value=[
+            {"recipient": "a@example.com", "status": "sent", "error": None},
+            {"recipient": "b@example.com", "status": "sent", "error": None},
+        ]
     )
 
     try:
@@ -150,9 +161,8 @@ async def test_a_partial_recipient_failure_leaves_the_day_due(engine):
             patch.object(dse.advisory_lock, "held", _lock_ok),
         ):
             # Tick 1: b@ fails → target must NOT be journalled.
-            with patch.object(dse, "send", partial):
-                async with Session() as db:
-                    await dse._tick(db, now=now)
+            with patch.object(dse, "_send_business_day", partial):
+                await dse._tick(now=now)
             async with Session() as db:
                 row = (
                     await db.execute(
@@ -165,9 +175,8 @@ async def test_a_partial_recipient_failure_leaves_the_day_due(engine):
             assert partial.await_count == 1
 
             # Tick 2: everyone succeeds → now it is journalled and no longer due.
-            with patch.object(dse, "send", full):
-                async with Session() as db:
-                    await dse._tick(db, now=now)
+            with patch.object(dse, "_send_business_day", full):
+                await dse._tick(now=now)
             async with Session() as db:
                 row = (
                     await db.execute(

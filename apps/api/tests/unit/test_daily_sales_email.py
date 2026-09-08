@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal as D
 from types import SimpleNamespace
@@ -317,11 +316,6 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
 _DUBAI = ZoneInfo("Asia/Dubai")
 
 
-@asynccontextmanager
-async def _lock_ok(*_a, **_k):
-    yield True
-
-
 def _branches_db(branches):
     class _Scalars:
         def all(self):
@@ -344,14 +338,13 @@ def _branch(name, opening_from="09:00", opening_to="23:00"):
 
 
 async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
-    """Drive `_tick` at a given instant with real branch hours, the send and the
-    already-sent guard stubbed, and read back which business dates got mailed."""
-    sent: list[str] = []
+    """Compute the due business days at a given instant with real branch-hours
+    arithmetic and the already-sent guard stubbed.
 
-    async def fake_send(_db, *, date_from, date_to, recipients):
-        sent.append(date_from)
-        return {"sent": []}
-
+    Drives `_due_dates` directly — the loop's injectable read phase — which
+    returns exactly the dates `_tick` would then mail, so these assertions still
+    read as "which days go out". The mailing/journalling half is covered against
+    a real database in `test_daily_sales_idempotency`."""
     win_by_id = {b.id: b._win for b in branches}
 
     async def fake_schedule(_db, branch_id):
@@ -369,12 +362,9 @@ async def _run_tick(*, now: datetime, branches: list, already_sent: set[str]):
             "_already_sent",
             AsyncMock(side_effect=lambda _db, d: d in already_sent),
         ),
-        patch.object(dse, "send", fake_send),
-        patch.object(dse.advisory_lock, "held", _lock_ok),
         patch.object(dse.branch_hours_service, "schedule", fake_schedule),
     ):
-        await dse._tick(_branches_db(branches), now=now)
-    return sent
+        return await dse._due_dates(_branches_db(branches), now=now)
 
 
 @pytest.mark.asyncio

@@ -678,32 +678,47 @@ async def _settle_aggregator_orders() -> None:
         logger.exception("daily report: pre-send promote/reconcile failed")
 
 
-async def send(
-    db: AsyncSession, *, date_from: str, date_to: str, recipients: list[str]
-) -> dict:
-    """Build the report and mail it, once per recipient, journalled."""
-    # Settle the day's marketplace orders into MM orders before counting, so the
-    # report is complete regardless of the background promote batch's timing — the
-    # fix for a channel (Keeta) scraped promptly but promoted hours later.
-    await _settle_aggregator_orders()
+@dataclass
+class _Composed:
+    """A built report, ready to mail. Kept apart from the mailing so the caller
+    can close its database session before the Resend call — the loop must hold no
+    connection across a third party (WP5, F-OPS-5)."""
+
+    subject: str
+    filename: str
+    html: str
+    xlsx: bytes
+    rows: int
+
+
+async def _compose(db: AsyncSession, *, date_from: str, date_to: str) -> _Composed:
+    """Build the report payload for a date range. All the database work of a send
+    lives here so the caller can release its session before mailing."""
     report = await build(db, date_from=date_from, date_to=date_to)
     detail = await build_detail(db, date_from=date_from, date_to=date_to)
-    xlsx = to_xlsx(report, detail)
-
     single = date_from == date_to
     label = date_from if single else f"{date_from} to {date_to}"
-    subject = f"Melting Moments — Daily sales {label}"
-    filename = f"daily-sales-{date_from}{'' if single else '_' + date_to}.xlsx"
-    html = _body_html(label, detail)
+    return _Composed(
+        subject=f"Melting Moments — Daily sales {label}",
+        filename=f"daily-sales-{date_from}{'' if single else '_' + date_to}.xlsx",
+        html=_body_html(label, detail),
+        xlsx=to_xlsx(report, detail),
+        rows=len(report.rows),
+    )
 
+
+async def _mail(composed: _Composed, recipients: list[str]) -> list[dict]:
+    """Mail a composed report to each recipient. Holds no database session — this
+    is the third-party (Resend) call the loop must not keep a connection across
+    (WP5, F-OPS-5)."""
     outcomes = []
     for recipient in recipients:
         result = await email_service.send_with_attachment(
             recipient,
-            subject,
-            html,
-            filename=filename,
-            content=xlsx,
+            composed.subject,
+            composed.html,
+            filename=composed.filename,
+            content=composed.xlsx,
             template=_TEMPLATE,
         )
         outcomes.append(
@@ -713,7 +728,25 @@ async def send(
                 "error": result.get("error"),
             }
         )
-    return {"subject": subject, "rows": len(report.rows), "sent": outcomes}
+    return outcomes
+
+
+async def send(
+    db: AsyncSession, *, date_from: str, date_to: str, recipients: list[str]
+) -> dict:
+    """Build the report and mail it, once per recipient.
+
+    The manual admin trigger's entry point: it owns the request session, so build
+    and mail share it. The nightly loop does NOT call this — it composes on a
+    scheduler session it then releases and mails with none held (`_tick`).
+    """
+    # Settle the day's marketplace orders into MM orders before counting, so the
+    # report is complete regardless of the background promote batch's timing — the
+    # fix for a channel (Keeta) scraped promptly but promoted hours later.
+    await _settle_aggregator_orders()
+    composed = await _compose(db, date_from=date_from, date_to=date_to)
+    outcomes = await _mail(composed, recipients)
+    return {"subject": composed.subject, "rows": composed.rows, "sent": outcomes}
 
 
 # ── The daily loop ───────────────────────────────────────────────────────────
@@ -793,7 +826,12 @@ def _last_close(windows: list[tuple[str, str] | None], day: date) -> datetime | 
     return max(closes) if closes else None
 
 
-async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
+async def _due_dates(db: AsyncSession, now: datetime | None = None) -> list[str]:
+    """The business days whose report is due and not yet journalled, oldest first.
+
+    A pure read: the loop calls it on a short-lived session it releases before
+    mailing, and the unit tests drive it directly with a stubbed db.
+    """
     tz = await business_day_service.resolve_timezone(db)
     now = now or datetime.now(tz)
 
@@ -803,7 +841,7 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
         .all()
     )
     if not branches:
-        return
+        return []
 
     # Each branch's weekly schedule, fetched once, so the per-day close windows
     # below resolve in memory (`branch_weekly_hours` is the source of truth now —
@@ -838,34 +876,55 @@ async def _tick(db: AsyncSession, now: datetime | None = None) -> None:
         business_date = day.isoformat()
         if not await _already_sent(db, business_date):
             pending.append(business_date)
-    if not pending:
-        return
+    return pending
 
+
+async def _send_business_day(business_date: str) -> list[dict]:
+    """Settle, compose and mail one day's report, holding no scheduler session
+    across the Resend call (WP5, F-OPS-5).
+
+    Settling runs first on its own sessions (it never touches ours); the report
+    is composed on a scheduler session that is released before the mail goes out.
+    """
+    await _settle_aggregator_orders()
+    async with SchedulerSessionFactory() as db:
+        composed = await _compose(db, date_from=business_date, date_to=business_date)
+    return await _mail(composed, DEFAULT_RECIPIENTS)
+
+
+async def _tick(now: datetime | None = None) -> None:
+    # Leadership FIRST, THEN a session (WP5, F-OPS-5). This loop used to open the
+    # session in `run_forever` and hold it for the whole tick — including the
+    # per-recipient Resend send — so every non-leader slot also checked out a
+    # scheduler connection each tick, and the leader pinned one across a third
+    # party. Now a non-leader takes only the lock's own connection; the leader
+    # reads the due days on a session it then releases, and mails with none held.
     async with advisory_lock.held(
         _ADVISORY_LOCK_KEY, name="daily sales report"
     ) as mine:
         if not mine:
             return
+        async with SchedulerSessionFactory() as db:
+            pending = await _due_dates(db, now)
+        if not pending:
+            return
         for business_date in pending:
-            # Re-check under the lock: another worker may have sent it in the gap.
-            if await _already_sent(db, business_date):
-                continue
-            summary = await send(
-                db,
-                date_from=business_date,
-                date_to=business_date,
-                recipients=DEFAULT_RECIPIENTS,
-            )
-            outcomes = summary["sent"]
+            # Re-check on a fresh session: another worker may have sent it in the
+            # gap, and the previous day's send committed its own journal row.
+            async with SchedulerSessionFactory() as db:
+                if await _already_sent(db, business_date):
+                    continue
+            outcomes = await _send_business_day(business_date)
             # Journal the day ONLY when every recipient succeeded. A partial
             # failure leaves no journal row, so the next tick retries rather than
             # calling a half-delivered report done (F-POS-18). The trade-off is
             # that a retry re-mails the recipients who already got it, which is
             # the right side to err on for a financial report.
             if outcomes and all(o["status"] == "sent" for o in outcomes):
-                await _record_sent(
-                    db, business_date, [o["recipient"] for o in outcomes]
-                )
+                async with SchedulerSessionFactory() as db:
+                    await _record_sent(
+                        db, business_date, [o["recipient"] for o in outcomes]
+                    )
                 logger.info(
                     "Daily sales report sent for %s: %s", business_date, outcomes
                 )
@@ -885,8 +944,7 @@ async def run_forever() -> None:
     while True:
         try:
             await heartbeat.beat("daily_sales_email")
-            async with SchedulerSessionFactory() as db:
-                await _tick(db)
+            await _tick()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a bad tick must not kill the loop
