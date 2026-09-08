@@ -73,11 +73,13 @@ function StaffTab() {
         {
           name: 'password',
           label: 'Console password',
+          type: 'password',
           helper: 'Leave blank to keep the current password',
         },
         {
           name: 'pin',
           label: 'Terminal PIN',
+          type: 'password',
           helper: '4–8 digits. Leave blank to keep the current PIN.',
         },
         {

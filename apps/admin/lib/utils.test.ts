@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cn, slugify, formatCurrency, formatDate, formatQuantity } from './utils';
+import { cn, slugify, formatCurrency, formatDate, formatQuantity, csvCell } from './utils';
 
 describe('cn', () => {
   it('joins class strings', () => {
@@ -100,5 +100,24 @@ describe('formatDate', () => {
   it('contains the year', () => {
     const result = formatDate('2024-01-15T00:00:00Z');
     expect(result).toContain('2024');
+  });
+});
+
+describe('csvCell (formula-injection safe)', () => {
+  it('quotes and doubles embedded quotes', () => {
+    expect(csvCell('a"b')).toBe('"a""b"');
+    expect(csvCell('plain')).toBe('"plain"');
+  });
+  it('neutralises a leading formula character with a quote prefix', () => {
+    expect(csvCell('=1+1')).toBe('"\'=1+1"');
+    expect(csvCell('+SUM(A1)')).toBe('"\'+SUM(A1)"');
+    expect(csvCell('-2')).toBe('"\'-2"');
+    expect(csvCell('@cmd')).toBe('"\'@cmd"');
+  });
+  it('leaves ordinary and empty values alone', () => {
+    expect(csvCell('Chocolate Cake')).toBe('"Chocolate Cake"');
+    expect(csvCell(null)).toBe('""');
+    expect(csvCell(undefined)).toBe('""');
+    expect(csvCell(42)).toBe('"42"');
   });
 });

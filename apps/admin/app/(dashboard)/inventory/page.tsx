@@ -24,7 +24,7 @@ import { Badge, Button, Input, Pagination, Select, Spinner, TabBar } from '@/com
 import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { csvCell, formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
 type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'submissions' | 'suppliers' | 'categories' | 'integrity';
@@ -66,12 +66,18 @@ const REPORT_TEMPLATE_GUIDANCE: Record<ReportTemplateKind, {
     staffInstruction: 'Count the actual raw material balance after production. Record receipts, internal use and waste as their own movements instead of typing a manual consumption total.',
   },
   packaging: {
-    defaultName: 'Packaging & dispatch closing count',
+    defaultName: 'Packaging & retail goods closing count',
     cadence: 'per_business_day',
     required: true,
-    kinds: ['packaging'],
+    // Retail resale goods (drinks, the gift note card, boxed sets) reconcile
+    // exactly like packaging — opening + received − sold = closing — and the
+    // packaging column contract already carries both `received` and `sold`, so
+    // they ride this report rather than needing a fourth kind. Their sold column
+    // fills from CONSUMPTION_FROM_ORDERS once each retail product's recipe
+    // consumes its inventory item.
+    kinds: ['packaging', 'resale_good'],
     requiredInput: 'physical_count',
-    staffInstruction: 'Count bags, boxes and other packaging in their storage order. Expected use comes from the sales recipes, receipts and transfers already in the ledger.',
+    staffInstruction: 'Count packaging (bags, boxes) and retail resale goods (drinks, cards, boxed sets) in their storage order. Expected use comes from the sales recipes, receipts and transfers already in the ledger.',
   },
   spot_check: {
     defaultName: 'Inventory spot check',
@@ -724,7 +730,6 @@ function CountsTab() {
   }, [branchId]);
 
   const downloadTemplate = () => {
-    const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
     const rows = [
       ['SKU', 'Item name', 'Unit', 'Expected quantity', 'Counted quantity', 'Remark'],
       ...levels.map((level) => [
@@ -736,7 +741,7 @@ function CountsTab() {
         '',
       ]),
     ];
-    const body = rows.map((row) => row.map(escape).join(',')).join('\n');
+    const body = rows.map((row) => row.map(csvCell).join(',')).join('\n');
     const href = URL.createObjectURL(new Blob([body], { type: 'text/csv;charset=utf-8' }));
     const anchor = document.createElement('a');
     anchor.href = href;

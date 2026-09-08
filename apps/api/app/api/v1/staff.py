@@ -120,6 +120,65 @@ async def _role_response(db: AsyncSession, role: Role) -> RoleResponse:
     return payload
 
 
+async def _another_role_manages_users(
+    db: AsyncSession, *, excluding: uuid.UUID
+) -> bool:
+    """Whether some OTHER live role that still has users can manage user accounts.
+
+    The safeguard behind the last-admin guard: if this is true, stripping user
+    management from the role being edited is safe; if not, it would leave the
+    console with nobody who can administer users, so the edit is refused.
+    """
+    roles = (
+        (
+            await db.execute(
+                select(Role).where(Role.id != excluding, Role.deleted_at.is_(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for r in roles:
+        if r.is_super_admin or "admin.users.manage" in (r.permissions or []):
+            n = (
+                await db.execute(
+                    select(func.count()).select_from(User).where(User.role_id == r.id)
+                )
+            ).scalar_one()
+            if n:
+                return True
+    return False
+
+
+async def _would_orphan_user_management(
+    db: AsyncSession, role: Role, data: RoleUpdate
+) -> bool:
+    """Whether applying `data` to `role` would leave the console with nobody who
+    can manage users (F-ADM-12): the role grants user management now, would not
+    after the edit, still has users, and no other role with users covers it.
+    """
+    after_permissions = (
+        data.permissions if data.permissions is not None else (role.permissions or [])
+    )
+    after_super = (
+        data.is_super_admin if data.is_super_admin is not None else role.is_super_admin
+    )
+    grants_before = role.is_super_admin or "admin.users.manage" in (
+        role.permissions or []
+    )
+    grants_after = after_super or "admin.users.manage" in after_permissions
+    if not (grants_before and not grants_after):
+        return False
+    this_role_users = (
+        await db.execute(
+            select(func.count()).select_from(User).where(User.role_id == role.id)
+        )
+    ).scalar_one()
+    return bool(this_role_users) and not await _another_role_manages_users(
+        db, excluding=role.id
+    )
+
+
 @roles_router.get("", response_model=list[RoleResponse])
 async def list_roles(
     include_deleted: bool = False,
@@ -184,6 +243,15 @@ async def update_role(
         permissions=data.permissions,
         is_super_admin=role.is_super_admin or bool(data.is_super_admin),
     )
+
+    # The console must never be left with nobody who can manage user accounts, so
+    # an admin cannot strip their own role and lock everyone out (F-ADM-12).
+    if await _would_orphan_user_management(db, role, data):
+        raise BadRequestError(
+            "This is the only role with users that can manage user accounts. "
+            "Grant user management to another role before removing it here."
+        )
+
     role = await crud_service.update(db, role, data)
     await audit_service.log_action(
         db,

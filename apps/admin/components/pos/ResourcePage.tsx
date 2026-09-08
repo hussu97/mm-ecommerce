@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
  * confirm-before-delete.
  */
 
-export type FieldType = 'text' | 'number' | 'select' | 'checkbox' | 'textarea';
+export type FieldType = 'text' | 'number' | 'password' | 'select' | 'checkbox' | 'textarea';
 
 export interface FieldDef {
   /**
@@ -445,7 +445,10 @@ function FormField({
   return (
     <Input
       label={field.label}
-      type={field.type === 'number' ? 'number' : 'text'}
+      // A password or PIN must be masked, and never offered up by the browser's
+      // saved-password autofill for a different account (F-ADM-10).
+      type={field.type === 'number' ? 'number' : field.type === 'password' ? 'password' : 'text'}
+      autoComplete={field.type === 'password' ? 'new-password' : undefined}
       step={field.step}
       value={value === undefined || value === null ? '' : String(value)}
       onChange={(e) => onChange(e.target.value)}

@@ -135,3 +135,18 @@ export function formatTime(iso: string): string {
     hour: 'numeric', minute: '2-digit', timeZone: SHOP_TZ,
   });
 }
+
+/**
+ * One CSV cell, safe to hand to a spreadsheet. Quotes the value and doubles any
+ * embedded quote, AND neutralises formula injection: a value that begins with
+ * `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with a single quote
+ * so Excel/Sheets treats it as text rather than executing it (F-ADM-15). Use this
+ * for every browser-built CSV — an item name or SKU is attacker-influenced data.
+ */
+export function csvCell(value: unknown): string {
+  let text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) {
+    text = `'${text}`;
+  }
+  return `"${text.replaceAll('"', '""')}"`;
+}
