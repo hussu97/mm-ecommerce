@@ -358,19 +358,84 @@ def _today() -> date:
     return datetime.now(trading_hours.TZ).date()
 
 
+async def _sync_branch_isolated(branch_id) -> str:
+    """Mirror one branch's hours to its integrators, each (branch, channel) on its
+    OWN committed session — no connection held across a portal PUT (F-AGG-17).
+
+    The leader used to run `sync_all` inside one session held for the whole tick:
+    a connection pinned across every branch × channel PUT and their backoff sleeps
+    (~16 min), and a raise anywhere lost every run row and every
+    `mark_needs_bootstrap` flag written but not yet committed. Here the schedule is
+    read once, then each channel's push runs and commits on its own short session,
+    so a hang or a raise costs only that one write and the rest stays durable.
+
+    The branch is re-loaded inside every session so all ORM access stays
+    session-local — a `Branch` carried across sessions would raise the moment
+    `_push_weekly_to_channel` read `aggregator_maps` off it. The plain `sched`
+    dict and `display` tuple are safe to carry.
+    """
+    async with SchedulerSessionFactory() as db:
+        branch = await db.get(
+            Branch, branch_id, options=[selectinload(Branch.aggregator_maps)]
+        )
+        if branch is None:
+            return "missing"
+        sched = await branch_hours_service.schedule(db, branch.id)
+        if sched is None:
+            return "no-schedule"
+        channels = [c for c in branch.aggregators if c != "keeta"]
+        display = branch_hours_service.effective_window(sched, _today())
+
+    for channel in channels:
+        async with SchedulerSessionFactory() as db:
+            branch = await db.get(
+                Branch, branch_id, options=[selectinload(Branch.aggregator_maps)]
+            )
+            await _push_weekly_to_channel(db, branch, channel, sched)
+            await db.commit()
+    async with SchedulerSessionFactory() as db:
+        branch = await db.get(
+            Branch, branch_id, options=[selectinload(Branch.aggregator_maps)]
+        )
+        await _push_foodics(db, branch, display)
+        await db.commit()
+    return "synced"
+
+
 async def _tick() -> None:
-    # Leadership FIRST, THEN a session (WP5, F-OPS-5). This loop used to open the
-    # session in `run_forever` and pass it in, so every non-leader slot checked
-    # out a scheduler connection each tick only to take the lock, find it held,
-    # and hand the connection back. Now a non-leader takes nothing but the lock's
-    # own connection; only the leader opens a session to do the work.
+    # Leadership FIRST, THEN sessions (WP5, F-OPS-5 / F-AGG-17). A non-leader takes
+    # nothing but the lock's own connection and returns. The leader reads the branch
+    # list on a short session it releases, then mirrors each branch on its own
+    # per-channel-committed sessions (`_sync_branch_isolated`) — never one
+    # connection pinned across the whole ~16-minute fan-out of portal PUTs, which is
+    # what `sync_all` under a single held session did (the request "Sync now" path
+    # still uses `sync_all` on its own request session).
     async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="branch hours sync") as mine:
         if not mine:
             return
+        # Nothing to mirror until the master write gate is on — skip the whole tick
+        # rather than open sessions to push nowhere.
+        if not settings.CATALOG_SYNC_ENABLED:
+            return
         async with SchedulerSessionFactory() as db:
-            results = await sync_all(db)
-            await db.commit()
-        synced = sum(1 for r in results if r.get("status") != "no-schedule")
+            branch_ids = (
+                (
+                    await db.execute(
+                        select(Branch.id)
+                        .where(Branch.is_active.is_(True), Branch.deleted_at.is_(None))
+                        .order_by(Branch.display_order, Branch.name)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        synced = 0
+        for branch_id in branch_ids:
+            try:
+                if await _sync_branch_isolated(branch_id) == "synced":
+                    synced += 1
+            except Exception:  # noqa: BLE001 — one branch must not stop the rest
+                logger.exception("branch-hours sync failed for branch %s", branch_id)
         if synced:
             logger.info("branch-hours sync: mirrored %s branch(es)", synced)
 

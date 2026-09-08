@@ -11,6 +11,7 @@ is a no-op.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -329,3 +330,94 @@ async def test_foodics_no_map_records_nothing(monkeypatch):
     branch = SimpleNamespace(id="b1", name="X")
     await branch_hours_sync._push_foodics(db, branch, ("09:00", "23:00"))
     assert _rows(db) == []
+
+
+# ── the loop tick: leader-first, per-branch isolated sessions (F-AGG-17) ──────
+
+
+@asynccontextmanager
+async def _leader(*_a, **_k):
+    yield True
+
+
+@asynccontextmanager
+async def _not_leader(*_a, **_k):
+    yield False
+
+
+class _BranchIdSession:
+    """A SchedulerSessionFactory stand-in whose one query returns branch ids."""
+
+    def __init__(self, branch_ids):
+        self._ids = branch_ids
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    async def execute(self, _stmt):
+        ids = self._ids
+
+        class _R:
+            def scalars(self_inner):
+                class _S:
+                    def all(self__):
+                        return ids
+
+                return _S()
+
+        return _R()
+
+
+def _wire_tick(monkeypatch, *, leader, branch_ids, gate=True):
+    monkeypatch.setattr(
+        branch_hours_sync.advisory_lock, "held", _leader if leader else _not_leader
+    )
+    monkeypatch.setattr(branch_hours_sync.settings, "CATALOG_SYNC_ENABLED", gate)
+    monkeypatch.setattr(
+        branch_hours_sync,
+        "SchedulerSessionFactory",
+        lambda: _BranchIdSession(branch_ids),
+    )
+    isolated = AsyncMock(return_value="synced")
+    monkeypatch.setattr(branch_hours_sync, "_sync_branch_isolated", isolated)
+    return isolated
+
+
+@pytest.mark.asyncio
+async def test_tick_mirrors_each_active_branch_when_it_is_the_leader(monkeypatch):
+    isolated = _wire_tick(monkeypatch, leader=True, branch_ids=["b1", "b2", "b3"])
+    await branch_hours_sync._tick()
+    assert [c.args[0] for c in isolated.await_args_list] == ["b1", "b2", "b3"]
+
+
+@pytest.mark.asyncio
+async def test_tick_does_nothing_when_another_slot_holds_the_lock(monkeypatch):
+    isolated = _wire_tick(monkeypatch, leader=False, branch_ids=["b1"])
+    await branch_hours_sync._tick()
+    isolated.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_the_whole_fan_out_when_the_write_gate_is_off(monkeypatch):
+    isolated = _wire_tick(monkeypatch, leader=True, branch_ids=["b1"], gate=False)
+    await branch_hours_sync._tick()
+    isolated.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tick_survives_one_branch_raising_and_still_does_the_rest(monkeypatch):
+    _wire_tick(monkeypatch, leader=True, branch_ids=["b1", "b2"])
+    seen: list[str] = []
+
+    async def flaky(branch_id):
+        seen.append(branch_id)
+        if branch_id == "b1":
+            raise RuntimeError("portal down")
+        return "synced"
+
+    monkeypatch.setattr(branch_hours_sync, "_sync_branch_isolated", flaky)
+    await branch_hours_sync._tick()  # must not raise
+    assert seen == ["b1", "b2"]

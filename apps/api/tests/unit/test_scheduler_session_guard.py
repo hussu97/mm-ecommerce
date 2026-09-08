@@ -212,14 +212,20 @@ _HTTP_SERVICE_BARE_CALLS = {"_ingest_one", "sync_all"}
 #: The nested holds that exist today and are deferred (see the note above). A
 #: backlog identified by (path relative to apps/api, enclosing function, dotted
 #: call) — no line number, so it survives edits. **It may only shrink.**
-_KNOWN_NESTED_HOLDS = {
-    ("app/services/branch_hours_sync.py", "_tick", "sync_all"),
-    # delivery_scheduler.sweep_once and grubops_orders.sweep_once were dropped
-    # when they moved to `advisory_lock.held_session`: their sweep now runs on the
-    # lock's OWN connection, so there is no separate `SchedulerSessionFactory`
-    # session pinned across the Lalamove / GrubOps round-trips — the whole sweep
-    # holds one connection, the lock's, which it would hold regardless.
-}
+# Empty — every known nested hold has been fixed:
+#   * branch_hours_sync._tick → sync_all (F-AGG-17): the loop now reads the branch
+#     list on a released session and mirrors each branch on its own
+#     per-(branch, channel)-committed sessions (`_sync_branch_isolated`), so no
+#     session is pinned across the portal PUTs. `sync_all` still exists for the
+#     request "Sync now" path, but the loop no longer awaits it under a session.
+#   * delivery_scheduler.sweep_once and grubops_orders.sweep_once moved to
+#     `advisory_lock.held_session`: their sweep runs on the lock's OWN connection,
+#     so there is no separate `SchedulerSessionFactory` session pinned across the
+#     Lalamove / GrubOps round-trips — the whole sweep holds one connection, the
+#     lock's, which it would hold regardless.
+# A new entry may be ADDED here only to defer a genuinely money-critical shared
+# leaf (see the note above); it must still only ever shrink.
+_KNOWN_NESTED_HOLDS: set[tuple[str, str, str]] = set()
 
 
 def _is_http_service_call(call: ast.Call) -> bool:
