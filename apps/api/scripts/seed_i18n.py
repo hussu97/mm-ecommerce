@@ -12,9 +12,12 @@ Two consequences that are easy to learn the hard way:
   the Redis cache, so the restored value is serving within seconds. Migrations
   `121` and `122` were both written before anyone noticed this, deployed green,
   and changed nothing that lasted. Edit the string here instead.
-* **The same is true of the console.** The Translations screen writes to the
-  database, and this overwrites it on the next deploy. That is why the value
-  here and the value a human last typed can disagree.
+* **The console is the exception now (F-ADM-5).** The Translations screen stamps
+  `ui_translations.hand_edited_at` when a human saves a string, and the seed
+  leaves any stamped row's value alone — so a console edit is NOT reverted, and
+  the screen's "Saved successfully" is finally true. A migration still changes a
+  seeded string only by editing the constant here; to make a source change win
+  back over a human edit, clear that row's `hand_edited_at`.
 
 Removing a key from `ALL_TRANSLATIONS` does *not* delete it — `seed()` only adds
 and updates. Retiring a key needs both: delete the line here so it stops being
@@ -1643,6 +1646,7 @@ async def seed(session: AsyncSession, *, force: bool = False) -> None:
         }
         added = 0
         updated = 0
+        skipped_hand_edited = 0
         for locale, namespace, key, value in ALL_TRANSLATIONS:
             existing = existing_by_key.get((locale, namespace, key))
             if not existing:
@@ -1653,6 +1657,15 @@ async def seed(session: AsyncSession, *, force: bool = False) -> None:
                 )
                 added += 1
             elif existing.value != value:
+                # A human owns this string now — the Translations console stamped
+                # `hand_edited_at` when they saved it, and reverting it to the
+                # source constant here is exactly the silent overwrite F-ADM-5 was.
+                # To let a source change win again, clear `hand_edited_at` on the
+                # row (or edit it in the console). New keys still seed; keys nobody
+                # touched still update.
+                if existing.hand_edited_at is not None:
+                    skipped_hand_edited += 1
+                    continue
                 existing.value = value
                 updated += 1
 
@@ -1670,12 +1683,14 @@ async def seed(session: AsyncSession, *, force: bool = False) -> None:
         # seed re-runs next boot rather than being skipped by a stamp for work
         # that never landed.
         await cache_set(_SEED_HASH_KEY, content_hash, ttl=_SEED_HASH_TTL)
-        unchanged = len(ALL_TRANSLATIONS) - added - updated
+        unchanged = len(ALL_TRANSLATIONS) - added - updated - skipped_hand_edited
         logger.info(
-            "i18n seed complete (%s added, %s updated, %s unchanged)",
+            "i18n seed complete (%s added, %s updated, %s unchanged, "
+            "%s hand-edited kept)",
             added,
             updated,
             unchanged,
+            skipped_hand_edited,
         )
 
 

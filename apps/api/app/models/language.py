@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, UUIDMixin
@@ -36,6 +46,14 @@ class UiTranslation(Base, UUIDMixin):
     namespace: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String(200), nullable=False)
     value: Mapped[str] = mapped_column(Text, nullable=False)
+    #: When a human last edited this string in the admin console. The i18n seeder
+    #: runs on every boot and overwrites any row whose value differs from the
+    #: source constant — which silently reverted every console edit (F-ADM-5).
+    #: Set, it marks the row as human-owned, and the seeder leaves its value
+    #: alone. Null means the string is still source-managed.
+    hand_edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def __repr__(self) -> str:
         return f"<UiTranslation {self.locale}:{self.namespace}.{self.key}>"

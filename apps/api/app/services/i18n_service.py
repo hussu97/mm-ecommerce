@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete, cache_get, cache_set
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.models.base import utcnow
 from app.models.language import Language, UiTranslation
 from app.schemas.i18n import (
     LanguageCreate,
@@ -140,14 +141,21 @@ async def bulk_upsert_translations(
         )
         existing = result.scalar_one_or_none()
 
+        # A console save is a human taking ownership of the string, so stamp
+        # `hand_edited_at`: the i18n seeder leaves a stamped row's value alone
+        # on its next boot rather than reverting it to the source constant
+        # (F-ADM-5).
+        now = utcnow()
         if existing:
             existing.value = entry.value
+            existing.hand_edited_at = now
         else:
             t = UiTranslation(
                 locale=locale,
                 namespace=data.namespace,
                 key=entry.key,
                 value=entry.value,
+                hand_edited_at=now,
             )
             db.add(t)
         count += 1
