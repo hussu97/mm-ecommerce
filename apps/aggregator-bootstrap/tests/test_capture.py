@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from aggregator_bootstrap.session_capture import (
     build_session,
     bundle_browser_state,
+    careem_session_cookie_expiry,
     cookie_expiry_from_playwright,
     earliest_token_expiry,
     jwt_expiry,
@@ -30,6 +31,37 @@ def test_careem_puts_authorization_in_the_header_profile():
     assert s["header_profile"]["authorization"] == "Bearer tok"
     assert s["header_profile"]["application"] == "web"
     assert "user-agent" in s["header_profile"]
+
+
+def test_careem_session_cookie_expiry_reads_the_embedded_unix_ts():
+    # `<nonce>|<unix-expiry>|<sig>` — the real 60-min death clock.
+    exp = careem_session_cookie_expiry({"session": "nonce|1788950175|sig"})
+    assert exp == datetime.fromtimestamp(1788950175, tz=timezone.utc)
+    assert careem_session_cookie_expiry({"session": "malformed"}) is None
+    assert careem_session_cookie_expiry({}) is None
+
+
+def test_careem_build_session_stamps_the_60min_session_expiry():
+    # A ~24h persistent cookie AND the 60-min `session` cookie: cookie_expires_at
+    # must take the sooner (60-min) one, minus skew, so liveness is honest.
+    soon = int(datetime.now(timezone.utc).timestamp()) + 3600
+    far = int(datetime.now(timezone.utc).timestamp()) + 86400
+    state = {
+        "cookies": [
+            {"name": "cf_clearance", "value": "z", "expires": far},
+            {"name": "session", "value": f"nonce|{soon}|sig", "expires": far},
+        ]
+    }
+    s = build_session(
+        "careem",
+        state["cookies"],
+        {"user-agent": "Chrome/151", "authorization": "Bearer t"},
+        playwright_state=state,
+    )
+    stamped = datetime.fromisoformat(s["cookie_expires_at"])
+    # ~soon minus the 120s skew (well under the 24h alternative).
+    assert abs(stamped.timestamp() - (soon - 120)) < 2
+    assert stamped.timestamp() < far
 
 
 def test_talabat_lifts_accesstoken_from_the_cookie():

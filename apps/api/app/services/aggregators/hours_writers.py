@@ -121,18 +121,12 @@ async def _branch_map(
 
 async def _load_session(db: AsyncSession, channel: str) -> LoadedSession:
     from app.services.aggregators import session_store
-    from app.services.providers import (
-        careem_provider,
-        deliveroo_provider,
-        talabat_provider,
-    )
+    from app.services.providers import deliveroo_provider, talabat_provider
 
     session = await session_store.load(db, channel)
-    # Noon replays the stored session as-is. Deliveroo/Talabat mint extra headers
-    # from the account row first; Careem refreshes its sliding `session` cookie so
-    # the hourly hours push does not race the 60-min gateway expiry.
+    # Careem/noon replay the stored session as-is; only Deliveroo/Talabat mint
+    # extra headers from the account row before the first GET.
     preparers = {
-        "careem": careem_provider.provider.prepare_session,
         "deliveroo": deliveroo_provider.provider.prepare_session,
         "talabat": talabat_provider.provider.prepare_session,
     }

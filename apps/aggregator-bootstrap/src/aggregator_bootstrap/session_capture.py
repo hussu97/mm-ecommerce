@@ -139,6 +139,26 @@ def cookie_expiry_from_playwright(
     return datetime.fromtimestamp(min(chosen), tz=UTC)
 
 
+def careem_session_cookie_expiry(cookie_map: dict[str, str]) -> datetime | None:
+    """Careem's real 60-minute death clock, read from the `session` cookie value.
+
+    Careem's Kong gateway gates on a `session` cookie shaped
+    `<nonce>|<unix-expiry>|<sig>` with a 60-min TTL minted at login and NOT
+    renewable server-side. Playwright only sees a ~24h persistent cookie, so
+    `cookie_expiry_from_playwright` misses this — the blind spot that let a dead
+    careem read as live for hours. Parsing the embedded expiry makes
+    `cookie_expires_at` honest, so the API flags the session unusable at ~60 min
+    and the worker re-logs in promptly instead of stranding it.
+    """
+    raw = cookie_map.get("session")
+    if not raw or "|" not in raw:
+        return None
+    try:
+        return datetime.fromtimestamp(int(raw.split("|")[1]), tz=UTC)
+    except (ValueError, IndexError, OverflowError, OSError):
+        return None
+
+
 def bundle_browser_state(
     playwright_state: dict[str, Any],
     *,
@@ -231,6 +251,13 @@ def build_session(
         {k: v for k, v in tokens.items() if isinstance(v, str)}
     )
     cookie_exp = cookie_expiry_from_playwright(state)
+    # Careem's `session` cookie dies in 60 min regardless of the ~24h persistent
+    # cookie Playwright sees; take the soonest so liveness reflects the real death.
+    if channel == "careem":
+        embedded = careem_session_cookie_expiry(cookie_map)
+        if embedded is not None:
+            embedded -= _EXPIRY_SKEW
+            cookie_exp = min(embedded, cookie_exp) if cookie_exp else embedded
     return {
         "channel": channel,
         "cookies": cookie_map,
