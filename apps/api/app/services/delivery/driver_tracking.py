@@ -333,12 +333,16 @@ def _as_payload(order: dict, *, at: datetime) -> dict:
     }
 
 
-#: The terminal courier_status set for each push-only provider, so the sweep can
-#: leave an already-finished booking alone in SQL rather than paying for a call
-#: to learn it is over.
+#: Every STORED provider value that is push-only, mapped to that courier's
+#: terminal statuses so the sweep can leave a finished booking alone in SQL.
+#: Slider records the tier it dispatched (`slider_bike`/`slider_car`), never the
+#: bare `slider`, so all three must be here — keying on the bare name matched no
+#: live Slider booking at all (found via MM-20260909-001).
 _PUSH_ONLY_TERMINALS = {
     "noon_send": NOON_SEND_TERMINAL_STATUSES,
     "slider": SLIDER_TERMINAL_STATUSES,
+    "slider_bike": SLIDER_TERMINAL_STATUSES,
+    "slider_car": SLIDER_TERMINAL_STATUSES,
 }
 
 
@@ -369,11 +373,14 @@ async def reconcile_push_only_endings(
     """
     from app.services.couriers import noon_send_service, slider_service
 
-    refreshers = {}
+    # Keyed by the STORED provider value, so every Slider tier resolves to
+    # slider's refresh (the row says `slider_car`, not `slider`).
+    refreshers: dict[str, object] = {}
     if noon_send_service.is_enabled():
-        refreshers[noon_send_service.PROVIDER] = noon_send_service.refresh
+        refreshers["noon_send"] = noon_send_service.refresh
     if slider_service.is_enabled():
-        refreshers[slider_service.PROVIDER] = slider_service.refresh
+        for tier in ("slider", "slider_bike", "slider_car"):
+            refreshers[tier] = slider_service.refresh
     if not refreshers:
         return 0
 

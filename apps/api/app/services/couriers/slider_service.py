@@ -51,6 +51,8 @@ from app.models.order_delivery import (
     SLIDER_STATUS_RANK,
     OrderDelivery,
     SliderStatusEnum,
+    is_collected,
+    is_terminal,
 )
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.webhook_event import WebhookEvent
@@ -1009,6 +1011,53 @@ async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> dict[str,
     return {"received": True, "event_type": status, "matched": True}
 
 
+def _browser_tracking_url(url: str) -> str:
+    """Slider's `/t/<code>` short link opens an "open in app or browser?"
+    interstitial; the `/track-order/<code>` form opens the tracking page in the
+    browser directly. Same code, one less tap for the customer, so we store the
+    direct form. Only the first `/t/` path segment is rewritten — the host, the
+    code and any query are left exactly as Slider sent them, and a link that is
+    already in the direct form (no `/t/`) is untouched.
+    """
+    return url.replace("/t/", "/track-order/", 1)
+
+
+def _is_reassignment(
+    delivery: OrderDelivery,
+    info: dict | None,
+    updated_at: datetime | None,
+) -> bool:
+    """Whether an out-of-order push is a rider CHANGE, not a stale replay.
+
+    Slider signals a reassignment by re-sending `rider_assigned` for the new
+    rider — which ranks below an already-advanced status (`heading_to_pickup`)
+    and so is dropped by the ordering guard, stranding the shop on the old
+    driver's name and number (MM-20260909-001). A push is a genuine reassignment
+    only when all of these hold, so a late re-delivery of the OLD rider's push
+    cannot masquerade as one:
+
+      * the booking is still coming to the kitchen — a "new rider" once the
+        parcel is collected, or on a finished delivery, is a replay, never a swap;
+      * the push names a rider whose phone differs from the one on the row (a
+        different person who has actually accepted the job — Slider names a rider
+        only once they have); and
+      * its timestamp, when both sides carry one, is not older than the last
+        push we accepted.
+    """
+    if is_terminal(delivery.provider, delivery.courier_status) or is_collected(
+        delivery.provider, delivery.courier_status
+    ):
+        return False
+    incoming = driver_assignment.Driver.from_slider(info)
+    if incoming.is_empty or not incoming.phone or not delivery.driver_phone:
+        return False
+    if incoming.phone == delivery.driver_phone:
+        return False
+    if updated_at is not None and delivery.status_updated_at is not None:
+        return updated_at >= delivery.status_updated_at
+    return True
+
+
 async def apply_webhook(
     db: AsyncSession,
     payload: dict[str, Any],
@@ -1025,10 +1074,21 @@ async def apply_webhook(
     """
     updated_at = parse_time(payload.get("timestamp") or payload.get("updated_at"))
     status = _status(payload)
+    # Slider names the rider inline on every push, so unlike noon Send there is
+    # no detail call to make. `record` decides whether anything actually moved.
+    info = payload.get("driver_info") or payload.get("driver") or payload.get("rider")
     if delivery.courier_status and status:
         arriving = SLIDER_STATUS_RANK.get(status, -1)
         current = SLIDER_STATUS_RANK.get(delivery.courier_status, -1)
-        if arriving < current:
+        # A push that ranks below what we hold is normally a stale replay and is
+        # dropped so it cannot walk the status backwards. The one exception is a
+        # reassignment: Slider re-sends `rider_assigned` for a NEW rider, which
+        # ranks below `heading_to_pickup` — dropping it wholesale is what left
+        # MM-20260909-001 showing the old driver. So let a genuine reassignment
+        # through (its rider is recorded and its lower status is honoured, since
+        # the new rider really is only just assigned); everything else is still
+        # ignored.
+        if arriving < current and not _is_reassignment(delivery, info, updated_at):
             logger.info(
                 "Ignoring out-of-order Slider webhook for %s (%s after %s)",
                 delivery.courier_order_id,
@@ -1041,11 +1101,8 @@ async def apply_webhook(
     if delivery_id := payload.get("order_number"):
         delivery.courier_order_id = str(delivery_id)
     if tracking := (payload.get("tracking_url") or payload.get("tracking_link")):
-        delivery.share_link = str(tracking)
+        delivery.share_link = _browser_tracking_url(str(tracking))
 
-    # Slider names the rider inline on every push, so unlike noon Send there is
-    # no detail call to make. `record` decides whether anything actually moved.
-    info = payload.get("driver_info") or payload.get("driver") or payload.get("rider")
     change = await driver_assignment.record(
         db,
         delivery,

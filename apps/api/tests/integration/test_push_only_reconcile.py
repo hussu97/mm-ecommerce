@@ -91,9 +91,12 @@ async def env(engine):
             booked_at=NOW - timedelta(hours=1),
         )
         # Eligible: a booking that never got even its first push (NULL status).
+        # Stored as `slider_car`, the tier dispatch actually records — the sweep
+        # must resolve that to slider, not miss it by keying on the bare name
+        # (the MM-20260909-001 provider-family bug).
         _delivery(
             "slider_nullstatus",
-            provider="slider",
+            provider="slider_car",
             courier_order_id="S-null",
             courier_status=None,
             status_updated_at=None,
@@ -117,10 +120,11 @@ async def env(engine):
             status_updated_at=recent,
             booked_at=recent,
         )
-        # Skip: booked beyond CHASE_FOR, a human owns it now.
+        # Skip: booked beyond CHASE_FOR, a human owns it now. A slider_bike tier,
+        # so both Slider tiers are exercised.
         _delivery(
             "slider_ancient",
-            provider="slider",
+            provider="slider_bike",
             courier_order_id="S-old",
             courier_status=SliderStatusEnum.HEADING_TO_PICKUP.value,
             status_updated_at=quiet,

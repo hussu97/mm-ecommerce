@@ -21,6 +21,7 @@ synthesised and the ordering comes from the statuses themselves.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -1177,6 +1178,108 @@ async def test_a_tracking_link_on_a_push_is_kept(inbound):
         delivery,
     )
     assert delivery.share_link == "https://t.slider/1"
+
+
+@pytest.mark.asyncio
+async def test_a_short_tracking_link_is_rewritten_to_open_in_the_browser(inbound):
+    """Slider's `/t/<code>` link opens an app-or-browser interstitial; we store
+    the `/track-order/<code>` form so it opens the tracking page directly."""
+    delivery = _row()
+    await slider_service.apply_webhook(
+        None,
+        {
+            "id": "SLD-1",
+            "status": "heading_to_pickup",
+            "tracking_link": "https://www.slider-app.com/t/aj7f-l223",
+        },
+        delivery,
+    )
+    assert delivery.share_link == "https://www.slider-app.com/track-order/aj7f-l223"
+
+
+# ── reassignment: a swap that arrives as a lower-ranked status (MM-20260909-001) ──
+
+
+@pytest.mark.asyncio
+async def test_a_reassignment_updates_the_driver_though_its_status_ranks_lower(inbound):
+    """Slider signals a swap by re-sending `rider_assigned` for the new rider,
+    which ranks below the `heading_to_pickup` we already hold. Dropping it left
+    the shop calling the old driver; a genuine reassignment (a different, newer
+    accepted rider) must take the new driver and honour its status."""
+    delivery = _row()
+    delivery.courier_status = "heading_to_pickup"
+    delivery.driver_phone = "+971500000001"
+    delivery.driver_name = "Old Driver"
+    delivery.status_updated_at = datetime(2026, 9, 9, 10, 0, tzinfo=timezone.utc)
+
+    await slider_service.apply_webhook(
+        None,
+        {
+            "id": "SLD-1",
+            "status": "rider_assigned",
+            "timestamp": "2026-09-09T10:03:15Z",
+            "driver_info": {"name": "New Driver", "phone_number": "+971500000002"},
+        },
+        delivery,
+    )
+
+    assert delivery.driver_phone == "+971500000002"
+    assert delivery.driver_name == "New Driver"
+    assert delivery.courier_status == "rider_assigned"
+    assert delivery.courier_previous_status == "heading_to_pickup"
+    assert inbound == ["rider_assigned"]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_replay_of_the_same_rider_is_still_ignored(inbound):
+    """The guard still holds for what it was for: a late duplicate of a status we
+    have moved past, carrying the SAME rider, does not walk the status back."""
+    delivery = _row()
+    delivery.courier_status = "heading_to_pickup"
+    delivery.driver_phone = "+971500000001"
+    delivery.driver_name = "Same Driver"
+    delivery.status_updated_at = datetime(2026, 9, 9, 10, 0, tzinfo=timezone.utc)
+
+    await slider_service.apply_webhook(
+        None,
+        {
+            "id": "SLD-1",
+            "status": "rider_assigned",
+            "timestamp": "2026-09-09T10:03:15Z",
+            "driver_info": {"name": "Same Driver", "phone_number": "+971500000001"},
+        },
+        delivery,
+    )
+
+    assert delivery.courier_status == "heading_to_pickup"
+    assert delivery.driver_phone == "+971500000001"
+    assert inbound == []
+
+
+@pytest.mark.asyncio
+async def test_a_new_rider_after_pickup_is_a_replay_not_a_swap(inbound):
+    """Once the parcel is on the bike a "new rider" push is a stale replay, never
+    a reassignment — nobody hands a collected order to a different driver — so the
+    guard still drops it and the picked-up status stands."""
+    delivery = _row()
+    delivery.courier_status = "picked_up"
+    delivery.driver_phone = "+971500000001"
+    delivery.status_updated_at = datetime(2026, 9, 9, 10, 0, tzinfo=timezone.utc)
+
+    await slider_service.apply_webhook(
+        None,
+        {
+            "id": "SLD-1",
+            "status": "rider_assigned",
+            "timestamp": "2026-09-09T10:03:15Z",
+            "driver_info": {"name": "Another", "phone_number": "+971500000002"},
+        },
+        delivery,
+    )
+
+    assert delivery.courier_status == "picked_up"
+    assert delivery.driver_phone == "+971500000001"
+    assert inbound == []
 
 
 # ── the emirate, and the two shapes it arrives in ─────────────────────────────
