@@ -1,6 +1,8 @@
 // Types for the POS domain. Kept separate from `types.ts` so the original
 // storefront/admin surface stays easy to read as the POS side grows.
 
+import type { Schemas } from '@mm/types';
+
 export type Translations = Record<string, Record<string, string>>;
 
 // Counter orders are all `pickup` now — the register dropped its order-type
@@ -308,49 +310,6 @@ export interface DrawerOperation {
   recorded_at: string;
 }
 
-// ─── POS orders ───────────────────────────────────────────────────────────────
-
-export interface PosOrderItem {
-  id: string;
-  product_name: string;
-  product_sku: string;
-  quantity: number;
-  returned_quantity: number;
-  unit_price: number;
-  total_price: number;
-  discount_amount: number;
-  tax_amount: number;
-  status: string | null;
-  kitchen_notes: string | null;
-}
-
-export interface PosOrder {
-  id: string;
-  order_number: string;
-  check_number: number | null;
-  branch_id: string | null;
-  order_type: OrderType | null;
-  source: string | null;
-  pos_status: PosOrderStatus | null;
-  business_date: string | null;
-  guests: number;
-  customer_name: string | null;
-  customer_phone: string | null;
-  subtotal: number;
-  discount_amount: number;
-  charges_amount: number;
-  vat_amount: number;
-  total_excl_vat: number;
-  rounding_amount: number;
-  tips_amount: number;
-  total: number;
-  amount_paid: number;
-  balance_due: number;
-  opened_at: string | null;
-  closed_at: string | null;
-  items: PosOrderItem[];
-}
-
 // ─── Inventory ────────────────────────────────────────────────────────────────
 
 export interface InventoryCategory {
@@ -475,19 +434,11 @@ export interface InventoryTransaction {
   reverses_transaction_id: string | null;
   correction_group_id: string | null;
   created_at: string;
-  items: Array<{
-    id: string;
-    item_id: string;
-    quantity: number;
-    unit: string;
-    unit_cost: number;
-    total_cost: number;
-    signed_quantity: number | null;
-    balance_after_quantity: number | null;
-    recipe_version_id: string | null;
-    item_name: string | null;
-    item_sku: string | null;
-  }>;
+  // The wire shape, not a hand-typed subset: the money and quantity fields are
+  // decimal STRINGS, and typing them `number` (as this did) invited the raw
+  // `-1200.000000` render this list used to show. Every reader coerces through
+  // `formatQuantity`/`Number` (F-ADM-14).
+  items: Schemas['TransactionLineResponse'][];
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

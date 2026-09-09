@@ -11,7 +11,7 @@ import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, CostOfGoods, Device, DrawerOperation,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   InventoryValuation, KitchenFlow, PaymentMethod,
-  PaymentReportRow, PermissionCatalogue, PosOrder, Printer, PurchaseOrder,
+  PaymentReportRow, PermissionCatalogue, Printer, PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
   SupplierAnalysisRow, Supplier, Tag, Tax,
   TaxGroup, TaxReportRow, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
@@ -171,17 +171,6 @@ export const tillsApi = {
   get: (id: string) => api.get<Till>(`/tills/${id}`),
   report: (id: string) => api.get<Record<string, unknown>>(`/tills/${id}/report`),
   drawerOperations: (id: string) => api.get<DrawerOperation[]>(`/tills/${id}/drawer-operations`),
-};
-
-// ─── POS orders ───────────────────────────────────────────────────────────────
-
-export const posOrdersApi = {
-  list: (params?: {
-    branch_id?: string; business_date?: string; pos_status?: string;
-    order_type?: string; open_only?: boolean; limit?: number;
-  }) => api.get<PosOrder[]>(`/pos/orders${buildQs(params)}`),
-  get: (id: string) => api.get<PosOrder>(`/pos/orders/${id}`),
-  openChecks: (branchId: string) => api.get<PosOrder[]>(`/pos/kitchen/open-checks${buildQs({ branch_id: branchId })}`),
 };
 
 // ─── Inventory ────────────────────────────────────────────────────────────────
