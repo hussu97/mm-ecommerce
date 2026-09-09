@@ -565,11 +565,24 @@ def add_system_endpoints(app: FastAPI, *, service: str) -> None:
         the container healthcheck polls; this is for a human and for alerting.
         """
         db_ok = False
+        alembic_version: str | None = None
         try:
             async with asyncio.timeout(2):
                 async with AsyncSessionFactory() as db:
                     await db.execute(text("SELECT 1"))
-            db_ok = True
+                    db_ok = True
+                    # The migration the VM is actually on. An hourly drift probe
+                    # (and a human) compares this to the repo head to catch a
+                    # deploy that skipped migrations — main and prod diverging
+                    # silently (F-OPS-11). Best-effort in its OWN guard: a missing
+                    # table or a slow read reports version=null, it must never
+                    # flip the liveness verdict that `SELECT 1` already settled.
+                    with suppress(Exception):
+                        alembic_version = (
+                            await db.execute(
+                                text("SELECT version_num FROM alembic_version")
+                            )
+                        ).scalar_one_or_none()
         except (Exception, TimeoutError):  # noqa: BLE001 — report, never raise
             db_ok = False
 
@@ -586,6 +599,7 @@ def add_system_endpoints(app: FastAPI, *, service: str) -> None:
             "service": service,
             "env": settings.APP_ENV,
             "db": "ok" if db_ok else "unavailable",
+            "alembic_version": alembic_version,
             "pools": {
                 "request": _pool_stats(engine),
                 "scheduler": _pool_stats(scheduler_engine),

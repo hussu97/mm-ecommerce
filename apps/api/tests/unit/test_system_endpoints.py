@@ -78,3 +78,12 @@ async def test_integrations_says_disabled_rather_than_calling_out(client, monkey
     response = await client.get("/health/integrations")
 
     assert response.json()["checks"]["firebase_certificates"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_health_reports_the_alembic_version_key(client):
+    """The migration the VM is on, for the drift probe (F-OPS-11). The key is
+    always present; its value is the version string when the DB is reachable and
+    null otherwise — the probe reads it either way."""
+    response = await client.get("/health")
+    assert "alembic_version" in response.json()

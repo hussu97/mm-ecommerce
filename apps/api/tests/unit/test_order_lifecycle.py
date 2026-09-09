@@ -503,3 +503,33 @@ async def test_a_correction_does_not_reopen_a_voided_check():
         extra_from=order_lifecycle.ADMIN_RECOVERABLE[OrderStatusEnum.DELIVERED],
     )
     assert order.pos_status == PosOrderStatusEnum.VOID.value
+
+
+# ── E6: a delivered non-counter order closes its register check ───────────────
+
+
+@pytest.mark.asyncio
+async def test_delivered_website_order_closes_its_register_check(quiet_consequences):
+    # A website order that reaches delivered through the courier webhook used to
+    # sit pos_status=active forever (E6). It is now closed, with closed_at stamped
+    # (the check constraint requires it).
+    order = _order(
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        source=OrderSourceEnum.ONLINE.value,
+        pos_status=PosOrderStatusEnum.ACTIVE.value,
+    )
+    await order_lifecycle.transition(_Db(), order, OrderStatusEnum.DELIVERED)
+    assert order.pos_status == PosOrderStatusEnum.CLOSED.value
+    assert order.closed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_delivered_counter_order_is_left_for_close_order(quiet_consequences):
+    # A cashier check is owned by `close_order`; the lifecycle must not touch it.
+    order = _order(
+        OrderStatusEnum.OUT_FOR_DELIVERY,
+        source=OrderSourceEnum.CASHIER.value,
+        pos_status=PosOrderStatusEnum.ACTIVE.value,
+    )
+    await order_lifecycle.transition(_Db(), order, OrderStatusEnum.DELIVERED)
+    assert order.pos_status == PosOrderStatusEnum.ACTIVE.value

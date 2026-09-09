@@ -614,6 +614,19 @@ async def _consequences(
                 getattr(previous, "value", previous),
                 refunded,
             )
+        # A delivered website/marketplace order is finished on the register too,
+        # but only `close_order` closed the counter's own checks — so an online or
+        # live-aggregator order that reached delivered through the courier webhook
+        # or the auto-close sat `pos_status=active` forever (E6: 23 such rows).
+        # Close it here; counter orders are owned by `close_order` and excluded.
+        # `closed_at` MUST be stamped alongside — a closed order without it
+        # violates `ck_orders_closed_has_closed_at` (migration 141).
+        if (
+            order.source != OrderSourceEnum.CASHIER.value
+            and order.pos_status in OPEN_ON_THE_REGISTER
+        ):
+            order.pos_status = PosOrderStatusEnum.CLOSED.value
+            order.closed_at = utcnow()
 
     # An order that is not going to arrive, that was paid for by card, gets the
     # money back without anybody pressing anything else.
