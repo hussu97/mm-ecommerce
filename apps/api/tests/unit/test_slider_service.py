@@ -579,9 +579,11 @@ async def test_create_delivery_still_retries_a_429_the_server_never_acted_on(
     create may safely try once more."""
     attempts = _counting_client(
         monkeypatch,
-        lambda n: httpx.Response(429, json={"message": "later"})
-        if n == 1
-        else httpx.Response(200, json={"order_number": "S-1"}),
+        lambda n: (
+            httpx.Response(429, json={"message": "later"})
+            if n == 1
+            else httpx.Response(200, json={"order_number": "S-1"})
+        ),
     )
     assert await _create(_client(None)) == {"order_number": "S-1"}
     assert len(attempts) == 2
