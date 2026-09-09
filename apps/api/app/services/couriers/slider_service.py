@@ -1012,14 +1012,21 @@ async def handle_webhook(db: AsyncSession, payload: dict[str, Any]) -> dict[str,
 
 
 def _browser_tracking_url(url: str) -> str:
-    """Slider's `/t/<code>` short link opens an "open in app or browser?"
-    interstitial; the `/track-order/<code>` form opens the tracking page in the
-    browser directly. Same code, one less tap for the customer, so we store the
-    direct form. Only the first `/t/` path segment is rewritten — the host, the
-    code and any query are left exactly as Slider sent them, and a link that is
-    already in the direct form (no `/t/`) is untouched.
+    """Rewrite Slider's short link so it opens the tracking page in the browser
+    directly rather than an "open in app or browser?" interstitial. Two changes,
+    both learned from the live links (MM-20260909-001/002):
+
+      * `/t/<code>` → `/track-order/<code>` — the interstitial path becomes the
+        direct tracking page; and
+      * `www.slider-app.com` → the apex `slider-app.com` — the `www.` host
+        301-redirects (to `slider-app.com`) and is the host the Slider app claims
+        for its universal links, so a `www.` link is exactly the one that offers
+        "open in the app". The apex answers the tracking page with a 200.
+
+    Both are first-occurrence, host-scoped replaces; a link already in the direct
+    apex form is left untouched.
     """
-    return url.replace("/t/", "/track-order/", 1)
+    return url.replace("/t/", "/track-order/", 1).replace("://www.", "://", 1)
 
 
 def _is_reassignment(

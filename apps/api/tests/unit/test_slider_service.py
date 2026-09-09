@@ -1182,8 +1182,9 @@ async def test_a_tracking_link_on_a_push_is_kept(inbound):
 
 @pytest.mark.asyncio
 async def test_a_short_tracking_link_is_rewritten_to_open_in_the_browser(inbound):
-    """Slider's `/t/<code>` link opens an app-or-browser interstitial; we store
-    the `/track-order/<code>` form so it opens the tracking page directly."""
+    """Slider's `www…/t/<code>` link opens an app-or-browser interstitial; we
+    store the apex `/track-order/<code>` form (no `www.`, which 301-redirects and
+    claims the universal link) so it opens the tracking page directly."""
     delivery = _row()
     await slider_service.apply_webhook(
         None,
@@ -1194,7 +1195,7 @@ async def test_a_short_tracking_link_is_rewritten_to_open_in_the_browser(inbound
         },
         delivery,
     )
-    assert delivery.share_link == "https://www.slider-app.com/track-order/aj7f-l223"
+    assert delivery.share_link == "https://slider-app.com/track-order/aj7f-l223"
 
 
 # ── reassignment: a swap that arrives as a lower-ranked status (MM-20260909-001) ──
