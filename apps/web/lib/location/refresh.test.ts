@@ -59,7 +59,7 @@ describe('firstPinnedAddress', () => {
       id: 'a', user_id: 'u', label: 'Home', first_name: 'A', last_name: 'B',
       phone: '+971500000000', address_line_1: 'Somewhere', address_line_2: null,
       unit_number: null, country: 'AE', is_default: false,
-      latitude: SHARJAH.latitude, longitude: SHARJAH.longitude,
+      latitude: String(SHARJAH.latitude), longitude: String(SHARJAH.longitude),
       ...over,
     } as Address;
   }
@@ -73,14 +73,14 @@ describe('firstPinnedAddress', () => {
     const unpinned = addr({
       id: 'typed-only',
       is_default: true,
-      latitude: null as unknown as number,
-      longitude: null as unknown as number,
+      latitude: null,
+      longitude: null,
     });
     expect(firstPinnedAddress([unpinned, addr({ id: 'pinned' })])?.id).toBe('pinned');
   });
 
   it('treats the null island as no pin at all', () => {
-    const nullIsland = addr({ id: 'atlantic', is_default: true, latitude: 0, longitude: 0 });
+    const nullIsland = addr({ id: 'atlantic', is_default: true, latitude: '0', longitude: '0' });
     expect(firstPinnedAddress([nullIsland])).toBeNull();
   });
 

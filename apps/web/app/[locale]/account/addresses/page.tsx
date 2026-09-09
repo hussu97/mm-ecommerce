@@ -5,6 +5,7 @@ import { analytics, failureReason } from '@/lib/analytics';
 import { addressesApi, authApi, ApiError } from '@/lib/api';
 import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
 import { Address, AddressCreate, AddressFormDraft } from '@/lib/types';
+import { toLatLng } from '@/lib/address';
 import { Input } from '@/components/ui/Input';
 import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { PhoneVerify } from '@/components/ui/PhoneVerify';
@@ -111,8 +112,10 @@ export default function AddressesPage() {
       unit_number: addr.unit_number || '',
       country: addr.country,
       is_default: addr.is_default,
-      latitude: addr.latitude,
-      longitude: addr.longitude,
+      // Stored coords are strings (the wire shape); the form edits them as
+      // numbers, so parse at this boundary. A pinless address stays null.
+      latitude: toLatLng(addr)?.latitude ?? null,
+      longitude: toLatLng(addr)?.longitude ?? null,
     });
     setErrors({});
     setShowForm(true);

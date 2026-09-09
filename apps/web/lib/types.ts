@@ -1,3 +1,5 @@
+import type { Schemas } from '@mm/types';
+
 // ─── Language ─────────────────────────────────────────────────────────────────
 
 export interface Language {
@@ -416,22 +418,31 @@ export interface AdvertisedPromo {
 
 // ─── Address ──────────────────────────────────────────────────────────────────
 
-export interface Address {
-  id: string;
-  user_id: string;
-  label: string;
-  first_name: string;
-  last_name: string;
-  phone: string;
-  address_line_1: string;
-  address_line_2: string | null;
-  unit_number: string | null;
-  country: string;
-  is_default: boolean;
-  latitude: number | null;
-  longitude: number | null;
-  created_at: string;
-}
+/**
+ * An address as the app holds one, tracking the API contract (`@mm/types`) with
+ * one deliberate widening on the coordinates.
+ *
+ * The API returns `latitude`/`longitude` as required decimal **strings** — a
+ * `Decimal` serialised, never a `number`. This shape used to type them
+ * `number | null`, which was wrong on both counts and is the field that prices
+ * delivery (F-WEB-13): code read `address.latitude` as a number the runtime
+ * never held. Every other field now comes straight from `AddressResponse`, so a
+ * contract change surfaces here rather than drifting; `types.contract.test.ts`
+ * holds the two in step with `expectTypeOf`.
+ *
+ * The one difference from `AddressResponse` is that the coordinates are
+ * `string | null` rather than a required `string`: this same shape is reused for
+ * guest addresses in localStorage, which may have no pin yet. `null` is the
+ * pinless case every consumer already guards, and `toLatLng()` in `lib/address`
+ * is the single place a stored string becomes a number.
+ */
+export type Address = Omit<
+  Schemas['AddressResponse'],
+  'latitude' | 'longitude'
+> & {
+  latitude: string | null;
+  longitude: string | null;
+};
 
 export interface AddressCreate {
   label?: string;

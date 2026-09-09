@@ -16,6 +16,7 @@ import { addressesApi, deliveryApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { guestAddresses } from '@/lib/guest-addresses';
 import { readBranch, rememberBranch } from './branch-cookie';
+import { toLatLng } from '@/lib/address';
 import { MAX_FIX_AGE_MS, firstPinnedAddress, shouldReplaceWithBrowserFix } from './refresh';
 import {
   DEFAULT_LOCATION,
@@ -205,10 +206,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   const refreshFromAddresses = useCallback(async () => {
     try {
       const preferred = firstPinnedAddress(await addressesApi.list());
-      if (!preferred) return;
+      const pin = preferred && toLatLng(preferred);
+      if (!preferred || !pin) return;
       setLocation({
-        latitude: Number(preferred.latitude),
-        longitude: Number(preferred.longitude),
+        ...pin,
         source: 'address',
         label: preferred.label ?? null,
       });
@@ -269,10 +270,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         try {
           const preferred = firstPinnedAddress(await addressesApi.list());
           if (cancelled) return;
-          if (preferred) {
+          const pin = preferred && toLatLng(preferred);
+          if (preferred && pin) {
             setLocation({
-              latitude: Number(preferred.latitude),
-              longitude: Number(preferred.longitude),
+              ...pin,
               source: 'address',
               label: preferred.label ?? null,
             });
@@ -285,10 +286,10 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       }
 
       const lastOrdered = firstPinnedAddress(guestAddresses.list());
-      if (lastOrdered) {
+      const lastPin = lastOrdered && toLatLng(lastOrdered);
+      if (lastOrdered && lastPin) {
         setLocation({
-          latitude: Number(lastOrdered.latitude),
-          longitude: Number(lastOrdered.longitude),
+          ...lastPin,
           source: 'address',
           label: lastOrdered.label ?? null,
         });

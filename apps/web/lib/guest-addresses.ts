@@ -79,8 +79,11 @@ function toAddress(input: GuestAddressInput, id: string): Address {
     unit_number: input.unit_number ?? null,
     country: 'AE',
     is_default: input.is_default ?? false,
-    latitude: input.latitude ?? null,
-    longitude: input.longitude ?? null,
+    // Stored as strings so a guest address is byte-for-byte the shape the API
+    // returns (F-WEB-13) — the checkout and modal must not care which kind of
+    // customer they serve. A pinless guest address stays null.
+    latitude: input.latitude == null ? null : String(input.latitude),
+    longitude: input.longitude == null ? null : String(input.longitude),
     created_at: new Date().toISOString(),
   };
 }
