@@ -46,6 +46,15 @@ a webhook naming its rider rolled back at commit, and both the driver and the
 at again. `_refresh_one` never needed the id — it reads the booking first and
 learns the driver from that — so the filter bought nothing and cost the only
 case it mattered in.
+
+**noon Send and Slider get the ending half, not the position half.** Their
+position stream needs nothing (noon Send pushes one every 15-30s; Slider is
+fixed-fee and shows no live driver), but both are push-only and neither retries,
+so a dropped `DELIVERED`/`CANCELLED` strands the order exactly as a lost Lalamove
+`COMPLETED` would. `reconcile_push_only_endings` is their equivalent of the
+ending-reconcile above: for a booking that has gone quiet past `RECONCILE_AFTER`
+it calls the provider's own `refresh`, which feeds the current status through
+`apply_webhook` — the same door a push uses (F-COU-17).
 """
 
 from __future__ import annotations
@@ -53,10 +62,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.order_delivery import (
+    NOON_SEND_TERMINAL_STATUSES,
+    SLIDER_TERMINAL_STATUSES,
     CourierStatusEnum,
     OrderDelivery,
     is_collected,
@@ -67,7 +78,13 @@ from app.services.delivery.driver_assignment import Change, Driver
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CHASE_FOR", "STALE_AFTER", "refresh_live_drivers"]
+__all__ = [
+    "CHASE_FOR",
+    "RECONCILE_AFTER",
+    "STALE_AFTER",
+    "reconcile_push_only_endings",
+    "refresh_live_drivers",
+]
 
 #: How old a position has to be before it is worth an API call to replace.
 #:
@@ -100,6 +117,14 @@ _LIVE_LALAMOVE = (
 #: real delivery reaches it: a cake still uncollected six hours after its van
 #: was booked is a person's problem, not a sweep's.
 CHASE_FOR = timedelta(hours=6)
+
+#: How long a push-only booking (noon Send, Slider) may sit non-terminal before
+#: the sweep asks the courier directly (F-COU-17). Long enough that a healthy
+#: delivery's real terminal push has had every chance to arrive first — so this
+#: fires on a lost push, not ahead of a slow one. Both couriers' entire status
+#: stream is push-only and neither retries, so a dropped `DELIVERED`/`CANCELLED`
+#: strands the order at whatever it last heard until a person looks.
+RECONCILE_AFTER = timedelta(minutes=20)
 
 
 async def refresh_live_drivers(
@@ -306,3 +331,117 @@ def _as_payload(order: dict, *, at: datetime) -> dict:
         "timestamp": at.timestamp(),
         "data": {"order": order},
     }
+
+
+#: The terminal courier_status set for each push-only provider, so the sweep can
+#: leave an already-finished booking alone in SQL rather than paying for a call
+#: to learn it is over.
+_PUSH_ONLY_TERMINALS = {
+    "noon_send": NOON_SEND_TERMINAL_STATUSES,
+    "slider": SLIDER_TERMINAL_STATUSES,
+}
+
+
+async def reconcile_push_only_endings(
+    db: AsyncSession,
+    *,
+    limit: int = 25,
+    now: datetime | None = None,
+) -> int:
+    """
+    Ask noon Send and Slider about bookings that have gone quiet (F-COU-17).
+
+    Lalamove's missed endings are reconciled by `refresh_live_drivers`, which
+    reads the booking every minute anyway. noon Send and Slider are push-only and
+    neither retries, so a dropped `DELIVERED`/`CANCELLED` leaves the order at
+    whatever it last heard — delivered in the world, `packed` in the shop — with
+    nothing to wait for. Each already has a `refresh(db, order_id)` that reads the
+    booking and feeds the current status through `apply_webhook` (the same door a
+    push uses, so the transition, email, refund path and proof all happen
+    correctly); it was only ever reachable by hand from the admin panel. This runs
+    it automatically for rows that have been silent past `RECONCILE_AFTER`.
+
+    Called from `delivery_scheduler.sweep_once` under the same advisory lock as
+    the other sweeps. Each row is committed on its own so one order's reconcile —
+    which runs a real transition and the consequences that ride on it — cannot
+    roll back another's (F-COU-22 in spirit). Returns how many newly reached a
+    terminal status.
+    """
+    from app.services.couriers import noon_send_service, slider_service
+
+    refreshers = {}
+    if noon_send_service.is_enabled():
+        refreshers[noon_send_service.PROVIDER] = noon_send_service.refresh
+    if slider_service.is_enabled():
+        refreshers[slider_service.PROVIDER] = slider_service.refresh
+    if not refreshers:
+        return 0
+
+    moment = now or datetime.now(timezone.utc)
+    quiet_since = moment - RECONCILE_AFTER
+
+    # Per provider: a live booking (has an id, not already terminal) that has been
+    # silent past the window, and is still recent enough that a human does not
+    # already own it. A NULL status counts as non-terminal — a booking that never
+    # got even its first push is exactly the kind that lost one.
+    per_provider = [
+        and_(
+            OrderDelivery.provider == provider,
+            or_(
+                OrderDelivery.courier_status.is_(None),
+                OrderDelivery.courier_status.notin_(_PUSH_ONLY_TERMINALS[provider]),
+            ),
+        )
+        for provider in refreshers
+    ]
+
+    rows = (
+        (
+            await db.execute(
+                select(OrderDelivery)
+                .where(
+                    OrderDelivery.courier_order_id.is_not(None),
+                    or_(*per_provider),
+                    or_(
+                        OrderDelivery.status_updated_at.is_(None),
+                        OrderDelivery.status_updated_at < quiet_since,
+                    ),
+                    or_(
+                        OrderDelivery.booked_at.is_(None),
+                        OrderDelivery.booked_at > moment - CHASE_FOR,
+                    ),
+                )
+                .order_by(OrderDelivery.status_updated_at.asc().nullsfirst())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    healed = 0
+    for delivery in rows:
+        provider = delivery.provider
+        try:
+            await refreshers[provider](db, delivery.order_id)
+            # `refresh` may only have recorded a still-live status or a
+            # last_error; commit either way so the attempt (and any real ending)
+            # is durable and one row's work never rides on the next.
+            became_terminal = is_terminal(provider, delivery.courier_status)
+            await db.commit()
+            if became_terminal:
+                healed += 1
+                logger.warning(
+                    "Reconciled a missed %s ending on booking %s (now %s)",
+                    provider,
+                    delivery.courier_order_id,
+                    delivery.courier_status,
+                )
+        except Exception:  # noqa: BLE001 — one bad booking must not stop the rest
+            logger.exception(
+                "Could not reconcile %s booking %s",
+                provider,
+                delivery.courier_order_id,
+            )
+            await db.rollback()
+    return healed

@@ -114,6 +114,18 @@ async def sweep_once() -> bool:
             logger.exception("Driver sweep failed")
             await session.rollback()
         try:
+            # noon Send and Slider are push-only and never retry, so a dropped
+            # terminal push strands the order. This asks them directly about
+            # bookings gone quiet and reconciles a missed ending through the
+            # same door a push uses — the self-heal Lalamove already gets from
+            # the driver sweep above (F-COU-17). It commits per row itself.
+            healed = await driver_tracking.reconcile_push_only_endings(session)
+            if healed:
+                logger.info("Reconciled %s missed push-only ending(s)", healed)
+        except Exception:  # noqa: BLE001
+            logger.exception("Push-only reconcile sweep failed")
+            await session.rollback()
+        try:
             # The backstop under `checkout.session.expired`, for the ones of
             # it that never arrived. An order left at `created` is not inert:
             # it holds a redemption of its promo code, a place in the
