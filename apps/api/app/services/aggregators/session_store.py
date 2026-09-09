@@ -418,6 +418,33 @@ async def record_refresh(
     await db.flush()
 
 
+async def record_cookie_refresh(
+    db: AsyncSession,
+    channel: str,
+    account_ref: str = "",
+    *,
+    cookies: dict[str, str],
+    cookie_expires_at: datetime | None = None,
+) -> None:
+    """Persist cookies a provider rotated server-side, keeping the session live.
+
+    Careem hands back a renewed `session` cookie (a sliding 60-min TTL) in the
+    Set-Cookie of every authenticated response; the httpx transport otherwise
+    discards it, so the stored cookie ages out and the gateway 401s. This writes
+    the rotated jar back — a cookies-only sibling of `record_refresh`. Passing
+    `cookie_expires_at` is optional: omit it to leave the stored expiry untouched.
+    """
+    row = await _row(db, channel, account_ref)
+    if row is None:
+        return
+    row.cookies_encrypted = crypto.encrypt_json(cookies)
+    if cookie_expires_at is not None:
+        row.cookie_expires_at = cookie_expires_at
+    row.last_warmed_at = utcnow()
+    row.last_error = None
+    await db.flush()
+
+
 async def record_success(db: AsyncSession, channel: str, account_ref: str = "") -> None:
     """Stamp a clean data pull, clearing any prior error."""
     row = await _row(db, channel, account_ref)

@@ -49,8 +49,9 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.aggregator import CHANNEL_CAREEM
+from app.models.aggregator import CHANNEL_CAREEM, SESSION_LIVE
 from app.services.aggregators.normalized import (
     PayoutsResult,
     SalesResult,
@@ -76,6 +77,10 @@ from app.services.providers.aggregator_base import (
 logger = logging.getLogger(__name__)
 
 _API = "https://partners.careem.com/api/saturn-ext"
+#: The Kong gateway's load-bearing credential: a `session` cookie with a sliding
+#: 60-min TTL, renewed in the Set-Cookie of every authenticated response. Kept
+#: fresh server-side by `prepare_session` so the httpx path stops aging it out.
+_SESSION_COOKIE = "session"
 #: Careem hosts uploaded product images on its own media CDN. `upload_product_image`
 #: returns `{id: "<name>-<merchantId>.jpg"}`; the served URL is this host +
 #: `/catalogs/<id>` (verified live 2026-09-05 — GET 200 image/jpeg; note the CDN
@@ -256,6 +261,66 @@ class CareemClient(BaseAggregatorClient):
     # Chrome returns 200. So it needs TLS impersonation like Talabat/Noon.
     uses_tls_impersonation = True
     impersonate_target = "chrome"
+
+    async def prepare_session(
+        self, db: AsyncSession, session: LoadedSession | None
+    ) -> LoadedSession | None:
+        """Keep the sliding `session` cookie fresh without a headed re-login.
+
+        Careem's Kong gateway gates on the `session` cookie (60-min sliding TTL)
+        and renews it in the Set-Cookie of every authenticated response. The
+        httpx transport opens a fresh curl session per call and drops that
+        Set-Cookie, so the stored cookie ages out ~hourly and every call then
+        401s until the worker does a headed re-login. So at the start of a sweep
+        we make one lightweight authenticated GET, harvest the renewed cookie and
+        persist it — as long as any careem sweep runs within the hour, the
+        session self-renews server-side, no browser.
+
+        Best-effort: on anything but a clean 200 with a renewed cookie (an
+        already-dead >60-min session, a transient error) the session is returned
+        untouched and the sweep escalates exactly as before — a genuinely dead
+        session still needs the headed worker.
+        """
+        if session is None or session.status != SESSION_LIVE:
+            return session
+        try:
+            resp = await self.request_raw(
+                session,
+                "GET",
+                f"{_API}/v2/admin/merchants/user/scope",
+                params={"attributes[]": "area"},
+            )
+        except Exception as exc:  # noqa: BLE001 — best effort; let the sweep proceed
+            logger.debug("careem: session keepalive GET failed: %s", exc)
+            return session
+        if getattr(resp, "status_code", None) != 200:
+            return session
+        try:
+            renewed = dict(getattr(resp, "cookies", {}) or {}).get(_SESSION_COOKIE)
+        except Exception:  # noqa: BLE001 — a cookie jar we cannot read is not fatal
+            renewed = None
+        if not renewed or renewed == (session.cookies or {}).get(_SESSION_COOKIE):
+            return session
+
+        cookies = {**(session.cookies or {}), _SESSION_COOKIE: renewed}
+        session.cookies = cookies
+        # Persist on a dedicated committed session so the rotated cookie survives
+        # even if the sweep's own transaction rolls back.
+        try:
+            from app.core.database import AsyncSessionFactory
+            from app.services.aggregators import session_store
+
+            async with AsyncSessionFactory() as store_db:
+                await session_store.record_cookie_refresh(
+                    store_db, self.channel, cookies=cookies
+                )
+                await store_db.commit()
+            logger.info("careem: refreshed the sliding session cookie server-side")
+        except Exception as exc:  # noqa: BLE001 — the in-memory refresh still helps the run
+            logger.warning(
+                "careem: could not persist the refreshed session cookie: %s", exc
+            )
+        return session
 
     @staticmethod
     def _city_id(session: LoadedSession) -> str:
