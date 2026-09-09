@@ -595,6 +595,8 @@ export interface DashboardToday {
   summary: DashboardSummary;
   by_status: DashboardBreakdownRow[];
   by_courier: DashboardCourierRow[];
+  /** By branch, across every channel — every order resolves to a branch. */
+  by_branch: DashboardBreakdownRow[];
   by_channel: DashboardBreakdownRow[];
   by_fulfillment: DashboardBreakdownRow[];
   by_payment: DashboardBreakdownRow[];

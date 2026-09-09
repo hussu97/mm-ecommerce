@@ -30,6 +30,7 @@ from app.core.exceptions import BadRequestError
 from app.core.money import money
 from app.core.permissions import require
 from app.models import (
+    Branch,
     Courier,
     CustomOrder,
     CustomOrderStatusEnum,
@@ -152,6 +153,33 @@ async def _window_totals(
         )
     ).one()
     return int(result[0]), float(money(result[1]))
+
+
+async def _by_branch(
+    db: AsyncSession, *, start, end, statuses=None, couriers=None
+) -> list[BreakdownRow]:
+    """Orders and revenue per branch over the window, revenue-eligible only.
+
+    `orders.branch_id` is NOT NULL — every order, storefront or counter or
+    aggregator, is resolved to a branch (its pickup branch, or the branch its
+    delivery zone belongs to) before it is written — so there is no "Unknown"
+    bucket to explain, and every id groups to a real name. Follows the same
+    status and carrier selection as the other mixes so the whole dashboard reads
+    one filtered day.
+    """
+    labels = {
+        b_id: name
+        for b_id, name in (await db.execute(select(Branch.id, Branch.name))).all()
+    }
+    return await _breakdown(
+        db,
+        Order.branch_id,
+        start=start,
+        end=end,
+        labels=labels,
+        statuses=statuses,
+        couriers=couriers,
+    )
 
 
 async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownRow]:
@@ -365,6 +393,10 @@ async def dashboard_today(
 
     by_courier = await _by_courier(db, start=start, end=end)
 
+    by_branch = await _by_branch(
+        db, start=start, end=end, statuses=picked, couriers=carriers
+    )
+
     by_channel = await _breakdown(
         db,
         Order.source,
@@ -406,6 +438,7 @@ async def dashboard_today(
         summary=summary,
         by_status=by_status,
         by_courier=by_courier,
+        by_branch=by_branch,
         by_channel=by_channel,
         by_fulfillment=by_fulfillment,
         by_payment=by_payment,

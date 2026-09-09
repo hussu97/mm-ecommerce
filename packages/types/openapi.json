@@ -8414,6 +8414,13 @@
             ],
             "title": "Business Date To"
           },
+          "by_branch": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Branch",
+            "type": "array"
+          },
           "by_channel": {
             "items": {
               "$ref": "#/components/schemas/BreakdownRow"
@@ -8472,6 +8479,7 @@
           "summary",
           "by_status",
           "by_courier",
+          "by_branch",
           "by_channel",
           "by_fulfillment",
           "by_payment",

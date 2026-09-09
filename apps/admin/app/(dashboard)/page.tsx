@@ -456,6 +456,16 @@ export default function DashboardPage() {
         </Section>
       )}
 
+      {/* Sales by branch — every order resolves to a branch, so this is the
+          whole day's takings split by where they were rung up or fulfilled. */}
+      {data?.by_branch && data.by_branch.length > 0 && (
+        <Section title="Sales by Branch">
+          <div className="bg-white border border-gray-200 p-4">
+            <BreakdownBars rows={data.by_branch} empty="No orders yet today" />
+          </div>
+        </Section>
+      )}
+
       {/* Today's mix — where the orders and money came from */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
         <div className="bg-white border border-gray-200 p-4">

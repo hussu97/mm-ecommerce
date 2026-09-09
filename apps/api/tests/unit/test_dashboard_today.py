@@ -172,6 +172,22 @@ async def test_breakdown_titlecases_unlabelled_values():
 # ── delivered-by-courier groups the three carrier shapes into one menu ─────────
 
 
+async def test_by_branch_labels_each_id_with_its_branch_name():
+    # `_by_branch` reads the branch names first, then groups orders by
+    # `branch_id`; the labels map turns each id into a name. An id that fell
+    # through to the raw UUID string would be the failure this guards.
+    import uuid
+
+    sharjah, barsha = uuid.uuid4(), uuid.uuid4()
+    branches = _Result([(sharjah, "Sharjah"), (barsha, "Al Barsha")])
+    grouped = _Result([(sharjah, 3, "100.00"), (barsha, 1, "40.00")])
+    out = await mod._by_branch(_DB([branches, grouped]), start=_A, end=_B)
+    assert [(r.label, r.orders, r.revenue) for r in out] == [
+        ("Sharjah", 3, 100.0),
+        ("Al Barsha", 1, 40.0),
+    ]
+
+
 async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
     # (source, aggregator_channel, total, dispatch provider) for delivered orders.
     rows = [

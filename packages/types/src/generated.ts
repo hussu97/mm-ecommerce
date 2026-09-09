@@ -11339,6 +11339,8 @@ export interface components {
             business_date: string;
             /** Business Date To */
             business_date_to?: string | null;
+            /** By Branch */
+            by_branch: components["schemas"]["BreakdownRow"][];
             /** By Channel */
             by_channel: components["schemas"]["BreakdownRow"][];
             /** By Courier */

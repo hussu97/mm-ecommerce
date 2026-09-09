@@ -93,6 +93,10 @@ class DashboardTodayResponse(BaseModel):
     #: By carrier — counter, each aggregator marketplace, each dispatch courier —
     #: over delivered orders only. The full courier menu, like `by_status`.
     by_courier: list[CourierBreakdownRow]
+    #: By branch, over revenue-eligible orders across every channel. Every order
+    #: resolves to a branch (`orders.branch_id` is NOT NULL), so there is no
+    #: unattributed bucket.
+    by_branch: list[BreakdownRow]
     #: By order source — storefront, cashier, aggregator.
     by_channel: list[BreakdownRow]
     #: Delivery vs pickup.
