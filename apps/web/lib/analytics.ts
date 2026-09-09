@@ -519,7 +519,12 @@ export const analytics = {
     track('low_order_fee_applied', { ...data, currency: CURRENCY }),
 
   paymentMethodSelected: (data: {
-    method: string;
+    // The values this event can carry, spelled out so they are the source of
+    // truth the doc is checked against (W10, F-WEB-14): `apple_pay` was added
+    // here as a bare `string` and the Umami reference never learned about it.
+    // analytics-docs.test.ts holds this union and `method (card | cod | apple_pay)`
+    // in the doc in step.
+    method: 'card' | 'cod' | 'apple_pay';
     delivery_method: string;
     total: number;
   }) => track('payment_method_selected', { ...data, currency: CURRENCY }),

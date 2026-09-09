@@ -7,9 +7,13 @@
  * dashboard that silently stops counting something, and nobody notices a
  * number that was never there.
  *
- * Only the *names* are checked. The doc's "fired from" column is prose and
- * cannot be verified from here — it has drifted before, and closing the name
- * half is what is cheaply possible.
+ * The event *names* are checked in full. Payload *fields* are mostly prose and
+ * cannot be verified from here, with one exception that has already bitten us
+ * (F-WEB-14): `payment_method_selected.method` is an enumerated value, and
+ * `apple_pay` was added in code without a doc row — a report segmenting on
+ * `method` silently had no bucket for it. That one field is now typed as a union
+ * in `analytics.ts` and checked against the `method (…)` list in the doc, so the
+ * value half cannot drift there. The "fired from" column is still prose.
  */
 
 import { readFileSync } from 'node:fs';
@@ -29,6 +33,25 @@ function eventsInCode(): Set<string> {
 function eventsInDoc(): Set<string> {
   const doc = readFileSync(DOC, 'utf8');
   return new Set([...doc.matchAll(/^\|\s*`([a-z0-9_]+)`\s*\|/gm)].map((m) => m[1]));
+}
+
+/** The `method` values the `paymentMethodSelected` helper is typed to emit. */
+function paymentMethodsInCode(): Set<string> {
+  const src = readFileSync(ANALYTICS, 'utf8');
+  const helper = src.match(/paymentMethodSelected:[\s\S]*?method:\s*([^;]+);/);
+  if (!helper) return new Set();
+  return new Set([...helper[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]));
+}
+
+/** The `method (a | b | …)` values documented for `payment_method_selected`.
+ *  Read off the whole row line — the cell uses escaped pipes (`\|`) inside the
+ *  parentheses, so splitting on `|` would cut the list in half. */
+function paymentMethodsInDoc(): Set<string> {
+  const doc = readFileSync(DOC, 'utf8');
+  const row = doc.split('\n').find((l) => l.includes('`payment_method_selected`'));
+  const paren = row?.match(/method\s*\(([^)]*)\)/);
+  if (!paren) return new Set();
+  return new Set([...paren[1].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]));
 }
 
 describe('analytics events and their documentation', () => {
@@ -57,5 +80,20 @@ describe('analytics events and their documentation', () => {
     // Both sets being empty would pass the two tests above.
     expect(eventsInCode().size).toBeGreaterThan(50);
     expect(eventsInDoc().size).toBeGreaterThan(50);
+  });
+
+  it('documents every payment method the code can emit', () => {
+    const code = paymentMethodsInCode();
+    const doc = paymentMethodsInDoc();
+    // Guard the matchers: an empty set either side would pass the equality below
+    // for the wrong reason.
+    expect(code.size, 'could not read the method union from analytics.ts').toBeGreaterThan(1);
+    expect(doc.size, 'could not read the method (…) list from the doc').toBeGreaterThan(1);
+    expect(
+      [...code].sort(),
+      "payment_method_selected's `method` values in analytics.ts and the " +
+        'doc have drifted — update the Custom Events Reference row and add a ' +
+        'Changelog entry (a value the dashboard cannot segment on is invisible)',
+    ).toEqual([...doc].sort());
   });
 });
