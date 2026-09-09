@@ -51,7 +51,7 @@ from app.core.alerting import capture_issue
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery, is_failed
-from app.services import branch_hours_service
+from app.services import branch_holiday_service, branch_hours_service
 from app.services.couriers import lalamove_service, noon_send_service, slider_service
 
 logger = logging.getLogger(__name__)
@@ -554,22 +554,29 @@ async def _record_outcome(
     # primary-key get rather than `resolve_pickup`: the zone's fallback logic is
     # for deciding where a driver collects from, and all this needs is two
     # strings off a row the session has usually already loaded.
-    sched = (
-        await branch_hours_service.schedule(db, order.branch_id)
-        if getattr(order, "branch_id", None)
-        else None
-    )
-    window = branch_hours_service.effective_window(
-        sched, trading_hours.local(datetime.now(timezone.utc)).date()
-    )
+    branch_id = getattr(order, "branch_id", None)
+    sched = await branch_hours_service.schedule(db, branch_id) if branch_id else None
+    today = trading_hours.local(datetime.now(timezone.utc)).date()
+    # `window_for`, not `effective_window`: the latter falls forward to the next
+    # open day, so on a closed day it would hand back *that* day's hours and a
+    # retry could be scheduled onto a shut shop. The closed days go to `_retry_at`
+    # too, so a holiday shuts the retry the same way an after-close does — a
+    # driver sent to a dark counter on Eid is the same failure as one at 00:05
+    # (F-COU-13). `closed_dates_for` also folds the weekly non-trading days.
+    window = branch_hours_service.window_for(sched, today)
     opens_at, closes_at = window if window else ("00:00", "23:59")
+    closed_dates = (
+        await branch_holiday_service.closed_dates_for(db, branch_id, today=today)
+        if branch_id
+        else frozenset()
+    )
     # `or 0` because the column default is applied by the database at INSERT: a
     # delivery row built in memory and not yet flushed still reads None, and a
     # dispatch can be attempted on one — the checkout writes the row and the
     # register accepts the order inside the same request.
     delivery.dispatch_attempts = (delivery.dispatch_attempts or 0) + 1
     delivery.next_attempt_at = _retry_at(
-        delivery, opens_at=opens_at, closes_at=closes_at
+        delivery, opens_at=opens_at, closes_at=closes_at, closed_dates=closed_dates
     )
     if delivery.next_attempt_at is None:
         logger.warning(
@@ -594,21 +601,23 @@ def _retry_at(
     now: datetime | None = None,
     opens_at: str = "00:00",
     closes_at: str = "23:59",
+    closed_dates: frozenset[str] = frozenset(),
 ) -> datetime | None:
     """
     When to ask again, or None for "not on its own".
 
     Two things end it. Running out of rungs (`RETRY_BACKOFF`), which means the
-    failure has outlived the kind of problem that fixes itself. And landing after
-    the kitchen has shut — the driver collects from a physical counter, and a
-    booking made at 00:05 for something that failed at 23:00 sends somebody to a
-    dark shop.
+    failure has outlived the kind of problem that fixes itself. And landing when
+    the kitchen is shut — the driver collects from a physical counter, and a
+    booking made at 00:05 for something that failed at 23:00, or one that lands
+    on a branch holiday, sends somebody to a dark shop. `closed_dates` makes the
+    holiday count the same as the after-close (F-COU-13).
     """
     if delivery.dispatch_attempts > len(RETRY_BACKOFF):
         return None
     moment = now or datetime.now(timezone.utc)
     when = moment + RETRY_BACKOFF[delivery.dispatch_attempts - 1]
-    if not trading_hours.is_open(when, opens_at, closes_at):
+    if not trading_hours.is_open(when, opens_at, closes_at, closed_dates):
         return None
     return when
 

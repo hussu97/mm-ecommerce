@@ -335,9 +335,7 @@ class SliderClient:
         if schedule_at:
             body["schedule_at"] = schedule_at
         return (
-            await self._call(
-                "POST", "/deliveries", json_body=body, idempotent=False
-            )
+            await self._call("POST", "/deliveries", json_body=body, idempotent=False)
             or {}
         )
 

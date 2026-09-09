@@ -26,13 +26,34 @@ from app.services.couriers.courier_service import RETRY_BACKOFF
 NOW = datetime(2026, 8, 15, 7, 21, tzinfo=timezone.utc)  # 11:21 in Dubai
 
 
-class _Db:
-    """Serves the branch's weekly schedule `_record_outcome` resolves the retry
-    window from. `window` is the same shift every weekday, or None for a branch
-    with no schedule (which reads as all-day)."""
+class _Scalars:
+    """A scalars() result that both iterates and answers .all(), because
+    `_record_outcome` now reads two things off this db: the weekly schedule
+    (via .all()) and the holiday dates (iterated as a set)."""
 
-    def __init__(self, window: tuple[str, str] | None = None):
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _Db:
+    """Serves the two reads `_record_outcome` makes: the branch's weekly
+    schedule (the retry window) and its explicit holidays. `window` is the same
+    shift every weekday, or None for a branch with no schedule (all-day);
+    `holidays` are `YYYY-MM-DD` strings the branch is explicitly shut on."""
+
+    def __init__(
+        self,
+        window: tuple[str, str] | None = None,
+        holidays: frozenset[str] = frozenset(),
+    ):
         self._window = window
+        self._holidays = holidays
 
     async def get(self, _model, _pk):
         return None
@@ -40,7 +61,9 @@ class _Db:
     async def flush(self):
         return None
 
-    async def execute(self, _statement):
+    async def execute(self, statement):
+        if "branch_holiday" in str(statement).lower():
+            return SimpleNamespace(scalars=lambda: _Scalars(list(self._holidays)))
         rows = (
             [
                 SimpleNamespace(
@@ -51,7 +74,7 @@ class _Db:
             if self._window
             else []
         )
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+        return SimpleNamespace(scalars=lambda: _Scalars(rows))
 
 
 def _order(status=OrderStatusEnum.PACKED, branch_id=None):
@@ -134,6 +157,38 @@ async def test_a_retry_is_not_scheduled_into_a_shut_shop():
         assert delivery.next_attempt_at is not None
     else:
         assert delivery.next_attempt_at is None
+
+
+async def test_a_retry_is_not_scheduled_onto_a_branch_holiday():
+    """Inside trading hours but on a day the branch is shut for a holiday, the
+    counter is still dark — so the retry waits for a human rather than sending a
+    driver to a closed shop on Eid (F-COU-13). The window is all-day here, so the
+    holiday is provably the only thing shutting it."""
+    from app.core import trading_hours
+
+    when = datetime.now(timezone.utc) + RETRY_BACKOFF[0]
+    # The day the 5-minute retry lands on (and its neighbour, so a run seconds
+    # before midnight is still covered), marked shut.
+    shut = frozenset(
+        trading_hours.local(d).date().isoformat()
+        for d in (when, when + timedelta(minutes=1))
+    )
+    branch = uuid.uuid4()
+
+    on_holiday = _delivery(last_error="Courier rejected the booking")
+    await courier_service._record_outcome(
+        _Db(window=("00:00", "23:59"), holidays=shut),
+        _order(branch_id=branch),
+        on_holiday,
+    )
+    assert on_holiday.next_attempt_at is None
+
+    # Same all-day window, no holiday: it schedules — so the holiday is the cause.
+    open_day = _delivery(last_error="Courier rejected the booking")
+    await courier_service._record_outcome(
+        _Db(window=("00:00", "23:59")), _order(branch_id=branch), open_day
+    )
+    assert open_day.next_attempt_at is not None
 
 
 async def test_a_booking_that_worked_clears_the_counter():
