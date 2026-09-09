@@ -29,7 +29,8 @@ import { cn, formatCurrency, formatDateTime } from '@/lib/utils';
 import {
   normalizeAddressSnapshot,
   MOVABLE_STATUSES,
-  SETTLED_STATUSES,
+  canCancel,
+  isSettled,
   STATUS_LABEL,
   STATUS_STEPS,
   STATUS_VARIANT,
@@ -220,7 +221,7 @@ export default function OrderDetailPage() {
       // one, and the difference is money: cancelling refunds automatically,
       // and marking one delivered afterwards does not take the refund back.
       // Say so here rather than let somebody find it in a reconciliation.
-      SETTLED_STATUSES.includes(order.status as OrderStatus)
+      isSettled(order)
         ? {
             title: 'Correct this order',
             message:
@@ -803,16 +804,14 @@ export default function OrderDetailPage() {
             Write Off &amp; Refund
           </Button>
         )}
-        {/* Cancelling a website order. Once it was only the two live states —
-            nothing made yet, the customer still on the phone. It now reaches a
-            boxed order too (`arrived_at_pos`, `packed`), matching the backend
-            that lets a ready pickup or delivery order be called off: that path
-            refunds and restocks, so `updateStatus` sends it through the danger
-            dialog rather than straight through. */}
-        {(order.status === 'created' ||
-          order.status === 'confirmed' ||
-          order.status === 'arrived_at_pos' ||
-          order.status === 'packed') && (
+        {/* Cancelling a live order. The live states (created, confirmed,
+            arrived_at_pos) are cancellable whatever the source; a `packed` order
+            is only cancellable for a website or marketplace order, because a
+            packed *counter* order has no server hatch and the button could only
+            ever 409 (F-ADM-16). `canCancel` mirrors that matrix. A ready pickup
+            or delivery order that IS cancellable refunds and restocks, so
+            `updateStatus` runs it through the danger dialog. */}
+        {canCancel(order) && (
           <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
             <span className="material-icons text-[14px]">cancel</span>
             Cancel Order
@@ -966,7 +965,7 @@ export default function OrderDetailPage() {
           onRedispatch={redispatch}
           onChangeFulfilment={openFulfilment}
           canChangeFulfilment={MOVABLE_STATUSES.includes(order.status)}
-          isSettled={SETTLED_STATUSES.includes(order.status)}
+          isSettled={isSettled(order)}
           onRefresh={refreshCourier}
         />
       )}

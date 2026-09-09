@@ -20,8 +20,29 @@ import { formatDateTime } from '@/lib/utils';
  * Mirrors `_SETTLED_STATUSES` in `app/api/v1/orders.py`, which is what actually
  * enforces it — and which also refuses anything already refunded, so the
  * undelivered orders written while it *was* an ending stay where they are.
+ *
+ * The full set, not just `cancelled`: this had listed only `cancelled` while the
+ * server settles `cancelled`/`refunded`/`disputed` (and anything with money
+ * already refunded), so the three courier buttons showed on a refunded order and
+ * could only ever 409 (F-ADM-9). Use `isSettled` — not this list alone — anywhere
+ * a button is gated, so the `refunded_amount` half is covered too. The test in
+ * `conventions.test.ts` parses the Python and fails if the two drift apart.
  */
-export const SETTLED_STATUSES: OrderStatus[] = ['cancelled'];
+export const SETTLED_STATUSES: OrderStatus[] = ['cancelled', 'refunded', 'disputed'];
+
+/**
+ * Whether the order is over, so no courier action should be offered on it.
+ *
+ * Mirrors `_assert_still_going_somewhere` exactly: a settled status, OR any
+ * money already refunded — an order refunded by hand in a gateway keeps a live
+ * status but is just as finished, and the server refuses a dispatch on it.
+ */
+export function isSettled(order: Pick<Order, 'status' | 'refunded_amount'>): boolean {
+  return (
+    SETTLED_STATUSES.includes(order.status as OrderStatus) ||
+    Number(order.refunded_amount ?? 0) > 0
+  );
+}
 
 /**
  * Where an order may be standing and still be handed to a different courier.
@@ -38,6 +59,37 @@ export const MOVABLE_STATUSES: OrderStatus[] = [
   'packed',
   'undelivered',
 ];
+
+/**
+ * The statuses ANY source may be cancelled from — the states `VALID_TRANSITIONS`
+ * maps to `cancelled` (order_lifecycle.py). `packed` is deliberately NOT here:
+ * the map closes it, and only a website or marketplace order reopens it through
+ * the source hatch below. (`payment_failed` is cancellable server-side too but
+ * has its own retry/void flow on this screen, so the Cancel button leaves it be.)
+ */
+const CANCELLABLE_FROM: OrderStatus[] = ['created', 'confirmed', 'arrived_at_pos'];
+
+/**
+ * Sources whose `packed` order may still be cancelled — the counterpart of
+ * `ONLINE_CANCELLABLE_FROM` / `AGGREGATOR_CANCELLABLE_FROM`. A cashier order is
+ * absent on purpose: there is no `CASHIER_CANCELLABLE_FROM`, so a packed counter
+ * order is not cancellable, and offering the button only earned a 409 (F-ADM-16).
+ */
+const PACKED_CANCELLABLE_SOURCES = new Set(['online', 'aggregator']);
+
+/**
+ * Whether to offer "Cancel Order", mirroring what `update_status` + `transition`
+ * will actually accept. It is a function of BOTH status and source, because the
+ * one interesting case — a `packed` order — turns on where it came from.
+ * `conventions.test.ts` holds this in step with the Python hatches.
+ */
+export function canCancel(order: Pick<Order, 'status' | 'source'>): boolean {
+  if (CANCELLABLE_FROM.includes(order.status as OrderStatus)) return true;
+  if (order.status === 'packed') {
+    return order.source != null && PACKED_CANCELLABLE_SOURCES.has(order.source);
+  }
+  return false;
+}
 
 export const STATUS_STEPS: OrderStatus[] = [
   'created',

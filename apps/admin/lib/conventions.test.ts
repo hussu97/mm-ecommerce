@@ -11,6 +11,12 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import {
+  SETTLED_STATUSES,
+  canCancel,
+} from '../app/(dashboard)/orders/[orderNumber]/order-status';
+import type { Order } from './types';
+
 const ADMIN = join(__dirname, '..');
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -66,5 +72,81 @@ describe('convention 9 — one request path', () => {
     }
 
     expect(offenders, 'these bypass lib/api.ts request()').toEqual([]);
+  });
+});
+
+describe('F-ADM-9 — settled statuses mirror the server', () => {
+  it('lists exactly the statuses in _SETTLED_STATUSES (app/api/v1/orders.py)', () => {
+    // The order detail screen gates its courier buttons on these; the server
+    // enforces `_assert_still_going_somewhere` against the same set, so a status
+    // the client does not treat as settled shows a button that can only 409.
+    const py = readFileSync(
+      join(ADMIN, '..', 'api', 'app', 'api', 'v1', 'orders.py'),
+      'utf8',
+    );
+    const block = py.match(/_SETTLED_STATUSES\s*=\s*\{([^}]*)\}/);
+    expect(block, '_SETTLED_STATUSES moved or was renamed in orders.py').toBeTruthy();
+
+    const server = [...block![1].matchAll(/OrderStatusEnum\.(\w+)/g)]
+      .map((m) => m[1].toLowerCase())
+      .sort();
+    expect(server.length).toBeGreaterThan(1); // the matcher actually found them
+
+    expect(
+      [...SETTLED_STATUSES].sort(),
+      'SETTLED_STATUSES in order-status.ts has drifted from the server set',
+    ).toEqual(server);
+  });
+});
+
+describe('F-ADM-16 — the Cancel button never offers what the server refuses', () => {
+  const LIFECYCLE = join(
+    ADMIN,
+    '..',
+    'api',
+    'app',
+    'services',
+    'orders',
+    'order_lifecycle.py',
+  );
+
+  const order = (status: string, source: string) =>
+    ({ status, source }) as unknown as Pick<Order, 'status' | 'source'>;
+
+  it('only online/aggregator (never cashier) may cancel a packed order', () => {
+    // The whole bug: a packed COUNTER order showed a Cancel button the server
+    // 409s. Only ONLINE/AGGREGATOR have a packed hatch server-side.
+    expect(canCancel(order('packed', 'online'))).toBe(true);
+    expect(canCancel(order('packed', 'aggregator'))).toBe(true);
+    expect(canCancel(order('packed', 'cashier'))).toBe(false);
+  });
+
+  it('offers the live states for every source and offers nothing once shipped', () => {
+    for (const source of ['cashier', 'online', 'aggregator']) {
+      for (const status of ['created', 'confirmed', 'arrived_at_pos']) {
+        expect(canCancel(order(status, source)), `${status}/${source}`).toBe(true);
+      }
+      for (const status of ['out_for_delivery', 'delivered', 'cancelled', 'refunded']) {
+        expect(canCancel(order(status, source)), `${status}/${source}`).toBe(false);
+      }
+    }
+  });
+
+  it('matches the Python: a packed hatch exists for online+aggregator only', () => {
+    const py = readFileSync(LIFECYCLE, 'utf8');
+    // Both source hatches are exactly {PACKED} …
+    for (const name of ['ONLINE_CANCELLABLE_FROM', 'AGGREGATOR_CANCELLABLE_FROM']) {
+      const block = py.match(new RegExp(`${name}[^=]*=\\s*frozenset\\(\\s*\\{([^}]*)\\}`));
+      expect(block, `${name} moved or was renamed`).toBeTruthy();
+      const states = [...block![1].matchAll(/OrderStatusEnum\.(\w+)/g)].map(m =>
+        m[1].toLowerCase(),
+      );
+      expect(states, `${name} is no longer just {PACKED} — revisit canCancel`).toEqual([
+        'packed',
+      ]);
+    }
+    // … and there is no cashier hatch, which is why a packed counter order stays
+    // uncancellable. If one is ever added, canCancel must learn about it.
+    expect(py.includes('CASHIER_CANCELLABLE_FROM')).toBe(false);
   });
 });

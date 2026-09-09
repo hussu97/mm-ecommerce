@@ -265,8 +265,12 @@ export default function ReconciliationPage() {
       header: 'Refund (agg / MM)',
       className: 'text-right whitespace-nowrap',
       render: r => {
-        const mismatch =
-          r.refund_flag || (r.refund_agg ?? 0) !== (r.refund_mm ?? 0);
+        // `refund_flag` is the server's verdict — `abs(refund_agg - refund_mm) >
+        // tolerance` (reconcile.py) — so it is the whole answer. The old extra
+        // `(refund_agg ?? 0) !== (refund_mm ?? 0)` compared the two as raw
+        // strings ("0.00" !== "0.0000"), reddening matched refunds, and re-added
+        // the sub-tolerance noise the flag deliberately drops (F-ADM-4).
+        const mismatch = r.refund_flag;
         return (
           <div className={`text-right tabular-nums ${mismatch ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
             {money(r.refund_agg)} <span className="text-gray-300">/</span> {money(r.refund_mm)}
