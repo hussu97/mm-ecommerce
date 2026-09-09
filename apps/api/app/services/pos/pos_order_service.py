@@ -1209,55 +1209,69 @@ async def send_to_kitchen(
     if not pending:
         raise ConflictError("Every line has already been sent to the kitchen")
 
-    sequence = int(
-        (
-            await db.execute(
-                select(func.count())
-                .select_from(KitchenTicket)
-                .where(KitchenTicket.order_id == order.id)
-            )
-        ).scalar_one()
-    )
-
     by_flow: dict[uuid.UUID | None, list[OrderItem]] = {}
     for item in pending:
         by_flow.setdefault(item.kitchen_flow_id, []).append(item)
 
     now = utcnow()
-    tickets: list[KitchenTicket] = []
-    for flow_id, items in by_flow.items():
-        sequence += 1
-        ticket = KitchenTicket(
-            order_id=order.id,
-            kitchen_flow_id=flow_id,
-            branch_id=order.branch_id,
-            sequence=sequence,
-            status=KitchenTicketStatusEnum.NEW.value,
-            sent_at=now,
-        )
-        db.add(ticket)
-        await db.flush()
-        for item in items:
-            db.add(
-                KitchenTicketItem(
-                    ticket_id=ticket.id,
-                    order_item_id=item.id,
-                    product_name=item.product_name,
-                    quantity=item.quantity,
-                    modifiers_summary=_summarise_options(item),
-                    notes=_ticket_notes(item),
-                    status=KitchenTicketStatusEnum.NEW.value,
+    # Number the new tickets after the highest this order already has. Two fires
+    # of the same check racing — a double-tapped "send", one course fired from
+    # two stations — both read the same high-water mark and pick the same next
+    # number. The (order_id, sequence) unique constraint (migration 219,
+    # F-POS-31) catches the loser, who re-reads the mark and retries inside a
+    # savepoint so the rest of the transaction survives, the same shape
+    # create_pos_order uses for check_number. Rebuilding the tickets each attempt
+    # is deliberate: a savepoint rollback discards the objects it added.
+    ticket_ids: list[uuid.UUID] = []
+    for attempt in range(3):
+        try:
+            async with db.begin_nested():
+                sequence = int(
+                    (
+                        await db.execute(
+                            select(
+                                func.coalesce(func.max(KitchenTicket.sequence), 0)
+                            ).where(KitchenTicket.order_id == order.id)
+                        )
+                    ).scalar_one()
                 )
-            )
-            item.sent_to_kitchen_at = now
-        tickets.append(ticket)
-
-    await db.flush()
+                tickets: list[KitchenTicket] = []
+                for flow_id, items in by_flow.items():
+                    sequence += 1
+                    ticket = KitchenTicket(
+                        order_id=order.id,
+                        kitchen_flow_id=flow_id,
+                        branch_id=order.branch_id,
+                        sequence=sequence,
+                        status=KitchenTicketStatusEnum.NEW.value,
+                        sent_at=now,
+                    )
+                    db.add(ticket)
+                    await db.flush()
+                    for item in items:
+                        db.add(
+                            KitchenTicketItem(
+                                ticket_id=ticket.id,
+                                order_item_id=item.id,
+                                product_name=item.product_name,
+                                quantity=item.quantity,
+                                modifiers_summary=_summarise_options(item),
+                                notes=_ticket_notes(item),
+                                status=KitchenTicketStatusEnum.NEW.value,
+                            )
+                        )
+                        item.sent_to_kitchen_at = now
+                    tickets.append(ticket)
+                await db.flush()
+                ticket_ids = [t.id for t in tickets]
+            break
+        except IntegrityError:
+            if attempt == 2:
+                raise
 
     # Re-load with items eagerly attached. The tickets were just constructed, so
     # their `items` collections are unloaded, and serialising them would trigger
     # a lazy load with no greenlet to run it on.
-    ticket_ids = [t.id for t in tickets]
     refreshed = (
         (
             await db.execute(

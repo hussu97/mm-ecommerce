@@ -308,6 +308,13 @@ class KitchenTicket(Base, UUIDMixin, TimestampMixin):
         # Migration 099: a ticket with an unspellable status is one no kitchen
         # display queue will ever show again.
         status_vocabulary("kitchen_tickets", "status", KitchenTicketStatusEnum),
+        # Migration 219 (F-POS-31): the sequence numbers an order's tickets, so
+        # it is unique per order. Two concurrent fires of the same check used to
+        # both write the same number; this makes that a caught IntegrityError
+        # that `send_to_kitchen` retries against, not a duplicate "#2".
+        UniqueConstraint(
+            "order_id", "sequence", name="uq_kitchen_tickets_order_sequence"
+        ),
     )
 
     order_id: Mapped[uuid.UUID] = mapped_column(
