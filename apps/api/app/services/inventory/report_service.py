@@ -186,6 +186,44 @@ async def current_sequence(db: AsyncSession, branch_id: uuid.UUID) -> int | None
     ).scalar_one()
 
 
+#: Movements a shift/count report never posts against, so their landing between a
+#: refresh and a submit must not block the submit or invalidate a confirmed line.
+#:
+#: A physical count SETS the on-hand to the counted figure — `post_transaction`
+#: re-reads the current level under the branch lock and posts `counted − current`,
+#: so a sale that consumed stock in the meantime is already in that current level
+#: and the count still lands on what was counted. A movement column posts its
+#: `entered − prefilled` delta against a *non-sales* prefill (produce, waste,
+#: transfer, internal use), which sale consumption never touches. So routine sale
+#: consumption is orthogonal to everything the report posts — and it never stops
+#: while a branch trades, which is why gating on it made the close count
+#: unsubmittable at a working kitchen (Sharjah, 2026-09-09). Any *other* movement
+#: (a manual adjustment, a transfer, a sibling production posting) does move a
+#: baseline the report posts against and still blocks.
+_NON_BLOCKING_MOVEMENT_TYPES = frozenset(
+    {InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value}
+)
+
+
+async def _competing_movement_since(
+    db: AsyncSession, branch_id: uuid.UUID, base_sequence: int | None
+) -> bool:
+    """Whether a movement that would invalidate the report's posting has landed
+    since it was refreshed — everything except routine sale consumption."""
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(InventoryTransaction)
+            .where(
+                InventoryTransaction.branch_id == branch_id,
+                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+                InventoryTransaction.posting_sequence > (base_sequence or 0),
+                InventoryTransaction.type.notin_(_NON_BLOCKING_MOVEMENT_TYPES),
+            )
+        )
+    ).scalar_one() > 0
+
+
 async def upsert_template(
     db: AsyncSession,
     *,
@@ -799,6 +837,11 @@ async def refresh_report(
                     InventoryTransaction.posting_sequence
                     > (report.base_posting_sequence or 0),
                     InventoryTransaction.posting_sequence <= latest,
+                    # A sale does not invalidate a confirmed count — the count is
+                    # absolute — so it must not un-confirm the line and force a
+                    # reconfirm on every refresh while the shop trades. Only a
+                    # movement the report posts against does.
+                    InventoryTransaction.type.notin_(_NON_BLOCKING_MOVEMENT_TYPES),
                 )
                 .distinct()
             )
@@ -978,8 +1021,13 @@ async def submit_report(
     }:
         return report
     await source_event_service.lock_branch_inventory(db, report.branch_id)
-    latest = await current_sequence(db, report.branch_id)
-    if latest != report.base_posting_sequence:
+    # Block only on a movement the report actually posts against — not on the
+    # routine sale consumption that never stops while a branch trades. Gating on
+    # any sequence change made the close count unsubmittable at a working kitchen:
+    # a sale posted between every refresh and submit. See `_NON_BLOCKING_MOVEMENT_TYPES`.
+    if await _competing_movement_since(
+        db, report.branch_id, report.base_posting_sequence
+    ):
         raise ConflictError(
             "Inventory moved since this report was refreshed; refresh and reconfirm"
         )

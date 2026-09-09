@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.exceptions import ConflictError
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
@@ -390,3 +391,128 @@ async def test_a_second_opening_balance_sets_the_level_not_doubles_it(engine, en
     await post_opening(60)
     async with Session() as db:
         assert await _levels(db, item_id, warehouse_id) == Decimal("60")
+
+
+async def _post_txn(db, *, branch_id, warehouse_id, user_id, item_id, ttype, qty):
+    """Post one closed inventory transaction of `ttype`, so the branch posting
+    sequence advances the way a real movement would."""
+    txn = InventoryTransaction(
+        reference=await inventory_service.next_reference(db, ttype),
+        type=ttype,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=branch_id,
+        warehouse_id=warehouse_id,
+        business_date=BUSINESS_DATE,
+        creator_id=user_id,
+        items=[
+            InventoryTransactionItem(
+                item_id=item_id,
+                quantity=Decimal(str(qty)),
+                unit="ingredient",
+                conversion_factor=Decimal("1"),
+                unit_cost=Decimal("3"),
+            )
+        ],
+    )
+    db.add(txn)
+    await db.flush()
+    user = await db.get(User, user_id)
+    await inventory_service.post_transaction(db, transaction=txn, user=user)
+    return txn
+
+
+async def test_a_sale_does_not_block_submit_but_an_adjustment_does(engine, env):
+    """A close count must be submittable while the shop is still selling.
+
+    Sale consumption never stops during trading and posts a transaction each
+    time, advancing the branch sequence. The old guard rejected the submit on any
+    such change, so the count could never be handed in (Sharjah, 2026-09-09). A
+    sale changes nothing the report posts — the count SETS the level absolutely —
+    so it must pass; a manual adjustment does move a baseline and must still block.
+    """
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with Session() as db:
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+            qty=100,
+        )
+        report = _report(branch_id, template_id, report_type="finished_goods")
+        report.status = ShiftInventoryReportStatusEnum.DRAFT.value
+        report.base_posting_sequence = await report_service.current_sequence(
+            db, branch_id
+        )
+        report.lines = [
+            _line(
+                item_id,
+                entered_quantity=95,
+                expected_quantity=100,
+                source_summary={"entered_columns": [], "prefilled": {}},
+            )
+        ]
+        db.add(report)
+        await db.flush()
+        report_id = report.id
+        # A sale consumes stock after the refresh — the sequence moves.
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+            qty=5,
+        )
+        await db.commit()
+
+    async with Session() as db:
+        report = await report_service.load_report(db, report_id)
+        user = await db.get(User, user_id)
+        submitted = await report_service.submit_report(db, report=report, user=user)
+        assert submitted.status in {
+            ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value,
+            ShiftInventoryReportStatusEnum.APPROVED.value,
+            ShiftInventoryReportStatusEnum.POSTED.value,
+        }
+        await db.commit()
+
+    async with Session() as db:
+        report2 = _report(branch_id, template_id, report_type="finished_goods")
+        report2.status = ShiftInventoryReportStatusEnum.DRAFT.value
+        report2.base_posting_sequence = await report_service.current_sequence(
+            db, branch_id
+        )
+        report2.lines = [
+            _line(
+                item_id,
+                entered_quantity=90,
+                expected_quantity=95,
+                source_summary={"entered_columns": [], "prefilled": {}},
+            )
+        ]
+        db.add(report2)
+        await db.flush()
+        report2_id = report2.id
+        # A manual adjustment moves a baseline the report posts against.
+        await _post_txn(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            user_id=user_id,
+            item_id=item_id,
+            ttype=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
+            qty=2,
+        )
+        await db.commit()
+
+    async with Session() as db:
+        report2 = await report_service.load_report(db, report2_id)
+        user = await db.get(User, user_id)
+        with pytest.raises(ConflictError):
+            await report_service.submit_report(db, report=report2, user=user)
