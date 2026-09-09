@@ -524,6 +524,122 @@ async def test_a_refusal_is_not_tried_again_and_says_it_is_a_refusal(
     assert "outside the service area" in str(exc.value)
 
 
+def _counting_client(monkeypatch, responder):
+    attempts: list[int] = []
+
+    class _Client:
+        def __init__(self, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def request(self, *_a, **_kw):
+            attempts.append(1)
+            return responder(len(attempts))
+
+    monkeypatch.setattr(slider_provider.httpx, "AsyncClient", _Client)
+    return attempts
+
+
+async def _create(client) -> dict:
+    return await client.create_delivery(
+        order_id="ord_1",
+        vehicle="slider_bike",
+        pickup={"lat": 25.0, "lng": 55.0},
+        dropoff={"lat": 25.1, "lng": 55.1},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+async def test_create_delivery_never_retries_a_5xx_a_rider_may_already_be_out(
+    monkeypatch, status
+):
+    """F-COU-15: a create that 5xxs may already have dispatched a rider, and
+    Slider has no Idempotency-Key, so retrying it would risk a second rider for
+    one order. The create fails on the first try and leaves rebooking to the
+    dispatcher's booked-guard."""
+    attempts = _counting_client(
+        monkeypatch, lambda _n: httpx.Response(status, json={"message": "boom"})
+    )
+    with pytest.raises(SliderError):
+        await _create(_client(None))
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_delivery_still_retries_a_429_the_server_never_acted_on(
+    monkeypatch,
+):
+    """A 429 is a queue, not a dispatch — the server provably did not act — so a
+    create may safely try once more."""
+    attempts = _counting_client(
+        monkeypatch,
+        lambda n: httpx.Response(429, json={"message": "later"})
+        if n == 1
+        else httpx.Response(200, json={"order_number": "S-1"}),
+    )
+    assert await _create(_client(None)) == {"order_number": "S-1"}
+    assert len(attempts) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_delivery_retries_a_connect_failure_but_not_a_read_timeout(
+    monkeypatch,
+):
+    """A connect-phase failure never reached Slider, so a retry cannot double a
+    dispatch — but a read timeout may be a request already on the wire, so it is
+    not retried."""
+    # Connect error: request never left, safe to retry → 2 attempts then success.
+    connect_attempts = _counting_client(monkeypatch, lambda _n: None)
+
+    class _ConnectThenOk:
+        def __init__(self, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def request(self, *_a, **_kw):
+            connect_attempts.append(1)
+            if len(connect_attempts) == 1:
+                raise httpx.ConnectError("refused")
+            return httpx.Response(200, json={"order_number": "S-2"})
+
+    monkeypatch.setattr(slider_provider.httpx, "AsyncClient", _ConnectThenOk)
+    assert await _create(_client(None)) == {"order_number": "S-2"}
+    assert len(connect_attempts) == 2
+
+    # Read timeout: may already be half-applied, so it must NOT retry.
+    read_attempts: list[int] = []
+
+    class _ReadTimeout:
+        def __init__(self, **_kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def request(self, *_a, **_kw):
+            read_attempts.append(1)
+            raise httpx.ReadTimeout("slow")
+
+    monkeypatch.setattr(slider_provider.httpx, "AsyncClient", _ReadTimeout)
+    with pytest.raises(SliderError):
+        await _create(_client(None))
+    assert len(read_attempts) == 1
+
+
 def test_the_base_url_carries_its_v1_prefix():
     """
     There is one host now — the sandbox and the `SLIDER_ENV` override went when

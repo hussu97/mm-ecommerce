@@ -69,11 +69,23 @@ __all__ = [
 #: went to production.
 BASE_URL = "https://api.slider-app.com/v1"
 
-#: Errors worth trying again. A courier that is briefly unreachable should not
-#: fail a dispatch, and a 429 is a queue rather than a refusal. Deliberately
-#: nothing else: a 4xx from Slider is an answer, and repeating the question does
-#: not change it.
+#: Errors worth trying again on an IDEMPOTENT call. A courier that is briefly
+#: unreachable should not fail a fare quote, and a 429 is a queue rather than a
+#: refusal. Deliberately nothing else: a 4xx from Slider is an answer, and
+#: repeating the question does not change it.
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+#: What a NON-idempotent call (create_delivery) may retry on: only a 429, which
+#: is a queue the server has not acted on. A 5xx is not here — the request may
+#: have dispatched a rider before the error, and retrying it would send a second
+#: (F-COU-15). Slider offers no Idempotency-Key, so "did it happen?" cannot be
+#: asked; the only safe retry is one the server provably never processed.
+_UNSAFE_RETRY_STATUSES = frozenset({429})
+
+#: Network failures that happened BEFORE the request could reach Slider, so a
+#: non-idempotent retry cannot double anything. A read/write timeout is excluded:
+#: the request may already be on the wire and half-applied.
+_CONNECT_PHASE_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 #: Named because their WAF is the reason. A request with no `User-Agent` is
 #: answered with a 403 that carries no hint of what was wrong with it.
@@ -167,6 +179,7 @@ class SliderClient:
         json_body: dict[str, Any] | None = None,
         timeout: float | None = None,
         attempts: int = 2,
+        idempotent: bool = True,
     ) -> Any:
         config = self.config
         if not config.api_key:
@@ -193,6 +206,13 @@ class SliderClient:
         # body on every endpoint that wants it, and `order_id` is what makes a
         # repeated create the same delivery to them.
 
+        # A non-idempotent call (create_delivery) retries only where the server
+        # provably did not act — a 429, or a failure to connect at all — because
+        # Slider has no Idempotency-Key and a 5xx or a read timeout may already
+        # have dispatched a rider (F-COU-15). An idempotent call keeps the wider
+        # ladder.
+        retry_statuses = _RETRY_STATUSES if idempotent else _UNSAFE_RETRY_STATUSES
+
         last: Exception | None = None
         for attempt in range(attempts):
             try:
@@ -207,11 +227,12 @@ class SliderClient:
                     )
             except httpx.HTTPError as exc:
                 last = exc
-                if attempt + 1 < attempts:
+                retriable = idempotent or isinstance(exc, _CONNECT_PHASE_ERRORS)
+                if retriable and attempt + 1 < attempts:
                     continue
                 raise SliderError(f"Slider is unreachable: {exc}") from exc
 
-            if response.status_code in _RETRY_STATUSES and attempt + 1 < attempts:
+            if response.status_code in retry_statuses and attempt + 1 < attempts:
                 last = SliderError(
                     f"Slider returned {response.status_code}",
                     status=response.status_code,
@@ -281,9 +302,12 @@ class SliderClient:
         treats `SliderError.is_unserviceable` as "book somebody else" rather
         than as a failure to report.
 
-        `order_id` is ours and is what makes a retry after a timeout the same
-        delivery to them rather than a second rider to us — there is no
-        idempotency header in their reference, so this field is the whole of it.
+        `order_id` is ours; their reference says it makes a repeated create the
+        same delivery, but there is no Idempotency-Key to lean on and that claim
+        is unverified — so this call is marked `idempotent=False` and never
+        auto-retries on a 5xx or a timeout, either of which may already have
+        dispatched a rider (F-COU-15). A create that fails ambiguously is left
+        for the dispatcher's own booked-guarded retry, not doubled here.
         `display_order_id` is what the rider is shown.
 
         Note `dropoff`, one word: `drop_off` is silently not the field they
@@ -310,7 +334,12 @@ class SliderClient:
             body["driver_tip"] = round(float(driver_tip), 2)
         if schedule_at:
             body["schedule_at"] = schedule_at
-        return await self._call("POST", "/deliveries", json_body=body) or {}
+        return (
+            await self._call(
+                "POST", "/deliveries", json_body=body, idempotent=False
+            )
+            or {}
+        )
 
     async def get_delivery(self, order_number: str) -> dict[str, Any]:
         """GET /deliveries/{order_number} — status, rider, tracking link.
