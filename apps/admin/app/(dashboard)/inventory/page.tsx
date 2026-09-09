@@ -20,7 +20,7 @@ import type {
   Supplier,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Pagination, Select, Spinner, TabBar } from '@/components/ui';
+import { Badge, Button, Input, LoadError, Pagination, Select, Spinner, TabBar } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
@@ -855,6 +855,10 @@ function ShiftReportsTab() {
   const [itemSearch, setItemSearch] = useState('');
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  // Whether the templates fetch failed. Without this an errored load is
+  // indistinguishable from a branch with no templates, and the "create the
+  // first version" prompt below invited a duplicate on top of a 500 (F-ADM-8).
+  const [loadError, setLoadError] = useState(false);
 
   const guidance = REPORT_TEMPLATE_GUIDANCE[reportType];
   const suggestedItems = useMemo(
@@ -872,23 +876,32 @@ function ShiftReportsTab() {
   const reload = useCallback(async () => {
     if (!branchId) {
       setTemplates([]);
+      setLoadError(false);
       return;
     }
-    setTemplates(await inventoryApi.reportTemplates(branchId));
+    setLoadError(false);
+    try {
+      setTemplates(await inventoryApi.reportTemplates(branchId));
+    } catch {
+      // Keep the list empty but remember it is empty because the load FAILED,
+      // not because the branch has none — the render below leans on that.
+      setTemplates([]);
+      setLoadError(true);
+    }
   }, [branchId]);
 
   useEffect(() => {
     let cancelled = false;
     if (!branchId) {
-      void Promise.resolve().then(() => {
-        if (!cancelled) setTemplates([]);
-      });
+      setTemplates([]);
+      setLoadError(false);
       return () => { cancelled = true; };
     }
-    void inventoryApi.reportTemplates(branchId).then((reportTemplates) => {
-      if (!cancelled) setTemplates(reportTemplates);
-    });
-    void inventoryApi.items().then(setItems);
+    setLoadError(false);
+    inventoryApi.reportTemplates(branchId)
+      .then((reportTemplates) => { if (!cancelled) setTemplates(reportTemplates); })
+      .catch(() => { if (!cancelled) { setTemplates([]); setLoadError(true); } });
+    inventoryApi.items().then(setItems).catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -994,7 +1007,13 @@ function ShiftReportsTab() {
       </select>
       <div className="flex items-center justify-between"><span className="text-xs text-gray-500">Select multiple items with Shift/Cmd. Default approval is AED 100 or 10%.</span><Button onClick={() => void createTemplate()} loading={savingTemplate} disabled={!branchId || selectedItems.length === 0}>Create template</Button></div>
       {message && <p className={`p-2 text-sm ${message.error ? 'bg-red-50 text-red-800' : 'bg-green-50 text-green-800'}`}>{message.text}</p>}
-      {branchId && templates.length === 0 && <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">No templates for this branch yet. Create the first version above.</p>}
+      {branchId && loadError && (
+        <LoadError
+          message="This branch's report templates could not be loaded. It may already have some — do not create a new one until this clears."
+          onRetry={() => void reload()}
+        />
+      )}
+      {branchId && !loadError && templates.length === 0 && <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">No templates for this branch yet. Create the first version above.</p>}
       {templates.length > 0 && <DataTable rows={templates} rowKey={(row) => row.id} columns={[
         { header: 'Template', priority: 'primary', render: (row) => row.name },
         { header: 'Type', render: (row) => row.report_type.replaceAll('_', ' ') },

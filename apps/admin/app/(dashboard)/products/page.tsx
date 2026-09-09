@@ -127,6 +127,20 @@ export default function ProductsPage() {
   }
 
   async function handleBulkStatus(is_active: boolean) {
+    const n = selectedIds.size;
+    // Deactivating in bulk is the destructive direction, and single deactivate
+    // already asks — so a stroke that takes up to a page of products off sale
+    // must ask too, and name the count (F-ADM-6). Activating is safe and does not.
+    if (
+      !is_active &&
+      !(await confirm({
+        title: 'Deactivate products',
+        message: `Deactivate ${n} ${n === 1 ? 'product' : 'products'}? They will move to the Inactive tab.`,
+        confirmLabel: `Deactivate ${n}`,
+        danger: true,
+      }))
+    )
+      return;
     setBulking(true);
     try {
       await bulkApi.updateStatus('products', Array.from(selectedIds), is_active);
@@ -145,6 +159,19 @@ export default function ProductsPage() {
    * website should not withdraw them from the counter too.
    */
   async function handleBulkVisibility(channel: SalesChannel, visible: boolean) {
+    const n = selectedIds.size;
+    // Hiding is the destructive direction — it withdraws products from a
+    // storefront — so it confirms with a count; showing does not (F-ADM-6).
+    if (
+      !visible &&
+      !(await confirm({
+        title: 'Hide products',
+        message: `Hide ${n} ${n === 1 ? 'product' : 'products'} from the website?`,
+        confirmLabel: `Hide ${n}`,
+        danger: true,
+      }))
+    )
+      return;
     setBulking(true);
     try {
       await bulkApi.updateVisibility(Array.from(selectedIds), channel, visible);
@@ -208,7 +235,7 @@ export default function ProductsPage() {
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 bg-primary/10 border border-primary/30 px-4 py-2.5 mb-4">
           <span className="text-xs font-body text-primary font-medium">{selectedIds.size} selected</span>
-          <button onClick={() => setSelectedIds(new Set(products.map(p => p.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All</button>
+          <button onClick={() => setSelectedIds(new Set(products.map(p => p.id)))} className="text-xs font-body text-gray-500 hover:text-primary underline">All on this page</button>
           <button onClick={() => setSelectedIds(new Set())} className="text-xs font-body text-gray-500 hover:text-primary underline">None</button>
           <div className="flex-1" />
           <span className="text-xs font-body text-gray-500">Website</span>
