@@ -3,7 +3,10 @@
 import { useState } from 'react';
 import { posReportsApi, type DailySalesEmailResult } from '@/lib/pos-api';
 import { Button, Textarea, Badge } from '@/components/ui';
+import { useConfirm } from '@/components/ui/feedback';
 import type { Window } from '../report-window';
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Email the daily sales spreadsheet on demand.
@@ -15,10 +18,13 @@ import type { Window } from '../report-window';
  * of recipients. Delivered trade only.
  */
 export function EmailTab({ window }: { window: Window }) {
-  const [emails, setEmails] = useState('h_abbasi97@hotmail.com');
+  // No default recipient: this used to ship one person's personal address in
+  // source, so a hurried send mailed the figures there by default (F-ADM-3).
+  const [emails, setEmails] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<DailySalesEmailResult>();
+  const confirm = useConfirm();
 
   const send = async () => {
     const recipients = emails
@@ -34,6 +40,26 @@ export function EmailTab({ window }: { window: Window }) {
       setError('Enter at least one recipient email.');
       return;
     }
+    const invalid = recipients.filter((e) => !EMAIL_RE.test(e));
+    if (invalid.length > 0) {
+      setError(`Not a valid email: ${invalid.join(', ')}`);
+      return;
+    }
+
+    // Mailing real sales figures to real inboxes is a side-effect worth a
+    // second look — name the recipients and the range before it goes.
+    const span =
+      window.date_from === window.date_to
+        ? window.date_from
+        : `${window.date_from} to ${window.date_to}`;
+    if (
+      !(await confirm({
+        title: 'Send the sales report',
+        message: `Email the ${span} sales report to ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}: ${recipients.join(', ')}?`,
+        confirmLabel: 'Send',
+      }))
+    )
+      return;
 
     setSending(true);
     setError(undefined);

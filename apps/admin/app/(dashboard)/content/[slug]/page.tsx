@@ -30,6 +30,10 @@ export default function ContentEditorPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  // Which locales have edits not yet persisted. Content for every locale lives
+  // in `content`, but Save used to write only the active one — so editing EN,
+  // switching to AR and saving persisted AR and dropped EN silently (F-ADM-11).
+  const [dirty, setDirty] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     Promise.all([languagesApi.list(), cmsApi.get(slug)])
@@ -42,17 +46,34 @@ export default function ContentEditorPage() {
       .finally(() => setLoading(false));
   }, [slug]);
 
+  // Don't let a navigation or tab-close throw away edits in any locale.
+  useEffect(() => {
+    if (dirty.size === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
   function handleLocaleContent(localeContent: Record<string, unknown>) {
     setContent(prev => ({ ...prev, [activeLocale]: localeContent }));
+    setDirty(prev => (prev.has(activeLocale) ? prev : new Set(prev).add(activeLocale)));
     setSaved(false);
   }
 
   async function handleSave() {
+    if (dirty.size === 0) return;
     setSaving(true);
     setError('');
     setSaved(false);
     try {
-      await cmsApi.updateLocale(slug, activeLocale, content[activeLocale] ?? {});
+      // Persist EVERY locale with unsaved edits, not just the one on screen.
+      for (const locale of dirty) {
+        await cmsApi.updateLocale(slug, locale, content[locale] ?? {});
+      }
+      setDirty(new Set());
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -102,6 +123,7 @@ export default function ContentEditorPage() {
             }`}
           >
             {lang.name}
+            {dirty.has(lang.code) && <span className="ml-1 text-amber-500" title="Unsaved changes">•</span>}
           </button>
         ))}
       </div>
@@ -113,9 +135,11 @@ export default function ContentEditorPage() {
 
       {/* Save */}
       <div className="flex items-center gap-3">
-        <Button onClick={handleSave} loading={saving}>
+        <Button onClick={handleSave} loading={saving} disabled={dirty.size === 0}>
           <span className="material-icons text-[14px]">save</span>
-          Save {activeLocale.toUpperCase()} Content
+          {dirty.size > 1
+            ? `Save changes (${dirty.size} languages)`
+            : 'Save changes'}
         </Button>
         {saved && (
           <span className="text-xs font-body text-green-600 flex items-center gap-1">
