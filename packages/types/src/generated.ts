@@ -19023,6 +19023,16 @@ export interface components {
             is_admin: boolean;
             /** Is Guest */
             is_guest: boolean;
+            /**
+             * Is Superadmin
+             * @default false
+             */
+            is_superadmin: boolean;
+            /**
+             * Permissions
+             * @default []
+             */
+            permissions: string[];
             /** Phone */
             phone: string | null;
         };

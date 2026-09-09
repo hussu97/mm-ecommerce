@@ -35,6 +35,13 @@ class UserResponse(BaseModel):
     is_admin: bool
     is_guest: bool
     created_at: datetime
+    #: The permission slugs this user's role grants (empty for a customer or a
+    #: role-less staff member). The admin console shows a nav entry only when the
+    #: user holds its required slug — so a screen the API would 403 is not offered
+    #: as a dead link (F-ADM-7).
+    permissions: list[str] = []
+    #: Sees everything, so the console skips the per-entry slug check for them.
+    is_superadmin: bool = False
 
 
 class TokenResponse(BaseModel):

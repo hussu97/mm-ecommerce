@@ -1,54 +1,63 @@
 /**
- * One nav entry lights up, even when a route sits inside another.
+ * The sidebar shows only the screens a user's API access would serve (F-ADM-7).
  *
- * The sidebar used to decide per entry with `pathname.startsWith(href)`, which
- * was correct only for as long as no nav href was a prefix of another and every
- * route had its own entry. A child route without an entry — `/analytics/carts`
- * (the Live Baskets tab), `/orders/MM-…` — must light its parent, and a
- * per-entry rule has no way to express "the more specific one wins" because it
- * never sees the other entries.
+ * The load-bearing part is the `requires` slug on each entry: a wrong slug hides
+ * a screen from someone who should see it, or shows one the API will 403. These
+ * hold the map honest — every slug is a real one the backend defines, and every
+ * screen entry declares its gate explicitly (a `null` is a deliberate "public").
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { activeNavHref } from './nav';
 
-describe('activeNavHref', () => {
-  it('lights the parent section from a child route without its own entry', () => {
-    // Live Baskets is a tab of Analytics now, not its own nav entry.
-    expect(activeNavHref('/analytics/carts')).toBe('/analytics');
+import { NAV, canAccessNav, type NavEntry } from './nav';
+
+const ADMIN = join(__dirname, '..');
+
+function serverSlugs(): Set<string> {
+  const py = readFileSync(
+    join(ADMIN, '..', 'api', 'app', 'models', 'role.py'),
+    'utf8',
+  );
+  // PERMISSION_GROUPS is a dict of group -> list of ("slug", "description").
+  const start = py.indexOf('PERMISSION_GROUPS');
+  const end = py.indexOf('ALL_PERMISSIONS');
+  const block = py.slice(start, end === -1 ? undefined : end);
+  return new Set([...block.matchAll(/\(\s*"([a-z_.]+)"\s*,/g)].map((m) => m[1]));
+}
+
+const entries = NAV.filter((e): e is NavEntry => 'href' in e);
+
+describe('sidebar nav permissions', () => {
+  it('gives every screen an explicit requirement (a slug or null)', () => {
+    const missing = entries
+      .filter((e) => e.requires === undefined)
+      .map((e) => e.href);
+    expect(missing, 'these nav entries have no `requires` — gate them').toEqual([]);
   });
 
-  it('still lights the parent up on the parent route', () => {
-    expect(activeNavHref('/analytics')).toBe('/analytics');
+  it('names only permission slugs the backend actually defines', () => {
+    const slugs = serverSlugs();
+    expect(slugs.size).toBeGreaterThan(20); // the parser found the catalogue
+    const unknown = entries
+      .filter((e) => e.requires !== null && !slugs.has(e.requires))
+      .map((e) => `${e.href} → ${e.requires}`);
+    expect(unknown, 'these `requires` are not real permission slugs').toEqual([]);
   });
 
-  it('lights Logs from any of its three tab routes', () => {
-    // Email, Webhooks and Audit are tabs of Logs; none has its own nav entry.
-    expect(activeNavHref('/logs/email')).toBe('/logs');
-    expect(activeNavHref('/logs/webhooks')).toBe('/logs');
-    expect(activeNavHref('/logs/audit')).toBe('/logs');
-  });
+  it('gates entries by the viewer, and a super-admin sees everything', () => {
+    const orders = entries.find((e) => e.href === '/orders')!;
+    const security = entries.find((e) => e.href === '/security')!; // requires: null
 
-  it('uses Reconciliation as the sidebar front door for its lateral tabs', () => {
-    expect(activeNavHref('/aggregators/reconciliation')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/grubops')).toBe('/aggregators/reconciliation');
-    expect(activeNavHref('/aggregators/invoices')).toBe('/aggregators/reconciliation');
-  });
-
-  it('lights a section up from one of its detail pages', () => {
-    // `/orders/[orderNumber]` has no nav entry of its own, so the section it
-    // belongs to is the answer.
-    expect(activeNavHref('/orders/MM-20260820-001')).toBe('/orders');
-  });
-
-  it('matches the dashboard exactly, since it is a prefix of everything', () => {
-    expect(activeNavHref('/')).toBe('/');
-    expect(activeNavHref('/products')).toBe('/products');
-  });
-
-  it('does not treat a shared word-start as nesting', () => {
-    // `/product-something` is not inside `/products`, and a bare `startsWith`
-    // would have said it was.
-    expect(activeNavHref('/products-archive')).toBeNull();
+    expect(canAccessNav(orders, { permissions: ['orders.read'] })).toBe(true);
+    expect(canAccessNav(orders, { permissions: ['catalogue.manage'] })).toBe(false);
+    expect(canAccessNav(orders, { permissions: [] })).toBe(false);
+    // A null requirement is public to any signed-in admin.
+    expect(canAccessNav(security, { permissions: [] })).toBe(true);
+    // Super-admin bypasses the slug check entirely.
+    expect(canAccessNav(orders, { is_superadmin: true, permissions: [] })).toBe(true);
+    // No user at all sees nothing.
+    expect(canAccessNav(orders, null)).toBe(false);
   });
 });

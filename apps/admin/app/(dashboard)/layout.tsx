@@ -5,19 +5,27 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { loginPathFor } from '@/lib/auth-redirect';
-import { activeNavHref, NAV } from '@/lib/nav';
+import { activeNavHref, canAccessNav, NAV, requiredPermissionFor } from '@/lib/nav';
 import { cn } from '@/lib/utils';
 
 interface SidebarContentProps {
   collapsed: boolean;
   pathname: string;
-  user: { email: string };
+  user: { email: string; permissions: string[]; is_superadmin: boolean };
   setMobileOpen: (open: boolean) => void;
   onLogout: () => void;
 }
 
 function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: SidebarContentProps) {
   const currentHref = activeNavHref(pathname);
+  // Show only the screens this user's API access would actually serve, and drop
+  // a section heading once all its entries are gone (F-ADM-7).
+  const allowed = NAV.filter((e) => 'section' in e || canAccessNav(e, user));
+  const nav = allowed.filter((e, i) => {
+    if (!('section' in e)) return true;
+    const next = allowed[i + 1];
+    return next !== undefined && !('section' in next);
+  });
   return (
     <>
       {/* Logo */}
@@ -30,7 +38,7 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
 
       {/* Nav */}
       <nav className="flex-1 py-4 overflow-y-auto">
-        {NAV.map((entry) => {
+        {nav.map((entry) => {
           if ('section' in entry) {
             // Section headings disappear when collapsed — a lone divider reads
             // better than a truncated word in a 56px rail.
@@ -99,6 +107,25 @@ function SidebarContent({ collapsed, pathname, user, setMobileOpen, onLogout }: 
   );
 }
 
+function NoAccessScreen() {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center">
+      <span className="material-icons text-4xl text-gray-300 mb-3">lock</span>
+      <h1 className="font-display text-xl text-gray-800 mb-1">No access to this screen</h1>
+      <p className="max-w-sm text-sm font-body text-gray-500">
+        Your role doesn&rsquo;t include permission for this page. Ask an administrator
+        to add it to your role if you need it.
+      </p>
+      <Link
+        href="/"
+        className="mt-5 text-xs font-body uppercase tracking-widest text-primary hover:underline"
+      >
+        Back to dashboard
+      </Link>
+    </div>
+  );
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, logout } = useAuth();
   const router = useRouter();
@@ -125,6 +152,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     logout();
     router.push('/login');
   }
+
+  // The screen at this path is off-limits when its nav entry names a slug the
+  // user lacks — enforced here (not just hidden from the sidebar) so a deep link
+  // or a bookmark lands on a clear no-access page rather than a 403-driven mess.
+  const needed = requiredPermissionFor(pathname);
+  const canView = needed === null || user.is_superadmin || user.permissions.includes(needed);
 
   return (
     <div className="flex min-h-screen">
@@ -206,7 +239,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             294px of a 390px screen. Anything rendered here supplies content,
             never padding. */}
         <main className="flex-1 px-4 py-5 md:p-6 overflow-y-auto overflow-x-hidden">
-          {children}
+          {canView ? children : <NoAccessScreen />}
         </main>
       </div>
     </div>

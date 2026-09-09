@@ -99,5 +99,24 @@ class User(Base, UUIDMixin, TimestampMixin):
             return True
         return bool(self.role and self.role.has(permission))
 
+    @property
+    def is_superadmin(self) -> bool:
+        """Whether this user may see and do everything — the unrestricted
+        console-admin flag, or a role flagged super-admin. Serialised on
+        `UserResponse` so the admin console can show a super-admin every screen
+        without enumerating slugs (F-ADM-7). `role` is `lazy="selectin"`, so
+        reading it here never lazy-loads.
+        """
+        return self.is_admin or bool(self.role and self.role.is_super_admin)
+
+    @property
+    def permissions(self) -> list[str]:
+        """The explicit permission slugs this user's role grants, or none without
+        a role. A super-admin is NOT enumerated here — the console reads
+        `is_superadmin` for "everything" — so this is exactly what gates which
+        screens a non-super staff member sees.
+        """
+        return list(self.role.permissions or []) if self.role else []
+
     def __repr__(self) -> str:
         return f"<User {self.email}>"

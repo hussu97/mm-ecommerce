@@ -6,6 +6,11 @@ export interface User {
   is_admin: boolean;
   is_guest: boolean;
   created_at: string;
+  /** Permission slugs this user's role grants; empty without a role (F-ADM-7).
+   *  The sidebar shows a screen only when the user holds its slug. */
+  permissions: string[];
+  /** Sees every screen — the console skips the per-entry slug check. */
+  is_superadmin: boolean;
 }
 
 /**

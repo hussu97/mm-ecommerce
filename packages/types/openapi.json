@@ -31490,6 +31490,19 @@
             "title": "Is Guest",
             "type": "boolean"
           },
+          "is_superadmin": {
+            "default": false,
+            "title": "Is Superadmin",
+            "type": "boolean"
+          },
+          "permissions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Permissions",
+            "type": "array"
+          },
           "phone": {
             "anyOf": [
               {
