@@ -45,6 +45,10 @@ __all__ = ["run_forever", "sweep_once"]
 _ADVISORY_LOCK_KEY = 0x6D6D_4241_5443_4801
 
 _TICK_SECONDS = 60
+#: A brief settle-and-stagger pause before the first sweep — long enough to let
+#: boot finish and to drift off the other loops, short enough that a fresh order
+#: is not left waiting a whole tick for its first pass (F-COU-18).
+_STARTUP_DELAY_SECONDS = 3
 
 
 async def sweep_once() -> bool:
@@ -150,9 +154,14 @@ async def run_forever() -> None:
     future sweep — so failures are logged and the next tick tries again.
     """
     logger.info("Delivery scheduler started (every %ss)", _TICK_SECONDS)
+    # A short jittered pause lets startup settle (and drifts this loop off the
+    # others so their wakeups don't lock in phase — see background.jittered),
+    # then the FIRST sweep runs immediately rather than a full tick later. The
+    # old top-of-loop sleep meant a fresh order waited up to _TICK_SECONDS for
+    # its first dispatch/arrival pass every time the container restarted (F-COU-18).
+    await asyncio.sleep(background.jittered(_STARTUP_DELAY_SECONDS))
     while True:
         try:
-            await asyncio.sleep(background.jittered(_TICK_SECONDS))
             await heartbeat.beat("delivery_scheduler")
             await sweep_once()
         except asyncio.CancelledError:
@@ -160,3 +169,10 @@ async def run_forever() -> None:
             raise
         except Exception:  # noqa: BLE001 — the loop outlives any one failure
             logger.exception("Delivery sweep failed; retrying on the next tick")
+        # Always wait a tick before the next sweep, INCLUDING after a failure, so
+        # a persistent error retries at the tick cadence and never in a hot loop.
+        try:
+            await asyncio.sleep(background.jittered(_TICK_SECONDS))
+        except asyncio.CancelledError:
+            logger.info("Delivery scheduler stopping")
+            raise

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
+from app.core.bounded import BoundedLRU
 from app.core.config import settings
 
 # E.164 or nothing. Re-exported below, because it stopped being a courier
@@ -266,10 +267,13 @@ class Estimate:
 #: Checkout re-quotes whenever the pin or the basket moves, and the basket does
 #: not change the price of a courier run. Keyed on the origin and the rounded
 #: destination so nudging the pin a few metres does not spend another call.
-_quote_cache: dict[
+#: Bounded (F-COU-21): one entry per distinct rounded pin, LRU-evicted past the
+#: cap, so a long-lived worker cannot accumulate a cold key per pin forever.
+_QUOTE_CACHE_MAX = 1024
+_quote_cache: BoundedLRU[
     tuple[uuid.UUID | None, float, float],
     tuple[float, Estimate | None, str | None],
-] = {}
+] = BoundedLRU(_QUOTE_CACHE_MAX)
 
 #: A failure is cached far more briefly than a price. Outside the fixed-fee
 #: zones this answer *is* the fee, so a cached failure is a customer being told

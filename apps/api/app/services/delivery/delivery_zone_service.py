@@ -8,6 +8,7 @@ from typing import Any, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.bounded import BoundedLRU
 from app.models.delivery_polygon import (
     DeliveryPolygon,
     DeliveryPolygonVersion,
@@ -145,9 +146,15 @@ def point_in_geometry(lat: float, lng: float, geometry: dict[str, Any]) -> bool:
 # change (F-COU-9). So an in-place fee or courier edit, which keeps the version
 # id, is still picked up by every worker on its next read: the id matches but the
 # revision does not. Publishing a different map moves the id instead, which also
-# misses. Storing one entry per id (rather than one per (id, revision)) keeps the
-# map bounded — a superseded revision is overwritten, not left to accumulate.
-_cache: dict[uuid.UUID, tuple[int, tuple[Zone, ...]]] = {}
+# misses. Storing one entry per id (not per (id, revision)) means an in-place
+# edit overwrites its own entry; a PUBLISH, though, is a new id, so without a cap
+# every version ever published would accumulate one entry forever. Bounded to the
+# two most recent ids (F-COU-21): the live one, plus the immediately previous that
+# a mid-cutover worker may still serve for a read or two.
+_CACHE_MAX_VERSIONS = 2
+_cache: BoundedLRU[uuid.UUID, tuple[int, tuple[Zone, ...]]] = BoundedLRU(
+    _CACHE_MAX_VERSIONS
+)
 
 
 def invalidate_cache() -> None:

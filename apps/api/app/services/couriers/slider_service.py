@@ -42,6 +42,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.bounded import BoundedLRU
 from app.core.config import settings
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
@@ -141,10 +142,14 @@ COD_CARD_CEILING = Decimal("500.00")
 _QUOTE_CACHE_SECONDS = 120
 _FAILURE_CACHE_SECONDS = 15
 
-_quote_cache: dict[
-    tuple[uuid.UUID | None, float, float],
+#: Bounded (F-COU-21): LRU-evicted past the cap so a worker cannot accumulate a
+#: cold entry per distinct pin/tier forever. Freshness is still each value's own
+#: timestamp, checked on read below.
+_QUOTE_CACHE_MAX = 1024
+_quote_cache: BoundedLRU[
+    tuple,
     tuple[float, Estimate | None, str | None],
-] = {}
+] = BoundedLRU(_QUOTE_CACHE_MAX)
 
 
 def clear_caches() -> None:
