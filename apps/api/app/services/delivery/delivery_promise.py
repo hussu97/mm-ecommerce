@@ -53,6 +53,7 @@ from app.core import trading_hours
 from app.models.branch import Branch
 from app.models.courier import Courier, UnbatchedPromiseEnum
 from app.services import branch_holiday_service, branch_hours_service
+from app.services.couriers import courier_service
 from app.services.delivery.delivery_zone_service import Zone
 
 __all__ = [
@@ -93,16 +94,27 @@ class _Context:
     #: so a caller constructing a context by hand — a test, a script — gets the
     #: no-holidays reading without having to say so.
     closed_dates: frozenset[str] = frozenset()
+    #: The courier the zone actually resolves to (F-COU-19), not its raw
+    #: `fulfilment_provider`: a Slider zone with Slider unconfigured is carried
+    #: by noon Send / Lalamove, and the promise must be that courier's schedule
+    #: and name that courier — the same resolution the fare quote and dispatch
+    #: use. Defaults to None for the no-zone context.
+    provider_code: str | None = None
 
 
 async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Context:
     if zone is None:
         return _Context(None, None, None, None)
 
+    # The courier the zone actually resolves to — a Slider zone with Slider
+    # unconfigured falls back to noon Send / Lalamove — so the promise reads the
+    # right transit schedule and names the courier that will really carry it
+    # (F-COU-19). This is the same resolution the fare quote and dispatch use.
+    provider_code, _ = courier_service.effective_provider(
+        zone.fulfilment_provider, zone.name
+    )
     courier = (
-        await db.execute(
-            select(Courier).where(Courier.code == zone.fulfilment_provider)
-        )
+        await db.execute(select(Courier).where(Courier.code == provider_code))
     ).scalar_one_or_none()
 
     branch = await _serving_branch(db, zone.branch_id)
@@ -124,7 +136,9 @@ async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Conte
         else None
     )
     opens_at, closes_at = window if window else (None, None)
-    return _Context(zone, courier, opens_at, closes_at, closed)
+    return _Context(
+        zone, courier, opens_at, closes_at, closed, provider_code=provider_code
+    )
 
 
 async def _serving_branch(
@@ -182,7 +196,7 @@ def resolve(context: _Context, moment: datetime) -> DeliveryPromise | None:
         if courier is not None
         else UnbatchedPromiseEnum.NEXT_DAY.value
     )
-    code = context.zone.fulfilment_provider
+    code = context.provider_code or context.zone.fulfilment_provider
 
     # 3. Somebody else's schedule. A day, and one more day if today's trading is
     #    already over — an order at 23:30 against a 23:00 close cannot even be

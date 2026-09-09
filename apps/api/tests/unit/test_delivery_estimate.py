@@ -70,6 +70,7 @@ def zone(provider: str) -> Zone:
 def context(
     *,
     provider: str = "lalamove",
+    provider_code: str | None = None,
     courier_row: Courier | None = None,
     no_courier: bool = False,
     opens: str | None = OPENS,
@@ -87,12 +88,31 @@ def context(
         opens_at=opens,
         closes_at=closes,
         closed_dates=closed,
+        provider_code=provider_code,
     )
 
 
 def shut(*days: int) -> frozenset[str]:
     """Those days of August 2026, closed."""
     return frozenset(f"2026-08-{day:02d}" for day in days)
+
+
+# ── F-COU-19: the effective courier, not the zone's raw provider ─────────────
+
+
+def test_a_slider_zone_promises_via_its_effective_courier_not_the_raw_one():
+    """A Slider zone whose Slider credential is absent is carried by the fallback
+    courier (noon Send in Sharjah), and `_load` resolves that before the lookup —
+    so `resolve` prices on the fallback's schedule and names it in the reason.
+    The zone still says `slider`; the promise must not."""
+    promise = resolve(
+        context(provider="slider", provider_code="noon_send", courier_row=NOON_SEND),
+        at(14),
+    )
+    assert promise is not None
+    assert promise.precision == "time"  # noon Send is a minutes courier
+    assert "courier:noon_send" in promise.reason
+    assert "slider" not in promise.reason
 
 
 # ── rule 1: nowhere ──────────────────────────────────────────────────────────
