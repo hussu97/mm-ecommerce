@@ -436,7 +436,9 @@ async def list_transactions(
     type: str | None = None,
     status_filter: str | None = Query(None, alias="status"),
     business_date: str | None = None,
+    search: str | None = None,
     limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("reports.inventory")),
 ):
@@ -465,7 +467,32 @@ async def list_transactions(
         stmt = stmt.where(InventoryTransaction.status == status_filter)
     if business_date:
         stmt = stmt.where(InventoryTransaction.business_date == business_date)
-    stmt = stmt.order_by(InventoryTransaction.created_at.desc()).limit(limit)
+    if search and search.strip():
+        # Reference, or any line whose item matches by name/SKU — so the admin
+        # ledger search reaches the whole log, not just the page it had loaded
+        # (F-ADM-2). An EXISTS on the item table, not a join, so a multi-line
+        # transaction is not duplicated in the result.
+        term = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(
+                InventoryTransaction.reference.ilike(term),
+                InventoryTransaction.items.any(
+                    InventoryTransactionItem.item_id.in_(
+                        select(InventoryItem.id).where(
+                            or_(
+                                InventoryItem.name.ilike(term),
+                                InventoryItem.sku.ilike(term),
+                            )
+                        )
+                    )
+                ),
+            )
+        )
+    stmt = (
+        stmt.order_by(InventoryTransaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
 
     transactions = list((await db.execute(stmt)).scalars().unique().all())
     names = await _item_lookup_for_transactions(db, transactions)

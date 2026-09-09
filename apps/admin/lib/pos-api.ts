@@ -203,7 +203,7 @@ export const inventoryApi = {
   updateSupplier: (id: string, d: Record<string, unknown>) => api.put<Supplier>(`/inventory/suppliers/${id}`, d),
   removeSupplier: (id: string) => api.delete<void>(`/inventory/suppliers/${id}`),
 
-  transactions: (params?: { branch_id?: string; type?: string; status?: string; business_date?: string }) =>
+  transactions: (params?: { branch_id?: string; type?: string; status?: string; business_date?: string; search?: string; limit?: number; offset?: number }) =>
     api.get<InventoryTransaction[]>(`/inventory/transactions${buildQs(params)}`),
   createTransaction: (d: Record<string, unknown>, post = true) =>
     api.post<InventoryTransaction>(`/inventory/transactions${buildQs({ post })}`, d),

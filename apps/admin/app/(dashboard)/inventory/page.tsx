@@ -660,17 +660,28 @@ function BranchFilter({ value, onChange }: { value: string; onChange: (id: strin
 function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
   const [branchId, setBranchId] = useState('');
   const [businessDate, setBusinessDate] = useState('');
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const search = useDebouncedValue(searchInput.trim(), 300);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(100);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<InventoryTransaction[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     void branchesApi.list().then(setBranches).catch(() => setBranches([]));
   }, []);
+  // Any filter or page-size change starts the paging over.
   useEffect(() => {
-    // Load every branch when none is picked — a super-admin sees the whole
-    // ledger, which is what "nothing shows until you choose a branch" was hiding.
+    setPage(1);
+  }, [branchId, businessDate, search, perPage, countOnly]);
+  useEffect(() => {
+    // Server-side paging AND search now (F-ADM-2): the ledger is an unbounded
+    // immutable log, so it used to load the first 100, search over just those
+    // and print "N movements — every signed stock movement" — a lie past 100.
+    // Ask for one more than the page to learn whether a next page exists without
+    // a COUNT on every keystroke.
     setLoading(true);
     setError(null);
     void inventoryApi
@@ -678,28 +689,30 @@ function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
         branch_id: branchId || undefined,
         business_date: businessDate || undefined,
         type: countOnly ? 'inventory_count' : undefined,
+        search: search || undefined,
+        limit: perPage + 1,
+        offset: (page - 1) * perPage,
       })
-      .then(setRows)
+      .then((data) => {
+        setHasMore(data.length > perPage);
+        setRows(data.slice(0, perPage));
+      })
       .catch(() => {
         setRows([]);
+        setHasMore(false);
         setError('Could not load the ledger. Try again in a moment.');
       })
       .finally(() => setLoading(false));
-  }, [branchId, businessDate, countOnly]);
+  }, [branchId, businessDate, countOnly, search, page, perPage]);
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
-  // Client-side search across reference, type, branch and the item names in each
-  // movement — so "flour" or a reference number narrows the loaded ledger without
-  // a round trip.
-  const term = search.trim().toLowerCase();
-  const visible = term
-    ? rows.filter((row) =>
-        [row.reference, row.type, branchName(row.branch_id), ...row.items.map((i) => i.item_name)]
-          .join(' ')
-          .toLowerCase()
-          .includes(term),
-      )
-    : rows;
-  return <div className="p-6 max-w-[1500px] space-y-4"><div className="flex flex-wrap items-end gap-3"><BranchFilter value={branchId} onChange={setBranchId} /><Input label="Business date" type="date" value={businessDate} onChange={(e) => setBusinessDate(e.target.value)} className="w-44" /><Input label="Search reference or item" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. flour, CFO-000459" className="w-72" />{(branchId || businessDate || search) && <Button variant="outline" size="sm" className="mb-1" onClick={() => { setBranchId(''); setBusinessDate(''); setSearch(''); }}>Clear</Button>}</div><p className="text-sm text-gray-500">{loading ? 'Loading…' : error ? error : countOnly ? 'Physical counts post only the variance; levels are never edited directly.' : `${visible.length} movement${visible.length === 1 ? '' : 's'} — every signed stock movement in immutable posting order, with source and running balance.`}</p><DataTable rows={visible} rowKey={(row) => row.id} columns={[
+  const start = rows.length === 0 ? 0 : (page - 1) * perPage + 1;
+  const end = (page - 1) * perPage + rows.length;
+  const rangeLabel = countOnly
+    ? 'Physical counts post only the variance; levels are never edited directly.'
+    : rows.length === 0
+      ? 'No movements match.'
+      : `Movements ${start}–${end}${hasMore ? ' (more on the next page)' : ''}, in immutable posting order with source and running balance.`;
+  return <div className="p-6 max-w-[1500px] space-y-4"><div className="flex flex-wrap items-end gap-3"><BranchFilter value={branchId} onChange={setBranchId} /><Input label="Business date" type="date" value={businessDate} onChange={(e) => setBusinessDate(e.target.value)} className="w-44" /><Input label="Search reference or item" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="e.g. flour, CFO-000459" className="w-72" />{(branchId || businessDate || searchInput) && <Button variant="outline" size="sm" className="mb-1" onClick={() => { setBranchId(''); setBusinessDate(''); setSearchInput(''); }}>Clear</Button>}</div><p className="text-sm text-gray-500">{loading ? 'Loading…' : error ? error : rangeLabel}</p><DataTable rows={rows} rowKey={(row) => row.id} columns={[
     { header: 'Seq', render: (row) => row.posting_sequence ?? 'Draft' },
     { header: 'Branch', render: (row) => branchName(row.branch_id) },
     { header: 'Reference', priority: 'primary', render: (row) => row.reference },
@@ -707,7 +720,7 @@ function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
     { header: 'Source', render: (row) => row.source_type ? `${row.source_type} · ${row.source_id ?? ''}` : 'Manual' },
     { header: 'Movements', render: (row) => <div className="space-y-1">{row.items.map((line) => <div key={line.id} className="text-xs"><span className={Number(line.signed_quantity) < 0 ? 'text-red-600' : 'text-green-700'}>{Number(line.signed_quantity) > 0 ? '+' : ''}{formatQuantity(line.signed_quantity ?? line.quantity)}</span> {line.item_name} <span className="text-gray-400">→ {formatQuantity(line.balance_after_quantity)}</span></div>)}</div> },
     { header: 'Posted', render: (row) => row.posted_at ? new Date(row.posted_at).toLocaleString() : '—' },
-  ]} /></div>;
+  ]} />{!loading && !error && (rows.length > 0 || page > 1) && <Pagination page={page} pages={hasMore ? page + 1 : page} total={end} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="movements" />}</div>;
 }
 
 function CountsTab() {

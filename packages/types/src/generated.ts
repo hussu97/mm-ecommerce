@@ -27983,7 +27983,9 @@ export interface operations {
                 type?: string | null;
                 status?: string | null;
                 business_date?: string | null;
+                search?: string | null;
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;
