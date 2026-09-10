@@ -112,6 +112,16 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
 
     let cancelled = false;
     (async () => {
+      // Start loading Stripe.js in parallel with the eligibility round-trip.
+      // The script does not depend on the answer, and js.stripe.com is the
+      // slower of the two to arrive — so overlapping them, rather than waiting
+      // for eligibility and only then reaching for the script, removes one hop
+      // from the wait before the button can appear. Both are still awaited
+      // below, so nothing shows early: an ineligible answer returns before the
+      // loaded Stripe is ever used, and `getStripe` already memoises the load
+      // and swallows a failure to null.
+      const stripeLoad = getStripe();
+
       let eligibility;
       try {
         eligibility = await paymentsApi.applePayEligibility(amount);
@@ -120,7 +130,7 @@ export function useApplePay({ enabled, amount }: UseApplePayInput) {
       }
       if (cancelled || !eligibility.eligible) return;
 
-      const stripe = await getStripe();
+      const stripe = await stripeLoad;
       if (cancelled || !stripe) return;
 
       const request = stripe.paymentRequest({

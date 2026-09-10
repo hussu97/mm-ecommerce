@@ -442,6 +442,7 @@ async def quote_priced(
     longitude: Decimal | float | None = None,
     cart: Cart | None = None,
     address: str | None = None,
+    settings: DeliverySettings | None = None,
 ) -> tuple[dict, DeliveryPrice]:
     """
     What delivery would cost to this point, for the checkout to show live.
@@ -466,8 +467,14 @@ async def quote_priced(
     second quote — a real risk of showing one number and charging another, on
     top of doubling what the busiest screen on the site costs us. `quote()` is
     the thin wrapper for callers that only want the payload.
+
+    `settings` lets a caller that has already loaded the delivery settings — the
+    order preview does, and hands the same row to `compute_order_totals` right
+    after — pass them in rather than have this read the one-row table again. Left
+    unset, it reads them, exactly as before.
     """
-    settings = await get_settings(db)
+    if settings is None:
+        settings = await get_settings(db)
     priced = await price(
         db,
         subtotal,

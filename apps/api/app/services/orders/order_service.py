@@ -1376,6 +1376,13 @@ async def preview_order(
     # `/delivery/quote` call it replaces did — that endpoint never knew the
     # method either — so it is the same number of courier calls, not one more.
     # With no pin there is no courier call at all; `price()` returns before it.
+    # Read once, here, and hand the same row to both pricing calls below. Both
+    # used to read the one-row `delivery_settings` table for themselves, so the
+    # busiest endpoint on the site made two round-trips for a value that cannot
+    # change between them within a request. The number each computes is identical
+    # to before — only the second read is gone.
+    delivery_settings = await delivery_service.get_settings(db)
+
     quote_payload, priced = await delivery_service.quote_priced(
         db,
         subtotal - discount_amount,
@@ -1383,6 +1390,7 @@ async def preview_order(
         longitude=data.longitude,
         cart=cart,
         address=data.address,
+        settings=delivery_settings,
     )
 
     totals = await order_pricing.compute_order_totals(
@@ -1391,6 +1399,7 @@ async def preview_order(
         delivery_method=data.delivery_method,
         discount_amount=discount_amount,
         priced=priced,
+        settings=delivery_settings,
         # A preview answers; it does not refuse. See `compute_order_totals`.
         strict=False,
     )

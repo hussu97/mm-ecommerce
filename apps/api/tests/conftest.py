@@ -19,14 +19,15 @@ def patch_settings(monkeypatch):
 @pytest.fixture(autouse=True)
 def reset_courier_caches():
     """
-    Clear the three process-level courier caches between tests.
+    Clear the process-level pricing/promise caches between tests.
 
-    `lalamove_service` and `slider_service` cache quotes, and
+    `lalamove_service` and `slider_service` cache quotes,
     `noon_send_service` caches the partner limits for the life of the process
-    — deliberately, since they are asked once per boot in production. In a test
-    run "the process" is the whole suite, so one test that populates a cache
-    hands it to every test that follows, and the leak surfaces as an order that
-    depends on test ordering.
+    — deliberately, since they are asked once per boot in production — and
+    `delivery_promise` caches the courier/branch-hours/holiday inputs a checkout
+    ETA reads. In a test run "the process" is the whole suite, so one test that
+    populates a cache hands it to every test that follows, and the leak surfaces
+    as an order that depends on test ordering.
 
     Individual tests already called `clear_caches()` by hand. That works only
     for the tests that remember, which is the shape of every convention this
@@ -37,11 +38,13 @@ def reset_courier_caches():
         noon_send_service,
         slider_service,
     )
+    from app.services.delivery import delivery_promise
 
     for reset in (
         lalamove_service.clear_caches,
         slider_service.clear_caches,
         noon_send_service.invalidate_limits,
+        delivery_promise.clear_caches,
     ):
         reset()
     yield
@@ -49,6 +52,7 @@ def reset_courier_caches():
         lalamove_service.clear_caches,
         slider_service.clear_caches,
         noon_send_service.invalidate_limits,
+        delivery_promise.clear_caches,
     ):
         reset()
 

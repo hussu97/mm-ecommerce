@@ -42,6 +42,7 @@ not to make.
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -50,6 +51,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
+from app.core.bounded import BoundedLRU
 from app.models.branch import Branch
 from app.models.courier import Courier, UnbatchedPromiseEnum
 from app.services import branch_holiday_service, branch_hours_service
@@ -102,27 +104,66 @@ class _Context:
     provider_code: str | None = None
 
 
-async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Context:
-    if zone is None:
-        return _Context(None, None, None, None)
+@dataclass(frozen=True)
+class _PromiseInputs:
+    """The DB-derived half of a `_Context` — everything except the caller's zone.
 
-    # The courier the zone actually resolves to — a Slider zone with Slider
-    # unconfigured falls back to noon Send / Lalamove — so the promise reads the
-    # right transit schedule and names the courier that will really carry it
-    # (F-COU-19). This is the same resolution the fare quote and dispatch use.
-    provider_code, _ = courier_service.effective_provider(
-        zone.fulfilment_provider, zone.name
-    )
+    Cacheable on its own because it is fully determined by `(provider_code,
+    branch_id, day)`: the courier row for that code, and the serving branch's
+    opening window and closures for that day. `courier` is the one ORM object
+    here and it is read-only downstream — `resolve` touches only its already
+    loaded scalar columns and the session runs `expire_on_commit=False`, so a
+    detached instance stays safe to read.
+    """
+
+    courier: Courier | None
+    opens_at: str | None
+    closes_at: str | None
+    closed_dates: frozenset[str]
+
+
+#: These inputs move only when an admin edits store hours, a holiday, or a
+#: courier's promise figures — never within a request, and rarely within a
+#: minute — yet the checkout re-reads all three on every debounced preview
+#: keystroke. Identical `(courier, branch, day)` lookups inside this window reuse
+#: the last read. A soft ETA, so the short staleness never names a wrong day and
+#: an admin edit still lands within the window — the same TTL-only discipline the
+#: Lalamove quote cache already relies on, and a plain module constant like that
+#: cache's own `_FAILURE_CACHE_SECONDS` rather than a per-environment setting.
+_PROMISE_INPUT_CACHE_SECONDS = 60
+#: Bounded like the courier quote cache so a long-lived worker cannot grow a key
+#: per (branch, day) forever.
+_PROMISE_INPUT_CACHE_MAX = 512
+_inputs_cache: BoundedLRU[
+    tuple[str | None, uuid.UUID | None, str],
+    tuple[float, _PromiseInputs],
+] = BoundedLRU(_PROMISE_INPUT_CACHE_MAX)
+
+
+def clear_caches() -> None:
+    """Drop the promise-input cache. For tests and any admin write that must be
+    seen at once rather than at the end of the TTL."""
+    _inputs_cache.clear()
+
+
+async def _load_inputs(
+    db: AsyncSession,
+    provider_code: str | None,
+    branch_id: uuid.UUID | None,
+    day: date,
+) -> _PromiseInputs:
+    key = (provider_code, branch_id, day.isoformat())
+    cached = _inputs_cache.get(key)
+    if cached is not None:
+        age = time.monotonic() - cached[0]
+        if age < _PROMISE_INPUT_CACHE_SECONDS:
+            return cached[1]
+
     courier = (
         await db.execute(select(Courier).where(Courier.code == provider_code))
     ).scalar_one_or_none()
 
-    branch = await _serving_branch(db, zone.branch_id)
-    # From the day being quoted rather than from "today". They are the same
-    # instant on every live call, and they stop being the same the moment
-    # anything asks what a promise *would have been* — the window has to start
-    # where the question starts, or the closures that mattered are missing.
-    day = trading_hours.local(moment).date()
+    branch = await _serving_branch(db, branch_id)
     closed = (
         await branch_holiday_service.closed_dates_for(db, branch.id, today=day)
         if branch is not None
@@ -136,8 +177,38 @@ async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Conte
         else None
     )
     opens_at, closes_at = window if window else (None, None)
+
+    inputs = _PromiseInputs(courier, opens_at, closes_at, closed)
+    _inputs_cache[key] = (time.monotonic(), inputs)
+    return inputs
+
+
+async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Context:
+    if zone is None:
+        return _Context(None, None, None, None)
+
+    # The courier the zone actually resolves to — a Slider zone with Slider
+    # unconfigured falls back to noon Send / Lalamove — so the promise reads the
+    # right transit schedule and names the courier that will really carry it
+    # (F-COU-19). This is the same resolution the fare quote and dispatch use.
+    # A pure lookup, so it stays out here and keys the cache below.
+    provider_code, _ = courier_service.effective_provider(
+        zone.fulfilment_provider, zone.name
+    )
+    # From the day being quoted rather than from "today". They are the same
+    # instant on every live call, and they stop being the same the moment
+    # anything asks what a promise *would have been* — the window has to start
+    # where the question starts, or the closures that mattered are missing.
+    day = trading_hours.local(moment).date()
+
+    inputs = await _load_inputs(db, provider_code, zone.branch_id, day)
     return _Context(
-        zone, courier, opens_at, closes_at, closed, provider_code=provider_code
+        zone,
+        inputs.courier,
+        inputs.opens_at,
+        inputs.closes_at,
+        inputs.closed_dates,
+        provider_code=provider_code,
     )
 
 
