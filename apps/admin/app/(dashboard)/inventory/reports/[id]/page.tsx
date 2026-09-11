@@ -47,6 +47,7 @@ export default function ReportDetailPage() {
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [commentBody, setCommentBody] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -192,6 +193,22 @@ export default function ReportDetailPage() {
     }
   };
 
+  const addComment = async () => {
+    if (!report) return;
+    const body = commentBody.trim();
+    if (!body) return;
+    setBusy(true);
+    try {
+      setReport(await inventoryApi.addReportComment(report.id, body));
+      setCommentBody('');
+      toast.success('Comment added. The shop sees it on the till.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not add the comment.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading) return <div className="p-6"><Spinner /></div>;
   if (error || !report) return (
     <div className="p-6 space-y-3">
@@ -314,6 +331,38 @@ export default function ReportDetailPage() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="border border-gray-200 p-4 space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-600">Comments</h2>
+        <p className="text-xs text-gray-500">
+          Notes to the shop about this count — why it was queried, what to recheck. They show on the register under POS actions ▸ Reports.
+        </p>
+        {report.comments.length === 0 ? (
+          <p className="text-sm text-gray-400">No comments yet.</p>
+        ) : (
+          <ul className="space-y-3">
+            {report.comments.map((comment) => (
+              <li key={comment.id} className="border-l-2 border-primary/40 pl-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium text-gray-800">{comment.author_name ?? 'A reviewer'}</span>
+                  <span className="text-xs text-gray-400">{formatDateTime(comment.created_at)}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm text-gray-700">{comment.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="space-y-2">
+          <textarea
+            value={commentBody}
+            onChange={(e) => setCommentBody(e.target.value)}
+            rows={2}
+            className="w-full border border-gray-300 bg-white p-2 text-sm"
+            placeholder="Add a note for the shop…"
+          />
+          <Button onClick={() => void addComment()} loading={busy} disabled={!commentBody.trim()}>Add comment</Button>
+        </div>
       </div>
     </div>
   );

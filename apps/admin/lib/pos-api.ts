@@ -29,6 +29,9 @@ export type ProjectionDrift = Schemas['ProjectionDriftResponse'];
 export type BranchInventorySettings = Schemas['BranchInventorySettingsResponse'];
 export type StockAudit = Schemas['StockAuditRequest'];
 export type StockAuditPreview = Schemas['StockAuditPreviewResponse'];
+export type TransferTemplate = Schemas['TransferTemplateResponse'];
+export type TransferTemplateWrite = Schemas['TransferTemplateUpsert'];
+export type TransferOrder = Schemas['TransferOrderResponse'];
 
 // ─── Branches & floor plan ────────────────────────────────────────────────────
 
@@ -266,10 +269,26 @@ export const inventoryApi = {
     api.post<ShiftInventoryReport>(`/inventory/reports/${id}/approve`, {}),
   rejectReport: (id: string, reason: string) =>
     api.post<ShiftInventoryReport>(`/inventory/reports/${id}/reject`, { reason }),
+  addReportComment: (id: string, body: string) =>
+    api.post<ShiftInventoryReport>(`/inventory/shift-reports/${id}/comments`, { body }),
   branchSettings: (branchId: string) =>
     api.get<BranchInventorySettings>(`/inventory/branch-settings/${branchId}`),
   updateBranchSettings: (branchId: string, data: Partial<BranchInventorySettings>) =>
     api.patch<BranchInventorySettings>(`/inventory/branch-settings/${branchId}`, data),
+
+  // ── Inter-branch stock transfers ──────────────────────────────────────────
+  // Templates are the reusable per-source-branch pick lists a register draws on
+  // to raise a transfer; the transfer/return log is the read-only history.
+  transferTemplates: (sourceBranchId: string) =>
+    api.get<TransferTemplate[]>(`/inventory/transfer-templates${buildQs({ source_branch_id: sourceBranchId })}`),
+  createTransferTemplate: (data: TransferTemplateWrite) =>
+    api.post<TransferTemplate>('/inventory/transfer-templates', data),
+  updateTransferTemplate: (id: string, data: TransferTemplateWrite) =>
+    api.put<TransferTemplate>(`/inventory/transfer-templates/${id}`, data),
+  deleteTransferTemplate: (id: string) =>
+    api.delete<void>(`/inventory/transfer-templates/${id}`),
+  transferOrders: (params?: { branch_id?: string; source_branch_id?: string; status?: string; limit?: number }) =>
+    api.get<TransferOrder[]>(`/inventory/transfer-orders${buildQs(params)}`),
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

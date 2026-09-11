@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { branchesApi } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
@@ -9,6 +9,17 @@ import { BranchHolidays } from '@/components/pos/BranchHolidays';
 
 export default function BranchesPage() {
   const load = useCallback(() => branchesApi.list(), []);
+  // The branch list drives the "returns go to" picker; loaded once.
+  const [allBranches, setAllBranches] = useState<Branch[]>([]);
+  useEffect(() => {
+    void branchesApi.list().then(setAllBranches).catch(() => setAllBranches([]));
+  }, []);
+  // An empty return-branch select means "no return branch", which the API wants
+  // as null, not "".
+  const normalise = (d: Partial<Branch>): Partial<Branch> => ({
+    ...d,
+    return_branch_id: d.return_branch_id ? d.return_branch_id : null,
+  });
 
   return (
     <>
@@ -16,8 +27,8 @@ export default function BranchesPage() {
       title="Branches"
       description="Shops, production kitchens and warehouses. Every order, till and stock level belongs to one."
       load={load}
-      create={(d) => branchesApi.create(d as Partial<Branch>)}
-      update={(id, d) => branchesApi.update(id, d as Partial<Branch>)}
+      create={(d) => branchesApi.create(normalise(d as Partial<Branch>))}
+      update={(id, d) => branchesApi.update(id, normalise(d as Partial<Branch>))}
       remove={(id) => branchesApi.remove(id)}
       searchKeys={['name', 'reference']}
       emptyMessage="No branches yet. Create one to start using the POS."
@@ -27,6 +38,7 @@ export default function BranchesPage() {
         receives_online_orders: true,
         offers_pickup: false,
         cash_enabled: true,
+        uses_pos: true,
         accepts_reservations: false,
         is_active: true,
         display_order: 0,
@@ -116,6 +128,26 @@ export default function BranchesPage() {
           type: 'checkbox',
           helper:
             'Turn off for a cashless kitchen — the POS then skips the opening float and end-of-shift cash count.',
+        },
+        {
+          name: 'uses_pos',
+          label: 'Runs the POS register',
+          type: 'checkbox',
+          helper:
+            'Turn off for a branch with no till (e.g. DSO, Karama). A transfer or return sent to it is auto-received on its behalf, and it gets no "to receive" notification.',
+        },
+        {
+          name: 'return_branch_id',
+          label: 'Returns go to',
+          type: 'select',
+          options: [
+            { value: '', label: 'No return branch' },
+            ...allBranches
+              .filter((b) => !b.deleted_at)
+              .map((b) => ({ value: b.id, label: b.name })),
+          ],
+          helper:
+            'Where this branch sends surplus, expired or damaged stock. The till uses this automatically — staff never pick a destination for a return.',
         },
         { name: 'accepts_reservations', label: 'Accepts reservations', type: 'checkbox' },
         { name: 'display_order', label: 'Display order', type: 'number' },

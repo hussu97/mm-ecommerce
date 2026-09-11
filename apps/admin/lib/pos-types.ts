@@ -51,6 +51,10 @@ export interface Branch {
   offers_pickup: boolean;
   /** Whether this branch handles cash and runs a till drawer. Off = cashless kitchen; the POS skips the opening float and end-of-shift cash count. */
   cash_enabled: boolean;
+  /** Whether this branch runs the POS. Off = a branch with no till (DSO, Karama); a transfer/return to it is auto-received on its behalf. */
+  uses_pos: boolean;
+  /** The branch this one returns surplus/expired/damaged stock to. Null = returns not routed from here. */
+  return_branch_id: string | null;
   accepts_reservations: boolean;
   reservation_duration: number;
   is_active: boolean;

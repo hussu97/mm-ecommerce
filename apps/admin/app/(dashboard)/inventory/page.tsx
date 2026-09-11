@@ -10,6 +10,9 @@ import {
   type ReportTemplate,
   type ShiftInventoryReport,
   type StockAuditPreview,
+  type TransferOrder,
+  type TransferTemplate,
+  type TransferTemplateWrite,
 } from '@/lib/pos-api';
 import type {
   Branch,
@@ -21,13 +24,14 @@ import type {
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, LoadError, Pagination, Select, Spinner, TabBar } from '@/components/ui';
-import { DataTable } from '@/components/ui/DataTable';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
+import { useConfirm } from '@/components/ui/feedback';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { csvCell, formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
-type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'submissions' | 'suppliers' | 'categories' | 'integrity';
+type TabKey = 'items' | 'levels' | 'ledger' | 'counts' | 'shift-reports' | 'submissions' | 'transfers' | 'suppliers' | 'categories' | 'integrity';
 
 type ReportTemplateKind = 'production' | 'finished_goods' | 'raw_materials' | 'packaging' | 'spot_check';
 
@@ -115,6 +119,7 @@ export default function InventoryPage() {
             { key: 'counts', label: 'Counts' },
             { key: 'shift-reports', label: 'Report templates' },
             { key: 'submissions', label: 'Report submissions' },
+            { key: 'transfers', label: 'Transfers' },
             { key: 'suppliers', label: 'Suppliers' },
             { key: 'categories', label: 'Categories' },
             { key: 'integrity', label: 'Integrity' },
@@ -129,6 +134,7 @@ export default function InventoryPage() {
       {tab === 'counts' && <CountsTab />}
       {tab === 'shift-reports' && <ShiftReportsTab />}
       {tab === 'submissions' && <SubmissionsTab />}
+      {tab === 'transfers' && <TransfersTab />}
       {tab === 'suppliers' && <SuppliersTab />}
       {tab === 'categories' && <CategoriesTab />}
       {tab === 'integrity' && <IntegrityTab />}
@@ -657,6 +663,52 @@ function BranchFilter({ value, onChange }: { value: string; onChange: (id: strin
   return <Select label="Branch" value={value} onChange={(e) => onChange(e.target.value)} placeholder="Choose branch" className="w-64" options={branches.map((b) => ({ value: b.id, label: b.name }))} />;
 }
 
+// Plain-English names for the raw movement types, so the ledger reads the way the
+// shift report and the shop talk — "Sold", "Transfer out" — not `consumption_from_orders`.
+const MOVEMENT_LABELS: Record<string, string> = {
+  purchasing: 'Received (purchase)',
+  transfer_send: 'Transfer out',
+  transfer_receive: 'Transfer in',
+  return_from_transfers: 'Transfer returned',
+  quantity_adjustment: 'Manual adjustment',
+  return_to_supplier: 'Returned to supplier',
+  production: 'Produced',
+  consumption_from_production: 'Used in production',
+  consumption_from_orders: 'Sold',
+  return_from_orders: 'Customer return (restock)',
+  waste_from_orders: 'Waste',
+  waste_from_production: 'Production waste',
+  cost_adjustment: 'Revaluation (cost)',
+  inventory_count: 'Stock count',
+  opening_balance: 'Opening balance',
+  internal_use: 'Internal use',
+  extra_production_use: 'Extra production use',
+};
+
+const movementLabel = (type: string): string =>
+  MOVEMENT_LABELS[type] ?? type.replaceAll('_', ' ');
+
+// Where a movement came from, in words. The human reference (order#, transfer#)
+// is resolved server-side into `source_reference` when present; otherwise this
+// names the kind of source, and a reversal is called out.
+function sourceLabel(row: InventoryTransaction): string {
+  if (row.reverses_transaction_id) return 'Correction / reversal';
+  const ref = (row as { source_reference?: string | null }).source_reference;
+  if (ref) return ref;
+  if (!row.source_type) return 'Manual';
+  const kinds: Record<string, string> = {
+    order: 'Customer order',
+    order_return: 'Customer return',
+    transfer_order: 'Transfer / return',
+    production: 'Production',
+    production_yield: 'Production yield',
+    shift_inventory_report: 'Shift report',
+    bulk_stock_audit: 'Stock audit',
+    correction: 'Correction',
+  };
+  return kinds[row.source_type] ?? row.source_type.replaceAll('_', ' ');
+}
+
 function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
   const [branchId, setBranchId] = useState('');
   const [businessDate, setBusinessDate] = useState('');
@@ -716,11 +768,22 @@ function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
     { header: 'Seq', render: (row) => row.posting_sequence ?? 'Draft' },
     { header: 'Branch', render: (row) => branchName(row.branch_id) },
     { header: 'Reference', priority: 'primary', render: (row) => row.reference },
-    { header: 'Type', render: (row) => row.type.replaceAll('_', ' ') },
-    { header: 'Source', render: (row) => row.source_type ? `${row.source_type} · ${row.source_id ?? ''}` : 'Manual' },
-    { header: 'Movements', render: (row) => <div className="space-y-1">{row.items.map((line) => <div key={line.id} className="text-xs"><span className={Number(line.signed_quantity) < 0 ? 'text-red-600' : 'text-green-700'}>{Number(line.signed_quantity) > 0 ? '+' : ''}{formatQuantity(line.signed_quantity ?? line.quantity)}</span> {line.item_name} <span className="text-gray-400">→ {formatQuantity(line.balance_after_quantity)}</span></div>)}</div> },
+    { header: 'Type', render: (row) => movementLabel(row.type) },
+    { header: 'Source', render: (row) => sourceLabel(row) },
+    { header: 'Movements', render: (row) => {
+      // A revaluation moves value, not quantity: show the money, or the row reads
+      // as "+0" with no visible number.
+      if (row.type === 'cost_adjustment') {
+        return <span className="text-xs text-gray-600">Value {Number(row.total_cost) >= 0 ? '+' : ''}{formatCurrency(row.total_cost)}</span>;
+      }
+      return <div className="space-y-1">{row.items.map((line) => {
+        const isCount = row.type === 'inventory_count' || row.type === 'opening_balance';
+        return <div key={line.id} className="text-xs"><span className={Number(line.signed_quantity) < 0 ? 'text-red-600' : 'text-green-700'}>{Number(line.signed_quantity) > 0 ? '+' : ''}{formatQuantity(line.signed_quantity ?? line.quantity)}</span> {line.item_name} <span className="text-gray-400">→ {formatQuantity(line.balance_after_quantity)}{isCount ? ' counted' : ''}</span></div>;
+      })}</div>;
+    } },
     { header: 'Posted', render: (row) => row.posted_at ? new Date(row.posted_at).toLocaleString() : '—' },
-  ]} />{!loading && !error && (rows.length > 0 || page > 1) && <Pagination page={page} pages={hasMore ? page + 1 : page} total={end} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="movements" />}</div>;
+  ]} />{!loading && !error && (rows.length > 0 || page > 1) && <Pagination page={page} pages={hasMore ? page + 1 : page} total={end} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="movements" />}
+    {!countOnly && <p className="text-xs text-gray-400 leading-relaxed">How to read this: the ledger is the source of truth and “On hand” is a running projection of it. A green number added stock, a red one removed it; “→” is the item’s balance after that movement. A stock count posts only the difference and sets the balance to what was counted. A revaluation changes cost, not quantity.</p>}</div>;
 }
 
 function CountsTab() {
@@ -1159,6 +1222,331 @@ function SubmissionsTab() {
             ]}
           />
           <Pagination page={page} pages={pages} total={visible.length} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="reports" />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Transfers ──────────────────────────────────────────────────────────────
+//
+// One tab, two areas: the per-source-branch template configurator (the reusable
+// pick lists a register draws on to raise an inter-branch transfer) and the
+// read-only transfer/return log. Both hang off the one shared branch selector,
+// mirroring ShiftReportsTab (configurator) and SubmissionsTab (log).
+
+function TransfersTab() {
+  const [branchId, setBranchId] = useState('');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  useEffect(() => {
+    void branchesApi.list().then(setBranches).catch(() => setBranches([]));
+  }, []);
+  const branchName = useCallback(
+    (id: string) => branches.find((b) => b.id === id)?.name ?? id,
+    [branches],
+  );
+
+  return (
+    <div className="p-6 max-w-[1500px] space-y-8">
+      <BranchFilter value={branchId} onChange={setBranchId} />
+      <p className="text-sm text-gray-500">
+        Choose a branch first. Its transfer templates are the reusable pick lists a register draws on to raise an inter-branch transfer; the log below lists every transfer and return this branch has sent or received.
+      </p>
+      <TransferTemplatesSection branchId={branchId} branches={branches} branchName={branchName} />
+      <TransferLogSection branchId={branchId} branchName={branchName} />
+    </div>
+  );
+}
+
+function TransferTemplatesSection({ branchId, branches, branchName }: {
+  branchId: string;
+  branches: Branch[];
+  branchName: (id: string) => string;
+}) {
+  const confirm = useConfirm();
+  const [templates, setTemplates] = useState<TransferTemplate[]>([]);
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [loadError, setLoadError] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [destinationBranchId, setDestinationBranchId] = useState('');
+  const [displayOrder, setDisplayOrder] = useState(0);
+  const [isActive, setIsActive] = useState(true);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [itemSearch, setItemSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+
+  const selectableItems = useMemo(() => {
+    const search = itemSearch.trim().toLocaleLowerCase();
+    return items
+      .filter((item) => item.is_active && !item.deleted_at)
+      .filter((item) => !search || `${item.name} ${item.sku}`.toLocaleLowerCase().includes(search))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [items, itemSearch]);
+
+  const reload = useCallback(async () => {
+    if (!branchId) { setTemplates([]); setLoadError(false); return; }
+    setLoadError(false);
+    try {
+      setTemplates(await inventoryApi.transferTemplates(branchId));
+    } catch {
+      setTemplates([]);
+      setLoadError(true);
+    }
+  }, [branchId]);
+
+  useEffect(() => {
+    void inventoryApi.items().then(setItems).catch(() => setItems([]));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!branchId) { setTemplates([]); setLoadError(false); return () => { cancelled = true; }; }
+    setLoadError(false);
+    inventoryApi.transferTemplates(branchId)
+      .then((rows) => { if (!cancelled) setTemplates(rows); })
+      .catch(() => { if (!cancelled) { setTemplates([]); setLoadError(true); } });
+    return () => { cancelled = true; };
+  }, [branchId]);
+
+  const resetForm = useCallback(() => {
+    setEditingId(null);
+    setName('');
+    setDestinationBranchId('');
+    setDisplayOrder(0);
+    setIsActive(true);
+    setSelectedItems([]);
+  }, []);
+
+  // Switching branch abandons any in-progress edit — a template belongs to its
+  // source branch, so its item list and destination make no sense under another.
+  useEffect(() => { resetForm(); setMessage(null); }, [branchId, resetForm]);
+
+  const startEdit = (template: TransferTemplate) => {
+    setEditingId(template.id);
+    setName(template.name);
+    setDestinationBranchId(template.destination_branch_id ?? '');
+    setDisplayOrder(template.display_order);
+    setIsActive(template.is_active);
+    setSelectedItems([...template.items].sort((a, b) => a.display_order - b.display_order).map((item) => item.item_id));
+    setMessage(null);
+  };
+
+  const save = async () => {
+    if (!branchId || !name.trim() || selectedItems.length === 0) return;
+    setSaving(true);
+    setMessage(null);
+    const body: TransferTemplateWrite = {
+      source_branch_id: branchId,
+      destination_branch_id: destinationBranchId || null,
+      name: name.trim(),
+      is_active: isActive,
+      display_order: displayOrder,
+      items: selectedItems.map((itemId, index) => ({ item_id: itemId, display_order: index })),
+    };
+    try {
+      if (editingId) await inventoryApi.updateTransferTemplate(editingId, body);
+      else await inventoryApi.createTransferTemplate(body);
+      setMessage({ text: editingId ? 'Template updated.' : 'Template created.', error: false });
+      resetForm();
+      await reload();
+    } catch (error) {
+      setMessage({ text: error instanceof ApiError ? error.message : 'Could not save the template. Please try again.', error: true });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (template: TransferTemplate) => {
+    if (!(await confirm({
+      title: 'Delete template',
+      message: `Delete "${template.name}"? Registers will no longer offer this pick list.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }))) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      await inventoryApi.deleteTransferTemplate(template.id);
+      if (editingId === template.id) resetForm();
+      setMessage({ text: `${template.name} deleted.`, error: false });
+      await reload();
+    } catch (error) {
+      setMessage({ text: error instanceof ApiError ? error.message : 'Could not delete the template. Please try again.', error: true });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const destinationOptions = branches.filter((b) => b.id !== branchId);
+
+  return (
+    <div className="border border-gray-200 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-gray-800">Transfer templates</h3>
+        <Badge>{templates.length} template{templates.length === 1 ? '' : 's'}</Badge>
+      </div>
+      {!branchId ? (
+        <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">Choose a branch above to configure its transfer templates.</p>
+      ) : (
+        <>
+          <div className="grid gap-3 md:grid-cols-4">
+            <Input label="Template name" value={name} onChange={(event) => setName(event.target.value)} />
+            <Select
+              label="Destination branch"
+              value={destinationBranchId}
+              onChange={(event) => setDestinationBranchId(event.target.value)}
+              placeholder="Any branch"
+              options={destinationOptions.map((b) => ({ value: b.id, label: b.name }))}
+            />
+            <Input label="Display order (low first)" type="number" value={String(displayOrder)} onChange={(event) => setDisplayOrder(Number(event.target.value) || 0)} />
+            <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={isActive} onChange={(event) => setIsActive(event.target.checked)} />Active</label>
+          </div>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <label className="block flex-1 text-xs uppercase tracking-wider text-gray-500">Items in this template
+              <Input aria-label="Search transfer-template items" value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Search name or SKU" className="mt-1" />
+            </label>
+            <span className="pb-2 text-xs text-gray-500">{selectedItems.length} selected · sorted by name</span>
+          </div>
+          <select multiple value={selectedItems} onChange={(event) => setSelectedItems(Array.from(event.target.selectedOptions, (option) => option.value))} className="min-h-44 w-full border border-gray-300 bg-white p-2 text-sm">
+            {selectableItems.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku}</option>)}
+          </select>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Select multiple items with Shift/Cmd.</span>
+            <div className="flex gap-2">
+              {editingId && <Button variant="outline" onClick={resetForm} disabled={saving}>Cancel edit</Button>}
+              <Button onClick={() => void save()} loading={saving} disabled={!branchId || selectedItems.length === 0 || !name.trim()}>{editingId ? 'Save changes' : 'Create template'}</Button>
+            </div>
+          </div>
+          {message && <p className={`p-2 text-sm ${message.error ? 'bg-red-50 text-red-800' : 'bg-green-50 text-green-800'}`}>{message.text}</p>}
+          {loadError && (
+            <LoadError
+              message="This branch's transfer templates could not be loaded. It may already have some — do not create a new one until this clears."
+              onRetry={() => void reload()}
+            />
+          )}
+          {!loadError && templates.length === 0 && <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">No transfer templates for this branch yet. Create the first one above.</p>}
+          {templates.length > 0 && <DataTable rows={templates} rowKey={(row) => row.id} columns={[
+            { header: 'Name', priority: 'primary', render: (row) => row.name },
+            { header: 'Destination', render: (row) => row.destination_branch_id ? branchName(row.destination_branch_id) : <span className="text-gray-400">Any</span> },
+            { header: 'Items', render: (row) => row.items.length },
+            { header: 'Order', render: (row) => row.display_order },
+            { header: 'Status', render: (row) => <StatusBadge active={row.is_active} /> },
+          ]} actions={(row) => (
+            <>
+              <RowAction onClick={() => startEdit(row)}>Edit</RowAction>
+              <RowAction danger disabled={saving} onClick={() => void remove(row)}>Delete</RowAction>
+            </>
+          )} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+const transferStatusVariant = (status: string): 'success' | 'warning' | 'danger' | 'neutral' => {
+  if (status === 'received' || status === 'completed' || status === 'approved') return 'success';
+  if (status === 'pending' || status === 'submitted' || status === 'in_transit') return 'warning';
+  if (status === 'cancelled' || status === 'rejected') return 'danger';
+  return 'neutral';
+};
+
+const transferLineVaries = (line: TransferOrder['items'][number]) =>
+  Number(line.received_quantity) !== Number(line.sent_quantity);
+
+function TransferLogSection({ branchId, branchName }: {
+  branchId: string;
+  branchName: (id: string) => string;
+}) {
+  const [rows, setRows] = useState<TransferOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
+
+  useEffect(() => { setPage(1); }, [branchId, statusFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    // "As source or destination": two branch-scoped calls merged by id, since
+    // the endpoint filters source and destination separately. No branch → all.
+    const load = branchId
+      ? Promise.all([
+          inventoryApi.transferOrders({ source_branch_id: branchId, limit: 2000 }),
+          inventoryApi.transferOrders({ branch_id: branchId, limit: 2000 }),
+        ]).then(([outgoing, incoming]) => {
+          const byId = new Map<string, TransferOrder>();
+          for (const order of [...outgoing, ...incoming]) byId.set(order.id, order);
+          return Array.from(byId.values());
+        })
+      : inventoryApi.transferOrders({ limit: 2000 });
+    load
+      .then((data) => { if (!cancelled) setRows(data); })
+      .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.message : 'Failed to load transfers.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [branchId]);
+
+  const statuses = useMemo(() => Array.from(new Set(rows.map((r) => r.status))).sort(), [rows]);
+
+  const visible = useMemo(() => {
+    const filtered = statusFilter ? rows.filter((r) => r.status === statusFilter) : rows;
+    return [...filtered].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  }, [rows, statusFilter]);
+
+  const pages = Math.max(1, Math.ceil(visible.length / perPage));
+  const pageRows = visible.slice((page - 1) * perPage, page * perPage);
+  const totalOf = (order: TransferOrder, pick: (line: TransferOrder['items'][number]) => string) =>
+    order.items.reduce((sum, line) => sum + Number(pick(line) || 0), 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-gray-800">Transfer &amp; return log</h3>
+      </div>
+      <p className="text-sm text-gray-500">Read-only history of transfers and returns {branchId ? 'this branch has sent or received' : 'across all branches'}. A variance flag marks any line whose received quantity differs from what was sent — expand the row for the reason.</p>
+      <div className="flex flex-wrap items-end gap-3">
+        <Select label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} placeholder="All statuses" className="w-56" options={statuses.map((s) => ({ value: s, label: s.replaceAll('_', ' ') }))} />
+      </div>
+      {error && <p className="bg-red-50 p-2 text-sm text-red-800">{error}</p>}
+      {loading ? <Spinner /> : (
+        <>
+          <DataTable
+            rows={pageRows}
+            rowKey={(row) => row.id}
+            empty={<span className="text-sm text-gray-500">No transfers or returns match these filters.</span>}
+            expanded={(row) => {
+              const varied = row.items.filter(transferLineVaries);
+              if (varied.length === 0) return null;
+              return (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium uppercase tracking-wider text-gray-500">Variances</p>
+                  {varied.map((line) => (
+                    <div key={line.id} className="text-xs text-gray-700">
+                      <span className="font-medium">{line.item_name ?? line.item_id}</span>{' '}
+                      sent {formatQuantity(line.sent_quantity)} · received {formatQuantity(line.received_quantity)} {line.unit}
+                      {line.variance_reason ? <span className="text-gray-500"> — {line.variance_reason}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              );
+            }}
+            columns={[
+              { header: 'Reference', priority: 'primary', render: (row) => row.reference },
+              { header: 'Kind', render: (row) => <Badge variant={row.kind === 'return' ? 'warning' : 'neutral'}>{row.kind}</Badge> },
+              { header: 'From → To', render: (row) => <span className="text-xs">{branchName(row.source_branch_id)} → {branchName(row.branch_id)}</span> },
+              { header: 'Status', render: (row) => <Badge variant={transferStatusVariant(row.status)}>{row.status.replaceAll('_', ' ')}</Badge> },
+              { header: 'Sent', className: 'text-right', render: (row) => formatQuantity(totalOf(row, (line) => line.sent_quantity)) },
+              { header: 'Received', className: 'text-right', render: (row) => formatQuantity(totalOf(row, (line) => line.received_quantity)) },
+              { header: 'Variance', render: (row) => row.items.some(transferLineVaries) ? <Badge variant="danger">Variance</Badge> : '—' },
+              { header: 'Created', render: (row) => formatDateTime(row.created_at) },
+            ]}
+          />
+          <Pagination page={page} pages={pages} total={visible.length} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="transfers" />
         </>
       )}
     </div>
