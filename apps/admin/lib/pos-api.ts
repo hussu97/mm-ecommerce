@@ -196,6 +196,7 @@ export const inventoryApi = {
     category_id?: string;
     search?: string;
     below_minimum_only?: boolean;
+    limit?: number;
   }) => api.get<InventoryLevel[]>(`/inventory/levels${buildQs(params)}`),
 
   warehouses: (branchId?: string) => api.get<Warehouse[]>(`/inventory/warehouses${buildQs({ branch_id: branchId })}`),
@@ -289,6 +290,8 @@ export const inventoryApi = {
     api.delete<void>(`/inventory/transfer-templates/${id}`),
   transferOrders: (params?: { branch_id?: string; source_branch_id?: string; status?: string; limit?: number }) =>
     api.get<TransferOrder[]>(`/inventory/transfer-orders${buildQs(params)}`),
+  transferOrder: (id: string) =>
+    api.get<TransferOrder>(`/inventory/transfer-orders/${id}`),
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

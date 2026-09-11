@@ -435,6 +435,13 @@ export interface InventoryTransaction {
   posting_sequence: number | null;
   source_type: string | null;
   source_id: string | null;
+  // Human reference for the source, resolved server-side: the shift report's
+  // "name · date", the order number, the transfer/return reference, or
+  // "Reversal of …". Null when there is nothing to name.
+  source_reference: string | null;
+  // Admin path the reference deep-links to (e.g. `/orders/123`,
+  // `/inventory/reports/{id}`, `/inventory/transfers/{id}`); null when none.
+  source_link: string | null;
   reverses_transaction_id: string | null;
   correction_group_id: string | null;
   created_at: string;
