@@ -4507,6 +4507,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/transfer-orders/{order_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Transfer Order
+         * @description One transfer or return, both legs — the ledger's transfer source links here
+         *     and the console's detail page reads it. Visible to a user with access to
+         *     either end of the transfer.
+         */
+        get: operations["get_transfer_order_api_v1_inventory_transfer_orders__order_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/transfer-orders/{order_id}/accept": {
         parameters: {
             query?: never;
@@ -12741,6 +12763,8 @@ export interface components {
             source_accepted_sequence?: number | null;
             /** Source Id */
             source_id?: string | null;
+            /** Source Link */
+            source_link?: string | null;
             /** Source Reference */
             source_reference?: string | null;
             /** Source Type */
@@ -28500,6 +28524,37 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_transfer_order_api_v1_inventory_transfer_orders__order_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

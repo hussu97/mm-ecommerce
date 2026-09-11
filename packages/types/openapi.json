@@ -12561,6 +12561,17 @@
             ],
             "title": "Source Id"
           },
+          "source_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Link"
+          },
           "source_reference": {
             "anyOf": [
               {
@@ -48733,6 +48744,55 @@
           }
         ],
         "summary": "Create Transfer Order",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/transfer-orders/{order_id}": {
+      "get": {
+        "description": "One transfer or return, both legs \u2014 the ledger's transfer source links here\nand the console's detail page reads it. Visible to a user with access to\neither end of the transfer.",
+        "operationId": "get_transfer_order_api_v1_inventory_transfer_orders__order_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Transfer Order",
         "tags": [
           "Inventory"
         ]

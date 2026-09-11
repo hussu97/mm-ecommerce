@@ -176,6 +176,23 @@ async def list_transfer_orders(
     return [await _serialise_transfer(db, o) for o in orders]
 
 
+@transfer_orders_router.get("/{order_id}", response_model=TransferOrderResponse)
+async def get_transfer_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """One transfer or return, both legs — the ledger's transfer source links here
+    and the console's detail page reads it. Visible to a user with access to
+    either end of the transfer."""
+    order = await transfer_service.load_transfer_order(db, order_id)
+    if not (user.is_admin or (user.role and user.role.is_super_admin)):
+        allowed = set(access_service.branch_ids_for(user))
+        if order.branch_id not in allowed and order.source_branch_id not in allowed:
+            await access_service.assert_branch_access(db, user, order.branch_id)
+    return await _serialise_transfer(db, order)
+
+
 @transfer_orders_router.post(
     "", response_model=TransferOrderResponse, status_code=status.HTTP_201_CREATED
 )

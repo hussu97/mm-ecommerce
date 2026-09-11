@@ -35,6 +35,7 @@ from app.models import (
     Warehouse,
 )
 from app.models.inventory import InventoryTransactionTypeEnum
+from app.models.inventory_v2 import ShiftInventoryReport
 from app.models.user import User
 from app.schemas.inventory import (
     CloseCountRequest,
@@ -390,7 +391,7 @@ transactions_router = APIRouter()
 def _serialise_transaction(
     transaction: InventoryTransaction,
     names: dict[uuid.UUID, InventoryItem],
-    references: dict[uuid.UUID, str] | None = None,
+    references: dict[uuid.UUID, dict[str, str | None]] | None = None,
 ) -> InventoryTransactionResponse:
     payload = InventoryTransactionResponse.model_validate(transaction)
     for line in payload.items:
@@ -398,8 +399,9 @@ def _serialise_transaction(
         if item is not None:
             line.item_name = item.name
             line.item_sku = item.sku
-    if references is not None:
-        payload.source_reference = references.get(transaction.id)
+    if references is not None and (ref := references.get(transaction.id)):
+        payload.source_reference = ref["reference"]
+        payload.source_link = ref["link"]
     return payload
 
 
@@ -421,6 +423,12 @@ async def _resolve_source_references(
         parsed
         for t in transactions
         if t.source_type == "transfer_order"
+        and (parsed := _as_uuid(t.source_id)) is not None
+    }
+    report_ids = {
+        parsed
+        for t in transactions
+        if t.source_type == "shift_inventory_report"
         and (parsed := _as_uuid(t.source_id)) is not None
     }
     order_ids = {t.order_id for t in transactions if t.order_id}
@@ -448,19 +456,53 @@ async def _resolve_source_references(
         InventoryTransaction.id,
         InventoryTransaction.reference,
     )
+    reports: dict[uuid.UUID, str] = {}
+    if report_ids:
+        rows = (
+            await db.execute(
+                select(
+                    ShiftInventoryReport.id,
+                    ShiftInventoryReport.template_snapshot,
+                    ShiftInventoryReport.business_date,
+                ).where(ShiftInventoryReport.id.in_(report_ids))
+            )
+        ).all()
+        for rid, snapshot, business_date in rows:
+            name = (snapshot or {}).get("name") or "Inventory report"
+            reports[rid] = f"{name} · {business_date}"
 
-    resolved: dict[uuid.UUID, str] = {}
+    # Each entry carries the human reference and, where a detail page exists, the
+    # admin path to deep-link to.
+    resolved: dict[uuid.UUID, dict[str, str | None]] = {}
     for t in transactions:
         if t.reverses_transaction_id and t.reverses_transaction_id in reversals:
-            resolved[t.id] = f"Reversal of {reversals[t.reverses_transaction_id]}"
+            resolved[t.id] = {
+                "reference": f"Reversal of {reversals[t.reverses_transaction_id]}",
+                "link": None,
+            }
         elif t.source_type == "transfer_order" and (sid := _as_uuid(t.source_id)):
             ref = transfers.get(sid)
             if ref:
-                resolved[t.id] = ref
+                resolved[t.id] = {
+                    "reference": ref,
+                    "link": f"/inventory/transfers/{sid}",
+                }
+        elif t.source_type == "shift_inventory_report" and (
+            sid := _as_uuid(t.source_id)
+        ):
+            ref = reports.get(sid)
+            if ref:
+                resolved[t.id] = {
+                    "reference": ref,
+                    "link": f"/inventory/reports/{sid}",
+                }
         elif t.order_id and t.order_id in orders:
-            resolved[t.id] = orders[t.order_id]
+            resolved[t.id] = {
+                "reference": orders[t.order_id],
+                "link": f"/orders/{orders[t.order_id]}",
+            }
         elif t.purchase_order_id and t.purchase_order_id in pos:
-            resolved[t.id] = pos[t.purchase_order_id]
+            resolved[t.id] = {"reference": pos[t.purchase_order_id], "link": None}
     return resolved
 
 

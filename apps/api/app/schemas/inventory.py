@@ -391,10 +391,14 @@ class InventoryTransactionResponse(ORMModel):
     updated_at: datetime
     items: list[TransactionLineResponse] = []
     #: The human reference of the document that caused this movement — the order
-    #: number, the transfer/return reference, the PO reference, or "Reversal of …".
-    #: Filled by the list endpoint so the ledger reads without a second lookup;
-    #: null where the source is manual or not resolved.
+    #: number, the transfer/return reference, the shift report's name+date, the PO
+    #: reference, or "Reversal of …". Filled by the list endpoint so the ledger
+    #: reads without a second lookup; null where the source is manual or unresolved.
     source_reference: str | None = None
+    #: The admin path to that document's detail page, so the ledger can link to it
+    #: (order → order detail, report/transfer → their detail). Null when there is
+    #: no page to link to.
+    source_link: str | None = None
 
 
 # ─── Purchase orders ──────────────────────────────────────────────────────────
