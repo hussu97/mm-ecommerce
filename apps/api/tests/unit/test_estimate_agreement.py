@@ -84,6 +84,7 @@ def _delivery(**over):
         courier_status=None,
         share_link=None,
         dispatchable_at=None,
+        courier_eta_at=None,
     )
     base.update(over)
     return SimpleNamespace(**base)
