@@ -535,6 +535,58 @@
         "title": "AdminPasskeyResponse",
         "type": "object"
       },
+      "AdminTransferReceive": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/AdminTransferReceiveLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "title": "AdminTransferReceive",
+        "type": "object"
+      },
+      "AdminTransferReceiveLine": {
+        "properties": {
+          "quantity": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "transfer_order_item_id": {
+            "format": "uuid",
+            "title": "Transfer Order Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transfer_order_item_id",
+          "quantity"
+        ],
+        "title": "AdminTransferReceiveLine",
+        "type": "object"
+      },
       "AdminUserSummary": {
         "properties": {
           "created_at": {
@@ -30987,6 +31039,28 @@
             ],
             "title": "Balance After Value"
           },
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
+          "category_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Order"
+          },
           "conversion_factor": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Conversion Factor",
@@ -31287,6 +31361,28 @@
             ],
             "title": "Approved Quantity"
           },
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
+          "category_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Order"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -31555,6 +31651,28 @@
       },
       "TransferTemplateItemResponse": {
         "properties": {
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
+          "category_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Order"
+          },
           "display_order": {
             "title": "Display Order",
             "type": "integer"
@@ -48946,7 +49064,7 @@
     },
     "/api/v1/inventory/transfer-orders/{order_id}/receive": {
       "post": {
-        "description": "Book the goods in. A shortfall against what was sent stays visible.",
+        "description": "Book the goods in. A shortfall against what was sent stays visible.\n\nAn empty ``lines`` list receives every line as sent (``receive_transfer``\ndefaults each line's received quantity to its ``sent_quantity``) \u2014 the\n\"accept all as sent\" case needs no extra handling here.",
         "operationId": "receive_transfer_api_v1_inventory_transfer_orders__order_id__receive_post",
         "parameters": [
           {
@@ -48964,7 +49082,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AcceptTransfer"
+                "$ref": "#/components/schemas/AdminTransferReceive"
               }
             }
           },

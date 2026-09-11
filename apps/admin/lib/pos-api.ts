@@ -294,6 +294,8 @@ export const inventoryApi = {
     api.get<TransferOrder[]>(`/inventory/transfer-orders${buildQs(params)}`),
   transferOrder: (id: string) =>
     api.get<TransferOrder>(`/inventory/transfer-orders/${id}`),
+  receiveTransferOrder: (id: string, lines: { transfer_order_item_id: string; quantity: number; reason?: string | null }[]) =>
+    api.post<TransferOrder>(`/inventory/transfer-orders/${id}/receive`, { lines }),
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

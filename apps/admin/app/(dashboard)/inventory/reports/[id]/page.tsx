@@ -286,10 +286,10 @@ export default function ReportDetailPage() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
             <tr>
-              <th className="p-2">Item</th>
-              <th className="p-2">Unit</th>
-              {columns.map((col) => <th key={col.key} className="p-2 text-right">{col.label}</th>)}
-              <th className="p-2">Remark</th>
+              <th className="px-2 py-1">Item</th>
+              <th className="px-2 py-1">Unit</th>
+              {columns.map((col) => <th key={col.key} className="px-2 py-1 text-right">{col.label}</th>)}
+              <th className="px-2 py-1">Remark</th>
             </tr>
           </thead>
           <tbody>
@@ -297,10 +297,10 @@ export default function ReportDetailPage() {
               <GroupRows key={group.name} name={group.name} span={columns.length + 3}>
                 {group.lines.map((line) => (
                   <tr key={line.id} className="border-t border-gray-100">
-                    <td className="p-2 font-medium">{itemName(line)}</td>
-                    <td className="p-2 text-gray-500">{line.unit}</td>
+                    <td className="px-2 py-1 font-medium">{itemName(line)}</td>
+                    <td className="px-2 py-1 text-gray-500">{line.unit}</td>
                     {columns.map((col) => (
-                      <td key={col.key} className="p-2 text-right">
+                      <td key={col.key} className="px-2 py-1 text-right">
                         {editing && col.editable ? (
                           <input
                             inputMode="decimal"
@@ -313,7 +313,7 @@ export default function ReportDetailPage() {
                         )}
                       </td>
                     ))}
-                    <td className="p-2">
+                    <td className="px-2 py-1">
                       {editing ? (
                         <input
                           value={reasons[line.item_id] ?? ''}
@@ -381,7 +381,7 @@ function GroupRows({ name, span, children }: { name: string; span: number; child
   return (
     <>
       <tr className="bg-gray-100/70">
-        <td colSpan={span} className="p-2 text-xs font-semibold uppercase tracking-wider text-gray-600">{name}</td>
+        <td colSpan={span} className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-gray-600">{name}</td>
       </tr>
       {children}
     </>

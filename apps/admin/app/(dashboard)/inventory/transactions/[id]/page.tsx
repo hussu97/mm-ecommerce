@@ -15,6 +15,28 @@ import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 
 const num = (v: unknown): number => Number(v ?? 0);
 
+type CountLine = InventoryTransaction['items'][number];
+
+const lineItemName = (line: CountLine): string => line.item_name ?? line.item_sku ?? line.item_id;
+const lineCategory = (line: CountLine): string => (line.category_name ? String(line.category_name) : 'Uncategorised');
+
+/** Group lines by category — category order (min per bucket) → category name →
+ * item name, Uncategorised last. Mirrors the shift-report detail page. */
+function groupByCategory(lines: CountLine[]): { name: string; lines: CountLine[] }[] {
+  const map = new Map<string, { order: number; lines: CountLine[] }>();
+  for (const line of lines) {
+    const name = lineCategory(line);
+    const order = line.category_order == null ? Number.MAX_SAFE_INTEGER : Number(line.category_order);
+    const bucket = map.get(name) ?? { order, lines: [] };
+    bucket.order = Math.min(bucket.order, order);
+    bucket.lines.push(line);
+    map.set(name, bucket);
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]))
+    .map(([name, bucket]) => ({ name, lines: [...bucket.lines].sort((a, b) => lineItemName(a).localeCompare(lineItemName(b))) }));
+}
+
 /** "inventory_count" → "Inventory count". */
 function humanizeType(type: string): string {
   const words = type.replaceAll('_', ' ').trim();
@@ -75,34 +97,49 @@ export default function TransactionDetailPage() {
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
             <tr>
-              <th className="p-2">Item</th>
-              <th className="p-2 text-right">Expected</th>
-              <th className="p-2 text-right">Counted</th>
-              <th className="p-2 text-right">Delta</th>
-              <th className="p-2 text-right">Value</th>
-              <th className="p-2">Remark</th>
+              <th className="px-2 py-1">Item</th>
+              <th className="px-2 py-1 text-right">Expected</th>
+              <th className="px-2 py-1 text-right">Counted</th>
+              <th className="px-2 py-1 text-right">Delta</th>
+              <th className="px-2 py-1 text-right">Value</th>
+              <th className="px-2 py-1">Remark</th>
             </tr>
           </thead>
           <tbody>
-            {transaction.items.map((line) => {
-              const delta = num(line.signed_quantity);
-              return (
-                <tr key={line.id} className="border-t border-gray-100">
-                  <td className="p-2 font-medium">{line.item_name ?? line.item_sku ?? line.item_id}</td>
-                  <td className="p-2 text-right">{line.expected_quantity == null ? '—' : formatQuantity(line.expected_quantity)}</td>
-                  <td className="p-2 text-right">{line.balance_after_quantity == null ? '—' : formatQuantity(line.balance_after_quantity)}</td>
-                  <td className={`p-2 text-right ${delta < 0 ? 'text-red-600' : delta > 0 ? 'text-green-700' : 'text-gray-400'}`}>
-                    {delta === 0 ? '—' : `${delta > 0 ? '+' : ''}${formatQuantity(delta)}`}
-                  </td>
-                  <td className="p-2 text-right">{formatCurrency(line.total_cost)}</td>
-                  <td className="p-2 text-gray-600">{line.notes ?? '—'}</td>
-                </tr>
-              );
-            })}
+            {groupByCategory(transaction.items).map((group) => (
+              <GroupRows key={group.name} name={group.name} span={6}>
+                {group.lines.map((line) => {
+                  const delta = num(line.signed_quantity);
+                  return (
+                    <tr key={line.id} className="border-t border-gray-100">
+                      <td className="px-2 py-1 font-medium">{lineItemName(line)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{line.expected_quantity == null ? '—' : formatQuantity(line.expected_quantity)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{line.balance_after_quantity == null ? '—' : formatQuantity(line.balance_after_quantity)}</td>
+                      <td className={`px-2 py-1 text-right tabular-nums ${delta < 0 ? 'text-red-600' : delta > 0 ? 'text-green-700' : 'text-gray-400'}`}>
+                        {delta === 0 ? '—' : `${delta > 0 ? '+' : ''}${formatQuantity(delta)}`}
+                      </td>
+                      <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(line.total_cost)}</td>
+                      <td className="px-2 py-1 text-gray-600">{line.notes ?? '—'}</td>
+                    </tr>
+                  );
+                })}
+              </GroupRows>
+            ))}
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+function GroupRows({ name, span, children }: { name: string; span: number; children: React.ReactNode }) {
+  return (
+    <>
+      <tr className="bg-gray-100/70">
+        <td colSpan={span} className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-gray-600">{name}</td>
+      </tr>
+      {children}
+    </>
   );
 }
 

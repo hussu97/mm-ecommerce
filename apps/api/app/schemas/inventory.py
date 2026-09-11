@@ -355,6 +355,10 @@ class TransactionLineResponse(ORMModel):
     notes: str | None
     item_name: str | None = None
     item_sku: str | None = None
+    #: The item's inventory category, backfilled from the loaded item so a count
+    #: sheet can group its lines. Both null for an uncategorised item (sort last).
+    category_name: str | None = None
+    category_order: int | None = None
 
 
 class InventoryTransactionResponse(ORMModel):
@@ -594,6 +598,11 @@ class TransferTemplateItemResponse(ORMModel):
     display_order: int
     item_name: str | None = None
     item_sku: str | None = None
+    #: The item's inventory category, backfilled from the loaded item so the
+    #: create-transfer screen and template configurator can group by it. Both null
+    #: for an uncategorised item (sort last).
+    category_name: str | None = None
+    category_order: int | None = None
 
 
 class TransferTemplateResponse(ORMModel):

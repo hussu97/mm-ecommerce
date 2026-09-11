@@ -4578,6 +4578,10 @@ export interface paths {
         /**
          * Receive Transfer
          * @description Book the goods in. A shortfall against what was sent stays visible.
+         *
+         *     An empty ``lines`` list receives every line as sent (``receive_transfer``
+         *     defaults each line's received quantity to its ``sent_quantity``) — the
+         *     "accept all as sent" case needs no extra handling here.
          */
         post: operations["receive_transfer_api_v1_inventory_transfer_orders__order_id__receive_post"];
         delete?: never;
@@ -8695,6 +8699,23 @@ export interface components {
             last_used_at: string | null;
             /** Name */
             name: string | null;
+        };
+        /** AdminTransferReceive */
+        AdminTransferReceive: {
+            /** Lines */
+            lines?: components["schemas"]["AdminTransferReceiveLine"][];
+        };
+        /** AdminTransferReceiveLine */
+        AdminTransferReceiveLine: {
+            /** Quantity */
+            quantity: number | string;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Transfer Order Item Id
+             * Format: uuid
+             */
+            transfer_order_item_id: string;
         };
         /** AdminUserSummary */
         AdminUserSummary: {
@@ -18940,6 +18961,10 @@ export interface components {
             balance_after_quantity?: string | null;
             /** Balance After Value */
             balance_after_value?: string | null;
+            /** Category Name */
+            category_name?: string | null;
+            /** Category Order */
+            category_order?: number | null;
             /** Conversion Factor */
             conversion_factor: string;
             /** Expected Quantity */
@@ -19031,6 +19056,10 @@ export interface components {
         TransferOrderLineResponse: {
             /** Approved Quantity */
             approved_quantity: string | null;
+            /** Category Name */
+            category_name?: string | null;
+            /** Category Order */
+            category_order?: number | null;
             /**
              * Id
              * Format: uuid
@@ -19125,6 +19154,10 @@ export interface components {
         };
         /** TransferTemplateItemResponse */
         TransferTemplateItemResponse: {
+            /** Category Name */
+            category_name?: string | null;
+            /** Category Order */
+            category_order?: number | null;
             /** Display Order */
             display_order: number;
             /**
@@ -28679,7 +28712,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AcceptTransfer"];
+                "application/json": components["schemas"]["AdminTransferReceive"];
             };
         };
         responses: {

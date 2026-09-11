@@ -26,6 +26,7 @@ from app.core.permissions import require
 from app.models import (
     Branch,
     Device,
+    InventoryCategory,
     InventoryItem,
     InventoryLevel,
     InventoryTransferTemplate,
@@ -66,6 +67,45 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+async def _category_map(
+    db: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, InventoryCategory]:
+    """The categories of the given items, keyed by category id, in one query.
+
+    Mirrors ``report_service._category_map``: reading ``item.category`` lazily
+    under asyncio raises MissingGreenlet, so the serialisers resolve categories in
+    this one explicit query and read the name/display_order off the result.
+    """
+    if not item_ids:
+        return {}
+    category_ids = (
+        (
+            await db.execute(
+                select(InventoryItem.category_id)
+                .where(
+                    InventoryItem.id.in_(item_ids),
+                    InventoryItem.category_id.is_not(None),
+                )
+                .distinct()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not category_ids:
+        return {}
+    categories = (
+        (
+            await db.execute(
+                select(InventoryCategory).where(InventoryCategory.id.in_(category_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {category.id: category for category in categories}
+
+
 # ─── Transfer orders ──────────────────────────────────────────────────────────
 
 transfer_orders_router = APIRouter()
@@ -97,6 +137,18 @@ class AcceptTransfer(BaseModel):
     lines: list[QuantityDecision] = Field(default_factory=list)
 
 
+class AdminTransferReceiveLine(BaseModel):
+    transfer_order_item_id: uuid.UUID
+    quantity: Decimal = Field(ge=0)
+    #: Why the received quantity differs from what was sent (short/over). Optional;
+    #: recorded on the line when supplied.
+    reason: str | None = None
+
+
+class AdminTransferReceive(BaseModel):
+    lines: list[AdminTransferReceiveLine] = Field(default_factory=list)
+
+
 class TransferOrderLineResponse(ORMModel):
     id: uuid.UUID
     item_id: uuid.UUID
@@ -109,6 +161,10 @@ class TransferOrderLineResponse(ORMModel):
     variance_reason: str | None = None
     item_name: str | None = None
     item_sku: str | None = None
+    #: The item's inventory category, backfilled from the loaded item so a client
+    #: can group the lines by it. Both null for an uncategorised item (sort last).
+    category_name: str | None = None
+    category_order: int | None = None
 
 
 class TransferOrderResponse(ORMModel):
@@ -146,11 +202,18 @@ async def _serialise_transfer(
             .all()
         )
         lookup = {r.id: r for r in rows}
+        categories = await _category_map(db, [r.id for r in rows])
         for line in payload.items:
             item = lookup.get(line.item_id)
             if item:
                 line.item_name = item.name
                 line.item_sku = item.sku
+                category = (
+                    categories.get(item.category_id) if item.category_id else None
+                )
+                if category is not None:
+                    line.category_name = category.name
+                    line.category_order = int(category.display_order or 0)
     return payload
 
 
@@ -330,16 +393,26 @@ async def send_transfer(
 )
 async def receive_transfer(
     order_id: uuid.UUID,
-    data: AcceptTransfer,
+    data: AdminTransferReceive,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.manage")),
 ):
-    """Book the goods in. A shortfall against what was sent stays visible."""
+    """Book the goods in. A shortfall against what was sent stays visible.
+
+    An empty ``lines`` list receives every line as sent (``receive_transfer``
+    defaults each line's received quantity to its ``sent_quantity``) — the
+    "accept all as sent" case needs no extra handling here.
+    """
     order = await transfer_service.load_transfer_order(db, order_id)
     await access_service.assert_branch_access(db, user, order.branch_id)
     received = {line.transfer_order_item_id: line.quantity for line in data.lines}
+    reasons = {
+        line.transfer_order_item_id: line.reason
+        for line in data.lines
+        if line.reason is not None
+    }
     await transfer_service.receive_transfer(
-        db, order=order, user=user, received=received or None
+        db, order=order, user=user, received=received or None, reasons=reasons or None
     )
     return await _serialise_transfer(db, order)
 
@@ -361,11 +434,18 @@ async def _serialise_template(
             .all()
         )
         lookup = {r.id: r for r in rows}
+        categories = await _category_map(db, [r.id for r in rows])
         for line in payload.items:
             item = lookup.get(line.item_id)
             if item:
                 line.item_name = item.name
                 line.item_sku = item.sku
+                category = (
+                    categories.get(item.category_id) if item.category_id else None
+                )
+                if category is not None:
+                    line.category_name = category.name
+                    line.category_order = int(category.display_order or 0)
     return payload
 
 
@@ -566,6 +646,10 @@ class PosOnHandResponse(BaseModel):
     item_name: str | None = None
     item_sku: str | None = None
     ingredient_unit: str | None = None
+    #: The item's inventory category, so the returns picker can group by it. Both
+    #: null for an uncategorised item (sort last).
+    category_name: str | None = None
+    category_order: int | None = None
 
 
 @pos_transfers_router.get("/on-hand", response_model=list[PosOnHandResponse])
@@ -590,12 +674,14 @@ async def pos_on_hand(
         .order_by(InventoryItem.name)
     )
     agg: dict[uuid.UUID, PosOnHandResponse] = {}
+    items: dict[uuid.UUID, InventoryItem] = {}
     for level, item in (await db.execute(stmt)).all():
         quantity = Decimal(str(level.quantity))
         existing = agg.get(item.id)
         if existing is not None:
             existing.quantity += quantity
         else:
+            items[item.id] = item
             agg[item.id] = PosOnHandResponse(
                 item_id=item.id,
                 quantity=quantity,
@@ -603,6 +689,13 @@ async def pos_on_hand(
                 item_sku=item.sku,
                 ingredient_unit=item.ingredient_unit,
             )
+    categories = await _category_map(db, list(items))
+    for item_id, row in agg.items():
+        item = items[item_id]
+        category = categories.get(item.category_id) if item.category_id else None
+        if category is not None:
+            row.category_name = category.name
+            row.category_order = int(category.display_order or 0)
     return list(agg.values())
 
 

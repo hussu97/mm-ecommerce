@@ -393,6 +393,7 @@ def _serialise_transaction(
     names: dict[uuid.UUID, InventoryItem],
     references: dict[uuid.UUID, dict[str, str | None]] | None = None,
     user_names: dict[uuid.UUID, str] | None = None,
+    categories: dict[uuid.UUID, InventoryCategory] | None = None,
 ) -> InventoryTransactionResponse:
     payload = InventoryTransactionResponse.model_validate(transaction)
     for line in payload.items:
@@ -400,6 +401,16 @@ def _serialise_transaction(
         if item is not None:
             line.item_name = item.name
             line.item_sku = item.sku
+            # Group the count detail by category. Read it off the resolved map,
+            # never item.category lazily (MissingGreenlet under asyncio).
+            category = (
+                categories.get(item.category_id)
+                if categories and item.category_id
+                else None
+            )
+            if category is not None:
+                line.category_name = category.name
+                line.category_order = int(category.display_order or 0)
     if references is not None and (ref := references.get(transaction.id)):
         payload.source_reference = ref["reference"]
         payload.source_link = ref["link"]
@@ -567,6 +578,43 @@ async def _item_lookup_for_transactions(
     return {row.id: row for row in rows}
 
 
+async def _category_map(
+    db: AsyncSession, names: dict[uuid.UUID, InventoryItem]
+) -> dict[uuid.UUID, InventoryCategory]:
+    """The categories of the already-loaded items, keyed by category id, in one
+    query. Mirrors ``report_service._category_map`` — resolving categories up front
+    so the sync serialiser never touches ``item.category`` lazily (MissingGreenlet
+    under asyncio)."""
+    category_ids = {item.category_id for item in names.values() if item.category_id}
+    if not category_ids:
+        return {}
+    categories = (
+        (
+            await db.execute(
+                select(InventoryCategory).where(InventoryCategory.id.in_(category_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {category.id: category for category in categories}
+
+
+async def _serialise_one_transaction(
+    db: AsyncSession,
+    transaction: InventoryTransaction,
+    references: dict[uuid.UUID, dict[str, str | None]] | None = None,
+    user_names: dict[uuid.UUID, str] | None = None,
+) -> InventoryTransactionResponse:
+    """Resolve a single transaction's item labels and categories, then serialise —
+    the one-transaction path all the write endpoints return through."""
+    names = await _item_lookup(db, transaction)
+    categories = await _category_map(db, names)
+    return _serialise_transaction(
+        transaction, names, references, user_names, categories
+    )
+
+
 @transactions_router.get("", response_model=list[InventoryTransactionResponse])
 @pos_manager_read_router.get(
     "/transactions", response_model=list[InventoryTransactionResponse]
@@ -637,10 +685,11 @@ async def list_transactions(
 
     transactions = list((await db.execute(stmt)).scalars().unique().all())
     names = await _item_lookup_for_transactions(db, transactions)
+    categories = await _category_map(db, names)
     references = await _resolve_source_references(db, transactions)
     user_names = await _resolve_poster_names(db, transactions)
     return [
-        _serialise_transaction(transaction, names, references, user_names)
+        _serialise_transaction(transaction, names, references, user_names, categories)
         for transaction in transactions
     ]
 
@@ -675,7 +724,7 @@ async def create_transaction(
     ).scalar_one_or_none()
     if existing is not None:
         existing = await inventory_service.load_transaction(db, existing.id)
-        return _serialise_transaction(existing, await _item_lookup(db, existing))
+        return await _serialise_one_transaction(db, existing)
 
     business_date = await business_day_service.current_business_date(db, branch)
 
@@ -727,7 +776,7 @@ async def create_transaction(
         )
         transaction = await inventory_service.load_transaction(db, transaction.id)
 
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    return await _serialise_one_transaction(db, transaction)
 
 
 @transactions_router.get(
@@ -742,9 +791,7 @@ async def get_transaction(
     await access_service.assert_branch_access(db, user, transaction.branch_id)
     references = await _resolve_source_references(db, [transaction])
     user_names = await _resolve_poster_names(db, [transaction])
-    return _serialise_transaction(
-        transaction, await _item_lookup(db, transaction), references, user_names
-    )
+    return await _serialise_one_transaction(db, transaction, references, user_names)
 
 
 @transactions_router.post(
@@ -762,7 +809,7 @@ async def post_transaction(
         db, transaction=transaction, user=user
     )
     transaction = await inventory_service.load_transaction(db, transaction.id)
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    return await _serialise_one_transaction(db, transaction)
 
 
 @transactions_router.post("/adjust", response_model=InventoryTransactionResponse)
@@ -784,7 +831,7 @@ async def adjust_quantity(
         notes=data.notes,
     )
     transaction = await inventory_service.load_transaction(db, transaction.id)
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    return await _serialise_one_transaction(db, transaction)
 
 
 # ─── Purchase orders ──────────────────────────────────────────────────────────
@@ -1037,7 +1084,7 @@ async def receive_purchase_order(
         db, purchase_order=purchase_order, user=user, received=received
     )
     transaction = await inventory_service.load_transaction(db, transaction.id)
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    return await _serialise_one_transaction(db, transaction)
 
 
 # ─── Supplier catalogue ───────────────────────────────────────────────────────
@@ -1245,7 +1292,7 @@ async def record_waste(
         notes=data.notes,
     )
     transaction = await inventory_service.load_transaction(db, transaction.id)
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    return await _serialise_one_transaction(db, transaction)
 
 
 @items_router.post("/cost-adjustment", response_model=CostAdjustmentResponse)
@@ -1296,7 +1343,7 @@ async def open_count(
         notes=data.notes,
     )
     transaction = await inventory_service.load_transaction(db, transaction.id)
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    return await _serialise_one_transaction(db, transaction)
 
 
 @counts_router.get("", response_model=list[InventoryTransactionResponse])
@@ -1327,9 +1374,11 @@ async def list_counts(
     )
     rows = list((await db.execute(stmt)).scalars().unique().all())
     names = await _item_lookup_for_transactions(db, rows)
+    categories = await _category_map(db, names)
     references = await _resolve_source_references(db, rows)
     return [
-        _serialise_transaction(transaction, names, references) for transaction in rows
+        _serialise_transaction(transaction, names, references, categories=categories)
+        for transaction in rows
     ]
 
 
