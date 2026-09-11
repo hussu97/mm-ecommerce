@@ -18923,6 +18923,8 @@ export interface components {
          * @description One source→destination leg of a transfer order.
          */
         TransferResponse: {
+            /** Auto Printed At */
+            auto_printed_at?: string | null;
             /**
              * Branch Id
              * Format: uuid

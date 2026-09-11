@@ -109,6 +109,8 @@ class TransferResponse(ORMModel):
     notes: str | None
     sent_transaction_id: UUID | None
     received_transaction_id: UUID | None
+    #: When the source till auto-printed this transfer's packing list, if it has.
+    auto_printed_at: datetime | None = None
     created_at: datetime
     items: list[TransferLineResponse] = []
 

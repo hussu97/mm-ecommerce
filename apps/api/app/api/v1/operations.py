@@ -9,13 +9,13 @@ docs/integrators-and-aggregators.md.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -778,6 +778,71 @@ async def pos_outgoing_transfers(
     )
     transfers = list((await db.execute(stmt)).scalars().unique().all())
     return [await _serialise_child(db, t) for t in transfers]
+
+
+@pos_transfers_router.post(
+    "/transfers/claim-autoprint", response_model=list[TransferResponse]
+)
+async def pos_claim_autoprint_transfers(
+    source_branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("pos.till.manage")),
+):
+    """Claim, once, the pending transfers whose order date is today, for the
+    source till to auto-print when it opens. Gated on the till permission because
+    the trigger is opening a till. The claim is atomic: the first till to open on
+    the date stamps ``auto_printed_at`` and gets the list; a later till the same
+    day gets nothing, so nothing reprints. A future-dated order is claimed on its
+    date, not before. The manual Print button is independent of all this."""
+    await access_service.assert_branch_access(db, user, source_branch_id)
+    source = await crud_service.get_or_404(db, Branch, source_branch_id)
+    business_date = await business_day_service.current_business_date(db, source)
+    today = date.fromisoformat(business_date)
+    # Orders due today: an explicit required_date of today, or (none set) raised
+    # on today's business date.
+    due_orders = select(TransferOrder.id).where(
+        or_(
+            TransferOrder.required_date == today,
+            and_(
+                TransferOrder.required_date.is_(None),
+                TransferOrder.business_date == business_date,
+            ),
+        )
+    )
+    claimed_ids = list(
+        (
+            await db.execute(
+                update(Transfer)
+                .where(
+                    Transfer.source_branch_id == source_branch_id,
+                    Transfer.status == TransferStatusEnum.PENDING.value,
+                    Transfer.sent_transaction_id.is_(None),
+                    Transfer.auto_printed_at.is_(None),
+                    Transfer.transfer_order_id.in_(due_orders),
+                )
+                .values(auto_printed_at=utcnow())
+                .returning(Transfer.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not claimed_ids:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(Transfer)
+                .where(Transfer.id.in_(claimed_ids))
+                .options(selectinload(Transfer.items))
+                .order_by(Transfer.created_at.desc())
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    return [await _serialise_child(db, t) for t in rows]
 
 
 @pos_transfers_router.post(

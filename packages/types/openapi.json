@@ -31557,6 +31557,18 @@
       "TransferResponse": {
         "description": "One source\u2192destination leg of a transfer order.",
         "properties": {
+          "auto_printed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Printed At"
+          },
           "branch_id": {
             "format": "uuid",
             "title": "Branch Id",

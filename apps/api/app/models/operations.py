@@ -259,6 +259,13 @@ class Transfer(Base, UUIDMixin, TimestampMixin):
         ForeignKey("inventory_transactions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: When the source till auto-printed this transfer's packing list — stamped
+    #: once, the first time a till opens on the order's date, so a later till
+    #: opening the same day does not reprint it. Null until then. The manual
+    #: Print button is independent and never touches this.
+    auto_printed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     transfer_order: Mapped[TransferOrder] = relationship(
         "TransferOrder", back_populates="children"
