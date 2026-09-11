@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -143,7 +144,9 @@ async def list_transfer_orders(
     branch_id: uuid.UUID | None = None,
     source_branch_id: uuid.UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
-    limit: int = Query(100, ge=1, le=1000),
+    # The admin log fetches the branch's whole history for client-side paging, so
+    # allow up to the console's max page size (2000) rather than capping at 1000.
+    limit: int = Query(100, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.manage")),
 ):
@@ -369,7 +372,26 @@ async def _serialise_template(
 async def _load_template(
     db: AsyncSession, template_id: uuid.UUID
 ) -> InventoryTransferTemplate:
-    template = await db.get(InventoryTransferTemplate, template_id)
+    # Eager-load items: a plain db.get returns the just-flushed row from the
+    # identity map without its collection, and serialising it would then trigger
+    # an async lazy load during Pydantic's synchronous attribute access (a
+    # MissingGreenlet 500). Load it the way load_transfer_order does.
+    template = (
+        (
+            await db.execute(
+                select(InventoryTransferTemplate)
+                .where(InventoryTransferTemplate.id == template_id)
+                .options(selectinload(InventoryTransferTemplate.items))
+                # populate_existing so an update's reload overwrites the cached
+                # items collection with the fresh list rather than the stale one
+                # from before the delete/re-add.
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .unique()
+        .one_or_none()
+    )
     if template is None:
         raise NotFoundError("Transfer template not found")
     return template
