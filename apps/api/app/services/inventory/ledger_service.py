@@ -14,6 +14,7 @@ from app.core.money import quantity, unit_cost
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
+    InventoryCategory,
     InventoryItem,
     InventoryLevel,
     InventoryTransaction,
@@ -258,6 +259,27 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
         items_by_sku.setdefault(inventory_item.sku.casefold(), []).append(
             inventory_item
         )
+    # Resolve categories in one query (never lazily off item.category under asyncio)
+    # so the preview can be grouped by category like every other line table.
+    category_ids = {
+        inventory_item.category_id
+        for inventory_item in matching_items
+        if inventory_item.category_id is not None
+    }
+    categories_by_id: dict[uuid.UUID, InventoryCategory] = {}
+    if category_ids:
+        categories_by_id = {
+            category.id: category
+            for category in (
+                await db.execute(
+                    select(InventoryCategory).where(
+                        InventoryCategory.id.in_(category_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
     levels_by_item = {
         level.item_id: level
         for level in (
@@ -308,11 +330,20 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
             normalised_delta = quantity(normalised - ingredient_expected)
             if abs(delta) > max(abs(expected) * Decimal("10"), Decimal("100000")):
                 errors.append("Extreme variance requires manual review")
+        category = (
+            categories_by_id.get(item.category_id)
+            if item and item.category_id
+            else None
+        )
         payload.append(
             {
                 "sku": row.sku,
                 "item_id": item.id if item else None,
                 "item_name": item.name if item else None,
+                "category_name": category.name if category else None,
+                "category_order": (
+                    int(category.display_order or 0) if category else None
+                ),
                 "unit": row.unit,
                 "expected_quantity": expected,
                 "counted_quantity": counted,

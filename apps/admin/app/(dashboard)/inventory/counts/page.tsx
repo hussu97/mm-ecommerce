@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { inventoryApi, type StockAuditPreview } from '@/lib/pos-api';
 import type { InventoryLevel } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button } from '@/components/ui';
-import { DataTable } from '@/components/ui/DataTable';
 import { csvCell, formatQuantity } from '@/lib/utils';
 import { BranchFilter, LedgerTab } from '../_shared';
 
@@ -117,15 +116,59 @@ export default function CountsPage() {
       {message && <div className="border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">{message}</div>}
       {preview && (
         <>
-          <DataTable rows={preview.rows} rowKey={(row) => `${row.sku}-${row.counted_quantity}-${row.errors.join('|')}`} columns={[
-            { header: 'SKU', priority: 'secondary', render: (row) => <code className="text-xs">{row.sku}</code> },
-            { header: 'Item', priority: 'primary', render: (row) => row.item_name ?? 'Unknown item' },
-            { header: 'Expected', className: 'text-right', render: (row) => formatQuantity(row.expected_quantity) },
-            { header: 'Counted', className: 'text-right', render: (row) => formatQuantity(row.counted_quantity) },
-            { header: 'Delta', className: 'text-right', render: (row) => <span className={Number(row.delta_quantity) === 0 ? 'text-gray-500' : Number(row.delta_quantity) < 0 ? 'text-red-700' : 'text-green-700'}>{formatQuantity(row.delta_quantity)} {row.unit}</span> },
-            { header: 'Validation', render: (row) => row.errors.length ? <span className="text-red-700">{row.errors.join('; ')}</span> : <Badge variant="success">Ready</Badge> },
-            { header: 'Remark', render: (row) => row.remark ?? '—' },
-          ]} />
+          <div className="overflow-x-auto border border-gray-200">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
+                <tr>
+                  <th className="px-2 py-1">SKU</th>
+                  <th className="px-2 py-1">Item</th>
+                  <th className="px-2 py-1 text-right">Expected</th>
+                  <th className="px-2 py-1 text-right">Counted</th>
+                  <th className="px-2 py-1 text-right">Delta</th>
+                  <th className="px-2 py-1">Validation</th>
+                  <th className="px-2 py-1">Remark</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const MAX = Number.MAX_SAFE_INTEGER;
+                  const buckets = new Map<string, { order: number; rows: typeof preview.rows }>();
+                  for (const row of preview.rows) {
+                    const name = row.category_name ?? 'Uncategorised';
+                    const order = row.category_name ? (row.category_order ?? MAX) : MAX;
+                    const bucket = buckets.get(name) ?? { order: MAX, rows: [] };
+                    bucket.order = Math.min(bucket.order, order);
+                    bucket.rows.push(row);
+                    buckets.set(name, bucket);
+                  }
+                  const groups = [...buckets.entries()].sort(
+                    (a, b) => a[1].order - b[1].order || a[0].localeCompare(b[0]),
+                  );
+                  for (const [, bucket] of groups) {
+                    bucket.rows.sort((x, y) => (x.item_name ?? x.sku).localeCompare(y.item_name ?? y.sku));
+                  }
+                  return groups.map(([category, bucket]) => (
+                    <Fragment key={category}>
+                      <tr className="bg-gray-100/70">
+                        <td colSpan={7} className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-gray-600">{category}</td>
+                      </tr>
+                      {bucket.rows.map((row) => (
+                        <tr key={`${row.sku}-${row.counted_quantity}-${row.errors.join('|')}`} className="border-t border-gray-100">
+                          <td className="px-2 py-1"><code className="text-xs">{row.sku}</code></td>
+                          <td className="px-2 py-1 font-medium">{row.item_name ?? 'Unknown item'}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(row.expected_quantity)}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(row.counted_quantity)}</td>
+                          <td className={`px-2 py-1 text-right tabular-nums ${Number(row.delta_quantity) === 0 ? 'text-gray-500' : Number(row.delta_quantity) < 0 ? 'text-red-700' : 'text-green-700'}`}>{formatQuantity(row.delta_quantity)} {row.unit}</td>
+                          <td className="px-2 py-1">{row.errors.length ? <span className="text-red-700">{row.errors.join('; ')}</span> : <Badge variant="success">Ready</Badge>}</td>
+                          <td className="px-2 py-1">{row.remark ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
           <div className="flex justify-end">
             <Button onClick={() => void apply()} loading={busy} disabled={!preview.valid || Boolean(preview.transaction_id)}>
               {preview.transaction_id ? 'Audit posted' : 'Post count deltas'}

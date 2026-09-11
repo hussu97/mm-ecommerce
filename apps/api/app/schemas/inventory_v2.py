@@ -151,6 +151,8 @@ class StockAuditPreviewRow(BaseModel):
     sku: str
     item_id: UUID | None
     item_name: str | None
+    category_name: str | None = None
+    category_order: int | None = None
     unit: str
     expected_quantity: Decimal | None
     counted_quantity: Decimal

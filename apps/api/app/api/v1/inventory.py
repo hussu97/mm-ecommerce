@@ -626,7 +626,7 @@ async def list_transactions(
     status_filter: str | None = Query(None, alias="status"),
     business_date: str | None = None,
     search: str | None = None,
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("reports.inventory")),

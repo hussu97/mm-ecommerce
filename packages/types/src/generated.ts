@@ -17878,6 +17878,10 @@ export interface components {
         };
         /** StockAuditPreviewRow */
         StockAuditPreviewRow: {
+            /** Category Name */
+            category_name?: string | null;
+            /** Category Order */
+            category_order?: number | null;
             /** Counted Quantity */
             counted_quantity: string;
             /** Delta Quantity */
