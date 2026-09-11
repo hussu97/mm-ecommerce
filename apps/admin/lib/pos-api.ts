@@ -183,7 +183,7 @@ export const inventoryApi = {
   updateCategory: (id: string, d: Record<string, unknown>) => api.put<InventoryCategory>(`/inventory/categories/${id}`, d),
   removeCategory: (id: string) => api.delete<void>(`/inventory/categories/${id}`),
 
-  items: (params?: { search?: string; category_id?: string }) =>
+  items: (params?: { search?: string; category_id?: string; include_inactive?: boolean }) =>
     api.get<InventoryItem[]>(`/inventory/items${buildQs(params)}`),
   createItem: (d: Record<string, unknown>) => api.post<InventoryItem>('/inventory/items', d),
   updateItem: (id: string, d: Record<string, unknown>) => api.put<InventoryItem>(`/inventory/items/${id}`, d),

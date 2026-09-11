@@ -96,7 +96,10 @@ export default function ItemsPage() {
     return true;
   }, [categoryId, kind, status, trackingMode, stockFilter, pivot]);
 
-  const load = useCallback(() => inventoryApi.items(), []);
+  // The management screen is the one place that shows inactive items (it has an
+  // active/inactive/all filter), so it opts into them explicitly; everywhere else
+  // gets active-only by default.
+  const load = useCallback(() => inventoryApi.items({ include_inactive: true }), []);
 
   const toolbar = (
     <div className="flex flex-wrap items-center gap-2">

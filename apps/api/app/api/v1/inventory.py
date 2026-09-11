@@ -214,7 +214,10 @@ items_router = APIRouter()
 async def list_items(
     search: str | None = None,
     category_id: uuid.UUID | None = None,
-    include_inactive: bool = True,
+    # Safe by default: pickers and reports get only active items, so a caller
+    # that forgets to filter cannot leak a deactivated one. The Items management
+    # screen passes ``include_inactive=true`` to show its active/inactive filter.
+    include_inactive: bool = False,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("inventory.read")),
 ):
