@@ -67,6 +67,7 @@ def _delivery(**overrides) -> SimpleNamespace:
         courier_status=None,
         share_link=None,
         dispatchable_at=None,
+        courier_eta_at=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -643,13 +644,16 @@ async def test_a_day_promise_survives_the_order_moving_to_a_booked_courier():
 
 
 @pytest.mark.asyncio
-async def test_a_rider_collecting_does_not_sharpen_a_day_promise():
+async def test_a_reassigned_order_sharpens_with_the_new_couriers_estimate_after_pickup():
     """
-    The sharpest case in the whole function, and the one that would have broken
-    it: a real pickup event on a courier we book returns an hour. It may only
-    do that for an order that was promised an hour.
+    A third-party order an admin moved onto a courier we book keeps its day
+    promise right up until a rider collects it — but once it is genuinely on our
+    courier's van, that courier's own estimate is the honest thing to show, not
+    the third-party's end-of-day bound. With no live ETA and no promise minutes
+    configured on the new courier, it defaults to the generous 120-min figure.
     """
     promised = NOW + timedelta(days=1)
+    picked_up = NOW - timedelta(minutes=5)
     result = await _fulfilment(
         _order(
             status=OrderStatusEnum.OUT_FOR_DELIVERY,
@@ -657,12 +661,31 @@ async def test_a_rider_collecting_does_not_sharpen_a_day_promise():
             promised_precision="day",
         ),
         _delivery(provider="lalamove", original_provider="third_party"),
+        reached={"out_for_delivery": picked_up},
+    )
+    assert result.precision == "time", "our courier's estimate replaces the day bound"
+    assert result.estimated_at == picked_up.astimezone(TZ) + (
+        fulfilment_service.REASSIGNED_ETA_FALLBACK
+        - fulfilment_service.COLLECTION_ALLOWANCE
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_live_courier_eta_is_shown_verbatim_once_the_rider_has_it():
+    """
+    The truest answer of all: an ETA the courier's own routing produced for this
+    run, persisted to `courier_eta_at`. When present it is shown as-is, ahead of
+    any pickup-plus-duration calculation — for a genuine order or a reassigned
+    one alike.
+    """
+    eta = NOW + timedelta(minutes=35)
+    result = await _fulfilment(
+        _order(status=OrderStatusEnum.OUT_FOR_DELIVERY, promised_precision="day"),
+        _delivery(provider="slider", courier_eta_at=eta),
         reached={"out_for_delivery": NOW - timedelta(minutes=5)},
     )
-    assert result.precision == "day_by", "a day promise must never become an hour"
-    # And it is the promised day, not today. A rider collecting early does not
-    # move the date the customer was given.
-    assert result.estimated_at.date() == promised.astimezone(TZ).date()
+    assert result.precision == "time"
+    assert result.estimated_at == eta.astimezone(TZ)
 
 
 @pytest.mark.asyncio

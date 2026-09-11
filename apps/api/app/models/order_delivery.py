@@ -441,6 +441,15 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     driver_route_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: The live estimated *delivery* time the courier's own routing gave us for
+    #: this run — an absolute moment, distinct from `driver_route_*` (which is the
+    #: driver→kitchen leg for pickup). Only the couriers we book ever report one,
+    #: and only once a rider is on the way, so it is null on most rows. When set
+    #: it is the truest answer the out-for-delivery estimate has, shown ahead of
+    #: any pickup-plus-duration calculation (`fulfilment_service._estimate`).
+    courier_eta_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: How many drivers this booking has had. 0 until one is matched, 1 for the
     #: ordinary case, 2+ once somebody has been swapped.
     #:

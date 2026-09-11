@@ -77,6 +77,13 @@ COLLECTION_ALLOWANCE = timedelta(minutes=10)
 #: batch group or the courier row; this is only the floor under a missing one.
 RIDER_TO_DOOR = timedelta(minutes=45)
 
+#: The door-to-door estimate for a third-party order an admin reassigned onto a
+#: courier we book, once a rider has collected it and the new courier has given
+#: us no live ETA and has no promise minutes configured. Deliberately generous:
+#: the customer was originally quoted somebody else's van, so a wider figure that
+#: does not under-promise is the safer default for a route we only just took on.
+REASSIGNED_ETA_FALLBACK = timedelta(minutes=120)
+
 #: The hour a third-party day-promise is bounded by. Their van and their
 #: schedule, so the honest shape is a date and a "by" — not an hour we picked.
 THIRD_PARTY_BY_HOUR = 22
@@ -452,42 +459,51 @@ def _estimate(
     booked_by_us = originally in _BOOKED_BY_US
 
     if stage == "on_the_way":
-        # The sharpest answer we ever have: one rider, one route, measured from
-        # the pickup event the courier reported plus the delivery duration the
-        # customer was promised — not from anything we assumed now. This is the
-        # one case built from a fact rather than a schedule, so it overrules the
-        # promise. For a courier we booked ourselves it does so even when the
-        # checkout promise was a day ("before 10 PM"): we know when the rider
-        # actually collected, so an end-of-day bound is needlessly vague. That
-        # pushes the estimate past the original day promise, which is honest —
-        # the rider left when they left. A reassigned third-party order may still
-        # only sharpen a promise that was itself made as a time.
+        # Once a rider we can see is holding the box, the estimate is built from
+        # what actually happened, not from what checkout guessed. Read in order
+        # of truth:
+        #
+        #   1. A live ETA the courier itself reported — the sharpest thing there
+        #      is, a figure their own routing produced for this run.
+        #   2. Otherwise the pickup event plus a delivery duration: the duration
+        #      promised at checkout for an order we booked from the start, or the
+        #      new courier's own polygon estimate for a third-party order we were
+        #      reassigned (120 min when it has none). Either way a real pickup on
+        #      a courier we book overrules the checkout promise — including a day
+        #      one — because we know when the rider collected. It can push the
+        #      estimate past the original promise, which is honest: the rider left
+        #      when they left.
         picked_up = (reached or {}).get(OrderStatusEnum.OUT_FOR_DELIVERY.value)
-        if (
-            picked_up is not None
-            and provider in _BOOKED_BY_US
-            and (promised_a_time or booked_by_us)
-        ):
+        if picked_up is not None and provider in _BOOKED_BY_US:
+            courier_eta = delivery.courier_eta_at if delivery is not None else None
+            if courier_eta is not None:
+                # Never behind the customer reading it (see below).
+                return (
+                    max(_local(courier_eta), _local(now) + timedelta(minutes=5)),
+                    "time",
+                )
             # The promise minus what it had already spent by the time the rider
-            # was holding the box. A flat 45 minutes here was the same number
-            # for a Dubai run and a northern one, which differ by half an hour.
-            remaining = (promise_minutes or RIDER_TO_DOOR) - COLLECTION_ALLOWANCE
+            # was holding the box. A genuine order we booked falls back to the
+            # flat rider figure; a reassigned third-party order to the generous
+            # 120-min default, since it was quoted somebody else's van.
+            fallback = RIDER_TO_DOOR if booked_by_us else REASSIGNED_ETA_FALLBACK
+            remaining = (promise_minutes or fallback) - COLLECTION_ALLOWANCE
             arriving = _local(picked_up) + max(remaining, timedelta(minutes=5))
             # Never behind the customer reading it. A rider who is running late
             # turns an estimate into a time that has already passed, and an
             # email saying the parcel arrived twenty minutes ago is worse than
             # one saying "any moment".
             return max(arriving, _local(now) + timedelta(minutes=5)), "time"
-        # Either it is on somebody else's van and the shop marked it by hand, or
-        # it is a reassigned third-party order still bound by its day promise.
-        # Both get the day, bounded by the hour rather than left open: "before
-        # 10 PM" is a commitment a customer can plan around, and "some time on
-        # Tuesday" is not.
+        # It is on somebody else's van and the shop marked it out for delivery by
+        # hand: there is no pickup event to measure from and no courier we can
+        # see, so the day is all there is — bounded by the hour rather than left
+        # open. "Before 10 PM" is a commitment a customer can plan around; "some
+        # time on Tuesday" is not.
         #
-        # The promised date where there is one, not today. A rider collecting an
-        # order early does not move the day it was promised for, and quietly
-        # re-dating it to `now` is how an order promised for tomorrow would
-        # start claiming it arrives this evening.
+        # The promised date where there is one, not today. A day promise marked
+        # out for delivery early does not move the day it was promised for, and
+        # quietly re-dating it to `now` is how an order promised for tomorrow
+        # would start claiming it arrives this evening.
         promised = _promise(order)
         day = promised[0] if promised is not None and not promised_a_time else now
         return _by_hour(day, THIRD_PARTY_BY_HOUR), "day_by"

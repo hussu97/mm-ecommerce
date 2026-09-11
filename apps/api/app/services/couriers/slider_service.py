@@ -1065,6 +1065,46 @@ def _is_reassignment(
     return True
 
 
+#: Keys a Slider push might carry the estimated *delivery* (dropoff) time under.
+#: Slider's status contract does not document one and none is seen in captured
+#: payloads yet, so this reads defensively across the plausible spellings and is
+#: a no-op until one appears — at which point `courier_eta_at` starts filling
+#: with no further change. The exact key should be pinned against a live payload
+#: when one is confirmed; an unknown key here costs nothing.
+_ETA_KEYS = (
+    "estimated_delivery_time",
+    "estimated_delivery_at",
+    "estimated_dropoff_time",
+    "dropoff_eta",
+    "delivery_eta",
+    "eta",
+)
+
+
+def _courier_eta(payload: dict[str, Any]) -> datetime | None:
+    """A dropoff ETA the courier reported, as an aware datetime, or None.
+
+    Accepts an ISO string (via `parse_time`) or an epoch (seconds or millis).
+    Returns None for anything unparseable or non-future-shaped, so a stray or
+    misread field never overwrites a good estimate with nonsense.
+    """
+    for key in _ETA_KEYS:
+        raw = payload.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            parsed = parse_time(raw)
+            if parsed is not None:
+                return parsed
+        elif isinstance(raw, (int, float)):
+            seconds = raw / 1000 if raw > 1e11 else raw
+            try:
+                return datetime.fromtimestamp(seconds, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+    return None
+
+
 async def apply_webhook(
     db: AsyncSession,
     payload: dict[str, Any],
@@ -1105,6 +1145,12 @@ async def apply_webhook(
             return delivery
 
     delivery.last_payload = payload
+    # A live dropoff ETA, where Slider sends one, is the truest input to the
+    # out-for-delivery estimate — stamped here so `fulfilment_service._estimate`
+    # can show it verbatim once a rider is on the way. No-op until the field
+    # appears (see `_courier_eta`); never cleared by a push that omits it.
+    if (eta := _courier_eta(payload)) is not None:
+        delivery.courier_eta_at = eta
     if delivery_id := payload.get("order_number"):
         delivery.courier_order_id = str(delivery_id)
     if tracking := (payload.get("tracking_url") or payload.get("tracking_link")):
