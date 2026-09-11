@@ -45669,7 +45669,7 @@
             "name": "include_inactive",
             "required": false,
             "schema": {
-              "default": true,
+              "default": false,
               "title": "Include Inactive",
               "type": "boolean"
             }
