@@ -12,6 +12,7 @@ import { Input, Select } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { COURIER_OPTIONS } from '@/lib/couriers';
 import { CourierMark } from '@/components/orders/CourierLogo';
+import { DateRangePresets } from '@/components/orders/DateRangePresets';
 import type { OrderFilters } from '@/lib/order-filters';
 import { hasAnyFilter } from '@/lib/order-filters';
 
@@ -76,6 +77,13 @@ export function OrderFilterBar({
 }) {
   return (
     <div className="mb-4 space-y-3">
+      <div>
+        <span className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1.5">
+          Quick range
+        </span>
+        <DateRangePresets filters={filters} onPatch={onPatch} />
+      </div>
+
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">

@@ -14,6 +14,7 @@ import {
   hasAnyFilter,
   type OrderFilters,
 } from '@/lib/order-filters';
+import { DateRangePresets } from '@/components/orders/DateRangePresets';
 import { formatCurrency, formatTime, formatTimeAgo, cn } from '@/lib/utils';
 
 /** How often the live figures refetch themselves, in ms. */
@@ -283,6 +284,10 @@ export default function DashboardPage() {
       </div>
 
       {/* Range + search controls. Clearing the dates returns to the live day. */}
+      <div className="mb-3">
+        <span className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1.5">Quick range</span>
+        <DateRangePresets filters={filters} onPatch={patch} />
+      </div>
       <div className="mb-6 flex flex-wrap items-end gap-3">
         <div>
           <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">From</label>

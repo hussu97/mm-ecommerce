@@ -97,6 +97,120 @@ export function ordersHref(f: OrderFilters, overrides?: Partial<OrderFilters>): 
   return q ? `/orders?${q}` : '/orders';
 }
 
+/* ------------------------------------------------------------------ *
+ * Quick date-range presets (Today, Yesterday, L7D, …).
+ *
+ * Every date the shop cares about is a calendar date in Asia/Dubai, not in
+ * whoever's browser is open (see `SHOP_TZ` in lib/utils.ts). So "today" must be
+ * computed against the shop's clock — a laptop on London time would otherwise
+ * put a preset a day off after midnight Dubai. We take the shop's current
+ * Y-M-D, anchor it at UTC midnight, and do the day/month arithmetic there so
+ * it is immune to DST (Dubai has none, but the anchor keeps it honest either
+ * way), then serialise back to the `YYYY-MM-DD` the API expects.
+ * ------------------------------------------------------------------ */
+
+const SHOP_TZ = 'Asia/Dubai';
+
+/** A `Date` anchored at UTC midnight of the shop's *current* calendar day. */
+function shopTodayAnchor(): Date {
+  // en-CA renders as YYYY-MM-DD, which we can split without locale surprises.
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SHOP_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+/** `YYYY-MM-DD` for a UTC-anchored date. */
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function addDays(d: Date, days: number): Date {
+  const next = new Date(d);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+export interface DatePreset {
+  key: string;
+  label: string;
+  /** Compute the inclusive `{ from, to }` for this preset, in shop time. */
+  range: () => { from: string; to: string };
+}
+
+/**
+ * The quick ranges offered on the dashboard and orders list. Order matters —
+ * this is the left-to-right order the chips render in.
+ */
+export const DATE_PRESETS: DatePreset[] = [
+  {
+    key: 'today',
+    label: 'Today',
+    range: () => {
+      const t = isoDay(shopTodayAnchor());
+      return { from: t, to: t };
+    },
+  },
+  {
+    key: 'yesterday',
+    label: 'Yesterday',
+    range: () => {
+      const y = isoDay(addDays(shopTodayAnchor(), -1));
+      return { from: y, to: y };
+    },
+  },
+  {
+    key: 'l7d',
+    label: 'L7D',
+    range: () => {
+      const today = shopTodayAnchor();
+      return { from: isoDay(addDays(today, -6)), to: isoDay(today) };
+    },
+  },
+  {
+    key: 'this_month',
+    label: 'This month',
+    range: () => {
+      const today = shopTodayAnchor();
+      const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+      return { from: isoDay(first), to: isoDay(today) };
+    },
+  },
+  {
+    key: 'last_month',
+    label: 'Last month',
+    range: () => {
+      const today = shopTodayAnchor();
+      const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+      // Day 0 of this month is the last day of the previous month.
+      const last = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+      return { from: isoDay(first), to: isoDay(last) };
+    },
+  },
+  {
+    key: 'l30d',
+    label: 'L30D',
+    range: () => {
+      const today = shopTodayAnchor();
+      return { from: isoDay(addDays(today, -29)), to: isoDay(today) };
+    },
+  },
+];
+
+/** The preset key whose range matches the current `from`/`to`, if any. */
+export function activePresetKey(f: OrderFilters): string | null {
+  if (!f.from || !f.to) return null;
+  for (const p of DATE_PRESETS) {
+    const r = p.range();
+    if (r.from === f.from && r.to === f.to) return p.key;
+  }
+  return null;
+}
+
 /**
  * Read and write the shared filters through the URL of the current page.
  *
