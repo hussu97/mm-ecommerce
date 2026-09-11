@@ -8,7 +8,7 @@ separately rather than netted silently into the totals.
 
 This was a single 1,805-line module — the largest file in the repository — and
 it split cleanly because every function here is a pure read: `(db, scope) ->
-rows`, no module state, nothing mutated. The five groups share `_scope` and the
+rows`, no module state, nothing mutated. The groups share `_scope` and the
 label lookups in `_base` and nothing else.
 
 **The barrel re-exports the report functions on purpose**, unlike
@@ -20,8 +20,6 @@ else is. A helper that only its own group uses stays in its module.
 from ._base import SUPPORTED_DIMENSIONS
 from .financial import (
     drawer_operations_report,
-    payments_report,
-    tax_report,
     tills_report,
     voids_and_returns,
 )
@@ -31,26 +29,18 @@ from .operations import (
 from .sales import sales_by_dimension, sales_summary
 from .stock import (
     cost_adjustment_history,
-    cost_of_goods,
-    inventory_valuation,
     purchase_orders_report,
-    suppliers_analysis,
     transfers_report,
 )
 
 __all__ = [
     "SUPPORTED_DIMENSIONS",
     "cost_adjustment_history",
-    "cost_of_goods",
     "drawer_operations_report",
-    "inventory_valuation",
-    "payments_report",
     "purchase_orders_report",
     "sales_by_dimension",
     "sales_predictions",
     "sales_summary",
-    "suppliers_analysis",
-    "tax_report",
     "tills_report",
     "transfers_report",
     "voids_and_returns",

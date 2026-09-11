@@ -8,13 +8,13 @@
 import { api, buildQs } from './api';
 import type { Schemas } from '@mm/types';
 import type {
-  Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, CostOfGoods, Device, DrawerOperation,
+  Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, Device, DrawerOperation,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
-  InventoryValuation, KitchenFlow, PaymentMethod,
-  PaymentReportRow, PermissionCatalogue, Printer, PurchaseOrder,
+  KitchenFlow, PaymentMethod,
+  PermissionCatalogue, Printer, PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
-  SupplierAnalysisRow, Supplier, Tag, Tax,
-  TaxGroup, TaxReportRow, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
+  Supplier, Tag, Tax,
+  TaxGroup, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
 export type VersionedRecipe = Schemas['VersionedRecipeResponse'];
@@ -312,16 +312,9 @@ export const posReportsApi = {
   salesSummary: (w: Window) => api.get<SalesSummary>(`/pos/reports/sales/summary${buildQs(w)}`),
   salesBy: (dimension: string, w: Window, limit = 100) =>
     api.get<SalesBreakdownRow[]>(`/pos/reports/sales/by${buildQs({ dimension, limit, ...w })}`),
-  payments: (w: Window) => api.get<PaymentReportRow[]>(`/pos/reports/payments${buildQs(w)}`),
   sendDailyEmail: (body: { date_from: string; date_to: string; recipients: string[] }) =>
     api.post<DailySalesEmailResult>('/pos/reports/sales/daily-email', body),
-  suppliersAnalysis: (w: Window) =>
-    api.get<SupplierAnalysisRow[]>(`/pos/reports/suppliers-analysis${buildQs(w)}`),
-  taxes: (w: Window) => api.get<TaxReportRow[]>(`/pos/reports/taxes${buildQs(w)}`),
   voidsReturns: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/voids-returns${buildQs(w)}`),
   tills: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/tills${buildQs(w)}`),
   drawerOperations: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/drawer-operations${buildQs(w)}`),
-  inventoryValuation: (branchId?: string) =>
-    api.get<InventoryValuation>(`/pos/reports/inventory/valuation${buildQs({ branch_id: branchId })}`),
-  costOfGoods: (w: Window) => api.get<CostOfGoods>(`/pos/reports/inventory/cost-of-goods${buildQs(w)}`),
 };

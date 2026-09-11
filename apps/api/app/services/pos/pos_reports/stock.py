@@ -1,4 +1,4 @@
-"""Inventory valuation, cost of goods, suppliers, purchase orders and transfers."""
+"""Cost adjustments, purchase orders and transfers."""
 
 from __future__ import annotations
 
@@ -12,148 +12,13 @@ from app.core.money import money
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
-    InventoryLevel,
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
     PurchaseOrder,
     PurchaseOrderItem,
     Supplier,
-    Warehouse,
 )
-
-from ._base import (
-    ZERO,
-)
-from .sales import sales_summary
-
-# ─── Inventory ────────────────────────────────────────────────────────────────
-
-
-async def inventory_valuation(
-    db: AsyncSession, *, branch_id: uuid.UUID | None = None
-) -> dict:
-    """Total value of stock on hand, and the items below their reorder point."""
-    stmt = (
-        select(InventoryLevel, InventoryItem)
-        .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
-        .where(InventoryItem.deleted_at.is_(None))
-    )
-    if branch_id:
-        stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(
-            Warehouse.branch_id == branch_id
-        )
-
-    total_value = ZERO
-    below: list[dict] = []
-    item_count = 0
-    for level, item in (await db.execute(stmt)).all():
-        item_count += 1
-        total_value += Decimal(str(level.quantity)) * Decimal(str(level.average_cost))
-        if Decimal(str(level.quantity)) < Decimal(str(item.minimum_level)):
-            below.append(
-                {
-                    "item_id": str(item.id),
-                    "sku": item.sku,
-                    "name": item.name,
-                    "quantity": money(level.quantity),
-                    "minimum_level": money(item.minimum_level),
-                    "par_level": money(item.par_level),
-                    "unit": item.ingredient_unit,
-                    "shortfall": money(
-                        Decimal(str(item.par_level)) - Decimal(str(level.quantity))
-                    ),
-                }
-            )
-
-    return {
-        "items_tracked": item_count,
-        "total_value": money(total_value),
-        "below_minimum_count": len(below),
-        "below_minimum": below,
-    }
-
-
-async def cost_of_goods(
-    db: AsyncSession,
-    *,
-    branch_id: uuid.UUID | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-) -> dict:
-    """
-    COGS from the depletion ledger, and the resulting margin against net sales.
-    Sourced from posted consumption transactions rather than from recipes, so it
-    reflects what was actually taken out of stock.
-    """
-    stmt = (
-        select(func.coalesce(func.sum(InventoryTransactionItem.total_cost), 0))
-        .select_from(InventoryTransactionItem)
-        .join(
-            InventoryTransaction,
-            InventoryTransaction.id == InventoryTransactionItem.transaction_id,
-        )
-        .where(
-            InventoryTransaction.type
-            == InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
-            InventoryTransaction.status == "closed",
-        )
-    )
-    if branch_id:
-        stmt = stmt.where(InventoryTransaction.branch_id == branch_id)
-    if date_from:
-        stmt = stmt.where(InventoryTransaction.business_date >= date_from)
-    if date_to:
-        stmt = stmt.where(InventoryTransaction.business_date <= date_to)
-
-    cogs = money((await db.execute(stmt)).scalar_one())
-    sales = await sales_summary(
-        db, branch_id=branch_id, date_from=date_from, date_to=date_to
-    )
-    net = sales["net_sales_excl_tax"]
-    margin = money(net - cogs)
-    return {
-        "cost_of_goods": cogs,
-        "net_sales_excl_tax": net,
-        "gross_margin": margin,
-        "gross_margin_percent": (round(float(margin / net) * 100, 2) if net else 0.0),
-    }
-
-
-async def suppliers_analysis(
-    db: AsyncSession,
-    *,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    limit: int = 100,
-) -> list[dict]:
-    """What each supplier has been paid, and how much was ordered from them."""
-    stmt = (
-        select(
-            Supplier.name,
-            func.count(func.distinct(PurchaseOrder.id)),
-            func.coalesce(func.sum(PurchaseOrder.total_cost), 0),
-        )
-        .select_from(PurchaseOrder)
-        .join(Supplier, Supplier.id == PurchaseOrder.supplier_id)
-        .group_by(Supplier.name)
-        .order_by(func.coalesce(func.sum(PurchaseOrder.total_cost), 0).desc())
-        .limit(limit)
-    )
-    if date_from:
-        stmt = stmt.where(PurchaseOrder.business_date >= date_from)
-    if date_to:
-        stmt = stmt.where(PurchaseOrder.business_date <= date_to)
-
-    rows = (await db.execute(stmt)).all()
-    return [
-        {
-            "supplier": name,
-            "purchase_orders": int(count or 0),
-            "total_spend": money(total),
-        }
-        for name, count, total in rows
-    ]
 
 
 async def cost_adjustment_history(

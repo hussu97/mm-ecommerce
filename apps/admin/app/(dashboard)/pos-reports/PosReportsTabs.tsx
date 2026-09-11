@@ -6,12 +6,15 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 /**
- * The sub-navigation shared by the six POS report screens.
+ * The sub-navigation shared by the POS report screens.
  *
- * Sales, Payments, Taxes, Inventory, Suppliers and the Email report used to be
- * six `TabBar` buttons over one page's `useState`. They are six tabs of one
- * section now, each its own route, and the active one is decided by the URL —
+ * These used to be `TabBar` buttons over one page's `useState`; they are tabs of
+ * one section now, each its own route, and the active one is decided by the URL —
  * links, not buttons. Styling mirrors `LogsTabs` so it reads as one section.
+ *
+ * The Payments, Taxes, Inventory and Suppliers tabs were retired (the first two
+ * unused, the latter two showed duplicated/incorrect figures — the live
+ * Inventory section is the source of truth); Sales and the Email report remain.
  *
  * The reporting window rides in the query string (`?from=&to=&branch=`), so the
  * tab links carry it along — switching tabs keeps the same window.
@@ -22,10 +25,6 @@ import { cn } from '@/lib/utils';
  */
 const TABS = [
   { href: '/pos-reports/sales', label: 'Sales' },
-  { href: '/pos-reports/payments', label: 'Payments' },
-  { href: '/pos-reports/taxes', label: 'Taxes' },
-  { href: '/pos-reports/inventory', label: 'Inventory' },
-  { href: '/pos-reports/suppliers', label: 'Suppliers' },
   { href: '/pos-reports/email', label: 'Email Report' },
 ];
 

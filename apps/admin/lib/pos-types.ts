@@ -482,48 +482,6 @@ export interface SalesBreakdownRow {
   discounts: number;
 }
 
-export interface PaymentReportRow {
-  payment_method_id: string;
-  name: string;
-  type: string;
-  transactions: number;
-  amount: number;
-  refunds: number;
-  net: number;
-  tips: number;
-}
-
-export interface TaxReportRow {
-  name: string;
-  rate: number;
-  rate_percent: number;
-  taxable_amount: number;
-  tax_amount: number;
-}
-
-export interface InventoryValuation {
-  items_tracked: number;
-  total_value: number;
-  below_minimum_count: number;
-  below_minimum: Array<{
-    item_id: string;
-    sku: string;
-    name: string;
-    quantity: number;
-    minimum_level: number;
-    par_level: number;
-    unit: string;
-    shortfall: number;
-  }>;
-}
-
-export interface CostOfGoods {
-  cost_of_goods: number;
-  net_sales_excl_tax: number;
-  gross_margin: number;
-  gross_margin_percent: number;
-}
-
 export interface BusinessSettings {
   id: string;
   business_name: string;
@@ -554,11 +512,4 @@ export interface BusinessSettings {
   auto_logout_seconds: number;
   order_number_reset_daily: boolean;
   enable_tips: boolean;
-}
-
-
-export interface SupplierAnalysisRow {
-  supplier: string;
-  purchase_orders: number;
-  total_spend: number;
 }

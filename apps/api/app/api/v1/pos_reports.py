@@ -1,4 +1,4 @@
-"""POS reporting endpoints — sales, payments, tax, operations and inventory."""
+"""POS reporting endpoints — sales, operations and stock-cost reports."""
 
 from __future__ import annotations
 
@@ -74,25 +74,6 @@ async def sales_by(
     )
 
 
-@router.get("/payments")
-async def payments(
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.sales")),
-):
-    return await pos_reports.payments_report(db, **window.kwargs)
-
-
-@router.get("/taxes")
-async def taxes(
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.other")),
-):
-    """VAT return input: taxable base and tax collected per rate."""
-    return await pos_reports.tax_report(db, **window.kwargs)
-
-
 @router.get("/voids-returns")
 async def voids_and_returns(
     limit: int = Query(200, ge=1, le=1000),
@@ -119,38 +100,6 @@ async def drawer_operations(
     _: User = Depends(require("reports.other")),
 ):
     return await pos_reports.drawer_operations_report(db, **window.kwargs)
-
-
-@router.get("/inventory/valuation")
-async def inventory_valuation(
-    branch_id: uuid.UUID | None = None,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.inventory")),
-):
-    """Stock value on hand plus everything below its reorder point."""
-    return await pos_reports.inventory_valuation(db, branch_id=branch_id)
-
-
-@router.get("/inventory/cost-of-goods")
-async def cost_of_goods(
-    window: _Window = Depends(),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost")),
-):
-    return await pos_reports.cost_of_goods(db, **window.kwargs)
-
-
-@router.get("/suppliers-analysis")
-async def suppliers_analysis(
-    date_from: str | None = None,
-    date_to: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("reports.cost")),
-):
-    """Purchase-order count and spend per supplier."""
-    return await pos_reports.suppliers_analysis(
-        db, date_from=date_from, date_to=date_to
-    )
 
 
 @router.get("/cost-adjustment-history")

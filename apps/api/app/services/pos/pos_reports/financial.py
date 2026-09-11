@@ -1,4 +1,4 @@
-"""Payments, tax, voids and returns, tills and the drawer."""
+"""Voids and returns, tills and the drawer."""
 
 from __future__ import annotations
 
@@ -11,152 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.money import money
 from app.models.device import Device
 from app.models.order import Order, OrderItem
-from app.models.payment_method import PaymentMethod
-from app.models.pos_order import (
-    OrderPayment,
-    OrderTax,
-)
 from app.models.till import DrawerOperation, Till
 
 from ._base import (
-    _COMPLETED_SALE,
-    ZERO,
     _scope,
     _staff_labels,
 )
-
-
-async def payments_report(
-    db: AsyncSession,
-    *,
-    branch_id: uuid.UUID | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-) -> list[dict]:
-    """Tender mix — what customers actually paid with."""
-    stmt = (
-        select(
-            PaymentMethod.id,
-            PaymentMethod.name,
-            PaymentMethod.type,
-            func.count(OrderPayment.id),
-            func.coalesce(func.sum(OrderPayment.amount), 0),
-            func.coalesce(func.sum(OrderPayment.tips), 0),
-        )
-        .select_from(OrderPayment)
-        .join(Order, Order.id == OrderPayment.order_id)
-        .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
-    )
-    stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
-    stmt = stmt.where(OrderPayment.is_refund.is_(False)).group_by(
-        PaymentMethod.id, PaymentMethod.name, PaymentMethod.type
-    )
-
-    refunds_stmt = (
-        select(
-            OrderPayment.payment_method_id,
-            func.coalesce(func.sum(OrderPayment.amount), 0),
-        )
-        .select_from(OrderPayment)
-        .join(Order, Order.id == OrderPayment.order_id)
-    )
-    refunds_stmt = (
-        _scope(refunds_stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
-        .where(OrderPayment.is_refund.is_(True))
-        .group_by(OrderPayment.payment_method_id)
-    )
-    refunds = {str(k): money(v) for k, v in (await db.execute(refunds_stmt)).all()}
-
-    return [
-        {
-            "payment_method_id": str(pid),
-            "name": name,
-            "type": ptype,
-            "transactions": int(count or 0),
-            "amount": money(amount),
-            "refunds": refunds.get(str(pid), ZERO),
-            "net": money(Decimal(str(amount or 0)) - refunds.get(str(pid), ZERO)),
-            "tips": money(tips),
-        }
-        for pid, name, ptype, count, amount, tips in (await db.execute(stmt)).all()
-    ]
-
-
-async def tax_report(
-    db: AsyncSession,
-    *,
-    branch_id: uuid.UUID | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-) -> dict:
-    """VAT return input: taxable base and tax collected, per rate.
-
-    Scoped to `_COMPLETED_SALE` — the same set of orders `sales_summary` calls a
-    sale — not `pos_status == closed` alone. The old filter counted only closed
-    counter checks, so a delivered website order's VAT was in the sales summary
-    but missing from the tax report, and the two never reconciled (F-POS-8).
-
-    `discrepancies` is a data-integrity signal alongside the rates: how many
-    completed-sale orders whose stamped `vat_amount` does not equal the sum of
-    their own `order_taxes` rows. It should be zero; a non-zero count means the
-    per-rate breakdown here and the VAT figure on the sales summary are drawn
-    from tax data that no longer agrees with itself, and the return needs looking
-    at before it is filed.
-    """
-    stmt = (
-        select(
-            OrderTax.name,
-            OrderTax.rate,
-            func.coalesce(func.sum(OrderTax.taxable_amount), 0),
-            func.coalesce(func.sum(OrderTax.amount), 0),
-        )
-        .select_from(OrderTax)
-        .join(Order, Order.id == OrderTax.order_id)
-    )
-    stmt = _scope(stmt, branch_id=branch_id, date_from=date_from, date_to=date_to)
-    stmt = (
-        stmt.where(_COMPLETED_SALE)
-        .group_by(OrderTax.name, OrderTax.rate)
-        .order_by(OrderTax.rate)
-    )
-    rates = [
-        {
-            "name": name,
-            "rate": float(rate or 0),
-            "rate_percent": round(float(rate or 0) * 100, 2),
-            "taxable_amount": money(base),
-            "tax_amount": money(amount),
-        }
-        for name, rate, base, amount in (await db.execute(stmt)).all()
-    ]
-
-    # The sum of an order's own tax lines, per order.
-    tax_sum = (
-        select(
-            OrderTax.order_id.label("order_id"),
-            func.coalesce(func.sum(OrderTax.amount), 0).label("tax_lines_total"),
-        )
-        .group_by(OrderTax.order_id)
-        .subquery()
-    )
-    disc_stmt = _scope(
-        select(func.count())
-        .select_from(Order)
-        .outerjoin(tax_sum, tax_sum.c.order_id == Order.id),
-        branch_id=branch_id,
-        date_from=date_from,
-        date_to=date_to,
-    ).where(
-        _COMPLETED_SALE,
-        # NULL-safe: an order with no tax rows (sum → NULL) reconciles against a
-        # zero `vat_amount` and is not flagged; only a genuine mismatch counts.
-        func.coalesce(tax_sum.c.tax_lines_total, 0).is_distinct_from(
-            func.coalesce(Order.vat_amount, 0)
-        ),
-    )
-    discrepancies = int((await db.execute(disc_stmt)).scalar_one() or 0)
-
-    return {"rates": rates, "discrepancies": discrepancies}
 
 
 async def voids_and_returns(
