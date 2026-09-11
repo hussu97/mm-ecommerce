@@ -234,14 +234,20 @@ export default function LoginsPage() {
     {
       header: 'Channel',
       priority: 'primary',
+      sortable: true,
+      sortAccessor: r => channelName(r.channel),
       render: r => <span className="font-medium text-gray-800">{channelName(r.channel)}</span>,
     },
     {
       header: 'Login method',
+      sortable: true,
+      sortAccessor: r => METHOD_LABEL[r.login_method] ?? r.login_method,
       render: r => <span className="text-sm text-gray-700">{METHOD_LABEL[r.login_method] ?? r.login_method}</span>,
     },
     {
       header: 'OTP',
+      sortable: true,
+      sortAccessor: r => (r.otp_required ? 'OTP' : 'No OTP'),
       render: r =>
         r.otp_required ? (
           <Badge variant="warning">OTP</Badge>
@@ -251,6 +257,8 @@ export default function LoginsPage() {
     },
     {
       header: 'Portal email',
+      sortable: true,
+      sortAccessor: r => r.email ?? null,
       render: r =>
         r.email ? (
           <span className="text-sm text-gray-700">{r.email}</span>

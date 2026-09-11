@@ -32,17 +32,19 @@ export default function StaffTab() {
       defaults={{ is_active: true, is_admin: false, is_driver: false }}
       emptyMessage="No staff yet. Add your first cashier."
       columns={[
-        { header: 'Name', priority: 'primary', render: (s) => <span className="font-medium">{s.display_name ?? s.email}</span> },
-        { header: 'Email', priority: 'secondary', render: (s) => <span className="text-xs text-gray-500">{s.email}</span> },
-        { header: 'Staff no.', render: (s) => s.staff_number ?? '—' },
-        { header: 'Role', render: (s) => s.role_name ?? <span className="text-gray-400">None</span> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (s) => s.display_name ?? s.email, render: (s) => <span className="font-medium">{s.display_name ?? s.email}</span> },
+        { header: 'Email', priority: 'secondary', sortable: true, sortAccessor: (s) => s.email, render: (s) => <span className="text-xs text-gray-500">{s.email}</span> },
+        { header: 'Staff no.', sortable: true, sortAccessor: (s) => s.staff_number ?? null, render: (s) => s.staff_number ?? '—' },
+        { header: 'Role', sortable: true, sortAccessor: (s) => s.role_name ?? null, render: (s) => s.role_name ?? <span className="text-gray-400">None</span> },
         {
           header: 'PIN',
+          sortable: true,
+          sortAccessor: (s) => (s.has_pin ? 'Set' : 'Not set'),
           render: (s) =>
             s.has_pin ? <Badge variant="success">Set</Badge> : <Badge variant="warning">Not set</Badge>,
         },
-        { header: 'Branches', render: (s) => s.branch_ids.length || '—' },
-        { header: 'Status', render: (s) => <StatusBadge active={s.is_active} /> },
+        { header: 'Branches', sortable: true, sortAccessor: (s) => s.branch_ids.length, render: (s) => s.branch_ids.length || '—' },
+        { header: 'Status', sortable: true, sortAccessor: (s) => (s.is_active ? 'Active' : 'Inactive'), render: (s) => <StatusBadge active={s.is_active} /> },
       ]}
       fields={[
         { name: 'display_name', label: 'Full name', required: true },

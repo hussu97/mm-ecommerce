@@ -4,7 +4,13 @@ import { useCallback, useState } from 'react';
 import { redirectApi, ApiError } from '@/lib/api';
 import type { UrlRedirect } from '@/lib/types';
 import { Button, Input, Pagination, Select, TabBar, LoadError, Spinner } from '@/components/ui';
-import { DataTable } from '@/components/ui/DataTable';
+import {
+  DataTable,
+  sortByAccessor,
+  sortKeyOf,
+  type DataColumn,
+  type SortState,
+} from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { formatDateTime } from '@/lib/utils';
@@ -54,6 +60,9 @@ export default function RedirectsPage() {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  // Column-header sort — orders the whole filtered list before pagination
+  // slices a page; no active sort keeps the natural (server) order.
+  const [sort, setSort] = useState<SortState | null>(null);
 
   // Client-side pagination: `/redirects` returns the whole table in one call.
   // It is a list of URLs that have moved — tens of rows, not thousands — and
@@ -65,8 +74,80 @@ export default function RedirectsPage() {
   } = useApiList<UrlRedirect>({ paginate: 'client', fetch: fetchRedirects });
 
   const filtered = redirects.filter(r => (activeTab === 'active' ? r.is_active : !r.is_active));
-  const pages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+
+  const columns: DataColumn<UrlRedirect>[] = [
+    {
+      header: 'Old path',
+      priority: 'primary',
+      sortable: true,
+      sortAccessor: r => r.from_path,
+      render: r => (
+        <span className="font-mono text-xs text-gray-800">
+          {r.from_path}
+          {/* The wildcard suffix a prefix rule implies, written the way
+              an operator would recognise it. Braced because bare `/*`
+              in JSX children reads as the start of a comment. */}
+          {r.is_prefix && <span className="text-gray-400">{'/*'}</span>}
+        </span>
+      ),
+    },
+    {
+      header: 'Goes to',
+      priority: 'secondary',
+      sortable: true,
+      sortAccessor: r => r.to_path,
+      render: r => <span className="font-mono text-xs text-gray-600">{r.to_path}</span>,
+    },
+    {
+      header: 'Status',
+      sortable: true,
+      sortAccessor: r => r.status_code,
+      render: r => <span className="font-body text-xs text-gray-500">{r.status_code}</span>,
+    },
+    {
+      header: 'Added by',
+      sortable: true,
+      sortAccessor: r =>
+        r.source === 'category_rename'
+          ? 'Category rename'
+          : r.source === 'seed'
+            ? 'Set up with the shop'
+            : 'By hand',
+      render: r => (
+        <span className="font-body text-xs text-gray-500">
+          {r.source === 'category_rename'
+            ? 'Category rename'
+            : r.source === 'seed'
+              ? 'Set up with the shop'
+              : 'By hand'}
+        </span>
+      ),
+    },
+    {
+      // The only question anyone asks of a redirect a year later. A row
+      // with no hits since it was written is one you can retire; one
+      // that fired this morning is still carrying somebody's bookmark.
+      header: 'Used',
+      sortable: true,
+      sortAccessor: r => r.hit_count,
+      render: r => (
+        <span className="font-body text-xs text-gray-500">
+          {r.hit_count === 0
+            ? 'never'
+            : `${r.hit_count}× · ${r.last_hit_at ? formatDateTime(r.last_hit_at) : '—'}`}
+        </span>
+      ),
+    },
+  ];
+
+  // Sort the whole filtered list before slicing a page, so a column sorts the
+  // resource rather than only the rows already on screen.
+  const activeColumn = sort ? columns.find(c => sortKeyOf(c) === sort.key) : undefined;
+  const ordered = sort && activeColumn?.sortAccessor
+    ? sortByAccessor(filtered, activeColumn.sortAccessor, sort.direction)
+    : filtered;
+  const pages = Math.max(1, Math.ceil(ordered.length / perPage));
+  const paginated = ordered.slice((page - 1) * perPage, page * perPage);
   const activeCount = redirects.filter(r => r.is_active).length;
   const inactiveCount = redirects.filter(r => !r.is_active).length;
 
@@ -258,6 +339,8 @@ export default function RedirectsPage() {
         <DataTable<UrlRedirect>
           rows={paginated}
           rowKey={r => r.id}
+          sort={sort}
+          onSortChange={s => { setSort(s); setPage(1); }}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">
               {activeTab === 'active'
@@ -265,55 +348,7 @@ export default function RedirectsPage() {
                 : 'Nothing retired.'}
             </p>
           }
-          columns={[
-            {
-              header: 'Old path',
-              priority: 'primary',
-              render: r => (
-                <span className="font-mono text-xs text-gray-800">
-                  {r.from_path}
-                  {/* The wildcard suffix a prefix rule implies, written the way
-                      an operator would recognise it. Braced because bare `/*`
-                      in JSX children reads as the start of a comment. */}
-                  {r.is_prefix && <span className="text-gray-400">{'/*'}</span>}
-                </span>
-              ),
-            },
-            {
-              header: 'Goes to',
-              priority: 'secondary',
-              render: r => <span className="font-mono text-xs text-gray-600">{r.to_path}</span>,
-            },
-            {
-              header: 'Status',
-              render: r => <span className="font-body text-xs text-gray-500">{r.status_code}</span>,
-            },
-            {
-              header: 'Added by',
-              render: r => (
-                <span className="font-body text-xs text-gray-500">
-                  {r.source === 'category_rename'
-                    ? 'Category rename'
-                    : r.source === 'seed'
-                      ? 'Set up with the shop'
-                      : 'By hand'}
-                </span>
-              ),
-            },
-            {
-              // The only question anyone asks of a redirect a year later. A row
-              // with no hits since it was written is one you can retire; one
-              // that fired this morning is still carrying somebody's bookmark.
-              header: 'Used',
-              render: r => (
-                <span className="font-body text-xs text-gray-500">
-                  {r.hit_count === 0
-                    ? 'never'
-                    : `${r.hit_count}× · ${r.last_hit_at ? formatDateTime(r.last_hit_at) : '—'}`}
-                </span>
-              ),
-            },
-          ]}
+          columns={columns}
           actions={r => (
             <div className="flex items-center justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => openEdit(r)}>Edit</Button>

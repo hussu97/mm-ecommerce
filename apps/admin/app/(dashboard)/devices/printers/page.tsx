@@ -36,11 +36,13 @@ export default function PrintersTab() {
       }}
       emptyMessage="No printers configured."
       columns={[
-        { header: 'Name', priority: 'primary', render: (p) => <span className="font-medium">{p.name}</span> },
-        { header: 'Branch', render: (p) => branchName(p.branch_id) },
-        { header: 'Role', render: (p) => <span className="capitalize">{p.role}</span> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (p) => p.name, render: (p) => <span className="font-medium">{p.name}</span> },
+        { header: 'Branch', sortable: true, sortAccessor: (p) => branchName(p.branch_id), render: (p) => branchName(p.branch_id) },
+        { header: 'Role', sortable: true, sortAccessor: (p) => p.role, render: (p) => <span className="capitalize">{p.role}</span> },
         {
           header: 'Connection',
+          sortable: true,
+          sortAccessor: (p) => p.connection,
           render: (p) =>
             p.connection === 'lan' ? (
               <span className="text-xs">
@@ -50,13 +52,15 @@ export default function PrintersTab() {
               <span className="capitalize text-xs">{p.connection}</span>
             ),
         },
-        { header: 'Width', render: (p) => `${p.paper_width_mm}mm / ${p.characters_per_line} cols` },
+        { header: 'Width', sortable: true, sortAccessor: (p) => p.paper_width_mm, render: (p) => `${p.paper_width_mm}mm / ${p.characters_per_line} cols` },
         {
           header: 'Drawer',
+          sortable: true,
+          sortAccessor: (p) => (p.has_cash_drawer ? 'Yes' : '—'),
           render: (p) => (p.has_cash_drawer ? <Badge variant="info">Yes</Badge> : '—'),
         },
-        { header: 'Default', render: (p) => (p.is_default ? 'Yes' : '—') },
-        { header: 'Status', render: (p) => <StatusBadge active={p.is_active && !p.deleted_at} /> },
+        { header: 'Default', sortable: true, sortAccessor: (p) => (p.is_default ? 'Yes' : '—'), render: (p) => (p.is_default ? 'Yes' : '—') },
+        { header: 'Status', sortable: true, sortAccessor: (p) => (p.is_active && !p.deleted_at ? 'Active' : 'Inactive'), render: (p) => <StatusBadge active={p.is_active && !p.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

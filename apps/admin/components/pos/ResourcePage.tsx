@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
-import { DataTable, RowAction, type ColumnPriority } from '@/components/ui/DataTable';
+import {
+  DataTable,
+  RowAction,
+  sortByAccessor,
+  sortKeyOf,
+  type ColumnPriority,
+  type SortState,
+} from '@/components/ui/DataTable';
 import { cn } from '@/lib/utils';
 
 /**
@@ -51,6 +58,14 @@ export interface ColumnDef<T> {
    * doing on every list somebody reads on a phone.
    */
   priority?: ColumnPriority;
+  /** Make the header a sort control (↑/↓). The whole filtered list is ordered
+   *  by `sortAccessor` before pagination, so it sorts the resource, not a page. */
+  sortable?: boolean;
+  /** Sort-state identity; defaults to `header`. */
+  sortKey?: string;
+  /** The comparable value for sorting — number (numeric) or string (locale);
+   *  null/undefined sort last. */
+  sortAccessor?: (row: T) => string | number | null | undefined;
 }
 
 export interface ResourcePageProps<T extends { id: string }> {
@@ -116,6 +131,10 @@ export function ResourcePage<T extends { id: string }>({
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
+  // Column-header sort. When a sortable column is active it orders the whole
+  // filtered list (before pagination slices a page); otherwise the page's own
+  // `sortRows` ordering stands.
+  const [sort, setSort] = useState<SortState | null>(null);
 
   const [editing, setEditing] = useState<T | null>(null);
   const [creating, setCreating] = useState(false);
@@ -148,14 +167,20 @@ export function ResourcePage<T extends { id: string }>({
       );
       return matchesSearch && (filterRows?.(row) ?? true);
     });
+    const activeColumn = sort
+      ? columns.find((c) => sortKeyOf(c) === sort.key)
+      : undefined;
+    if (sort && activeColumn?.sortAccessor) {
+      return sortByAccessor(filtered, activeColumn.sortAccessor, sort.direction);
+    }
     return sortRows ? sortRows(filtered) : filtered;
-  }, [filterRows, rows, search, searchKeys, sortRows]);
+  }, [columns, filterRows, rows, search, searchKeys, sort, sortRows]);
 
   // A search that shrinks the result set below the current page would show an
   // empty table with rows still there — land back on the first page instead.
   useEffect(() => {
     setPage(1);
-  }, [filterRows, search, sortRows]);
+  }, [filterRows, search, sortRows, sort]);
 
   const pages = Math.max(1, Math.ceil(visible.length / perPage));
   const pageRows = paginated ? visible.slice((page - 1) * perPage, page * perPage) : visible;
@@ -277,6 +302,8 @@ export function ResourcePage<T extends { id: string }>({
           columns={columns}
           rows={pageRows}
           rowKey={(row) => row.id}
+          sort={sort}
+          onSortChange={setSort}
           expanded={expandedRow ? (row) => expandedRow(row, reload) : undefined}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">{emptyMessage}</p>

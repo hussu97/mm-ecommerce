@@ -246,12 +246,12 @@ function TransferTemplatesSection({ branchId, branches, branchName }: {
           )}
           {!loadError && templates.length === 0 && <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">No transfer templates for this branch yet. Create the first one above.</p>}
           {templates.length > 0 && <DataTable rows={templates} rowKey={(row) => row.id} columns={[
-            { header: 'Name', priority: 'primary', render: (row) => row.name },
-            { header: 'Destination', render: (row) => row.destination_branch_id ? branchName(row.destination_branch_id) : <span className="text-gray-400">Any</span> },
-            { header: 'Items', render: (row) => row.items.length },
-            { header: 'Order', render: (row) => row.display_order },
-            { header: 'Version', render: (row) => `v${row.version_number}` },
-            { header: 'POS status', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },
+            { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (row) => row.name, render: (row) => row.name },
+            { header: 'Destination', sortable: true, sortAccessor: (row) => row.destination_branch_id ? branchName(row.destination_branch_id) : null, render: (row) => row.destination_branch_id ? branchName(row.destination_branch_id) : <span className="text-gray-400">Any</span> },
+            { header: 'Items', sortable: true, sortAccessor: (row) => row.items.length, render: (row) => row.items.length },
+            { header: 'Order', sortable: true, sortAccessor: (row) => row.display_order, render: (row) => row.display_order },
+            { header: 'Version', sortable: true, sortAccessor: (row) => row.version_number, render: (row) => `v${row.version_number}` },
+            { header: 'POS status', sortable: true, sortAccessor: (row) => latestTemplateIds.has(row.id) ? row.is_active ? 'Current' : 'Deactivated' : 'Superseded', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },
           ]} actions={(row) => (
             <>
               <RowAction onClick={() => startEdit(row)}>Edit</RowAction>

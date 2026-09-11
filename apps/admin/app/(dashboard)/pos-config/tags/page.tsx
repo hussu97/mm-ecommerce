@@ -20,6 +20,8 @@ export default function TagsTab() {
       columns={[
         {
           header: 'Name',
+          sortable: true,
+          sortAccessor: (t) => t.name,
           render: (t) => (
             <span className="flex items-center gap-2 font-medium">
               {t.color && (
@@ -32,7 +34,7 @@ export default function TagsTab() {
             </span>
           ),
         },
-        { header: 'Type', render: (t) => <span className="capitalize">{t.type.replace(/_/g, ' ')}</span> },
+        { header: 'Type', sortable: true, sortAccessor: (t) => t.type, render: (t) => <span className="capitalize">{t.type.replace(/_/g, ' ')}</span> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

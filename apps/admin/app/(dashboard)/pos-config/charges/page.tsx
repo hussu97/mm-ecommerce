@@ -18,18 +18,22 @@ export default function ChargesTab() {
       searchKeys={['name']}
       defaults={{ type: 'fixed', value: 0, is_auto_applied: false, is_active: true, order_types: [] }}
       columns={[
-        { header: 'Name', priority: 'primary', render: (c) => <span className="font-medium">{c.name}</span> },
-        { header: 'Type', render: (c) => <span className="capitalize">{c.type}</span> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (c) => c.name, render: (c) => <span className="font-medium">{c.name}</span> },
+        { header: 'Type', sortable: true, sortAccessor: (c) => c.type, render: (c) => <span className="capitalize">{c.type}</span> },
         {
           header: 'Value',
+          sortable: true,
+          sortAccessor: (c) => Number(c.value),
           render: (c) => (c.type === 'percentage' ? `${(Number(c.value) * 100).toFixed(2)}%` : Number(c.value).toFixed(2)),
         },
-        { header: 'Auto', render: (c) => (c.is_auto_applied ? 'Yes' : '—') },
+        { header: 'Auto', sortable: true, sortAccessor: (c) => (c.is_auto_applied ? 'Yes' : '—'), render: (c) => (c.is_auto_applied ? 'Yes' : '—') },
         {
           header: 'Order types',
+          sortable: true,
+          sortAccessor: (c) => (c.order_types.length ? c.order_types.join(', ') : 'All'),
           render: (c) => (c.order_types.length ? c.order_types.join(', ') : 'All'),
         },
-        { header: 'Status', render: (c) => <StatusBadge active={c.is_active && !c.deleted_at} /> },
+        { header: 'Status', sortable: true, sortAccessor: (c) => (c.is_active && !c.deleted_at ? 'Active' : 'Inactive'), render: (c) => <StatusBadge active={c.is_active && !c.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

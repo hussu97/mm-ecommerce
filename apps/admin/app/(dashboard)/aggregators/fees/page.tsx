@@ -105,46 +105,66 @@ export default function AggregatorFeesPage() {
   }, [channel, fromDate, toDate, reload]);
 
   const t = summary?.totals;
+  // Money arrives as `string | null` on the wire — coerce to a number so the
+  // column sorts numerically rather than lexically, keeping a blank last.
+  const num = (value: number | string | null | undefined): number | null =>
+    value == null ? null : Number(value);
   const columns: DataColumn<FeesRow>[] = [
     {
       header: 'Channel',
       priority: 'primary',
+      sortable: true,
+      sortAccessor: r => channelName(r.channel),
       render: r => <Badge variant="neutral">{channelName(r.channel)}</Badge>,
     },
     {
       header: 'Orders',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => r.orders,
       render: r => <span className="tabular-nums text-gray-600">{r.orders}</span>,
     },
     {
       header: 'Gross sales',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => num(r.gross_sales),
       render: r => <span className="tabular-nums text-gray-700">{money(r.gross_sales)}</span>,
     },
     {
       header: 'Commission',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => num(r.commission),
       render: r => <span className="tabular-nums font-medium text-gray-800">{money(r.commission)}</span>,
     },
     {
       header: 'VAT',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => num(r.vat),
       render: r => <span className="tabular-nums text-gray-700">{money(r.vat)}</span>,
     },
     {
       header: 'Other fees',
       priority: 'secondary',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => num(r.other_fees),
       render: r => <span className="tabular-nums text-gray-700">{money(r.other_fees)}</span>,
     },
     {
       header: 'Net payout',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => num(r.net_payable),
       render: r => <span className="tabular-nums text-gray-700">{money(r.net_payable)}</span>,
     },
     {
       header: 'Eff. rate',
       className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => r.effective_rate,
       render: r => <span className="tabular-nums text-gray-600">{rate(r.effective_rate)}</span>,
     },
   ];

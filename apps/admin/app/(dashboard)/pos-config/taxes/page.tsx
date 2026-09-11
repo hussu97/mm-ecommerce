@@ -18,10 +18,10 @@ export default function TaxesTab() {
       searchKeys={['name']}
       defaults={{ type: 'inclusive', is_active: true, rate: 0.05 }}
       columns={[
-        { header: 'Name', priority: 'primary', render: (t) => <span className="font-medium">{t.name}</span> },
-        { header: 'Rate', render: (t) => `${(Number(t.rate) * 100).toFixed(2)}%` },
-        { header: 'Type', render: (t) => <span className="capitalize">{t.type}</span> },
-        { header: 'Status', render: (t) => <StatusBadge active={t.is_active && !t.deleted_at} /> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (t) => t.name, render: (t) => <span className="font-medium">{t.name}</span> },
+        { header: 'Rate', sortable: true, sortAccessor: (t) => Number(t.rate), render: (t) => `${(Number(t.rate) * 100).toFixed(2)}%` },
+        { header: 'Type', sortable: true, sortAccessor: (t) => t.type, render: (t) => <span className="capitalize">{t.type}</span> },
+        { header: 'Status', sortable: true, sortAccessor: (t) => (t.is_active && !t.deleted_at ? 'Active' : 'Inactive'), render: (t) => <StatusBadge active={t.is_active && !t.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

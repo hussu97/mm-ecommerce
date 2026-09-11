@@ -33,12 +33,14 @@ export default function DevicesTab() {
       defaults={{ type: 'cashier' }}
       emptyMessage="No terminals registered yet."
       columns={[
-        { header: 'Name', priority: 'primary', render: (d) => <span className="font-medium">{d.name}</span> },
-        { header: 'Reference', priority: 'secondary', render: (d) => <code className="text-xs text-gray-500">{d.reference}</code> },
-        { header: 'Type', render: (d) => <span className="capitalize">{d.type.replace('_', ' ')}</span> },
-        { header: 'Branch', render: (d) => branchName(d.branch_id) },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (d) => d.name, render: (d) => <span className="font-medium">{d.name}</span> },
+        { header: 'Reference', priority: 'secondary', sortable: true, sortAccessor: (d) => d.reference, render: (d) => <code className="text-xs text-gray-500">{d.reference}</code> },
+        { header: 'Type', sortable: true, sortAccessor: (d) => d.type, render: (d) => <span className="capitalize">{d.type.replace('_', ' ')}</span> },
+        { header: 'Branch', sortable: true, sortAccessor: (d) => branchName(d.branch_id), render: (d) => branchName(d.branch_id) },
         {
           header: 'Pairing',
+          sortable: true,
+          sortAccessor: (d) => d.status,
           render: (d) =>
             d.status === 'used' ? (
               <Badge variant="success">Paired</Badge>
@@ -50,6 +52,8 @@ export default function DevicesTab() {
         },
         {
           header: 'Online orders',
+          sortable: true,
+          sortAccessor: (d) => (d.auto_accept_online_orders ? 'Auto-accept' : 'Needs accepting'),
           render: (d) =>
             d.auto_accept_online_orders ? (
               <Badge variant="info">Auto-accept</Badge>

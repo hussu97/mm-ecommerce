@@ -224,6 +224,8 @@ export default function MappingsPage() {
     {
       header: 'Branch',
       priority: 'primary',
+      sortable: true,
+      sortAccessor: r => r.branch_name ?? branchLabel(r.branch_id),
       render: r => (
         <span className="font-medium text-gray-800">
           {r.branch_name ?? branchLabel(r.branch_id)}
@@ -232,10 +234,14 @@ export default function MappingsPage() {
     },
     {
       header: 'Channel',
+      sortable: true,
+      sortAccessor: r => channelName(r.channel),
       render: r => <Badge variant="neutral">{channelName(r.channel)}</Badge>,
     },
     {
       header: 'Outlet id',
+      sortable: true,
+      sortAccessor: r => r.external_outlet_id ?? null,
       render: r =>
         r.external_outlet_id ? (
           <code className="text-xs text-gray-600">{r.external_outlet_id}</code>
@@ -245,6 +251,8 @@ export default function MappingsPage() {
     },
     {
       header: 'Brand id',
+      sortable: true,
+      sortAccessor: r => r.external_brand_id ?? null,
       render: r =>
         r.external_brand_id ? (
           <code className="text-xs text-gray-600">{r.external_brand_id}</code>
@@ -254,6 +262,8 @@ export default function MappingsPage() {
     },
     {
       header: 'Company id',
+      sortable: true,
+      sortAccessor: r => r.external_company_id ?? null,
       render: r =>
         r.external_company_id ? (
           <code className="text-xs text-gray-600">{r.external_company_id}</code>
@@ -263,6 +273,8 @@ export default function MappingsPage() {
     },
     {
       header: 'Active',
+      sortable: true,
+      sortAccessor: r => (r.is_active ? 'Active' : 'Inactive'),
       render: r => (
         <label className="inline-flex items-center gap-2 cursor-pointer select-none">
           <input

@@ -18,12 +18,12 @@ export default function SuppliersPage() {
       defaults={{ payment_terms_days: 0, is_active: true }}
       emptyMessage="No suppliers yet."
       columns={[
-        { header: 'Name', priority: 'primary', render: (s) => <span className="font-medium">{s.name}</span> },
-        { header: 'Contact', render: (s) => s.contact_name ?? '—' },
-        { header: 'Phone', render: (s) => s.phone ?? '—' },
-        { header: 'Email', priority: 'secondary', render: (s) => <span className="text-xs">{s.email ?? '—'}</span> },
-        { header: 'Terms', render: (s) => `${s.payment_terms_days} days` },
-        { header: 'Status', render: (s) => <StatusBadge active={s.is_active && !s.deleted_at} /> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (s) => s.name, render: (s) => <span className="font-medium">{s.name}</span> },
+        { header: 'Contact', sortable: true, sortAccessor: (s) => s.contact_name ?? null, render: (s) => s.contact_name ?? '—' },
+        { header: 'Phone', sortable: true, sortAccessor: (s) => s.phone ?? null, render: (s) => s.phone ?? '—' },
+        { header: 'Email', priority: 'secondary', sortable: true, sortAccessor: (s) => s.email ?? null, render: (s) => <span className="text-xs">{s.email ?? '—'}</span> },
+        { header: 'Terms', sortable: true, sortAccessor: (s) => s.payment_terms_days, render: (s) => `${s.payment_terms_days} days` },
+        { header: 'Status', sortable: true, sortAccessor: (s) => (s.is_active && !s.deleted_at ? 'Active' : 'Inactive'), render: (s) => <StatusBadge active={s.is_active && !s.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

@@ -36,6 +36,7 @@ export default function AdminUsersPage() {
               No admin users found.
             </p>
           }
+          defaultSort={{ key: 'Email', direction: 'asc' }}
           columns={[
             {
               header: 'Email',
@@ -43,6 +44,8 @@ export default function AdminUsersPage() {
               // admin address is long, so it gets the full width rather than a
               // fifth of it.
               priority: 'primary',
+              sortable: true,
+              sortAccessor: u => u.email,
               render: u => (
                 <span className="text-xs font-body font-medium text-gray-800 break-all">
                   {u.email}
@@ -51,6 +54,8 @@ export default function AdminUsersPage() {
             },
             {
               header: 'Role',
+              sortable: true,
+              sortAccessor: u => (u.is_superadmin ? 'Superadmin' : 'Admin'),
               render: u => (
                 <Badge variant={u.is_superadmin ? 'info' : 'neutral'}>
                   {u.is_superadmin ? 'Superadmin' : 'Admin'}
@@ -60,11 +65,15 @@ export default function AdminUsersPage() {
             {
               header: 'Passkeys',
               className: 'text-center',
+              sortable: true,
+              sortAccessor: u => u.passkey_count,
               render: u => (u.is_superadmin ? 'Disabled' : u.passkey_count),
             },
             {
               header: 'Status',
               className: 'text-center',
+              sortable: true,
+              sortAccessor: u => (u.is_active ? 'Active' : 'Inactive'),
               render: u => (
                 <span className={u.is_active ? 'text-green-600' : 'text-red-500'}>
                   {u.is_active ? 'Active' : 'Inactive'}
@@ -74,6 +83,8 @@ export default function AdminUsersPage() {
             {
               header: 'Created',
               className: 'text-right',
+              sortable: true,
+              sortAccessor: u => u.created_at,
               render: u => <span className="text-gray-400">{formatDate(u.created_at)}</span>,
             },
           ]}

@@ -186,14 +186,14 @@ export default function ReportTemplatesPage() {
       )}
       {branchId && !loadError && templates.length === 0 && <p className="border border-dashed border-gray-300 p-3 text-sm text-gray-500">No templates for this branch yet. Create the first version above.</p>}
       {templates.length > 0 && <DataTable rows={templates} rowKey={(row) => row.id} columns={[
-        { header: 'Template', priority: 'primary', render: (row) => row.name },
-        { header: 'Type', render: (row) => row.report_type.replaceAll('_', ' ') },
-        { header: 'Cadence', render: (row) => row.cadence.replaceAll('_', ' ') },
-        { header: 'Fill order', render: (row) => row.display_order },
-        { header: 'Version', render: (row) => `v${row.version_number}` },
-        { header: 'Items', render: (row) => row.items.length },
-        { header: 'POS status', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },
-        { header: 'Required', render: (row) => row.is_required ? <Badge variant="warning">Required</Badge> : 'Optional' },
+        { header: 'Template', priority: 'primary', sortable: true, sortAccessor: (row) => row.name, render: (row) => row.name },
+        { header: 'Type', sortable: true, sortAccessor: (row) => row.report_type, render: (row) => row.report_type.replaceAll('_', ' ') },
+        { header: 'Cadence', sortable: true, sortAccessor: (row) => row.cadence, render: (row) => row.cadence.replaceAll('_', ' ') },
+        { header: 'Fill order', sortable: true, sortAccessor: (row) => row.display_order, render: (row) => row.display_order },
+        { header: 'Version', sortable: true, sortAccessor: (row) => row.version_number, render: (row) => `v${row.version_number}` },
+        { header: 'Items', sortable: true, sortAccessor: (row) => row.items.length, render: (row) => row.items.length },
+        { header: 'POS status', sortable: true, sortAccessor: (row) => latestTemplateIds.has(row.id) ? row.is_active ? 'Current' : 'Deactivated' : 'Superseded', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },
+        { header: 'Required', sortable: true, sortAccessor: (row) => row.is_required ? 'Required' : 'Optional', render: (row) => row.is_required ? <Badge variant="warning">Required</Badge> : 'Optional' },
         { header: 'Action', render: (row) => latestTemplateIds.has(row.id) && row.is_active ? <Button size="sm" variant="outline" disabled={savingTemplate} onClick={() => void deactivateTemplate(row)}>Deactivate</Button> : '—' },
       ]} />}
     </div>

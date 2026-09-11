@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -44,6 +44,13 @@ import { cn } from '@/lib/utils';
 
 export type ColumnPriority = 'primary' | 'secondary' | 'meta' | 'desktop';
 
+export type SortDirection = 'asc' | 'desc';
+/** The active column (by its `sortKey`, defaulting to `header`) and direction. */
+export interface SortState {
+  key: string;
+  direction: SortDirection;
+}
+
 export interface DataColumn<T> {
   /** Label, card field name, and React key. Unique within the table. */
   header: string;
@@ -59,6 +66,20 @@ export interface DataColumn<T> {
   className?: string;
   /** How this column behaves on a phone. Defaults to `meta`. */
   priority?: ColumnPriority;
+  /**
+   * Turns the header into a sort control — a button with an ↑/↓ arrow. On a
+   * client-side table (no `onSortChange` on the table) the rows are sorted in
+   * place by `sortAccessor`; on a server-paginated one the table stays
+   * controlled and only reports the click through `onSortChange`.
+   */
+  sortable?: boolean;
+  /** Identity of this column in the sort state. Defaults to `header`. On a
+   *  server-sorted table this is the value handed to `onSortChange` (e.g. the
+   *  API field name). */
+  sortKey?: string;
+  /** The comparable value for client-side sorting. Numbers sort numerically,
+   *  everything else by locale string; null/undefined always sort last. */
+  sortAccessor?: (row: T) => string | number | null | undefined;
 }
 
 interface DataTableProps<T> {
@@ -90,6 +111,58 @@ interface DataTableProps<T> {
    */
   onRowClick?: (row: T) => void;
   className?: string;
+  /**
+   * Controlled sort — pass this with `onSortChange` when the rows are one
+   * server-fetched page and sorting has to go back to the API. Leave both off
+   * for a client-side table: mark columns `sortable` with a `sortAccessor` and
+   * the table sorts itself, seeded by `defaultSort`.
+   */
+  sort?: SortState | null;
+  onSortChange?: (sort: SortState) => void;
+  /** Initial sort for an uncontrolled (client-side) table. */
+  defaultSort?: SortState;
+}
+
+export const sortKeyOf = <T,>(c: DataColumn<T>) => c.sortKey ?? c.header;
+
+/**
+ * Sort a copy of `rows` by a column accessor. Numbers compare numerically, the
+ * rest by locale string, and null/undefined always sink to the bottom whichever
+ * way the column points. Shared so an externally-paginated table (which must
+ * sort the whole list before slicing a page) orders rows exactly as the table
+ * would if it held them all.
+ */
+export function sortByAccessor<T>(
+  rows: T[],
+  accessor: (row: T) => string | number | null | undefined,
+  direction: SortDirection,
+): T[] {
+  const dir = direction === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const va = accessor(a);
+    const vb = accessor(b);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+    return String(va).localeCompare(String(vb)) * dir;
+  });
+}
+
+/** The next sort state when a sortable header is clicked. */
+function nextSort(current: SortState | null | undefined, key: string): SortState {
+  if (current && current.key === key) {
+    return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+  }
+  return { key, direction: 'asc' };
+}
+
+function SortArrow({ active, direction }: { active: boolean; direction: SortDirection }) {
+  return (
+    <span className={cn('ml-1 text-[10px]', active ? 'text-primary' : 'text-gray-300')} aria-hidden>
+      {active ? (direction === 'asc' ? '↑' : '↓') : '↕'}
+    </span>
+  );
 }
 
 export function DataTable<T>({
@@ -102,8 +175,32 @@ export function DataTable<T>({
   expanded,
   onRowClick,
   className,
+  sort,
+  onSortChange,
+  defaultSort,
 }: DataTableProps<T>) {
-  if (rows.length === 0 && empty !== undefined) {
+  const controlled = onSortChange !== undefined;
+  const [internalSort, setInternalSort] = useState<SortState | null>(defaultSort ?? null);
+  const activeSort = controlled ? (sort ?? null) : internalSort;
+
+  const sortableColumns = columns.filter(c => c.sortable);
+
+  const applySort = (key: string) => {
+    const next = nextSort(activeSort, key);
+    if (controlled) onSortChange(next);
+    else setInternalSort(next);
+  };
+
+  // Client-side tables sort their own rows; a controlled (server-sorted) table
+  // renders whatever page it was handed.
+  const sortedRows = useMemo(() => {
+    if (controlled || !activeSort) return rows;
+    const col = columns.find(c => sortKeyOf(c) === activeSort.key);
+    if (!col?.sortAccessor) return rows;
+    return sortByAccessor(rows, col.sortAccessor, activeSort.direction);
+  }, [controlled, activeSort, rows, columns]);
+
+  if (sortedRows.length === 0 && empty !== undefined) {
     return <>{empty}</>;
   }
 
@@ -118,9 +215,43 @@ export function DataTable<T>({
 
   return (
     <div className={className}>
+      {/* ── Sort control for the card list, below md ─────────────────────
+          The cards have no header row to hang an arrow on, so a table that is
+          sortable on the desktop keeps a compact select here rather than
+          becoming unsortable on a phone. */}
+      {sortableColumns.length > 0 && (
+        <div className="md:hidden mb-2">
+          <label className="flex items-center gap-2 text-[11px] font-body uppercase tracking-widest text-gray-400">
+            Sort
+            <select
+              className="flex-1 rounded border border-gray-200 bg-white px-2 py-1.5 text-xs font-body text-gray-700"
+              value={activeSort ? `${activeSort.key}:${activeSort.direction}` : ''}
+              onChange={e => {
+                const value = e.target.value;
+                if (!value) return;
+                const [key, direction] = value.split(':') as [string, SortDirection];
+                if (controlled) onSortChange({ key, direction });
+                else setInternalSort({ key, direction });
+              }}
+            >
+              <option value="">Default</option>
+              {sortableColumns.map(c => {
+                const key = sortKeyOf(c);
+                return (
+                  <Fragment key={key}>
+                    <option value={`${key}:asc`}>{c.header} ↑</option>
+                    <option value={`${key}:desc`}>{c.header} ↓</option>
+                  </Fragment>
+                );
+              })}
+            </select>
+          </label>
+        </div>
+      )}
+
       {/* ── Cards, below md ─────────────────────────────────────────────── */}
       <ul className="md:hidden space-y-2">
-        {rows.map(row => (
+        {sortedRows.map(row => (
           <li
             key={rowKey(row)}
             onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -191,22 +322,48 @@ export function DataTable<T>({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
-              {columns.map(c => (
-                <th
-                  key={c.header}
-                  className={cn(
-                    'px-3 py-2 text-left text-[11px] uppercase tracking-widest text-gray-500 font-body',
-                    c.className,
-                  )}
-                >
-                  {c.headerRender ? c.headerRender() : c.header}
-                </th>
-              ))}
+              {columns.map(c => {
+                const key = sortKeyOf(c);
+                const active = activeSort?.key === key;
+                return (
+                  <th
+                    key={c.header}
+                    aria-sort={
+                      c.sortable
+                        ? active
+                          ? activeSort?.direction === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                        : undefined
+                    }
+                    className={cn(
+                      'px-3 py-2 text-left text-[11px] uppercase tracking-widest text-gray-500 font-body',
+                      c.className,
+                    )}
+                  >
+                    {c.headerRender ? (
+                      c.headerRender()
+                    ) : c.sortable ? (
+                      <button
+                        type="button"
+                        onClick={() => applySort(key)}
+                        className="inline-flex items-center uppercase tracking-widest hover:text-primary"
+                      >
+                        {c.header}
+                        <SortArrow active={!!active} direction={active && activeSort ? activeSort.direction : 'asc'} />
+                      </button>
+                    ) : (
+                      c.header
+                    )}
+                  </th>
+                );
+              })}
               {actions && <th className="px-3 py-2 w-40" />}
             </tr>
           </thead>
           <tbody>
-            {rows.map(row => {
+            {sortedRows.map(row => {
               const detail = expanded?.(row);
               return (
                 <Fragment key={rowKey(row)}>

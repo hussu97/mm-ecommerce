@@ -44,14 +44,16 @@ export default function BranchesPage() {
         display_order: 0,
       }}
       columns={[
-        { header: 'Name', priority: 'primary', render: (b) => <span className="font-medium">{b.name}</span> },
-        { header: 'Reference', priority: 'secondary', render: (b) => <code className="text-xs text-gray-500">{b.reference}</code> },
-        { header: 'Type', render: (b) => <span className="capitalize">{b.type}</span> },
-        { header: 'Day starts', render: (b) => b.business_day_start },
-        { header: 'Online', render: (b) => (b.receives_online_orders ? 'Yes' : 'No') },
-        { header: 'Collection', render: (b) => (b.offers_pickup ? 'Yes' : 'No') },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (b) => b.name, render: (b) => <span className="font-medium">{b.name}</span> },
+        { header: 'Reference', priority: 'secondary', sortable: true, sortAccessor: (b) => b.reference, render: (b) => <code className="text-xs text-gray-500">{b.reference}</code> },
+        { header: 'Type', sortable: true, sortAccessor: (b) => b.type, render: (b) => <span className="capitalize">{b.type}</span> },
+        { header: 'Day starts', sortable: true, sortAccessor: (b) => b.business_day_start, render: (b) => b.business_day_start },
+        { header: 'Online', sortable: true, sortAccessor: (b) => (b.receives_online_orders ? 'Yes' : 'No'), render: (b) => (b.receives_online_orders ? 'Yes' : 'No') },
+        { header: 'Collection', sortable: true, sortAccessor: (b) => (b.offers_pickup ? 'Yes' : 'No'), render: (b) => (b.offers_pickup ? 'Yes' : 'No') },
         {
           header: 'noon Send',
+          sortable: true,
+          sortAccessor: (b) => b.noon_send_outlet_code ?? null,
           render: (b) =>
             b.noon_send_outlet_code ? (
               <code className="text-xs text-gray-500">{b.noon_send_outlet_code}</code>
@@ -59,7 +61,7 @@ export default function BranchesPage() {
               <span className="text-xs text-gray-400">—</span>
             ),
         },
-        { header: 'Status', render: (b) => <StatusBadge active={b.is_active && !b.deleted_at} /> },
+        { header: 'Status', sortable: true, sortAccessor: (b) => (b.is_active && !b.deleted_at ? 'Active' : 'Inactive'), render: (b) => <StatusBadge active={b.is_active && !b.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

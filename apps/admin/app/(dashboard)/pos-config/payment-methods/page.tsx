@@ -18,12 +18,12 @@ export default function PaymentMethodsTab() {
       searchKeys={['name', 'code']}
       defaults={{ type: 'cash', is_active: true, allows_refund: true, display_order: 0 }}
       columns={[
-        { header: 'Name', priority: 'primary', render: (m) => <span className="font-medium">{m.name}</span> },
-        { header: 'Code', priority: 'secondary', render: (m) => <code className="text-xs text-gray-500">{m.code}</code> },
-        { header: 'Type', render: (m) => <span className="capitalize">{m.type.replace('_', ' ')}</span> },
-        { header: 'Opens drawer', render: (m) => (m.auto_open_drawer ? 'Yes' : '—') },
-        { header: 'Tips', render: (m) => (m.allows_tips ? 'Yes' : '—') },
-        { header: 'Status', render: (m) => <StatusBadge active={m.is_active && !m.deleted_at} /> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (m) => m.name, render: (m) => <span className="font-medium">{m.name}</span> },
+        { header: 'Code', priority: 'secondary', sortable: true, sortAccessor: (m) => m.code, render: (m) => <code className="text-xs text-gray-500">{m.code}</code> },
+        { header: 'Type', sortable: true, sortAccessor: (m) => m.type, render: (m) => <span className="capitalize">{m.type.replace('_', ' ')}</span> },
+        { header: 'Opens drawer', sortable: true, sortAccessor: (m) => (m.auto_open_drawer ? 'Yes' : '—'), render: (m) => (m.auto_open_drawer ? 'Yes' : '—') },
+        { header: 'Tips', sortable: true, sortAccessor: (m) => (m.allows_tips ? 'Yes' : '—'), render: (m) => (m.allows_tips ? 'Yes' : '—') },
+        { header: 'Status', sortable: true, sortAccessor: (m) => (m.is_active && !m.deleted_at ? 'Active' : 'Inactive'), render: (m) => <StatusBadge active={m.is_active && !m.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

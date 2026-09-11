@@ -128,26 +128,34 @@ export default function PurchaseOrdersPage() {
             </>
           )}
           columns={[
-            { header: 'Supplier', priority: 'primary', render: (po) => po.supplier_name ?? '—' },
+            { header: 'Supplier', priority: 'primary', sortable: true, sortAccessor: (po) => po.supplier_name ?? null, render: (po) => po.supplier_name ?? '—' },
             {
               header: 'Reference',
               priority: 'secondary',
+              sortable: true,
+              sortAccessor: (po) => po.reference,
               render: (po) => <code className="text-xs text-gray-600">{po.reference}</code>,
             },
             {
               header: 'Status',
+              sortable: true,
+              sortAccessor: (po) => po.status,
               render: (po) => (
                 <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace(/_/g, ' ')}</Badge>
               ),
             },
-            { header: 'Lines', className: 'text-right', render: (po) => po.items.length },
+            { header: 'Lines', className: 'text-right', sortable: true, sortAccessor: (po) => po.items.length, render: (po) => po.items.length },
             {
               header: 'Total',
               className: 'text-right',
+              sortable: true,
+              sortAccessor: (po) => Number(po.total_cost),
               render: (po) => formatCurrency(po.total_cost),
             },
             {
               header: 'Delivery',
+              sortable: true,
+              sortAccessor: (po) => po.delivery_date ?? null,
               render: (po) => <span className="text-gray-500">{po.delivery_date ?? '—'}</span>,
             },
           ]}

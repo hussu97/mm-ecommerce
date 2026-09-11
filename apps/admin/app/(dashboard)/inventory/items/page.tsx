@@ -2,9 +2,10 @@
 
 // Items — now with on-hand stock folded in (F4). The separate "On hand" tab is
 // gone; instead each item carries one column per active branch showing its
-// on-hand quantity there, every column (including the per-branch stock columns)
-// is sortable, and a Stock filter surfaces low / below-par items across the
-// whole estate. The item CRUD and the expandable RecipeEditor are unchanged.
+// on-hand quantity there, its single-value columns (including the per-branch
+// stock columns) are sortable from their headers, and a Stock filter surfaces
+// low / below-par items across the whole estate. The item CRUD and the
+// expandable RecipeEditor are unchanged.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -30,7 +31,6 @@ export default function ItemsPage() {
   const [trackingMode, setTrackingMode] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive' | 'all'>('active');
   const [stockFilter, setStockFilter] = useState<'' | 'low' | 'below_par'>('');
-  const [sort, setSort] = useState('name-asc');
 
   useEffect(() => {
     void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
@@ -96,36 +96,6 @@ export default function ItemsPage() {
     return true;
   }, [categoryId, kind, status, trackingMode, stockFilter, pivot]);
 
-  const sortRows = useCallback((rows: InventoryItem[]) => {
-    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-    // Per-branch stock sort: `stock:<branchId>:asc|desc`. A missing level row
-    // sorts last in either direction so real quantities lead.
-    if (sort.startsWith('stock:')) {
-      const [, branchId, dir] = sort.split(':');
-      const desc = dir !== 'asc';
-      return [...rows].sort((left, right) => {
-        const lq = stockOf(left.id, branchId)?.quantity;
-        const rq = stockOf(right.id, branchId)?.quantity;
-        if (lq == null && rq == null) return collator.compare(left.name, right.name);
-        if (lq == null) return 1;
-        if (rq == null) return -1;
-        if (lq === rq) return collator.compare(left.name, right.name);
-        return desc ? rq - lq : lq - rq;
-      });
-    }
-    const compare = (left: InventoryItem, right: InventoryItem) => {
-      switch (sort) {
-        case 'sku-asc': return collator.compare(left.sku, right.sku);
-        case 'sku-desc': return collator.compare(right.sku, left.sku);
-        case 'kind-asc': return collator.compare(left.kind, right.kind) || collator.compare(left.name, right.name);
-        case 'category-asc': return collator.compare(categoryNames.get(left.category_id ?? '') ?? 'Uncategorised', categoryNames.get(right.category_id ?? '') ?? 'Uncategorised') || collator.compare(left.name, right.name);
-        case 'name-desc': return collator.compare(right.name, left.name);
-        default: return collator.compare(left.name, right.name);
-      }
-    };
-    return [...rows].sort(compare);
-  }, [categoryNames, sort, stockOf]);
-
   const load = useCallback(() => inventoryApi.items(), []);
 
   const toolbar = (
@@ -147,21 +117,16 @@ export default function ItemsPage() {
       <select aria-label="Filter inventory status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
         <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option>
       </select>
-      <select aria-label="Sort inventory items" value={sort} onChange={(event) => setSort(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
-        <option value="name-asc">Name: A–Z</option><option value="name-desc">Name: Z–A</option><option value="sku-asc">SKU: A–Z</option><option value="sku-desc">SKU: Z–A</option><option value="kind-asc">Kind</option><option value="category-asc">Category</option>
-        {activeBranches.map((b) => (
-          <optgroup key={b.id} label={`Stock · ${b.name}`}>
-            <option value={`stock:${b.id}:desc`}>{b.name}: High → Low</option>
-            <option value={`stock:${b.id}:asc`}>{b.name}: Low → High</option>
-          </optgroup>
-        ))}
-      </select>
     </div>
   );
 
   const branchColumns: ColumnDef<InventoryItem>[] = activeBranches.map((b) => ({
     header: b.name,
     className: 'text-right whitespace-nowrap',
+    sortable: true,
+    // Two branches can share a name; key the sort by the stable branch id.
+    sortKey: `stock:${b.id}`,
+    sortAccessor: (item: InventoryItem) => stockOf(item.id, b.id)?.quantity ?? null,
     render: (item: InventoryItem) => {
       const cell = stockOf(item.id, b.id);
       if (!cell) return <span className="text-gray-300">—</span>;
@@ -185,7 +150,6 @@ export default function ItemsPage() {
       searchKeys={['name', 'sku']}
       toolbar={toolbar}
       filterRows={filterRows}
-      sortRows={sortRows}
       rowActions={(item) => <button className="text-xs text-primary hover:underline" onClick={() => setRecipeItem((current) => (current?.id === item.id ? null : item))}>{recipeItem?.id === item.id ? 'Close recipe' : 'Recipe'}</button>}
       expandedRow={(item) => (item.id === recipeItem?.id ? <div className="py-2"><RecipeEditor ownerKind="inventory_item" ownerId={item.id} ownerLabel={item.name} /></div> : null)}
       defaults={{
@@ -206,11 +170,13 @@ export default function ItemsPage() {
       }}
       emptyMessage="No inventory items yet."
       columns={[
-        { header: 'SKU', priority: 'secondary', render: (i) => <code className="text-xs text-gray-500">{i.sku}</code> },
-        { header: 'Name', priority: 'primary', render: (i) => <span className="font-medium">{i.name}</span> },
+        { header: 'SKU', priority: 'secondary', sortable: true, sortAccessor: (i) => i.sku, render: (i) => <code className="text-xs text-gray-500">{i.sku}</code> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (i) => i.name, render: (i) => <span className="font-medium">{i.name}</span> },
         {
           header: 'Category',
           priority: 'secondary',
+          sortable: true,
+          sortAccessor: (i) => categoryNames.get(i.category_id ?? '') ?? 'Uncategorised',
           render: (i) => categoryNames.get(i.category_id ?? '') ?? <span className="text-gray-400">Uncategorised</span>,
         },
         {
@@ -222,12 +188,12 @@ export default function ItemsPage() {
           ),
         },
         { header: 'Cost', render: (i) => formatCurrency(i.cost) },
-        { header: 'Kind', render: (i) => <Badge>{i.kind.replaceAll('_', ' ')}</Badge> },
+        { header: 'Kind', sortable: true, sortAccessor: (i) => i.kind, render: (i) => <Badge>{i.kind.replaceAll('_', ' ')}</Badge> },
         { header: 'Tracking', render: (i) => <Badge variant={i.tracking_mode === 'phantom' ? 'warning' : 'neutral'}>{i.tracking_mode}</Badge> },
-        { header: 'Min', className: 'text-right', render: (i) => Number(i.minimum_level) },
-        { header: 'Par', className: 'text-right', render: (i) => Number(i.par_level) },
+        { header: 'Min', className: 'text-right', sortable: true, sortAccessor: (i) => Number(i.minimum_level), render: (i) => Number(i.minimum_level) },
+        { header: 'Par', className: 'text-right', sortable: true, sortAccessor: (i) => Number(i.par_level), render: (i) => Number(i.par_level) },
         ...branchColumns,
-        { header: 'Status', render: (i) => <StatusBadge active={i.is_active && !i.deleted_at} /> },
+        { header: 'Status', sortable: true, sortAccessor: (i) => (i.is_active && !i.deleted_at ? 'Active' : 'Inactive'), render: (i) => <StatusBadge active={i.is_active && !i.deleted_at} /> },
       ]}
       fields={[
         { name: 'sku', label: 'SKU', required: true },

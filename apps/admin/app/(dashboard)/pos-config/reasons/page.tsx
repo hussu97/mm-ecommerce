@@ -18,12 +18,14 @@ export default function ReasonsTab() {
       searchKeys={['name']}
       defaults={{ type: 'void_return', is_active: true }}
       columns={[
-        { header: 'Name', priority: 'primary', render: (r) => <span className="font-medium">{r.name}</span> },
+        { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (r) => r.name, render: (r) => <span className="font-medium">{r.name}</span> },
         {
           header: 'Used for',
+          sortable: true,
+          sortAccessor: (r) => r.type,
           render: (r) => <span className="capitalize">{r.type.replace(/_/g, ' ')}</span>,
         },
-        { header: 'Status', render: (r) => <StatusBadge active={r.is_active && !r.deleted_at} /> },
+        { header: 'Status', sortable: true, sortAccessor: (r) => (r.is_active && !r.deleted_at ? 'Active' : 'Inactive'), render: (r) => <StatusBadge active={r.is_active && !r.deleted_at} /> },
       ]}
       fields={[
         { name: 'name', label: 'Name', required: true },

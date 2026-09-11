@@ -4,7 +4,13 @@ import { useCallback, useState } from 'react';
 import { promoApi, bulkApi, ApiError } from '@/lib/api';
 import type { PromoCode } from '@/lib/types';
 import { Button, Input, Pagination, Select, TabBar, LoadError, Spinner } from '@/components/ui';
-import { DataTable } from '@/components/ui/DataTable';
+import {
+  DataTable,
+  sortByAccessor,
+  sortKeyOf,
+  type DataColumn,
+  type SortState,
+} from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -57,6 +63,10 @@ export default function PromoCodesPage() {
   const [actionCode, setActionCode] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulking, setBulking] = useState(false);
+  // Column-header sort. When a sortable column is active it orders the whole
+  // filtered list before pagination slices a page; otherwise the natural order
+  // stands.
+  const [sort, setSort] = useState<SortState | null>(null);
 
   // Client-side pagination: `/promo-codes` returns the whole list in one call
   // and the tab filter + slicing below happen locally.
@@ -69,8 +79,121 @@ export default function PromoCodesPage() {
   const filteredCodes = codes.filter(c =>
     activeTab === 'active' ? c.is_active : !c.is_active
   );
-  const codePages = Math.max(1, Math.ceil(filteredCodes.length / perPage));
-  const paginatedCodes = filteredCodes.slice((page - 1) * perPage, page * perPage);
+
+  const columns: DataColumn<PromoCode>[] = [
+    {
+      header: '',
+      priority: 'desktop',
+      className: 'w-8',
+      headerRender: () => (
+        <input
+          type="checkbox"
+          checked={paginatedCodes.length > 0 && paginatedCodes.every(c => selectedIds.has(c.id))}
+          onChange={toggleSelectAll}
+          className="accent-primary"
+        />
+      ),
+      render: p => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(p.id)}
+          onChange={() => toggleSelect(p.id)}
+          className="accent-primary"
+        />
+      ),
+    },
+    {
+      header: 'Code',
+      priority: 'primary',
+      sortable: true,
+      sortAccessor: p => p.code,
+      render: p => (
+        <>
+          <span className="font-body font-medium text-gray-800 text-xs tracking-wider">
+            {p.code}
+          </span>
+          {p.code_ar && (
+            <span dir="rtl" className="block text-[11px] font-body text-gray-400 mt-0.5">
+              {p.code_ar}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      header: 'Discount',
+      sortable: true,
+      sortAccessor: p => p.discount_value,
+      render: p => (
+        <>
+          {p.discount_type === 'percentage'
+            ? `${p.discount_value}%`
+            : formatCurrency(p.discount_value)}
+          <span className="text-[11px] text-gray-400 ml-1 capitalize">
+            ({p.discount_type})
+          </span>
+          {p.max_discount_amount != null && (
+            <span className="block text-[11px] text-gray-400 mt-0.5">
+              max {formatCurrency(p.max_discount_amount)}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      header: 'Min Order',
+      sortable: true,
+      sortAccessor: p => p.min_order_amount,
+      render: p =>
+        p.min_order_amount != null ? formatCurrency(p.min_order_amount) : '—',
+    },
+    {
+      header: 'Uses',
+      className: 'text-center',
+      sortable: true,
+      sortAccessor: p => p.current_uses,
+      render: p => (
+        <>
+          {p.current_uses}
+          {p.max_uses != null ? ` / ${p.max_uses}` : ''}
+          {p.max_uses_per_user != null && (
+            <span className="block text-[11px] text-gray-400 mt-0.5">
+              {p.max_uses_per_user} per customer
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      header: 'First Orders',
+      className: 'text-center',
+      sortable: true,
+      sortAccessor: p => p.first_orders_limit,
+      render: p => (p.first_orders_limit != null ? `First ${p.first_orders_limit}` : '—'),
+    },
+    {
+      header: 'Valid',
+      sortable: true,
+      sortAccessor: p => p.valid_from,
+      render: p => (
+        <span className="text-[11px] text-gray-400">
+          {p.valid_from ? formatDate(p.valid_from) : '—'}
+          {' → '}
+          {p.valid_until ? formatDate(p.valid_until) : '∞'}
+        </span>
+      ),
+    },
+  ];
+
+  // Sort the whole filtered list before slicing a page, so a column sorts the
+  // resource rather than only the rows already on screen. No active sort keeps
+  // the natural (server) order.
+  const activeColumn = sort ? columns.find(c => sortKeyOf(c) === sort.key) : undefined;
+  const orderedCodes = sort && activeColumn?.sortAccessor
+    ? sortByAccessor(filteredCodes, activeColumn.sortAccessor, sort.direction)
+    : filteredCodes;
+  const codePages = Math.max(1, Math.ceil(orderedCodes.length / perPage));
+  const paginatedCodes = orderedCodes.slice((page - 1) * perPage, page * perPage);
 
   function openCreate() {
     setEditingCode(null);
@@ -407,6 +530,8 @@ export default function PromoCodesPage() {
         <DataTable<PromoCode>
           rows={paginatedCodes}
           rowKey={p => p.id}
+          sort={sort}
+          onSortChange={s => { setSort(s); setPage(1); }}
           rowClassName={p => (selectedIds.has(p.id) ? 'bg-primary/5' : undefined)}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">No promo codes yet.</p>
@@ -435,98 +560,7 @@ export default function PromoCodesPage() {
               </Button>
             )
           }
-          columns={[
-            {
-              header: '',
-              priority: 'desktop',
-              className: 'w-8',
-              headerRender: () => (
-                <input
-                  type="checkbox"
-                  checked={paginatedCodes.length > 0 && paginatedCodes.every(c => selectedIds.has(c.id))}
-                  onChange={toggleSelectAll}
-                  className="accent-primary"
-                />
-              ),
-              render: p => (
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(p.id)}
-                  onChange={() => toggleSelect(p.id)}
-                  className="accent-primary"
-                />
-              ),
-            },
-            {
-              header: 'Code',
-              priority: 'primary',
-              render: p => (
-                <>
-                  <span className="font-body font-medium text-gray-800 text-xs tracking-wider">
-                    {p.code}
-                  </span>
-                  {p.code_ar && (
-                    <span dir="rtl" className="block text-[11px] font-body text-gray-400 mt-0.5">
-                      {p.code_ar}
-                    </span>
-                  )}
-                </>
-              ),
-            },
-            {
-              header: 'Discount',
-              render: p => (
-                <>
-                  {p.discount_type === 'percentage'
-                    ? `${p.discount_value}%`
-                    : formatCurrency(p.discount_value)}
-                  <span className="text-[11px] text-gray-400 ml-1 capitalize">
-                    ({p.discount_type})
-                  </span>
-                  {p.max_discount_amount != null && (
-                    <span className="block text-[11px] text-gray-400 mt-0.5">
-                      max {formatCurrency(p.max_discount_amount)}
-                    </span>
-                  )}
-                </>
-              ),
-            },
-            {
-              header: 'Min Order',
-              render: p =>
-                p.min_order_amount != null ? formatCurrency(p.min_order_amount) : '—',
-            },
-            {
-              header: 'Uses',
-              className: 'text-center',
-              render: p => (
-                <>
-                  {p.current_uses}
-                  {p.max_uses != null ? ` / ${p.max_uses}` : ''}
-                  {p.max_uses_per_user != null && (
-                    <span className="block text-[11px] text-gray-400 mt-0.5">
-                      {p.max_uses_per_user} per customer
-                    </span>
-                  )}
-                </>
-              ),
-            },
-            {
-              header: 'First Orders',
-              className: 'text-center',
-              render: p => (p.first_orders_limit != null ? `First ${p.first_orders_limit}` : '—'),
-            },
-            {
-              header: 'Valid',
-              render: p => (
-                <span className="text-[11px] text-gray-400">
-                  {p.valid_from ? formatDate(p.valid_from) : '—'}
-                  {' → '}
-                  {p.valid_until ? formatDate(p.valid_until) : '∞'}
-                </span>
-              ),
-            },
-          ]}
+          columns={columns}
         />
       )}
 
