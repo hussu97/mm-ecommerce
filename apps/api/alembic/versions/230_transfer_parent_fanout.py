@@ -241,12 +241,13 @@ def upgrade() -> None:
     for column in _MOVED_TO_PARENT:
         op.drop_column("transfers", column)
 
-    # ── 7. One ledger code path: transfer legs point at source_type 'transfer'
-    #    (source_id is the child id, unchanged by the rename). ──
-    op.execute(
-        "UPDATE inventory_transactions SET source_type = 'transfer' "
-        "WHERE source_type = 'transfer_order'"
-    )
+    # ── 7. The ledger's existing transfer legs keep their `source_type =
+    #    'transfer_order'`: those rows are closed and immutable (a DB trigger
+    #    forbids updating them), and there is no need to relabel them — the
+    #    rename preserved every id, so a leg's `source_id` still points at what
+    #    is now the child `transfers` row, and the ledger resolver matches both
+    #    'transfer' (new) and 'transfer_order' (historical). New legs post as
+    #    'transfer'. (Relabelling would trip `inventory_transaction_immutable`.)
 
     # ── 8. A role that could manage transfers keeps the send + receive rights
     #    the old single slug implied. ──
@@ -278,10 +279,8 @@ def downgrade() -> None:
         )
         """
     )
-    op.execute(
-        "UPDATE inventory_transactions SET source_type = 'transfer_order' "
-        "WHERE source_type = 'transfer'"
-    )
+    # Note: the upgrade does not relabel the ledger's transfer legs (they are
+    # immutable), so there is nothing to reverse here.
 
     # Restore the moved columns on the child, copying template provenance and
     # required_date back from the parent before the parent is dropped. The
