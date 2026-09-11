@@ -196,9 +196,7 @@ async def _recompute_parent_status(db: AsyncSession, order_id: uuid.UUID) -> Non
     ).scalar_one_or_none()
     if order is None:
         return
-    live = [
-        c for c in order.children if c.status != TransferStatusEnum.CANCELLED.value
-    ]
+    live = [c for c in order.children if c.status != TransferStatusEnum.CANCELLED.value]
     S = TransferStatusEnum
     P = TransferOrderStatusEnum
     if not live:

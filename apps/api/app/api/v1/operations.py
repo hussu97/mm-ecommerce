@@ -238,9 +238,7 @@ async def _assert_order_access(
     await access_service.assert_branch_access(db, user, order.source_branch_id)
 
 
-async def _build_report(
-    db: AsyncSession, order: TransferOrder
-) -> TransferOrderReport:
+async def _build_report(db: AsyncSession, order: TransferOrder) -> TransferOrderReport:
     branch_ids = {order.source_branch_id} | {c.branch_id for c in order.children}
     branches = (
         (await db.execute(select(Branch).where(Branch.id.in_(branch_ids))))
@@ -259,9 +257,9 @@ async def _build_report(
     if tx_ids:
         rows = (
             await db.execute(
-                select(
-                    InventoryTransaction.id, InventoryTransaction.total_cost
-                ).where(InventoryTransaction.id.in_(tx_ids))
+                select(InventoryTransaction.id, InventoryTransaction.total_cost).where(
+                    InventoryTransaction.id.in_(tx_ids)
+                )
             )
         ).all()
         tx_totals = {row[0]: Decimal(str(row[1] or 0)) for row in rows}
@@ -420,9 +418,7 @@ async def create_transfer_order(
             db, data.source_warehouse_id, data.source_branch_id
         )
     destination_ids = {
-        allocation.branch_id
-        for item in data.items
-        for allocation in item.allocations
+        allocation.branch_id for item in data.items for allocation in item.allocations
     }
     for branch_id in destination_ids:
         await crud_service.get_or_404(db, Branch, branch_id)
@@ -441,9 +437,7 @@ async def create_transfer_order(
     return await _serialise_order(db, order)
 
 
-@transfer_orders_router.get(
-    "/{order_id}/report", response_model=TransferOrderReport
-)
+@transfer_orders_router.get("/{order_id}/report", response_model=TransferOrderReport)
 async def get_transfer_order_report(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -739,9 +733,7 @@ async def pos_transfer_templates(
     return [await _serialise_template(db, t) for t in templates]
 
 
-@pos_transfers_router.get(
-    "/transfers/incoming", response_model=list[TransferResponse]
-)
+@pos_transfers_router.get("/transfers/incoming", response_model=list[TransferResponse])
 async def pos_incoming_transfers(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -764,9 +756,7 @@ async def pos_incoming_transfers(
     return [await _serialise_child(db, t) for t in transfers]
 
 
-@pos_transfers_router.get(
-    "/transfers/outgoing", response_model=list[TransferResponse]
-)
+@pos_transfers_router.get("/transfers/outgoing", response_model=list[TransferResponse])
 async def pos_outgoing_transfers(
     source_branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

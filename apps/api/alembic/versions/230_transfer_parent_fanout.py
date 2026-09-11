@@ -22,8 +22,8 @@ Steps:
 8. Grant the new ``inventory.transfers.send``/``.receive`` slugs to any role
    already holding ``inventory.transfers.manage``.
 
-Revision ID: 229_transfer_parent_fanout
-Revises: 228_order_delivery_courier_eta
+Revision ID: 230_transfer_parent_fanout
+Revises: 229_drop_pos_tags
 Create Date: 2026-09-11
 """
 
@@ -34,8 +34,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from alembic import op
 
-revision: str = "229_transfer_parent_fanout"
-down_revision: Union[str, None] = "228_order_delivery_courier_eta"
+revision: str = "230_transfer_parent_fanout"
+down_revision: Union[str, None] = "229_drop_pos_tags"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

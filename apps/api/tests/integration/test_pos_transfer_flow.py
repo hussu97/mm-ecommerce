@@ -325,12 +325,16 @@ async def test_creating_an_order_is_idempotent_on_client_request_id(env):
         # Create moves no stock, and the second create did not raise a second order.
         assert await _level(db, ids.item, ids.source_wh) == Decimal("100")
         count = (
-            await db.execute(
-                select(TransferOrder).where(
-                    TransferOrder.source_branch_id == ids.source
+            (
+                await db.execute(
+                    select(TransferOrder).where(
+                        TransferOrder.source_branch_id == ids.source
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(count) == 1
 
 

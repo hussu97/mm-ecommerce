@@ -236,9 +236,7 @@ async def test_transfer_line_serialises_with_category(env):
         order = await transfer_service.load_transfer_order(db, order_id)
         payload = await operations_api._serialise_order(db, order)
         by_item = {
-            line.item_id: line
-            for child in payload.children
-            for line in child.items
+            line.item_id: line for child in payload.children for line in child.items
         }
 
         categorised = by_item[ids.item]
