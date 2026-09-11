@@ -1,9 +1,14 @@
 'use client';
 
-// Report submissions → Manual stock counts. Stock-audit counts posted from the
-// register — a branch's first count posts as an opening balance, every count
-// after it as an inventory count. Its own filter bar (branch / date range /
-// kind); all filtering is client-side over the rows loaded once on mount.
+// Report submissions → Manual stock counts. ONLY the manual stock-take counts
+// uploaded in admin (the CSV audits on the Counts tab, source_type
+// `bulk_stock_audit`) — a branch's first one posts as an opening balance, every
+// one after it as an inventory count. Count movements that came out of a shift
+// report belong on the Shift reports tab, not here, so they are excluded (both
+// share the `inventory_count`/`opening_balance` movement type, which is why
+// filtering by type alone showed the same rows in both tabs). Its own filter bar
+// (branch / date range / kind); all filtering is client-side over the rows
+// loaded once on mount.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -69,7 +74,9 @@ export default function StockCountsPage() {
         if (cancelled) return;
         const byId = new Map<string, InventoryTransaction>();
         for (const tx of [...counts, ...openings]) byId.set(tx.id, tx);
-        setRows(Array.from(byId.values()));
+        // A count movement out of a shift report is that report's business, shown
+        // on the Shift reports tab; here we want only the manual CSV stock-takes.
+        setRows(Array.from(byId.values()).filter((tx) => tx.source_type === 'bulk_stock_audit'));
         setError('');
       })
       .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.message : 'Failed to load stock counts.'); })
@@ -115,7 +122,7 @@ export default function StockCountsPage() {
 
   return (
     <div className="max-w-[1400px] space-y-4">
-      <p className="text-sm text-gray-500">Stock-audit counts posted from the register across the branches — a branch&apos;s first count is an opening balance, every count after it a stock count. Click a row to see the counted lines and their value impact.</p>
+      <p className="text-sm text-gray-500">Manual stock-take counts uploaded in admin (the CSV audits on the Counts tab) — a branch&apos;s first count is an opening balance, every count after it a stock count. Counts that came from a shift report show under Shift reports, not here. Click a row to see the counted lines and their value impact.</p>
       <div className="flex flex-wrap items-end gap-3">
         <Select label="Branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder="All branches" className="w-56" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
         <Input label="From" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-44" />
