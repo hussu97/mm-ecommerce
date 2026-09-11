@@ -36,22 +36,6 @@ from .base import (
 )
 
 
-class TransferOrderStatusEnum(str, enum.Enum):
-    """
-    Mirrors the Foodics transfer-order lifecycle exactly.
-
-    A transfer order is a *request* between locations. Accepting it does not
-    move stock — sending does, and receiving completes it. Keeping the request
-    separate from the movement is what lets a branch dispute a short delivery.
-    """
-
-    DRAFT = "draft"
-    PENDING = "pending"  # submitted to the source location
-    ACCEPTED = "accepted"
-    DECLINED = "declined"
-    CLOSED = "closed"  # sent and received
-
-
 class TransferKindEnum(str, enum.Enum):
     """What a transfer order is for.
 
@@ -66,20 +50,61 @@ class TransferKindEnum(str, enum.Enum):
     RETURN = "return"
 
 
+class TransferStatusEnum(str, enum.Enum):
+    """The lifecycle of one *child* transfer — a single source→destination leg of
+    a transfer order.
+
+    Admin creates the order and every child is ``pending`` with no stock moved.
+    The source branch's till ships one destination at a time: marking a child
+    sent posts the ``TRANSFER_SEND`` and moves it to ``sent`` (in transit). The
+    destination books it in and it becomes ``closed``. ``cancelled`` is a child
+    voided before it shipped.
+
+    Movement still lives in the two link columns, not the status: ``sent`` is set
+    the instant ``sent_transaction_id`` is, and ``closed`` gates on
+    ``received_transaction_id`` — the status column is the cheap projection of
+    that composite for list filtering, the same way ``InventoryLevel`` projects
+    the ledger.
+    """
+
+    PENDING = "pending"
+    SENT = "sent"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
+
+
+class TransferOrderStatusEnum(str, enum.Enum):
+    """The *derived* status of a parent transfer order, rolled up from its
+    children (see ``transfer_service._recompute_parent_status``). Never assigned
+    directly by a request — recomputed on every child transition."""
+
+    PENDING = "pending"
+    PARTIALLY_SENT = "partially_sent"
+    SENT = "sent"
+    PARTIALLY_RECEIVED = "partially_received"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
+
+
 class TransferOrder(Base, UUIDMixin, TimestampMixin):
+    """One admin action: from a single source branch, a fan-out of stock to
+    several other branches at once. It holds one child :class:`Transfer` per
+    destination, so the sheet the admin fills (a quantity column per branch)
+    totals across the whole order. Creating it moves no stock — each child is
+    shipped from the source till later, one at a time.
+    """
+
     __tablename__ = "transfer_orders"
     __table_args__ = (
-        # Migration 099.
+        # Migration 228 — parent status is derived; the vocab is the backstop.
         status_vocabulary("transfer_orders", "status", TransferOrderStatusEnum),
-        # Migration 100.
         business_date_format("transfer_orders"),
-        # Migration 222 — mirrored here so the model states the same rule the DB does.
         CheckConstraint(
             "kind IN ('transfer', 'return')", name="ck_transfer_orders_kind"
         ),
-        # Migration 224 — a till that retries a create+send (lost response) must not
-        # ship the same box twice. The client sends a stable id; a second create
-        # with it is refused, and the service returns the order already made.
+        # An admin create that retries after a lost response must not raise the
+        # same fan-out twice. The client sends a stable id; a second create with
+        # it is refused, and the service returns the order already made.
         Index(
             "uq_transfer_orders_client_request_id",
             "client_request_id",
@@ -94,30 +119,17 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        server_default=TransferOrderStatusEnum.DRAFT.value,
+        server_default=TransferOrderStatusEnum.PENDING.value,
         index=True,
     )
-    #: `transfer` (branch → branch) or `return` (branch → its return branch). See
-    #: `TransferKindEnum`. Returns run the identical send/receive/variance flow.
+    #: `transfer` (branch → branch) or `return` (branch → its return branch).
     kind: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
         server_default=TransferKindEnum.TRANSFER.value,
         index=True,
     )
-    #: Who is asking.
-    branch_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("branches.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
-    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("warehouses.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    #: Who is being asked.
+    #: The single branch every child ships *from*, chosen in the admin's first step.
     source_branch_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("branches.id", ondelete="RESTRICT"),
@@ -132,24 +144,109 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
     business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     required_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    #: Client-supplied idempotency token for a POS create+send, unique when set.
-    #: A retried create with the same token returns the order already made.
+    #: Client-supplied idempotency token for an admin create, unique when set.
     client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The ``correction_group_id`` stamped on every shortfall top-up adjustment
+    #: posted when the admin overrode on-hand at create time (see
+    #: ``transfer_service.create_transfer_order``). Null when nothing was
+    #: overridden; the mini stock-adjustment report reads the group by this id.
+    adjustment_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
 
     creator_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    submitter_id: Mapped[uuid.UUID | None] = mapped_column(
+    #: Provenance — the transfer template this order was raised from and its
+    #: immutable snapshot at raise time. Null for a return or an ad-hoc order.
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transfer_templates.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+
+    children: Mapped[list[Transfer]] = relationship(
+        "Transfer",
+        back_populates="transfer_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    def __repr__(self) -> str:
+        return f"<TransferOrder {self.reference} {self.status}>"
+
+
+class Transfer(Base, UUIDMixin, TimestampMixin):
+    """One source→destination leg of a :class:`TransferOrder`. This is the object
+    that actually moves stock, through the two-leg send/receive the ledger has
+    always used; the parent is only the grouping the admin created it under.
+    """
+
+    __tablename__ = "transfers"
+    __table_args__ = (
+        status_vocabulary("transfers", "status", TransferStatusEnum),
+        business_date_format("transfers"),
+        CheckConstraint("kind IN ('transfer', 'return')", name="ck_transfers_kind"),
+    )
+
+    transfer_order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("transfer_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reference: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=TransferStatusEnum.PENDING.value,
+        index=True,
+    )
+    #: Denormalised from the parent so the POS lists (which query children
+    #: directly) stay self-describing — the receive screen badges a return
+    #: without a join. Copied at create; a child's kind never diverges.
+    kind: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=TransferKindEnum.TRANSFER.value,
+        index=True,
+    )
+    #: Destination.
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Source (mirrors the parent — denormalised so the send leg needs no join).
+    source_branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    source_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    responder_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    submitted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    responded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
     #: Set when the sending transaction is posted.
     sent_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -162,40 +259,27 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
         ForeignKey("inventory_transactions.id", ondelete="SET NULL"),
         nullable=True,
     )
-    #: The transfer template this order was raised from, and the immutable record
-    #: of that template as it stood at raise time. Nullable because returns and
-    #: ad-hoc transfers are raised without a template. RESTRICT so a template with
-    #: history cannot be hard-deleted out from under the orders that cite it —
-    #: deactivate it instead. Downstream reads the ``template_snapshot``, never the
-    #: live template, exactly as a shift report reads its own snapshot.
-    template_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("inventory_transfer_templates.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
-    )
-    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    template_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True
-    )
 
-    items: Mapped[list[TransferOrderItem]] = relationship(
-        "TransferOrderItem",
-        back_populates="transfer_order",
+    transfer_order: Mapped[TransferOrder] = relationship(
+        "TransferOrder", back_populates="children"
+    )
+    items: Mapped[list[TransferLine]] = relationship(
+        "TransferLine",
+        back_populates="transfer",
         cascade="all, delete-orphan",
         lazy="selectin",
     )
 
     def __repr__(self) -> str:
-        return f"<TransferOrder {self.reference} {self.status}>"
+        return f"<Transfer {self.reference} {self.status}>"
 
 
-class TransferOrderItem(Base, UUIDMixin):
-    __tablename__ = "transfer_order_items"
+class TransferLine(Base, UUIDMixin):
+    __tablename__ = "transfer_items"
 
-    transfer_order_id: Mapped[uuid.UUID] = mapped_column(
+    transfer_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("transfer_orders.id", ondelete="CASCADE"),
+        ForeignKey("transfers.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -206,7 +290,9 @@ class TransferOrderItem(Base, UUIDMixin):
         index=True,
     )
     quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
-    #: What the source location actually agreed to send, which may be less.
+    #: Vestigial since there is no accept step — set equal to ``quantity`` at
+    #: create so ``send``'s existing ``approved_quantity or quantity`` read is
+    #: untouched. Kept for the ledger's immutable-history compatibility.
     approved_quantity: Mapped[Any | None] = mapped_column(Numeric(16, 4), nullable=True)
     sent_quantity: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
@@ -225,12 +311,10 @@ class TransferOrderItem(Base, UUIDMixin):
     #: a transfer, the receiver's note when what arrived differs from what was sent.
     variance_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    transfer_order: Mapped[TransferOrder] = relationship(
-        "TransferOrder", back_populates="items"
-    )
+    transfer: Mapped[Transfer] = relationship("Transfer", back_populates="items")
 
     def __repr__(self) -> str:
-        return f"<TransferOrderItem item={self.item_id} qty={self.quantity}>"
+        return f"<TransferLine item={self.item_id} qty={self.quantity}>"
 
 
 class InventoryTransferTemplate(Base, UUIDMixin, TimestampMixin):

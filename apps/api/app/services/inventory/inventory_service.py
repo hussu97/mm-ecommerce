@@ -514,8 +514,20 @@ async def adjust_level(
     quantity_delta: Decimal,
     reason_id: uuid.UUID | None = None,
     notes: str | None = None,
+    warehouse_id: uuid.UUID | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    correction_group_id: uuid.UUID | None = None,
 ) -> InventoryTransaction:
-    """Convenience wrapper for a single-line signed quantity adjustment."""
+    """Convenience wrapper for a single-line signed quantity adjustment.
+
+    ``source_type``/``source_id``/``correction_group_id`` let a caller attribute
+    the adjustment to what caused it and group several under one id — the
+    transfer-order override posts one top-up per short item, all sharing the
+    order's ``adjustment_group_id`` so the mini stock-adjustment report can read
+    them back as a group. Left null, this is a plain manual adjustment as before.
+    ``warehouse_id`` pins the location; the poster resolves the default when null.
+    """
     business_date = await business_day_service.current_business_date(db, branch)
     item = await db.get(InventoryItem, item_id)
     if item is None:
@@ -528,10 +540,14 @@ async def adjust_level(
         type=InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
         status=TransactionStatusEnum.DRAFT.value,
         branch_id=branch.id,
+        warehouse_id=warehouse_id,
         business_date=business_date,
         reason_id=reason_id,
         notes=notes,
         creator_id=user.id,
+        source_type=source_type,
+        source_id=source_id,
+        correction_group_id=correction_group_id,
     )
     db.add(transaction)
     await db.flush()

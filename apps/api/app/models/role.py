@@ -50,7 +50,12 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
             "inventory.adjustments.manage",
             "Adjust quantities and costs, count stock and record production",
         ),
-        ("inventory.transfers.manage", "Create, send and receive stock transfers"),
+        ("inventory.transfers.manage", "Create stock transfer orders in the console"),
+        (
+            "inventory.transfers.send",
+            "Mark a transfer's items sent from the source till",
+        ),
+        ("inventory.transfers.receive", "Book a transfer in at the destination till"),
         (
             "inventory.purchase_orders.manage",
             "Create and submit purchase orders, and purchase against them",

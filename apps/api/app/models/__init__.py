@@ -153,10 +153,12 @@ from .operations import (  # noqa: F401
     InventoryTransferTemplate,
     InventoryTransferTemplateItem,
     NotificationRule,
+    Transfer,
     TransferKindEnum,
+    TransferLine,
     TransferOrder,
-    TransferOrderItem,
     TransferOrderStatusEnum,
+    TransferStatusEnum,
 )
 from .order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum  # noqa: F401
 from .order_delivery import (  # noqa: F401
@@ -385,10 +387,12 @@ __all__ = [
     # Operations
     "InventoryTransferTemplate",
     "InventoryTransferTemplateItem",
+    "Transfer",
     "TransferKindEnum",
+    "TransferLine",
     "TransferOrder",
-    "TransferOrderItem",
     "TransferOrderStatusEnum",
+    "TransferStatusEnum",
     "SpotCheck",
     "SpotCheckItem",
     "Reservation",
