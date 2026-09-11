@@ -12,19 +12,6 @@
         "title": "AbandonBookingRequest",
         "type": "object"
       },
-      "AcceptTransfer": {
-        "properties": {
-          "lines": {
-            "items": {
-              "$ref": "#/components/schemas/QuantityDecision"
-            },
-            "title": "Lines",
-            "type": "array"
-          }
-        },
-        "title": "AcceptTransfer",
-        "type": "object"
-      },
       "AddItemRequest": {
         "properties": {
           "course_id": {
@@ -533,58 +520,6 @@
           "last_used_at"
         ],
         "title": "AdminPasskeyResponse",
-        "type": "object"
-      },
-      "AdminTransferReceive": {
-        "properties": {
-          "lines": {
-            "items": {
-              "$ref": "#/components/schemas/AdminTransferReceiveLine"
-            },
-            "title": "Lines",
-            "type": "array"
-          }
-        },
-        "title": "AdminTransferReceive",
-        "type": "object"
-      },
-      "AdminTransferReceiveLine": {
-        "properties": {
-          "quantity": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              }
-            ],
-            "title": "Quantity"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "transfer_order_item_id": {
-            "format": "uuid",
-            "title": "Transfer Order Item Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "transfer_order_item_id",
-          "quantity"
-        ],
-        "title": "AdminTransferReceiveLine",
         "type": "object"
       },
       "AdminUserSummary": {
@@ -24287,34 +24222,6 @@
         "title": "QuantityAdjustmentRequest",
         "type": "object"
       },
-      "QuantityDecision": {
-        "properties": {
-          "quantity": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              }
-            ],
-            "title": "Quantity"
-          },
-          "transfer_order_item_id": {
-            "format": "uuid",
-            "title": "Transfer Order Item Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "transfer_order_item_id",
-          "quantity"
-        ],
-        "title": "QuantityDecision",
-        "type": "object"
-      },
       "ReasonCreate": {
         "properties": {
           "is_active": {
@@ -30960,23 +30867,13 @@
         "title": "TransactionLineResponse",
         "type": "object"
       },
-      "TransferLineInput": {
+      "TransferAllocationInput": {
+        "description": "How much of one item goes to one destination branch.",
         "properties": {
-          "item_id": {
+          "branch_id": {
             "format": "uuid",
-            "title": "Item Id",
+            "title": "Branch Id",
             "type": "string"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notes"
           },
           "quantity": {
             "anyOf": [
@@ -30990,101 +30887,16 @@
               }
             ],
             "title": "Quantity"
-          },
-          "unit": {
-            "default": "storage",
-            "enum": [
-              "storage",
-              "ingredient"
-            ],
-            "title": "Unit",
-            "type": "string"
-          }
-        },
-        "required": [
-          "item_id",
-          "quantity"
-        ],
-        "title": "TransferLineInput",
-        "type": "object"
-      },
-      "TransferOrderCreate": {
-        "properties": {
-          "branch_id": {
-            "format": "uuid",
-            "title": "Branch Id",
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/TransferLineInput"
-            },
-            "minItems": 1,
-            "title": "Items",
-            "type": "array"
-          },
-          "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Notes"
-          },
-          "required_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Required Date"
-          },
-          "source_branch_id": {
-            "format": "uuid",
-            "title": "Source Branch Id",
-            "type": "string"
-          },
-          "source_warehouse_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Warehouse Id"
-          },
-          "warehouse_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Warehouse Id"
           }
         },
         "required": [
           "branch_id",
-          "source_branch_id",
-          "items"
+          "quantity"
         ],
-        "title": "TransferOrderCreate",
+        "title": "TransferAllocationInput",
         "type": "object"
       },
-      "TransferOrderLineResponse": {
+      "TransferLineResponse": {
         "properties": {
           "approved_quantity": {
             "anyOf": [
@@ -31204,10 +31016,546 @@
           "unit",
           "notes"
         ],
-        "title": "TransferOrderLineResponse",
+        "title": "TransferLineResponse",
+        "type": "object"
+      },
+      "TransferOrderAdjustmentEntry": {
+        "description": "One shortfall top-up posted when the admin overrode on-hand at create.",
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "transaction_id": {
+            "format": "uuid",
+            "title": "Transaction Id",
+            "type": "string"
+          },
+          "transaction_reference": {
+            "title": "Transaction Reference",
+            "type": "string"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          },
+          "value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transaction_id",
+          "transaction_reference",
+          "item_id",
+          "quantity",
+          "unit_cost",
+          "value"
+        ],
+        "title": "TransferOrderAdjustmentEntry",
+        "type": "object"
+      },
+      "TransferOrderCreate": {
+        "properties": {
+          "client_request_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TransferOrderItemInput"
+            },
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "default": "transfer",
+            "enum": [
+              "transfer",
+              "return"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "required_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Date"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          },
+          "source_warehouse_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Warehouse Id"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "required": [
+          "source_branch_id",
+          "items"
+        ],
+        "title": "TransferOrderCreate",
+        "type": "object"
+      },
+      "TransferOrderItemInput": {
+        "properties": {
+          "allocations": {
+            "items": {
+              "$ref": "#/components/schemas/TransferAllocationInput"
+            },
+            "minItems": 1,
+            "title": "Allocations",
+            "type": "array"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "override": {
+            "default": false,
+            "title": "Override",
+            "type": "boolean"
+          },
+          "unit": {
+            "default": "storage",
+            "enum": [
+              "storage",
+              "ingredient"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "allocations"
+        ],
+        "title": "TransferOrderItemInput",
+        "type": "object"
+      },
+      "TransferOrderReport": {
+        "properties": {
+          "adjustment_total": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Adjustment Total",
+            "type": "string"
+          },
+          "adjustments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TransferOrderAdjustmentEntry"
+            },
+            "title": "Adjustments",
+            "type": "array"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "children": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TransferOrderReportChild"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          },
+          "source_branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Branch Name"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "kind",
+          "source_branch_id",
+          "business_date",
+          "created_at"
+        ],
+        "title": "TransferOrderReport",
+        "type": "object"
+      },
+      "TransferOrderReportChild": {
+        "properties": {
+          "destination_branch_id": {
+            "format": "uuid",
+            "title": "Destination Branch Id",
+            "type": "string"
+          },
+          "destination_branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Branch Name"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "received_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Received Value",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "sent_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Sent Value",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_received": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Received",
+            "type": "string"
+          },
+          "total_sent": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Sent",
+            "type": "string"
+          },
+          "transfer_id": {
+            "format": "uuid",
+            "title": "Transfer Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "transfer_id",
+          "reference",
+          "destination_branch_id",
+          "status",
+          "item_count",
+          "total_sent",
+          "total_received",
+          "sent_value",
+          "received_value"
+        ],
+        "title": "TransferOrderReportChild",
         "type": "object"
       },
       "TransferOrderResponse": {
+        "properties": {
+          "adjustment_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjustment Group Id"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "children": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TransferResponse"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "required_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Date"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
+          },
+          "total_by_item": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TransferOrderTotalLine"
+            },
+            "title": "Total By Item",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "kind",
+          "source_branch_id",
+          "business_date",
+          "required_date",
+          "notes",
+          "created_at"
+        ],
+        "title": "TransferOrderResponse",
+        "type": "object"
+      },
+      "TransferOrderTotalLine": {
+        "description": "One row of the parent's total-across-branches summary.",
+        "properties": {
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
+          "category_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Order"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "item_sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Sku"
+          },
+          "total_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Quantity",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "unit",
+          "total_quantity"
+        ],
+        "title": "TransferOrderTotalLine",
+        "type": "object"
+      },
+      "TransferResponse": {
+        "description": "One source\u2192destination leg of a transfer order.",
         "properties": {
           "branch_id": {
             "format": "uuid",
@@ -31231,7 +31579,7 @@
           "items": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/TransferOrderLineResponse"
+              "$ref": "#/components/schemas/TransferLineResponse"
             },
             "title": "Items",
             "type": "array"
@@ -31267,30 +31615,6 @@
             "title": "Reference",
             "type": "string"
           },
-          "required_date": {
-            "anyOf": [
-              {
-                "format": "date",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Required Date"
-          },
-          "responded_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Responded At"
-          },
           "sent_transaction_id": {
             "anyOf": [
               {
@@ -31312,59 +31636,27 @@
             "title": "Status",
             "type": "string"
           },
-          "submitted_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Submitted At"
-          },
-          "template_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template Id"
-          },
-          "template_version": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Template Version"
+          "transfer_order_id": {
+            "format": "uuid",
+            "title": "Transfer Order Id",
+            "type": "string"
           }
         },
         "required": [
           "id",
+          "transfer_order_id",
           "reference",
           "status",
           "kind",
           "branch_id",
           "source_branch_id",
           "business_date",
-          "required_date",
           "notes",
-          "submitted_at",
-          "responded_at",
           "sent_transaction_id",
           "received_transaction_id",
           "created_at"
         ],
-        "title": "TransferOrderResponse",
+        "title": "TransferResponse",
         "type": "object"
       },
       "TransferTemplateItemInput": {
@@ -48501,23 +48793,6 @@
         "parameters": [
           {
             "in": "query",
-            "name": "branch_id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "format": "uuid",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Branch Id"
-            }
-          },
-          {
-            "in": "query",
             "name": "source_branch_id",
             "required": false,
             "schema": {
@@ -48599,6 +48874,7 @@
         ]
       },
       "post": {
+        "description": "Raise a transfer order from one source branch, fanning out to many. Sending\nmore of an item than the source holds requires ``override`` on that item, which\nalso needs the adjustments permission (it writes stock off).",
         "operationId": "create_transfer_order_api_v1_inventory_transfer_orders_post",
         "requestBody": {
           "content": {
@@ -48645,7 +48921,7 @@
     },
     "/api/v1/inventory/transfer-orders/{order_id}": {
       "get": {
-        "description": "One transfer or return, both legs \u2014 the ledger's transfer source links here\nand the console's detail page reads it. Visible to a user with access to\neither end of the transfer.",
+        "description": "One transfer order with its per-branch children \u2014 the ledger's transfer\nsource links here and the console's detail page reads it.",
         "operationId": "get_transfer_order_api_v1_inventory_transfer_orders__order_id__get",
         "parameters": [
           {
@@ -48692,10 +48968,10 @@
         ]
       }
     },
-    "/api/v1/inventory/transfer-orders/{order_id}/accept": {
-      "post": {
-        "description": "Accept a request, optionally granting less than was asked for.",
-        "operationId": "accept_transfer_api_v1_inventory_transfer_orders__order_id__accept_post",
+    "/api/v1/inventory/transfer-orders/{order_id}/report": {
+      "get": {
+        "description": "The parent report: per-branch children with statuses and movement values,\nplus the mini stock-adjustment report from any override at create time.",
+        "operationId": "get_transfer_order_report_api_v1_inventory_transfer_orders__order_id__report_get",
         "parameters": [
           {
             "in": "path",
@@ -48708,22 +48984,12 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AcceptTransfer"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TransferOrderResponse"
+                  "$ref": "#/components/schemas/TransferOrderReport"
                 }
               }
             },
@@ -48745,211 +49011,7 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Accept Transfer",
-        "tags": [
-          "Inventory"
-        ]
-      }
-    },
-    "/api/v1/inventory/transfer-orders/{order_id}/decline": {
-      "post": {
-        "operationId": "decline_transfer_api_v1_inventory_transfer_orders__order_id__decline_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "order_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Order Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TransferOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Decline Transfer",
-        "tags": [
-          "Inventory"
-        ]
-      }
-    },
-    "/api/v1/inventory/transfer-orders/{order_id}/receive": {
-      "post": {
-        "description": "Book the goods in. A shortfall against what was sent stays visible.\n\nAn empty ``lines`` list receives every line as sent (``receive_transfer``\ndefaults each line's received quantity to its ``sent_quantity``) \u2014 the\n\"accept all as sent\" case needs no extra handling here.",
-        "operationId": "receive_transfer_api_v1_inventory_transfer_orders__order_id__receive_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "order_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Order Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AdminTransferReceive"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TransferOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Receive Transfer",
-        "tags": [
-          "Inventory"
-        ]
-      }
-    },
-    "/api/v1/inventory/transfer-orders/{order_id}/send": {
-      "post": {
-        "description": "Ship the goods \u2014 decrements the source location.",
-        "operationId": "send_transfer_api_v1_inventory_transfer_orders__order_id__send_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "order_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Order Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TransferOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Send Transfer",
-        "tags": [
-          "Inventory"
-        ]
-      }
-    },
-    "/api/v1/inventory/transfer-orders/{order_id}/submit": {
-      "post": {
-        "operationId": "submit_transfer_api_v1_inventory_transfer_orders__order_id__submit_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "order_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Order Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TransferOrderResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Submit Transfer",
+        "summary": "Get Transfer Order Report",
         "tags": [
           "Inventory"
         ]

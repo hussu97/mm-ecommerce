@@ -4499,7 +4499,12 @@ export interface paths {
         /** List Transfer Orders */
         get: operations["list_transfer_orders_api_v1_inventory_transfer_orders_get"];
         put?: never;
-        /** Create Transfer Order */
+        /**
+         * Create Transfer Order
+         * @description Raise a transfer order from one source branch, fanning out to many. Sending
+         *     more of an item than the source holds requires ``override`` on that item, which
+         *     also needs the adjustments permission (it writes stock off).
+         */
         post: operations["create_transfer_order_api_v1_inventory_transfer_orders_post"];
         delete?: never;
         options?: never;
@@ -4516,9 +4521,8 @@ export interface paths {
         };
         /**
          * Get Transfer Order
-         * @description One transfer or return, both legs — the ledger's transfer source links here
-         *     and the console's detail page reads it. Visible to a user with access to
-         *     either end of the transfer.
+         * @description One transfer order with its per-branch children — the ledger's transfer
+         *     source links here and the console's detail page reads it.
          */
         get: operations["get_transfer_order_api_v1_inventory_transfer_orders__order_id__get"];
         put?: never;
@@ -4529,98 +4533,21 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/inventory/transfer-orders/{order_id}/accept": {
+    "/api/v1/inventory/transfer-orders/{order_id}/report": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /**
-         * Accept Transfer
-         * @description Accept a request, optionally granting less than was asked for.
+         * Get Transfer Order Report
+         * @description The parent report: per-branch children with statuses and movement values,
+         *     plus the mini stock-adjustment report from any override at create time.
          */
-        post: operations["accept_transfer_api_v1_inventory_transfer_orders__order_id__accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/inventory/transfer-orders/{order_id}/decline": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
+        get: operations["get_transfer_order_report_api_v1_inventory_transfer_orders__order_id__report_get"];
         put?: never;
-        /** Decline Transfer */
-        post: operations["decline_transfer_api_v1_inventory_transfer_orders__order_id__decline_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/inventory/transfer-orders/{order_id}/receive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Receive Transfer
-         * @description Book the goods in. A shortfall against what was sent stays visible.
-         *
-         *     An empty ``lines`` list receives every line as sent (``receive_transfer``
-         *     defaults each line's received quantity to its ``sent_quantity``) — the
-         *     "accept all as sent" case needs no extra handling here.
-         */
-        post: operations["receive_transfer_api_v1_inventory_transfer_orders__order_id__receive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/inventory/transfer-orders/{order_id}/send": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Send Transfer
-         * @description Ship the goods — decrements the source location.
-         */
-        post: operations["send_transfer_api_v1_inventory_transfer_orders__order_id__send_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/inventory/transfer-orders/{order_id}/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Submit Transfer */
-        post: operations["submit_transfer_api_v1_inventory_transfer_orders__order_id__submit_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8372,11 +8299,6 @@ export interface components {
              */
             acknowledged_charge: boolean;
         };
-        /** AcceptTransfer */
-        AcceptTransfer: {
-            /** Lines */
-            lines?: components["schemas"]["QuantityDecision"][];
-        };
         /** AddItemRequest */
         AddItemRequest: {
             /** Course Id */
@@ -8527,23 +8449,6 @@ export interface components {
             last_used_at: string | null;
             /** Name */
             name: string | null;
-        };
-        /** AdminTransferReceive */
-        AdminTransferReceive: {
-            /** Lines */
-            lines?: components["schemas"]["AdminTransferReceiveLine"][];
-        };
-        /** AdminTransferReceiveLine */
-        AdminTransferReceiveLine: {
-            /** Quantity */
-            quantity: number | string;
-            /** Reason */
-            reason?: string | null;
-            /**
-             * Transfer Order Item Id
-             * Format: uuid
-             */
-            transfer_order_item_id: string;
         };
         /** AdminUserSummary */
         AdminUserSummary: {
@@ -16472,16 +16377,6 @@ export interface components {
             /** Reason Id */
             reason_id?: string | null;
         };
-        /** QuantityDecision */
-        QuantityDecision: {
-            /** Quantity */
-            quantity: number | string;
-            /**
-             * Transfer Order Item Id
-             * Format: uuid
-             */
-            transfer_order_item_id: string;
-        };
         /** ReasonCreate */
         ReasonCreate: {
             /**
@@ -18759,49 +18654,21 @@ export interface components {
             /** Unit Cost */
             unit_cost: string;
         };
-        /** TransferLineInput */
-        TransferLineInput: {
-            /**
-             * Item Id
-             * Format: uuid
-             */
-            item_id: string;
-            /** Notes */
-            notes?: string | null;
-            /** Quantity */
-            quantity: number | string;
-            /**
-             * Unit
-             * @default storage
-             * @enum {string}
-             */
-            unit: "storage" | "ingredient";
-        };
-        /** TransferOrderCreate */
-        TransferOrderCreate: {
+        /**
+         * TransferAllocationInput
+         * @description How much of one item goes to one destination branch.
+         */
+        TransferAllocationInput: {
             /**
              * Branch Id
              * Format: uuid
              */
             branch_id: string;
-            /** Items */
-            items: components["schemas"]["TransferLineInput"][];
-            /** Notes */
-            notes?: string | null;
-            /** Required Date */
-            required_date?: string | null;
-            /**
-             * Source Branch Id
-             * Format: uuid
-             */
-            source_branch_id: string;
-            /** Source Warehouse Id */
-            source_warehouse_id?: string | null;
-            /** Warehouse Id */
-            warehouse_id?: string | null;
+            /** Quantity */
+            quantity: number | string;
         };
-        /** TransferOrderLineResponse */
-        TransferOrderLineResponse: {
+        /** TransferLineResponse */
+        TransferLineResponse: {
             /** Approved Quantity */
             approved_quantity: string | null;
             /** Category Name */
@@ -18835,8 +18702,227 @@ export interface components {
             /** Variance Reason */
             variance_reason?: string | null;
         };
+        /**
+         * TransferOrderAdjustmentEntry
+         * @description One shortfall top-up posted when the admin overrode on-hand at create.
+         */
+        TransferOrderAdjustmentEntry: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Quantity */
+            quantity: string;
+            /**
+             * Transaction Id
+             * Format: uuid
+             */
+            transaction_id: string;
+            /** Transaction Reference */
+            transaction_reference: string;
+            /** Unit Cost */
+            unit_cost: string;
+            /** Value */
+            value: string;
+        };
+        /** TransferOrderCreate */
+        TransferOrderCreate: {
+            /** Client Request Id */
+            client_request_id?: string | null;
+            /** Items */
+            items: components["schemas"]["TransferOrderItemInput"][];
+            /**
+             * Kind
+             * @default transfer
+             * @enum {string}
+             */
+            kind: "transfer" | "return";
+            /** Notes */
+            notes?: string | null;
+            /** Required Date */
+            required_date?: string | null;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+            /** Source Warehouse Id */
+            source_warehouse_id?: string | null;
+            /** Template Id */
+            template_id?: string | null;
+        };
+        /** TransferOrderItemInput */
+        TransferOrderItemInput: {
+            /** Allocations */
+            allocations: components["schemas"]["TransferAllocationInput"][];
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Override
+             * @default false
+             */
+            override: boolean;
+            /**
+             * Unit
+             * @default storage
+             * @enum {string}
+             */
+            unit: "storage" | "ingredient";
+        };
+        /** TransferOrderReport */
+        TransferOrderReport: {
+            /**
+             * Adjustment Total
+             * @default 0
+             */
+            adjustment_total: string;
+            /**
+             * Adjustments
+             * @default []
+             */
+            adjustments: components["schemas"]["TransferOrderAdjustmentEntry"][];
+            /** Business Date */
+            business_date: string;
+            /**
+             * Children
+             * @default []
+             */
+            children: components["schemas"]["TransferOrderReportChild"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Reference */
+            reference: string;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+            /** Source Branch Name */
+            source_branch_name?: string | null;
+            /** Status */
+            status: string;
+        };
+        /** TransferOrderReportChild */
+        TransferOrderReportChild: {
+            /**
+             * Destination Branch Id
+             * Format: uuid
+             */
+            destination_branch_id: string;
+            /** Destination Branch Name */
+            destination_branch_name?: string | null;
+            /** Item Count */
+            item_count: number;
+            /** Received Value */
+            received_value: string;
+            /** Reference */
+            reference: string;
+            /** Sent Value */
+            sent_value: string;
+            /** Status */
+            status: string;
+            /** Total Received */
+            total_received: string;
+            /** Total Sent */
+            total_sent: string;
+            /**
+             * Transfer Id
+             * Format: uuid
+             */
+            transfer_id: string;
+        };
         /** TransferOrderResponse */
         TransferOrderResponse: {
+            /** Adjustment Group Id */
+            adjustment_group_id?: string | null;
+            /** Business Date */
+            business_date: string;
+            /**
+             * Children
+             * @default []
+             */
+            children: components["schemas"]["TransferResponse"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Notes */
+            notes: string | null;
+            /** Reference */
+            reference: string;
+            /** Required Date */
+            required_date: string | null;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+            /** Status */
+            status: string;
+            /** Template Id */
+            template_id?: string | null;
+            /** Template Version */
+            template_version?: number | null;
+            /**
+             * Total By Item
+             * @default []
+             */
+            total_by_item: components["schemas"]["TransferOrderTotalLine"][];
+        };
+        /**
+         * TransferOrderTotalLine
+         * @description One row of the parent's total-across-branches summary.
+         */
+        TransferOrderTotalLine: {
+            /** Category Name */
+            category_name?: string | null;
+            /** Category Order */
+            category_order?: number | null;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Item Sku */
+            item_sku?: string | null;
+            /** Total Quantity */
+            total_quantity: string;
+            /** Unit */
+            unit: string;
+        };
+        /**
+         * TransferResponse
+         * @description One source→destination leg of a transfer order.
+         */
+        TransferResponse: {
             /**
              * Branch Id
              * Format: uuid
@@ -18858,7 +18944,7 @@ export interface components {
              * Items
              * @default []
              */
-            items: components["schemas"]["TransferOrderLineResponse"][];
+            items: components["schemas"]["TransferLineResponse"][];
             /** Kind */
             kind: string;
             /** Notes */
@@ -18867,10 +18953,6 @@ export interface components {
             received_transaction_id: string | null;
             /** Reference */
             reference: string;
-            /** Required Date */
-            required_date: string | null;
-            /** Responded At */
-            responded_at: string | null;
             /** Sent Transaction Id */
             sent_transaction_id: string | null;
             /**
@@ -18880,12 +18962,11 @@ export interface components {
             source_branch_id: string;
             /** Status */
             status: string;
-            /** Submitted At */
-            submitted_at: string | null;
-            /** Template Id */
-            template_id?: string | null;
-            /** Template Version */
-            template_version?: number | null;
+            /**
+             * Transfer Order Id
+             * Format: uuid
+             */
+            transfer_order_id: string;
         };
         /** TransferTemplateItemInput */
         TransferTemplateItemInput: {
@@ -28288,7 +28369,6 @@ export interface operations {
     list_transfer_orders_api_v1_inventory_transfer_orders_get: {
         parameters: {
             query?: {
-                branch_id?: string | null;
                 source_branch_id?: string | null;
                 status?: string | null;
                 limit?: number;
@@ -28383,42 +28463,7 @@ export interface operations {
             };
         };
     };
-    accept_transfer_api_v1_inventory_transfer_orders__order_id__accept_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                order_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AcceptTransfer"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TransferOrderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    decline_transfer_api_v1_inventory_transfer_orders__order_id__decline_post: {
+    get_transfer_order_report_api_v1_inventory_transfer_orders__order_id__report_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -28435,104 +28480,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TransferOrderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    receive_transfer_api_v1_inventory_transfer_orders__order_id__receive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                order_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminTransferReceive"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TransferOrderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    send_transfer_api_v1_inventory_transfer_orders__order_id__send_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                order_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TransferOrderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    submit_transfer_api_v1_inventory_transfer_orders__order_id__submit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                order_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TransferOrderResponse"];
+                    "application/json": components["schemas"]["TransferOrderReport"];
                 };
             };
             /** @description Validation Error */
