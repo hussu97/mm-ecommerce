@@ -31,7 +31,13 @@ export type StockAudit = Schemas['StockAuditRequest'];
 export type StockAuditPreview = Schemas['StockAuditPreviewResponse'];
 export type TransferTemplate = Schemas['TransferTemplateResponse'];
 export type TransferTemplateWrite = Schemas['TransferTemplateUpsert'];
+// The parent transfer order (admin-raised, fans out to many branches) and its
+// per-branch child leg. `TransferOrder` no longer carries lines directly — it
+// rolls up `total_by_item` across its `children`, each a `Transfer`.
 export type TransferOrder = Schemas['TransferOrderResponse'];
+export type Transfer = Schemas['TransferResponse'];
+export type TransferOrderCreate = Schemas['TransferOrderCreate'];
+export type TransferOrderReport = Schemas['TransferOrderReport'];
 
 // ─── Branches & floor plan ────────────────────────────────────────────────────
 
@@ -283,12 +289,18 @@ export const inventoryApi = {
     api.put<TransferTemplate>(`/inventory/transfer-templates/${id}`, data),
   deactivateTransferTemplate: (id: string) =>
     api.post<TransferTemplate>(`/inventory/transfer-templates/${id}/deactivate`, {}),
-  transferOrders: (params?: { branch_id?: string; source_branch_id?: string; status?: string; limit?: number }) =>
+  // Transfer ORDERS are the admin-raised parents: one source branch fanning out
+  // to many destinations. Creating one moves no stock (status `pending`); the
+  // source's POS marks each child sent and the destinations receive. The log
+  // and detail pages read these; creation is admin-only from the console.
+  transferOrders: (params?: { source_branch_id?: string; status?: string; limit?: number }) =>
     api.get<TransferOrder[]>(`/inventory/transfer-orders${buildQs(params)}`),
   transferOrder: (id: string) =>
     api.get<TransferOrder>(`/inventory/transfer-orders/${id}`),
-  receiveTransferOrder: (id: string, lines: { transfer_order_item_id: string; quantity: number; reason?: string | null }[]) =>
-    api.post<TransferOrder>(`/inventory/transfer-orders/${id}/receive`, { lines }),
+  createTransferOrder: (body: TransferOrderCreate) =>
+    api.post<TransferOrder>('/inventory/transfer-orders', body),
+  transferOrderReport: (id: string) =>
+    api.get<TransferOrderReport>(`/inventory/transfer-orders/${id}/report`),
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

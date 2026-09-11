@@ -12,7 +12,7 @@ import {
   branchesApi,
   inventoryApi,
   type ShiftInventoryReport,
-  type TransferOrder,
+  type Transfer,
 } from '@/lib/pos-api';
 import type { Branch, InventoryItem, InventoryTransaction } from '@/lib/pos-types';
 import { Button, Input, Pagination, Select } from '@/components/ui';
@@ -129,8 +129,10 @@ export const movementLabel = (type: string): string =>
   MOVEMENT_LABELS[type] ?? type.replaceAll('_', ' ');
 
 // Where a movement came from, in words. The human reference (order#, transfer#)
-// is resolved server-side into `source_reference` when present; otherwise this
-// names the kind of source, and a reversal is called out.
+// is resolved server-side into `source_reference` when present — for a shortfall
+// top-up the backend hands us "Shortfall top-up · REF", so that reads through
+// here as-is; otherwise this names the kind of source, and a reversal is called
+// out.
 export function sourceLabel(row: InventoryTransaction): string {
   if (row.reverses_transaction_id) return 'Correction / reversal';
   if (row.source_reference) return row.source_reference;
@@ -139,6 +141,9 @@ export function sourceLabel(row: InventoryTransaction): string {
     order: 'Customer order',
     order_return: 'Customer return',
     transfer_order: 'Transfer / return',
+    // The mini stock-adjustment a transfer order posts when the admin overrode
+    // on-hand — its link points back at the parent order.
+    transfer_shortfall_adjustment: 'Transfer shortfall top-up',
     production: 'Production',
     production_yield: 'Production yield',
     shift_inventory_report: 'Shift report',
@@ -251,22 +256,20 @@ export const reportVariance = (row: ShiftInventoryReport) =>
 
 // ─── Transfer / return helpers ────────────────────────────────────────────────
 
+// A colour for a transfer status — shared by the parent order (pending,
+// partially_sent, sent, partially_received, closed, cancelled) and its child
+// legs (pending, sent, closed, cancelled). Terminal-good is green, in-flight is
+// amber, cancelled is red.
 export const transferStatusVariant = (status: string): 'success' | 'warning' | 'danger' | 'neutral' => {
-  if (status === 'received' || status === 'completed' || status === 'approved') return 'success';
-  if (status === 'pending' || status === 'submitted' || status === 'in_transit') return 'warning';
-  if (status === 'cancelled' || status === 'rejected') return 'danger';
+  if (status === 'closed' || status === 'received' || status === 'sent' || status === 'completed' || status === 'approved') return 'success';
+  if (status === 'pending' || status === 'partially_sent' || status === 'partially_received' || status === 'submitted' || status === 'in_transit') return 'warning';
+  if (status === 'cancelled' || status === 'declined' || status === 'rejected') return 'danger';
   return 'neutral';
 };
 
-export const transferLineVaries = (line: TransferOrder['items'][number]) =>
-  Number(line.received_quantity) !== Number(line.sent_quantity);
+// The status in words — the raw enum with underscores read as spaces.
+export const transferStatusLabel = (status: string): string => status.replaceAll('_', ' ');
 
-// Where a transfer/return sits, in words, from its two ledger legs.
-export function transferReceivingStatus(t: TransferOrder): { label: string; variant: 'success' | 'warning' | 'neutral' | 'danger' } {
-  if (t.received_transaction_id) return { label: 'Received', variant: 'success' };
-  if (t.sent_transaction_id) return { label: 'Sent — awaiting receipt', variant: 'warning' };
-  if (t.status === 'declined' || t.status === 'cancelled' || t.status === 'rejected') {
-    return { label: t.status.replaceAll('_', ' '), variant: 'danger' };
-  }
-  return { label: t.status.replaceAll('_', ' '), variant: 'neutral' };
-}
+// Whether a child leg's line was received short or over what was sent.
+export const transferLineVaries = (line: Transfer['items'][number]) =>
+  Number(line.received_quantity) !== Number(line.sent_quantity);

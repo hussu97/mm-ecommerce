@@ -6,6 +6,7 @@
 // to the shift reports, so this route is now just the configurator.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   branchesApi,
   inventoryApi,
@@ -31,9 +32,12 @@ export default function TransfersPage() {
 
   return (
     <div className="max-w-[1500px] space-y-8">
-      <BranchFilter value={branchId} onChange={setBranchId} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BranchFilter value={branchId} onChange={setBranchId} />
+        <Link href="/inventory/transfers/new" className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-xs font-body font-medium uppercase tracking-wider hover:opacity-90 transition-opacity">New transfer order</Link>
+      </div>
       <p className="text-sm text-gray-500">
-        Choose a branch first. Its transfer templates are the reusable pick lists a register draws on to raise an inter-branch transfer. The transfer &amp; return log lives under <strong>Report submissions</strong>.
+        Choose a branch first. Its transfer templates are the reusable pick lists a register draws on to raise an inter-branch transfer. To raise an order now, use <strong>New transfer order</strong>; the transfer &amp; return log lives under <strong>Report submissions</strong>.
       </p>
       <TransferTemplatesSection branchId={branchId} branches={branches} branchName={branchName} />
     </div>
