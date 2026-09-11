@@ -432,6 +432,9 @@ export interface InventoryTransaction {
   total_cost: number;
   notes: string | null;
   posted_at: string | null;
+  // Who posted the transaction, resolved server-side. Null when the poster is
+  // unknown or the row predates the field (e.g. a system-generated posting).
+  posted_by_name: string | null;
   posting_sequence: number | null;
   source_type: string | null;
   source_id: string | null;

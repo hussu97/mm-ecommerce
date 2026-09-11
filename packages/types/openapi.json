@@ -12476,6 +12476,17 @@
             ],
             "title": "Posted At"
           },
+          "posted_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted By Name"
+          },
           "poster_id": {
             "anyOf": [
               {
@@ -31479,6 +31490,29 @@
               }
             ],
             "title": "Submitted At"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
           }
         },
         "required": [
@@ -31609,6 +31643,10 @@
             "format": "uuid",
             "title": "Source Branch Id",
             "type": "string"
+          },
+          "version_number": {
+            "title": "Version Number",
+            "type": "integer"
           }
         },
         "required": [
@@ -31617,7 +31655,8 @@
           "destination_branch_id",
           "name",
           "is_active",
-          "display_order"
+          "display_order",
+          "version_number"
         ],
         "title": "TransferTemplateResponse",
         "type": "object"
@@ -49165,45 +49204,6 @@
       }
     },
     "/api/v1/inventory/transfer-templates/{template_id}": {
-      "delete": {
-        "operationId": "delete_transfer_template_api_v1_inventory_transfer_templates__template_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "template_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Template Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Delete Transfer Template",
-        "tags": [
-          "Inventory"
-        ]
-      },
       "put": {
         "operationId": "update_transfer_template_api_v1_inventory_transfer_templates__template_id__put",
         "parameters": [
@@ -49256,6 +49256,55 @@
           }
         ],
         "summary": "Update Transfer Template",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/transfer-templates/{template_id}/deactivate": {
+      "post": {
+        "description": "Retire a template without deleting it \u2014 only the latest revision of a\nlineage may be deactivated, so an older active revision cannot resurface on the\nregister. Orders raised from it keep their snapshot regardless.",
+        "operationId": "deactivate_transfer_template_api_v1_inventory_transfer_templates__template_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Deactivate Transfer Template",
         "tags": [
           "Inventory"
         ]

@@ -209,6 +209,8 @@ export const inventoryApi = {
 
   transactions: (params?: { branch_id?: string; type?: string; status?: string; business_date?: string; search?: string; limit?: number; offset?: number }) =>
     api.get<InventoryTransaction[]>(`/inventory/transactions${buildQs(params)}`),
+  getTransaction: (id: string) =>
+    api.get<InventoryTransaction>(`/inventory/transactions/${id}`),
   createTransaction: (d: Record<string, unknown>, post = true) =>
     api.post<InventoryTransaction>(`/inventory/transactions${buildQs({ post })}`, d),
   adjust: (d: Record<string, unknown>) => api.post<InventoryTransaction>('/inventory/transactions/adjust', d),
@@ -286,8 +288,8 @@ export const inventoryApi = {
     api.post<TransferTemplate>('/inventory/transfer-templates', data),
   updateTransferTemplate: (id: string, data: TransferTemplateWrite) =>
     api.put<TransferTemplate>(`/inventory/transfer-templates/${id}`, data),
-  deleteTransferTemplate: (id: string) =>
-    api.delete<void>(`/inventory/transfer-templates/${id}`),
+  deactivateTransferTemplate: (id: string) =>
+    api.post<TransferTemplate>(`/inventory/transfer-templates/${id}/deactivate`, {}),
   transferOrders: (params?: { branch_id?: string; source_branch_id?: string; status?: string; limit?: number }) =>
     api.get<TransferOrder[]>(`/inventory/transfer-orders${buildQs(params)}`),
   transferOrder: (id: string) =>

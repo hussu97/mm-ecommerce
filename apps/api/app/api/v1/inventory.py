@@ -392,6 +392,7 @@ def _serialise_transaction(
     transaction: InventoryTransaction,
     names: dict[uuid.UUID, InventoryItem],
     references: dict[uuid.UUID, dict[str, str | None]] | None = None,
+    user_names: dict[uuid.UUID, str] | None = None,
 ) -> InventoryTransactionResponse:
     payload = InventoryTransactionResponse.model_validate(transaction)
     for line in payload.items:
@@ -402,7 +403,30 @@ def _serialise_transaction(
     if references is not None and (ref := references.get(transaction.id)):
         payload.source_reference = ref["reference"]
         payload.source_link = ref["link"]
+    if user_names is not None:
+        # Prefer the poster (who committed the movement); fall back to the creator
+        # for a draft that was posted by the same hand in one step, as a stock
+        # audit is.
+        uid = transaction.poster_id or transaction.creator_id
+        payload.posted_by_name = user_names.get(uid) if uid else None
     return payload
+
+
+async def _resolve_poster_names(
+    db: AsyncSession, transactions: list[InventoryTransaction]
+) -> dict[uuid.UUID, str]:
+    """Resolve each movement's poster/creator to a display name in one query, so a
+    posted stock count reads as a submission with an author rather than a UUID."""
+    ids = {t.poster_id for t in transactions if t.poster_id}
+    ids |= {t.creator_id for t in transactions if t.creator_id}
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(User.id, User.display_name, User.email).where(User.id.in_(ids))
+        )
+    ).all()
+    return {row[0]: (row[1] or row[2]) for row in rows}
 
 
 async def _resolve_source_references(
@@ -503,6 +527,14 @@ async def _resolve_source_references(
             }
         elif t.purchase_order_id and t.purchase_order_id in pos:
             resolved[t.id] = {"reference": pos[t.purchase_order_id], "link": None}
+        elif t.source_type == "bulk_stock_audit":
+            # A manual stock count is its own source document — the audit IS the
+            # transaction, so it references its own number and links to its own
+            # detail page.
+            resolved[t.id] = {
+                "reference": t.reference,
+                "link": f"/inventory/transactions/{t.id}",
+            }
     return resolved
 
 
@@ -606,8 +638,9 @@ async def list_transactions(
     transactions = list((await db.execute(stmt)).scalars().unique().all())
     names = await _item_lookup_for_transactions(db, transactions)
     references = await _resolve_source_references(db, transactions)
+    user_names = await _resolve_poster_names(db, transactions)
     return [
-        _serialise_transaction(transaction, names, references)
+        _serialise_transaction(transaction, names, references, user_names)
         for transaction in transactions
     ]
 
@@ -707,7 +740,11 @@ async def get_transaction(
 ):
     transaction = await inventory_service.load_transaction(db, transaction_id)
     await access_service.assert_branch_access(db, user, transaction.branch_id)
-    return _serialise_transaction(transaction, await _item_lookup(db, transaction))
+    references = await _resolve_source_references(db, [transaction])
+    user_names = await _resolve_poster_names(db, [transaction])
+    return _serialise_transaction(
+        transaction, await _item_lookup(db, transaction), references, user_names
+    )
 
 
 @transactions_router.post(

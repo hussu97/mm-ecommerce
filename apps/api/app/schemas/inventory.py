@@ -378,6 +378,11 @@ class InventoryTransactionResponse(ORMModel):
     notes: str | None
     creator_id: UUID | None
     poster_id: UUID | None
+    #: The display name of whoever posted the movement (the poster, or the creator
+    #: when no distinct poster). Resolved by the read endpoints so a manual stock
+    #: count reads as a submission with an author, the way a shift report does;
+    #: null when the user cannot be resolved.
+    posted_by_name: str | None = None
     posted_at: datetime | None
     posting_sequence: int | None = None
     source_accepted_sequence: int | None = None
@@ -564,3 +569,41 @@ class QuantityAdjustmentRequest(BaseModel):
     quantity_delta: Decimal
     reason_id: UUID | None = None
     notes: str | None = None
+
+
+# ─── Transfer templates ───────────────────────────────────────────────────────
+
+
+class TransferTemplateItemInput(BaseModel):
+    item_id: UUID
+    display_order: int = 0
+
+
+class TransferTemplateUpsert(BaseModel):
+    source_branch_id: UUID
+    destination_branch_id: UUID | None = None
+    name: str = Field(min_length=1, max_length=150)
+    is_active: bool = True
+    display_order: int = 0
+    items: list[TransferTemplateItemInput] = Field(min_length=1)
+
+
+class TransferTemplateItemResponse(ORMModel):
+    id: UUID
+    item_id: UUID
+    display_order: int
+    item_name: str | None = None
+    item_sku: str | None = None
+
+
+class TransferTemplateResponse(ORMModel):
+    id: UUID
+    source_branch_id: UUID
+    destination_branch_id: UUID | None
+    name: str
+    is_active: bool
+    display_order: int
+    #: The revision number within the (source_branch_id, name) lineage. The admin
+    #: shows version history and marks the highest per lineage as Current.
+    version_number: int
+    items: list[TransferTemplateItemResponse] = []

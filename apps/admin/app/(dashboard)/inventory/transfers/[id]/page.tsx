@@ -73,6 +73,9 @@ export default function TransferDetailPage() {
         <Detail label="To" value={branchName(transfer.branch_id)} />
         <Detail label="Business date" value={transfer.business_date} />
         <Detail label="Created" value={transfer.created_at ? formatDateTime(transfer.created_at) : '—'} />
+        {transfer.template_version != null && (
+          <Detail label="Raised from" value={`Template v${transfer.template_version}`} />
+        )}
       </div>
 
       {hasVariance && (

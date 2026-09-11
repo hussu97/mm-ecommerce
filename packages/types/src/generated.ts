@@ -4652,8 +4652,29 @@ export interface paths {
         /** Update Transfer Template */
         put: operations["update_transfer_template_api_v1_inventory_transfer_templates__template_id__put"];
         post?: never;
-        /** Delete Transfer Template */
-        delete: operations["delete_transfer_template_api_v1_inventory_transfer_templates__template_id__delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/transfer-templates/{template_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate Transfer Template
+         * @description Retire a template without deleting it — only the latest revision of a
+         *     lineage may be deactivated, so an older active revision cannot resurface on the
+         *     register. Orders raised from it keep their snapshot regardless.
+         */
+        post: operations["deactivate_transfer_template_api_v1_inventory_transfer_templates__template_id__deactivate_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -12747,6 +12768,8 @@ export interface components {
             paid_tax: string;
             /** Posted At */
             posted_at: string | null;
+            /** Posted By Name */
+            posted_by_name?: string | null;
             /** Poster Id */
             poster_id: string | null;
             /** Posting Sequence */
@@ -19082,6 +19105,10 @@ export interface components {
             status: string;
             /** Submitted At */
             submitted_at: string | null;
+            /** Template Id */
+            template_id?: string | null;
+            /** Template Version */
+            template_version?: number | null;
         };
         /** TransferTemplateItemInput */
         TransferTemplateItemInput: {
@@ -19140,6 +19167,8 @@ export interface components {
              * Format: uuid
              */
             source_branch_id: string;
+            /** Version Number */
+            version_number: number;
         };
         /** TransferTemplateUpsert */
         TransferTemplateUpsert: {
@@ -28835,7 +28864,7 @@ export interface operations {
             };
         };
     };
-    delete_transfer_template_api_v1_inventory_transfer_templates__template_id__delete: {
+    deactivate_transfer_template_api_v1_inventory_transfer_templates__template_id__deactivate_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -28847,11 +28876,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            204: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["TransferTemplateResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

@@ -178,3 +178,101 @@ async def test_offset_pages_through_without_overlap(world):
         f"{MARKER}-BETA",
         f"{MARKER}-GAMMA",
     }
+
+
+async def test_stock_audit_reads_as_submission_with_author_and_link(engine):
+    """A posted manual count (source_type=bulk_stock_audit) surfaces its poster's
+    name and a deep link to its own transaction detail — so the ledger and the
+    submissions list read it as a stock-take with an author, not a bare UUID."""
+    from app.api.v1.inventory import get_transaction
+    from app.models.user import User
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        branch = Branch(
+            name=f"{MARKER} audit", reference=f"{MARKER}-{uuid.uuid4().hex[:12]}"
+        )
+        db.add(branch)
+        await db.flush()
+        db.add(Warehouse(branch_id=branch.id, name="Default", is_default=True))
+        counter = User(
+            email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.com",
+            display_name="Ava Counter",
+        )
+        db.add(counter)
+        item = InventoryItem(
+            sku=f"{MARKER}-{uuid.uuid4().hex[:8]}",
+            name=f"{MARKER} Flour",
+            kind="raw_material",
+            tracking_mode="stocked",
+            storage_unit="g",
+            ingredient_unit="g",
+            storage_to_ingredient_factor=Decimal("1"),
+            cost=Decimal("1"),
+        )
+        db.add(item)
+        await db.flush()
+        txn = InventoryTransaction(
+            reference=f"{MARKER}-CNT-1",
+            type="inventory_count",
+            status="draft",
+            branch_id=branch.id,
+            business_date="2026-09-11",
+            source_type="bulk_stock_audit",
+            source_id="stock-audit:x",
+            creator_id=counter.id,
+            poster_id=counter.id,
+        )
+        db.add(txn)
+        await db.flush()
+        db.add(
+            InventoryTransactionItem(
+                transaction_id=txn.id,
+                item_id=item.id,
+                quantity=Decimal("5"),
+                unit="ingredient",
+                conversion_factor=Decimal("1"),
+                unit_cost=Decimal("1"),
+            )
+        )
+        await db.commit()
+        branch_id, txn_id, counter_id = branch.id, txn.id, counter.id
+
+    try:
+        async with Session() as db:
+            rows = await _list(db, branch_id=branch_id, type="inventory_count")
+            row = next(r for r in rows if r.reference == f"{MARKER}-CNT-1")
+            assert row.posted_by_name == "Ava Counter"
+            assert row.source_reference == f"{MARKER}-CNT-1"
+            assert row.source_link == f"/inventory/transactions/{txn_id}"
+
+            detail = await get_transaction(transaction_id=txn_id, db=db, user=ADMIN)
+            assert detail.posted_by_name == "Ava Counter"
+            assert detail.source_link == f"/inventory/transactions/{txn_id}"
+    finally:
+        from app.models.user import User as _User
+
+        async with Session() as db:
+            await db.execute(text("SET session_replication_role = 'replica'"))
+            await db.execute(
+                InventoryTransactionItem.__table__.delete().where(
+                    InventoryTransactionItem.transaction_id == txn_id
+                )
+            )
+            await db.execute(
+                InventoryTransaction.__table__.delete().where(
+                    InventoryTransaction.id == txn_id
+                )
+            )
+            await db.execute(
+                InventoryItem.__table__.delete().where(
+                    InventoryItem.sku.like(f"{MARKER}-%")
+                )
+            )
+            await db.execute(
+                Warehouse.__table__.delete().where(Warehouse.branch_id == branch_id)
+            )
+            await db.execute(_User.__table__.delete().where(_User.id == counter_id))
+            await db.execute(Branch.__table__.delete().where(Branch.id == branch_id))
+            await db.execute(text("SET session_replication_role = 'origin'"))
+            await db.commit()

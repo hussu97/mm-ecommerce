@@ -17,9 +17,11 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -160,6 +162,22 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
         ForeignKey("inventory_transactions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: The transfer template this order was raised from, and the immutable record
+    #: of that template as it stood at raise time. Nullable because returns and
+    #: ad-hoc transfers are raised without a template. RESTRICT so a template with
+    #: history cannot be hard-deleted out from under the orders that cite it —
+    #: deactivate it instead. Downstream reads the ``template_snapshot``, never the
+    #: live template, exactly as a shift report reads its own snapshot.
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transfer_templates.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
 
     items: Mapped[list[TransferOrderItem]] = relationship(
         "TransferOrderItem",
@@ -221,12 +239,30 @@ class InventoryTransferTemplate(Base, UUIDMixin, TimestampMixin):
     catalogue — the same idea as a shift-report template, at the sending branch.
 
     ``destination_branch_id`` is optional: a template can be for one destination or
-    left open for the cashier to choose. Editable in place (not versioned) — a
-    transfer posts by its own ledger movement, so a template is only a starting
-    point, never an audit record the way a report snapshot is.
+    left open for the cashier to choose.
+
+    Append-only versioned, exactly like a shift-report template. A template is
+    identified to staff by its ``(source_branch_id, name)`` lineage, not by one
+    immutable row: editing it inserts a new row at the next ``version_number`` and
+    leaves the old revision as history. "Current" is the highest ``version_number``
+    per lineage. A transfer raised from a template stamps a snapshot of it onto the
+    ``TransferOrder``, so the order's provenance survives a later edit or
+    deactivation of the live template.
     """
 
     __tablename__ = "inventory_transfer_templates"
+    __table_args__ = (
+        # Migration 226. A name identifies a transfer-template family to staff, not
+        # one row: an operator must be able to create v2 under the same name. The
+        # revision tuple is the stable identity, and the service serializes
+        # allocation — this constraint is the database backstop for any other writer.
+        UniqueConstraint(
+            "source_branch_id",
+            "name",
+            "version_number",
+            name="uq_inventory_transfer_template_revision",
+        ),
+    )
 
     source_branch_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -246,6 +282,9 @@ class InventoryTransferTemplate(Base, UUIDMixin, TimestampMixin):
     display_order: Mapped[int] = mapped_column(
         Numeric(6, 0), nullable=False, server_default="0"
     )
+    version_number: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
     items: Mapped[list[InventoryTransferTemplateItem]] = relationship(
         "InventoryTransferTemplateItem",
         back_populates="template",
@@ -257,6 +296,11 @@ class InventoryTransferTemplate(Base, UUIDMixin, TimestampMixin):
 
 class InventoryTransferTemplateItem(Base, UUIDMixin):
     __tablename__ = "inventory_transfer_template_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id", "item_id", name="uq_inventory_transfer_template_item"
+        ),
+    )
 
     template_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

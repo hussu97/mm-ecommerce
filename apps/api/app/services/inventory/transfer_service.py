@@ -46,6 +46,7 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.operations import (
+    InventoryTransferTemplate,
     TransferKindEnum,
     TransferOrder,
     TransferOrderItem,
@@ -56,6 +57,7 @@ from app.services.inventory import (
     inventory_service,
     recipe_service,
     source_event_service,
+    transfer_template_service,
 )
 from app.services.pos import business_day_service
 
@@ -244,6 +246,7 @@ async def create_and_send(
     kind: str = TransferKindEnum.TRANSFER.value,
     notes: str | None = None,
     client_request_id: str | None = None,
+    template_id: uuid.UUID | None = None,
 ) -> TransferOrder:
     """Raise a transfer at the *sending* branch and ship it in one step.
 
@@ -255,6 +258,12 @@ async def create_and_send(
 
     ``lines`` is any object list carrying ``item_id``, ``quantity``, ``unit`` and
     an optional ``variance_reason`` (the reason a return line is going back).
+
+    When ``template_id`` is given, that exact template version is snapshotted onto
+    the order (``template_id``/``template_version``/``template_snapshot``) so the
+    order's provenance survives a later edit or deactivation of the live template —
+    downstream reads the snapshot, never the live row. Absent for a return or an
+    ad-hoc transfer, and the three columns stay null.
     """
     if source_branch.id == destination_branch.id:
         raise BadRequestError("A branch cannot transfer to itself")
@@ -274,6 +283,28 @@ async def create_and_send(
         if existing is not None:
             return await load_transfer_order(db, existing.id)
 
+    template_version: int | None = None
+    template_snapshot: dict | None = None
+    if template_id is not None:
+        template = (
+            (
+                await db.execute(
+                    select(InventoryTransferTemplate)
+                    .where(InventoryTransferTemplate.id == template_id)
+                    .options(selectinload(InventoryTransferTemplate.items))
+                )
+            )
+            .scalars()
+            .unique()
+            .one_or_none()
+        )
+        if template is None:
+            raise BadRequestError(f"Transfer template {template_id} not found")
+        template_version = template.version_number
+        template_snapshot = await transfer_template_service.snapshot_template(
+            db, template
+        )
+
     order = TransferOrder(
         reference=await next_transfer_reference(db),
         kind=kind,
@@ -290,6 +321,9 @@ async def create_and_send(
         responder_id=user.id,
         submitted_at=utcnow(),
         responded_at=utcnow(),
+        template_id=template_id,
+        template_version=template_version,
+        template_snapshot=template_snapshot,
     )
     # The pre-check above catches a sequential retry; this catches two truly
     # concurrent submits — the unique index refuses the loser, and we return the

@@ -16,8 +16,6 @@ import type { Branch, InventoryItem } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, LoadError, Select } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
-import { useConfirm } from '@/components/ui/feedback';
-import { StatusBadge } from '@/components/pos/ResourcePage';
 import { BranchFilter } from '../_shared';
 
 export default function TransfersPage() {
@@ -47,7 +45,6 @@ function TransferTemplatesSection({ branchId, branches, branchName }: {
   branches: Branch[];
   branchName: (id: string) => string;
 }) {
-  const confirm = useConfirm();
   const [templates, setTemplates] = useState<TransferTemplate[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loadError, setLoadError] = useState(false);
@@ -142,22 +139,32 @@ function TransferTemplatesSection({ branchId, branches, branchName }: {
     }
   };
 
-  const remove = async (template: TransferTemplate) => {
-    if (!(await confirm({
-      title: 'Delete template',
-      message: `Delete "${template.name}"? Registers will no longer offer this pick list.`,
-      confirmLabel: 'Delete',
-      danger: true,
-    }))) return;
+  // The latest revision of each lineage — a lineage being (source branch, name).
+  // Registers only ever see the latest active revision, so "current" is the
+  // highest version_number per lineage (mirrors templates/page.tsx). Templates
+  // are append-only: PUT creates a new version rather than editing in place.
+  const latestTemplateIds = useMemo(() => {
+    const latestByLineage = new Map<string, TransferTemplate>();
+    for (const template of templates) {
+      const key = `${template.source_branch_id}::${template.name}`;
+      const current = latestByLineage.get(key);
+      if (!current || template.version_number > current.version_number) {
+        latestByLineage.set(key, template);
+      }
+    }
+    return new Set(Array.from(latestByLineage.values(), (template) => template.id));
+  }, [templates]);
+
+  const deactivate = async (template: TransferTemplate) => {
     setSaving(true);
     setMessage(null);
     try {
-      await inventoryApi.deleteTransferTemplate(template.id);
+      await inventoryApi.deactivateTransferTemplate(template.id);
       if (editingId === template.id) resetForm();
-      setMessage({ text: `${template.name} deleted.`, error: false });
+      setMessage({ text: `${template.name} v${template.version_number} deactivated. Registers will no longer offer this pick list.`, error: false });
       await reload();
     } catch (error) {
-      setMessage({ text: error instanceof ApiError ? error.message : 'Could not delete the template. Please try again.', error: true });
+      setMessage({ text: error instanceof ApiError ? error.message : 'Could not deactivate the template. Please try again.', error: true });
     } finally {
       setSaving(false);
     }
@@ -216,11 +223,12 @@ function TransferTemplatesSection({ branchId, branches, branchName }: {
             { header: 'Destination', render: (row) => row.destination_branch_id ? branchName(row.destination_branch_id) : <span className="text-gray-400">Any</span> },
             { header: 'Items', render: (row) => row.items.length },
             { header: 'Order', render: (row) => row.display_order },
-            { header: 'Status', render: (row) => <StatusBadge active={row.is_active} /> },
+            { header: 'Version', render: (row) => `v${row.version_number}` },
+            { header: 'POS status', render: (row) => latestTemplateIds.has(row.id) ? row.is_active ? <Badge variant="success">Current</Badge> : <Badge variant="neutral">Deactivated</Badge> : <Badge variant="neutral">Superseded</Badge> },
           ]} actions={(row) => (
             <>
               <RowAction onClick={() => startEdit(row)}>Edit</RowAction>
-              <RowAction danger disabled={saving} onClick={() => void remove(row)}>Delete</RowAction>
+              {latestTemplateIds.has(row.id) && row.is_active && <RowAction disabled={saving} onClick={() => void deactivate(row)}>Deactivate</RowAction>}
             </>
           )} />}
         </>

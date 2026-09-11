@@ -14,7 +14,7 @@ import {
   type ShiftInventoryReport,
   type TransferOrder,
 } from '@/lib/pos-api';
-import type { Branch } from '@/lib/pos-types';
+import type { Branch, InventoryTransaction } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
@@ -59,6 +59,7 @@ export default function SubmissionsPage() {
       </div>
       <ShiftReportsSection branchId={branchId} />
       <TransferDocumentsSection branchId={branchId} branchName={branchName} />
+      <StockCountsSection branchId={branchId} branchName={branchName} />
     </div>
   );
 }
@@ -243,6 +244,85 @@ function TransferDocumentsSection({ branchId, branchName }: {
             ]}
           />
           <Pagination page={page} pages={pages} total={visible.length} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="transfers" />
+        </>
+      )}
+    </section>
+  );
+}
+
+// ─── Manual stock counts ──────────────────────────────────────────────────────
+
+function StockCountsSection({ branchId, branchName }: {
+  branchId: string;
+  branchName: (id: string) => string;
+}) {
+  const router = useRouter();
+  const [rows, setRows] = useState<InventoryTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
+
+  useEffect(() => { setPage(1); }, [branchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    // A branch's first count posts as an opening balance (OPN-…); every count
+    // after that posts as an inventory count (CNT-…). The endpoint filters on a
+    // single type, so pull both and merge by id.
+    Promise.all([
+      inventoryApi.transactions({ type: 'inventory_count', branch_id: branchId || undefined, limit: 2000 }),
+      inventoryApi.transactions({ type: 'opening_balance', branch_id: branchId || undefined, limit: 2000 }),
+    ])
+      .then(([counts, openings]) => {
+        if (cancelled) return;
+        const byId = new Map<string, InventoryTransaction>();
+        for (const tx of [...counts, ...openings]) byId.set(tx.id, tx);
+        setRows(Array.from(byId.values()));
+      })
+      .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.message : 'Failed to load stock counts.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [branchId]);
+
+  const visible = useMemo(() => {
+    const stamp = (tx: InventoryTransaction) => tx.posted_at ?? tx.created_at;
+    return [...rows].sort((a, b) => stamp(b).localeCompare(stamp(a)));
+  }, [rows]);
+
+  const pages = Math.max(1, Math.ceil(visible.length / perPage));
+  const pageRows = visible.slice((page - 1) * perPage, page * perPage);
+  const netDelta = (tx: InventoryTransaction) =>
+    tx.items.reduce((sum, line) => sum + Number(line.signed_quantity ?? 0), 0);
+
+  return (
+    <section className="space-y-4 border-t border-gray-200 pt-8">
+      <div>
+        <h2 className="font-display text-lg text-primary tracking-wide">Manual stock counts</h2>
+        <p className="text-sm text-gray-500">Stock-audit counts posted from the register {branchId ? 'for this branch' : 'across all branches'} — a branch&apos;s first count is an opening balance, every count after it a stock count. Click a row to see the counted lines and their value impact.</p>
+      </div>
+      {error && <p className="bg-red-50 p-2 text-sm text-red-800">{error}</p>}
+      {loading ? <Spinner /> : (
+        <>
+          <DataTable
+            rows={pageRows}
+            rowKey={(row) => row.id}
+            onRowClick={(row) => router.push(`/inventory/transactions/${row.id}`)}
+            empty={<span className="text-sm text-gray-500">No stock counts match these filters.</span>}
+            columns={[
+              { header: 'Business date', render: (row) => row.business_date },
+              { header: 'Posted', render: (row) => row.posted_at ? formatDateTime(row.posted_at) : '—' },
+              { header: 'Branch', render: (row) => branchName(row.branch_id) },
+              { header: 'Posted by', render: (row) => row.posted_by_name ?? '—' },
+              { header: 'Reference', priority: 'primary', render: (row) => <Link href={`/inventory/transactions/${row.id}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{row.reference}</Link> },
+              { header: 'Items', className: 'text-right', render: (row) => row.items.length },
+              { header: 'Net delta', className: 'text-right', render: (row) => { const d = netDelta(row); return <span className={d < 0 ? 'text-red-600' : d > 0 ? 'text-green-700' : 'text-gray-400'}>{d === 0 ? '—' : `${d > 0 ? '+' : ''}${formatQuantity(d)}`}</span>; } },
+              { header: 'Value impact', className: 'text-right', render: (row) => formatCurrency(row.total_cost) },
+            ]}
+          />
+          <Pagination page={page} pages={pages} total={visible.length} perPage={perPage} onPageChange={setPage} onPerPageChange={setPerPage} label="counts" />
         </>
       )}
     </section>
