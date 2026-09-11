@@ -9,7 +9,7 @@ docs/integrators-and-aggregators.md.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -22,13 +22,14 @@ from sqlalchemy.orm import selectinload
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.money import money
-from app.core.permissions import require
+from app.core.permissions import ensure, require
 from app.models import (
     Branch,
     Device,
     InventoryCategory,
     InventoryItem,
     InventoryLevel,
+    InventoryTransaction,
     InventoryTransferTemplate,
     NotificationRule,
     Order,
@@ -38,9 +39,10 @@ from app.models import (
     TableStatusEnum,
     Till,
     TillStatusEnum,
+    Transfer,
     TransferKindEnum,
     TransferOrder,
-    TransferOrderItem,
+    TransferStatusEnum,
     Warehouse,
 )
 from app.models.base import utcnow
@@ -50,6 +52,17 @@ from app.schemas.inventory import (
     TransferTemplateItemResponse,
     TransferTemplateResponse,
     TransferTemplateUpsert,
+)
+from app.schemas.transfers import (
+    TransferLineResponse,
+    TransferOrderAdjustmentEntry,
+    TransferOrderCreate,
+    TransferOrderReport,
+    TransferOrderReportChild,
+    TransferOrderResponse,
+    TransferOrderTotalLine,
+    TransferReceive,
+    TransferResponse,
 )
 from app.services import crud_service, push_service
 from app.services.inventory import (
@@ -111,147 +124,263 @@ async def _category_map(
 transfer_orders_router = APIRouter()
 
 
-class TransferLineInput(BaseModel):
-    item_id: uuid.UUID
-    quantity: Decimal = Field(gt=0)
-    unit: Literal["storage", "ingredient"] = "storage"
-    notes: str | None = None
-
-
-class TransferOrderCreate(BaseModel):
-    branch_id: uuid.UUID
-    source_branch_id: uuid.UUID
-    warehouse_id: uuid.UUID | None = None
-    source_warehouse_id: uuid.UUID | None = None
-    required_date: date | None = None
-    notes: str | None = None
-    items: list[TransferLineInput] = Field(min_length=1)
-
-
-class QuantityDecision(BaseModel):
-    transfer_order_item_id: uuid.UUID
-    quantity: Decimal = Field(ge=0)
-
-
-class AcceptTransfer(BaseModel):
-    lines: list[QuantityDecision] = Field(default_factory=list)
-
-
-class AdminTransferReceiveLine(BaseModel):
-    transfer_order_item_id: uuid.UUID
-    quantity: Decimal = Field(ge=0)
-    #: Why the received quantity differs from what was sent (short/over). Optional;
-    #: recorded on the line when supplied.
-    reason: str | None = None
-
-
-class AdminTransferReceive(BaseModel):
-    lines: list[AdminTransferReceiveLine] = Field(default_factory=list)
-
-
-class TransferOrderLineResponse(ORMModel):
-    id: uuid.UUID
-    item_id: uuid.UUID
-    quantity: Decimal
-    approved_quantity: Decimal | None
-    sent_quantity: Decimal
-    received_quantity: Decimal
-    unit: str
-    notes: str | None
-    variance_reason: str | None = None
-    item_name: str | None = None
-    item_sku: str | None = None
-    #: The item's inventory category, backfilled from the loaded item so a client
-    #: can group the lines by it. Both null for an uncategorised item (sort last).
-    category_name: str | None = None
-    category_order: int | None = None
-
-
-class TransferOrderResponse(ORMModel):
-    id: uuid.UUID
-    reference: str
-    status: str
-    kind: str
-    branch_id: uuid.UUID
-    source_branch_id: uuid.UUID
-    business_date: str
-    required_date: date | None
-    notes: str | None
-    submitted_at: datetime | None
-    responded_at: datetime | None
-    sent_transaction_id: uuid.UUID | None
-    received_transaction_id: uuid.UUID | None
-    #: Provenance — the transfer template this order was raised from and its version
-    #: at raise time, so the admin detail page can show "raised from template v3".
-    #: Null for a return or an ad-hoc transfer raised without a template.
-    template_id: uuid.UUID | None = None
-    template_version: int | None = None
-    created_at: datetime
-    items: list[TransferOrderLineResponse] = []
-
-
-async def _serialise_transfer(
-    db: AsyncSession, order: TransferOrder
-) -> TransferOrderResponse:
-    payload = TransferOrderResponse.model_validate(order)
-    ids = {line.item_id for line in order.items}
-    if ids:
+async def _backfill_lines(
+    db: AsyncSession,
+    line_payloads: list[TransferLineResponse],
+    lines: list,
+    *,
+    lookup: dict | None = None,
+    categories: dict | None = None,
+) -> None:
+    """Fill item name/sku/category onto serialised child lines from the DB."""
+    if lookup is None or categories is None:
+        ids = {line.item_id for line in lines}
+        if not ids:
+            return
         rows = (
             (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
             .scalars()
             .all()
         )
         lookup = {r.id: r for r in rows}
-        categories = await _category_map(db, [r.id for r in rows])
-        for line in payload.items:
-            item = lookup.get(line.item_id)
-            if item:
-                line.item_name = item.name
-                line.item_sku = item.sku
-                category = (
-                    categories.get(item.category_id) if item.category_id else None
-                )
-                if category is not None:
-                    line.category_name = category.name
-                    line.category_order = int(category.display_order or 0)
+        categories = await _category_map(db, list(ids))
+    for payload, line in zip(line_payloads, lines):
+        item = lookup.get(line.item_id)
+        if not item:
+            continue
+        payload.item_name = item.name
+        payload.item_sku = item.sku
+        category = categories.get(item.category_id) if item.category_id else None
+        if category is not None:
+            payload.category_name = category.name
+            payload.category_order = int(category.display_order or 0)
+
+
+async def _serialise_child(db: AsyncSession, transfer: Transfer) -> TransferResponse:
+    payload = TransferResponse.model_validate(transfer)
+    await _backfill_lines(db, payload.items, transfer.items)
     return payload
+
+
+async def _serialise_order(
+    db: AsyncSession, order: TransferOrder
+) -> TransferOrderResponse:
+    payload = TransferOrderResponse.model_validate(order)
+    item_ids = {line.item_id for child in order.children for line in child.items}
+    lookup: dict = {}
+    categories: dict = {}
+    if item_ids:
+        rows = (
+            (
+                await db.execute(
+                    select(InventoryItem).where(InventoryItem.id.in_(item_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        lookup = {r.id: r for r in rows}
+        categories = await _category_map(db, list(item_ids))
+
+    totals: dict[uuid.UUID, TransferOrderTotalLine] = {}
+    for child_payload, child in zip(payload.children, order.children):
+        await _backfill_lines(
+            db, child_payload.items, child.items, lookup=lookup, categories=categories
+        )
+        for line in child.items:
+            qty = Decimal(str(line.quantity))
+            total = totals.get(line.item_id)
+            if total is None:
+                item = lookup.get(line.item_id)
+                category = (
+                    categories.get(item.category_id)
+                    if item and item.category_id
+                    else None
+                )
+                totals[line.item_id] = TransferOrderTotalLine(
+                    item_id=line.item_id,
+                    item_name=item.name if item else None,
+                    item_sku=item.sku if item else None,
+                    unit=line.unit,
+                    total_quantity=qty,
+                    category_name=category.name if category else None,
+                    category_order=(
+                        int(category.display_order or 0) if category else None
+                    ),
+                )
+            else:
+                total.total_quantity += qty
+    payload.total_by_item = sorted(
+        totals.values(),
+        key=lambda r: (
+            r.category_order if r.category_order is not None else 9999,
+            r.item_name or "",
+        ),
+    )
+    return payload
+
+
+def _is_super(user: User) -> bool:
+    return bool(user.is_admin or (user.role and user.role.is_super_admin))
+
+
+async def _assert_order_access(
+    db: AsyncSession, user: User, order: TransferOrder
+) -> None:
+    """A user may see an order they source from or that ships to one of their
+    branches."""
+    if _is_super(user):
+        return
+    allowed = set(access_service.branch_ids_for(user))
+    destinations = {child.branch_id for child in order.children}
+    if order.source_branch_id in allowed or (destinations & allowed):
+        return
+    await access_service.assert_branch_access(db, user, order.source_branch_id)
+
+
+async def _build_report(
+    db: AsyncSession, order: TransferOrder
+) -> TransferOrderReport:
+    branch_ids = {order.source_branch_id} | {c.branch_id for c in order.children}
+    branches = (
+        (await db.execute(select(Branch).where(Branch.id.in_(branch_ids))))
+        .scalars()
+        .all()
+    )
+    names = {b.id: b.name for b in branches}
+
+    tx_ids = {
+        tid
+        for child in order.children
+        for tid in (child.sent_transaction_id, child.received_transaction_id)
+        if tid is not None
+    }
+    tx_totals: dict[uuid.UUID, Decimal] = {}
+    if tx_ids:
+        rows = (
+            await db.execute(
+                select(
+                    InventoryTransaction.id, InventoryTransaction.total_cost
+                ).where(InventoryTransaction.id.in_(tx_ids))
+            )
+        ).all()
+        tx_totals = {row[0]: Decimal(str(row[1] or 0)) for row in rows}
+
+    children = [
+        TransferOrderReportChild(
+            transfer_id=child.id,
+            reference=child.reference,
+            destination_branch_id=child.branch_id,
+            destination_branch_name=names.get(child.branch_id),
+            status=child.status,
+            item_count=len(child.items),
+            total_sent=sum(
+                (Decimal(str(line.sent_quantity)) for line in child.items),
+                Decimal("0"),
+            ),
+            total_received=sum(
+                (Decimal(str(line.received_quantity)) for line in child.items),
+                Decimal("0"),
+            ),
+            sent_value=tx_totals.get(child.sent_transaction_id, Decimal("0")),
+            received_value=tx_totals.get(child.received_transaction_id, Decimal("0")),
+        )
+        for child in order.children
+    ]
+
+    adjustments: list[TransferOrderAdjustmentEntry] = []
+    adjustment_total = Decimal("0")
+    if order.adjustment_group_id is not None:
+        adj_txs = (
+            (
+                await db.execute(
+                    select(InventoryTransaction)
+                    .where(
+                        InventoryTransaction.correction_group_id
+                        == order.adjustment_group_id
+                    )
+                    .options(selectinload(InventoryTransaction.items))
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        item_ids = {it.item_id for tx in adj_txs for it in tx.items}
+        item_names: dict[uuid.UUID, str] = {}
+        if item_ids:
+            rows = (
+                await db.execute(
+                    select(InventoryItem.id, InventoryItem.name).where(
+                        InventoryItem.id.in_(item_ids)
+                    )
+                )
+            ).all()
+            item_names = {row[0]: row[1] for row in rows}
+        for tx in adj_txs:
+            for it in tx.items:
+                qty = Decimal(str(it.quantity))
+                cost = Decimal(str(it.unit_cost or 0))
+                value = qty * cost
+                adjustment_total += value
+                adjustments.append(
+                    TransferOrderAdjustmentEntry(
+                        transaction_id=tx.id,
+                        transaction_reference=tx.reference,
+                        item_id=it.item_id,
+                        item_name=item_names.get(it.item_id),
+                        quantity=qty,
+                        unit_cost=cost,
+                        value=value,
+                    )
+                )
+
+    return TransferOrderReport(
+        id=order.id,
+        reference=order.reference,
+        status=order.status,
+        kind=order.kind,
+        source_branch_id=order.source_branch_id,
+        source_branch_name=names.get(order.source_branch_id),
+        business_date=order.business_date,
+        created_at=order.created_at,
+        children=children,
+        adjustments=adjustments,
+        adjustment_total=adjustment_total,
+    )
 
 
 @transfer_orders_router.get("", response_model=list[TransferOrderResponse])
 async def list_transfer_orders(
-    branch_id: uuid.UUID | None = None,
     source_branch_id: uuid.UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
-    # The admin log fetches the branch's whole history for client-side paging, so
-    # allow up to the console's max page size (2000) rather than capping at 1000.
+    # The admin log fetches history for client-side paging, so allow up to the
+    # console's max page size (2000) rather than capping at 1000.
     limit: int = Query(100, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.manage")),
 ):
     stmt = select(TransferOrder)
-    if branch_id:
-        await access_service.assert_branch_access(db, user, branch_id)
-        stmt = stmt.where(TransferOrder.branch_id == branch_id)
     if source_branch_id:
         await access_service.assert_branch_access(db, user, source_branch_id)
         stmt = stmt.where(TransferOrder.source_branch_id == source_branch_id)
-    if (
-        not branch_id
-        and not source_branch_id
-        and not (user.is_admin or (user.role and user.role.is_super_admin))
-    ):
+    elif not _is_super(user):
         allowed = access_service.branch_ids_for(user)
         stmt = stmt.where(
             or_(
-                TransferOrder.branch_id.in_(allowed),
                 TransferOrder.source_branch_id.in_(allowed),
+                TransferOrder.id.in_(
+                    select(Transfer.transfer_order_id).where(
+                        Transfer.branch_id.in_(allowed)
+                    )
+                ),
             )
         )
     if status_filter:
         stmt = stmt.where(TransferOrder.status == status_filter)
     stmt = stmt.order_by(TransferOrder.created_at.desc()).limit(limit)
     orders = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_transfer(db, o) for o in orders]
+    return [await _serialise_order(db, o) for o in orders]
 
 
 @transfer_orders_router.get("/{order_id}", response_model=TransferOrderResponse)
@@ -260,15 +389,11 @@ async def get_transfer_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.manage")),
 ):
-    """One transfer or return, both legs — the ledger's transfer source links here
-    and the console's detail page reads it. Visible to a user with access to
-    either end of the transfer."""
+    """One transfer order with its per-branch children — the ledger's transfer
+    source links here and the console's detail page reads it."""
     order = await transfer_service.load_transfer_order(db, order_id)
-    if not (user.is_admin or (user.role and user.role.is_super_admin)):
-        allowed = set(access_service.branch_ids_for(user))
-        if order.branch_id not in allowed and order.source_branch_id not in allowed:
-            await access_service.assert_branch_access(db, user, order.branch_id)
-    return await _serialise_transfer(db, order)
+    await _assert_order_access(db, user, order)
+    return await _serialise_order(db, order)
 
 
 @transfer_orders_router.post(
@@ -279,142 +404,56 @@ async def create_transfer_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.manage")),
 ):
-    if data.branch_id == data.source_branch_id:
-        raise BadRequestError("A branch cannot transfer to itself")
-
-    destination = await crud_service.get_or_404(db, Branch, data.branch_id)
-    await access_service.assert_branch_access(db, user, data.branch_id)
-    await crud_service.get_or_404(db, Branch, data.source_branch_id)
-    if data.warehouse_id:
-        await inventory_service.assert_warehouse_for_branch(
-            db, data.warehouse_id, data.branch_id
+    """Raise a transfer order from one source branch, fanning out to many. Sending
+    more of an item than the source holds requires ``override`` on that item, which
+    also needs the adjustments permission (it writes stock off)."""
+    if any(item.override for item in data.items):
+        ensure(
+            user,
+            "inventory.adjustments.manage",
+            message="Overriding stock on hand needs the adjustments permission",
         )
+    source = await crud_service.get_or_404(db, Branch, data.source_branch_id)
+    await access_service.assert_branch_access(db, user, data.source_branch_id)
     if data.source_warehouse_id:
         await inventory_service.assert_warehouse_for_branch(
             db, data.source_warehouse_id, data.source_branch_id
         )
-
-    order = TransferOrder(
-        reference=await transfer_service.next_transfer_reference(db),
-        branch_id=data.branch_id,
-        source_branch_id=data.source_branch_id,
-        warehouse_id=data.warehouse_id,
-        source_warehouse_id=data.source_warehouse_id,
-        business_date=await business_day_service.current_business_date(db, destination),
-        required_date=data.required_date,
-        notes=data.notes,
-        creator_id=user.id,
-    )
-    db.add(order)
-    await db.flush()
-
-    for line in data.items:
-        item = await db.get(InventoryItem, line.item_id)
-        if item is None:
-            raise BadRequestError(f"Inventory item {line.item_id} not found")
-        db.add(
-            TransferOrderItem(
-                transfer_order_id=order.id,
-                item_id=line.item_id,
-                quantity=line.quantity,
-                unit=line.unit,
-                conversion_factor=(
-                    Decimal("1")
-                    if line.unit == "ingredient"
-                    else Decimal(str(item.storage_to_ingredient_factor))
-                ),
-                notes=line.notes,
-            )
-        )
-    await db.flush()
-    return await _serialise_transfer(
-        db, await transfer_service.load_transfer_order(db, order.id)
-    )
-
-
-@transfer_orders_router.post("/{order_id}/submit", response_model=TransferOrderResponse)
-async def submit_transfer(
-    order_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    order = await transfer_service.load_transfer_order(db, order_id)
-    await access_service.assert_branch_access(db, user, order.branch_id)
-    await transfer_service.submit_transfer_order(db, order=order, user=user)
-    return await _serialise_transfer(db, order)
-
-
-@transfer_orders_router.post("/{order_id}/accept", response_model=TransferOrderResponse)
-async def accept_transfer(
-    order_id: uuid.UUID,
-    data: AcceptTransfer,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    """Accept a request, optionally granting less than was asked for."""
-    order = await transfer_service.load_transfer_order(db, order_id)
-    await access_service.assert_branch_access(db, user, order.source_branch_id)
-    approved = {line.transfer_order_item_id: line.quantity for line in data.lines}
-    await transfer_service.accept_transfer_order(
-        db, order=order, user=user, approved=approved or None
-    )
-    return await _serialise_transfer(db, order)
-
-
-@transfer_orders_router.post(
-    "/{order_id}/decline", response_model=TransferOrderResponse
-)
-async def decline_transfer(
-    order_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    order = await transfer_service.load_transfer_order(db, order_id)
-    await access_service.assert_branch_access(db, user, order.source_branch_id)
-    await transfer_service.decline_transfer_order(db, order=order, user=user)
-    return await _serialise_transfer(db, order)
-
-
-@transfer_orders_router.post("/{order_id}/send", response_model=TransferOrderResponse)
-async def send_transfer(
-    order_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    """Ship the goods — decrements the source location."""
-    order = await transfer_service.load_transfer_order(db, order_id)
-    await access_service.assert_branch_access(db, user, order.source_branch_id)
-    await transfer_service.send_transfer(db, order=order, user=user)
-    return await _serialise_transfer(db, order)
-
-
-@transfer_orders_router.post(
-    "/{order_id}/receive", response_model=TransferOrderResponse
-)
-async def receive_transfer(
-    order_id: uuid.UUID,
-    data: AdminTransferReceive,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
-):
-    """Book the goods in. A shortfall against what was sent stays visible.
-
-    An empty ``lines`` list receives every line as sent (``receive_transfer``
-    defaults each line's received quantity to its ``sent_quantity``) — the
-    "accept all as sent" case needs no extra handling here.
-    """
-    order = await transfer_service.load_transfer_order(db, order_id)
-    await access_service.assert_branch_access(db, user, order.branch_id)
-    received = {line.transfer_order_item_id: line.quantity for line in data.lines}
-    reasons = {
-        line.transfer_order_item_id: line.reason
-        for line in data.lines
-        if line.reason is not None
+    destination_ids = {
+        allocation.branch_id
+        for item in data.items
+        for allocation in item.allocations
     }
-    await transfer_service.receive_transfer(
-        db, order=order, user=user, received=received or None, reasons=reasons or None
+    for branch_id in destination_ids:
+        await crud_service.get_or_404(db, Branch, branch_id)
+
+    order = await transfer_service.create_transfer_order(
+        db,
+        source_branch=source,
+        user=user,
+        items=data.items,
+        kind=data.kind,
+        notes=data.notes,
+        required_date=data.required_date,
+        template_id=data.template_id,
+        client_request_id=data.client_request_id,
     )
-    return await _serialise_transfer(db, order)
+    return await _serialise_order(db, order)
+
+
+@transfer_orders_router.get(
+    "/{order_id}/report", response_model=TransferOrderReport
+)
+async def get_transfer_order_report(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """The parent report: per-branch children with statuses and movement values,
+    plus the mini stock-adjustment report from any override at create time."""
+    order = await transfer_service.load_transfer_order(db, order_id)
+    await _assert_order_access(db, user, order)
+    return await _build_report(db, order)
 
 
 # ─── Transfer templates (admin) ───────────────────────────────────────────────
@@ -564,26 +603,6 @@ async def deactivate_transfer_template(
 pos_transfers_router = APIRouter()
 
 
-class PosTransferLineInput(BaseModel):
-    item_id: uuid.UUID
-    quantity: Decimal = Field(gt=0)
-    unit: Literal["storage", "ingredient"] = "storage"
-    variance_reason: str | None = None
-
-
-class PosTransferCreate(BaseModel):
-    source_branch_id: uuid.UUID
-    destination_branch_id: uuid.UUID
-    notes: str | None = None
-    #: The template this transfer was raised from, if any. When present the exact
-    #: template version is snapshotted onto the order for provenance; absent for an
-    #: ad-hoc transfer, and the order's template columns stay null.
-    template_id: uuid.UUID | None = None
-    #: A stable token so a retried create+send does not ship the box twice.
-    client_request_id: str | None = Field(None, max_length=64)
-    lines: list[PosTransferLineInput] = Field(min_length=1)
-
-
 class PosReturnLineInput(BaseModel):
     item_id: uuid.UUID
     quantity: Decimal = Field(gt=0)
@@ -597,16 +616,6 @@ class PosReturnCreate(BaseModel):
     notes: str | None = None
     client_request_id: str | None = Field(None, max_length=64)
     lines: list[PosReturnLineInput] = Field(min_length=1)
-
-
-class PosTransferReceiveLine(BaseModel):
-    transfer_order_item_id: uuid.UUID
-    received_quantity: Decimal = Field(ge=0)
-    reason: str | None = None
-
-
-class PosTransferReceive(BaseModel):
-    lines: list[PosTransferReceiveLine] = Field(default_factory=list)
 
 
 class TransferBranchResponse(BaseModel):
@@ -731,117 +740,127 @@ async def pos_transfer_templates(
 
 
 @pos_transfers_router.get(
-    "/transfers/incoming", response_model=list[TransferOrderResponse]
+    "/transfers/incoming", response_model=list[TransferResponse]
 )
 async def pos_incoming_transfers(
     branch_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
+    user: User = Depends(require("inventory.transfers.receive")),
 ):
     """Transfers and returns sent to this branch and not yet booked in — the list
     the receiving tills work from."""
     await access_service.assert_branch_access(db, user, branch_id)
     stmt = (
-        select(TransferOrder)
+        select(Transfer)
         .where(
-            TransferOrder.branch_id == branch_id,
-            TransferOrder.sent_transaction_id.isnot(None),
-            TransferOrder.received_transaction_id.is_(None),
+            Transfer.branch_id == branch_id,
+            Transfer.sent_transaction_id.isnot(None),
+            Transfer.received_transaction_id.is_(None),
         )
-        .order_by(TransferOrder.created_at.desc())
+        .options(selectinload(Transfer.items))
+        .order_by(Transfer.created_at.desc())
     )
-    orders = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_transfer(db, o) for o in orders]
+    transfers = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_child(db, t) for t in transfers]
+
+
+@pos_transfers_router.get(
+    "/transfers/outgoing", response_model=list[TransferResponse]
+)
+async def pos_outgoing_transfers(
+    source_branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.send")),
+):
+    """Pending transfers this branch is to pack and send — admin created them, so
+    they wait for the source till to mark each one sent. Distinct from
+    ``incoming``, which is the destination's receive list."""
+    await access_service.assert_branch_access(db, user, source_branch_id)
+    stmt = (
+        select(Transfer)
+        .where(
+            Transfer.source_branch_id == source_branch_id,
+            Transfer.sent_transaction_id.is_(None),
+            Transfer.status == TransferStatusEnum.PENDING.value,
+        )
+        .options(selectinload(Transfer.items))
+        .order_by(Transfer.created_at.desc())
+    )
+    transfers = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_child(db, t) for t in transfers]
 
 
 @pos_transfers_router.post(
-    "/transfers",
-    response_model=TransferOrderResponse,
-    status_code=status.HTTP_201_CREATED,
+    "/transfers/{transfer_id}/send", response_model=TransferResponse
 )
-async def pos_create_transfer(
-    data: PosTransferCreate,
+async def pos_send_transfer(
+    transfer_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
+    user: User = Depends(require("inventory.transfers.send")),
 ):
-    """Create and immediately ship a transfer from the current branch. Auto-accepted
-    (the sender decides what leaves) and auto-sent — the source stock leaves now."""
-    await access_service.assert_branch_access(db, user, data.source_branch_id)
-    source = await crud_service.get_or_404(db, Branch, data.source_branch_id)
-    destination = await crud_service.get_or_404(db, Branch, data.destination_branch_id)
-    order = await transfer_service.create_and_send(
-        db,
-        source_branch=source,
-        destination_branch=destination,
-        user=user,
-        lines=data.lines,
-        kind=TransferKindEnum.TRANSFER.value,
-        notes=data.notes,
-        client_request_id=data.client_request_id,
-        template_id=data.template_id,
-    )
-    # Tell the receiving branch's tills, the same way a new website order is
-    # announced — quietly, as a badge on POS actions rather than an alarm. A
-    # non-POS branch has no tills and its receive was auto-completed above, so it
-    # is not notified.
-    if getattr(destination, "uses_pos", True):
+    """Mark a pending transfer sent from the source — its stock leaves now, and the
+    destination's tills are told there is one to receive."""
+    transfer = await transfer_service.load_transfer(db, transfer_id)
+    await access_service.assert_branch_access(db, user, transfer.source_branch_id)
+    await transfer_service.mark_transfer_sent(db, transfer=transfer, user=user)
+    transfer = await transfer_service.load_transfer(db, transfer_id)
+    destination = await db.get(Branch, transfer.branch_id)
+    if destination is not None and getattr(destination, "uses_pos", True):
         await push_service.notify_transfer_created(
             db,
             destination_branch_id=destination.id,
-            reference=order.reference,
-            item_count=len(data.lines),
-            kind=TransferKindEnum.TRANSFER.value,
+            reference=transfer.reference,
+            item_count=len(transfer.items),
+            kind=transfer.kind,
         )
-    return await _serialise_transfer(db, order)
+    return await _serialise_child(db, transfer)
 
 
 @pos_transfers_router.post(
-    "/transfers/{order_id}/receive", response_model=TransferOrderResponse
+    "/transfers/{transfer_id}/receive", response_model=TransferResponse
 )
 async def pos_receive_transfer(
-    order_id: uuid.UUID,
-    data: PosTransferReceive,
+    transfer_id: uuid.UUID,
+    data: TransferReceive,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
+    user: User = Depends(require("inventory.transfers.receive")),
 ):
     """Book in what arrived — short or over. The difference stays on the record with
     the receiver's reason; no separate movement is posted (the send already moved
     the stock)."""
-    order = await transfer_service.load_transfer_order(db, order_id)
-    await access_service.assert_branch_access(db, user, order.branch_id)
-    received = {
-        line.transfer_order_item_id: line.received_quantity for line in data.lines
-    }
+    transfer = await transfer_service.load_transfer(db, transfer_id)
+    await access_service.assert_branch_access(db, user, transfer.branch_id)
+    received = {line.transfer_line_id: line.received_quantity for line in data.lines}
     reasons = {
-        line.transfer_order_item_id: line.reason
+        line.transfer_line_id: line.reason
         for line in data.lines
         if line.reason is not None
     }
     await transfer_service.receive_transfer(
-        db, order=order, user=user, received=received or None, reasons=reasons or None
+        db,
+        transfer=transfer,
+        user=user,
+        received=received or None,
+        reasons=reasons or None,
     )
-    return await _serialise_transfer(
-        db, await transfer_service.load_transfer_order(db, order_id)
+    return await _serialise_child(
+        db, await transfer_service.load_transfer(db, transfer_id)
     )
 
 
 @pos_transfers_router.post(
     "/returns",
-    response_model=TransferOrderResponse,
+    response_model=TransferResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def pos_create_return(
     data: PosReturnCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.transfers.manage")),
+    user: User = Depends(require("inventory.transfers.send")),
 ):
     """Send goods back to this branch's return branch (surplus, expired, damaged).
-
-    A return is a transfer whose destination is fixed by the branch's
-    ``return_branch_id`` — the till never picks it — and whose every line carries a
-    reason. It runs the identical create+send+receive flow, so the return branch
-    receives it exactly as it would a transfer, and it is received in that same
-    "to receive" list, distinguished by its ``return`` kind.
+    A return ships immediately as a single-child order; the return branch receives
+    it from its "to receive" list, distinguished by its ``return`` kind.
     """
     await access_service.assert_branch_access(db, user, data.source_branch_id)
     source = await crud_service.get_or_404(db, Branch, data.source_branch_id)
@@ -850,13 +869,12 @@ async def pos_create_return(
             "This branch has no return branch configured. Set one in the admin console."
         )
     destination = await crud_service.get_or_404(db, Branch, source.return_branch_id)
-    order = await transfer_service.create_and_send(
+    order = await transfer_service.create_return_order(
         db,
         source_branch=source,
         destination_branch=destination,
         user=user,
         lines=data.lines,
-        kind=TransferKindEnum.RETURN.value,
         notes=data.notes,
         client_request_id=data.client_request_id,
     )
@@ -868,7 +886,11 @@ async def pos_create_return(
             item_count=len(data.lines),
             kind=TransferKindEnum.RETURN.value,
         )
-    return await _serialise_transfer(db, order)
+    # A return is a single-child order — hand that child back for the till.
+    child = order.children[0]
+    return await _serialise_child(
+        db, await transfer_service.load_transfer(db, child.id)
+    )
 
 
 # ─── Production ───────────────────────────────────────────────────────────────

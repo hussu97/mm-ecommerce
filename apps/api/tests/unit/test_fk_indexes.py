@@ -131,13 +131,15 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("shift_inventory_reports", "transaction_id"): _INVENTORY_LOWER_TRAFFIC,
     ("tables", "parent_id"): _SMALL_LOOKUP,
     ("tills", "closed_by_id"): _AUDIT_ACTOR,
+    # Parent transfer order (source only; destinations live on the children).
     ("transfer_orders", "creator_id"): _AUDIT_ACTOR,
-    ("transfer_orders", "received_transaction_id"): _INVENTORY_LOWER_TRAFFIC,
-    ("transfer_orders", "responder_id"): _AUDIT_ACTOR,
-    ("transfer_orders", "sent_transaction_id"): _INVENTORY_LOWER_TRAFFIC,
     ("transfer_orders", "source_warehouse_id"): _INVENTORY_LOWER_TRAFFIC,
-    ("transfer_orders", "submitter_id"): _AUDIT_ACTOR,
-    ("transfer_orders", "warehouse_id"): _INVENTORY_LOWER_TRAFFIC,
+    # Child transfer (one per destination branch).
+    ("transfers", "creator_id"): _AUDIT_ACTOR,
+    ("transfers", "received_transaction_id"): _INVENTORY_LOWER_TRAFFIC,
+    ("transfers", "sent_transaction_id"): _INVENTORY_LOWER_TRAFFIC,
+    ("transfers", "source_warehouse_id"): _INVENTORY_LOWER_TRAFFIC,
+    ("transfers", "warehouse_id"): _INVENTORY_LOWER_TRAFFIC,
 }
 
 

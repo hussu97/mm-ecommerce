@@ -34,7 +34,6 @@ from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 # both of these files.
 from app.core.money import quantity as _q
 from app.core.money import unit_cost as _c
-from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
@@ -47,10 +46,12 @@ from app.models.inventory import (
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.operations import (
     InventoryTransferTemplate,
+    Transfer,
     TransferKindEnum,
+    TransferLine,
     TransferOrder,
-    TransferOrderItem,
     TransferOrderStatusEnum,
+    TransferStatusEnum,
 )
 from app.models.user import User
 from app.services.inventory import (
@@ -64,13 +65,13 @@ from app.services.pos import business_day_service
 __all__ = [
     "production_output",
     "production_unit_cost",
-    "accept_transfer_order",
-    "create_and_send",
-    "decline_transfer_order",
+    "create_return_order",
+    "create_transfer_order",
+    "load_transfer",
+    "load_transfer_order",
+    "mark_transfer_sent",
     "produce",
     "receive_transfer",
-    "send_transfer",
-    "submit_transfer_order",
 ]
 
 
@@ -100,17 +101,26 @@ def production_unit_cost(input_cost: Decimal, net_output: Decimal) -> Decimal:
     return _c(Decimal(str(input_cost)) / Decimal(str(net_output)))
 
 
-async def next_transfer_reference(db: AsyncSession) -> str:
+async def next_transfer_order_reference(db: AsyncSession) -> str:
+    """A parent order reference (TO-…)."""
     return await inventory_service.next_inventory_reference(db, "TO")
 
 
+async def next_transfer_reference(db: AsyncSession) -> str:
+    """A child transfer reference (TRF-…). One per destination branch."""
+    return await inventory_service.next_inventory_reference(db, "TRF")
+
+
 async def load_transfer_order(db: AsyncSession, order_id: uuid.UUID) -> TransferOrder:
+    """A parent order with its children and their lines."""
     order = (
         (
             await db.execute(
                 select(TransferOrder)
                 .where(TransferOrder.id == order_id)
-                .options(selectinload(TransferOrder.items))
+                .options(
+                    selectinload(TransferOrder.children).selectinload(Transfer.items)
+                )
             )
         )
         .scalars()
@@ -122,14 +132,33 @@ async def load_transfer_order(db: AsyncSession, order_id: uuid.UUID) -> Transfer
     return order
 
 
-async def _lock_transfer_order(db: AsyncSession, order_id: uuid.UUID) -> TransferOrder:
-    """Serialize every state transition and stock movement for one transfer."""
-    order = (
+async def load_transfer(db: AsyncSession, transfer_id: uuid.UUID) -> Transfer:
+    """One child transfer with its lines."""
+    transfer = (
         (
             await db.execute(
-                select(TransferOrder)
-                .where(TransferOrder.id == order_id)
-                .options(selectinload(TransferOrder.items))
+                select(Transfer)
+                .where(Transfer.id == transfer_id)
+                .options(selectinload(Transfer.items))
+            )
+        )
+        .scalars()
+        .unique()
+        .one_or_none()
+    )
+    if transfer is None:
+        raise NotFoundError("Transfer not found")
+    return transfer
+
+
+async def _lock_transfer(db: AsyncSession, transfer_id: uuid.UUID) -> Transfer:
+    """Serialize every state transition and stock movement for one child."""
+    transfer = (
+        (
+            await db.execute(
+                select(Transfer)
+                .where(Transfer.id == transfer_id)
+                .options(selectinload(Transfer.items))
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -138,140 +167,86 @@ async def _lock_transfer_order(db: AsyncSession, order_id: uuid.UUID) -> Transfe
         .unique()
         .one_or_none()
     )
-    if order is None:
-        raise NotFoundError("Transfer order not found")
-    return order
+    if transfer is None:
+        raise NotFoundError("Transfer not found")
+    return transfer
 
 
-# ─── Request workflow ─────────────────────────────────────────────────────────
+# ─── Create (admin fan-out) ────────────────────────────────────────────────────
 #
-# Left in this shape deliberately, having been compared against the other two
-# state machines when the purchase-order one was pulled out of its router.
-#
-# `order_lifecycle` and `inventory_service`'s purchase-order machine are both a
-# declarative map: a transfer's is not, because a transfer's state is not in its
-# status column alone. `send_transfer` moves stock and does **not** change
-# `status` — an accepted order stays accepted and grows a `sent_transaction_id`;
-# `receive_transfer` gates on that id, not on the status, and only then closes
-# the order. The composite is real rather than an oversight: it is what lets a
-# transfer be simultaneously "accepted" and "on a van", which is the state the
-# whole design exists to make visible.
-#
-# A `status -> status` map cannot express "may send if accepted and not already
-# sent", so forcing one here would either lose the two link columns or turn them
-# into two more statuses that mean less than the columns do. The guards below
-# stay imperative, but they stay in a *service* — which was the actual complaint:
-# three homes for the pattern, one of them a router.
+# An admin raises one order from a single source branch, allocating quantities to
+# several destinations at once; it fans out into one child `Transfer` per
+# destination. Nothing moves at create time — each child is shipped from the
+# source till later (`mark_transfer_sent`), one at a time, and received at the
+# destination (`receive_transfer`). Movement lives in the child's two link
+# columns, not its status; the parent status is derived from its children.
 
 
-async def submit_transfer_order(
-    db: AsyncSession, *, order: TransferOrder, user: User
-) -> TransferOrder:
-    order = await _lock_transfer_order(db, order.id)
-    if order.status != TransferOrderStatusEnum.DRAFT.value:
-        raise ConflictError(
-            f"Only draft transfer orders can be submitted (this is {order.status})"
+async def _recompute_parent_status(db: AsyncSession, order_id: uuid.UUID) -> None:
+    """Roll the children's statuses up onto the parent, under a parent lock so two
+    children transitioning at once cannot race to a wrong answer."""
+    order = (
+        await db.execute(
+            select(TransferOrder)
+            .where(TransferOrder.id == order_id)
+            .options(selectinload(TransferOrder.children))
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-    if not order.items:
-        raise BadRequestError("A transfer order needs at least one line")
-
-    order.status = TransferOrderStatusEnum.PENDING.value
-    order.submitter_id = user.id
-    order.submitted_at = utcnow()
+    ).scalar_one_or_none()
+    if order is None:
+        return
+    live = [
+        c for c in order.children if c.status != TransferStatusEnum.CANCELLED.value
+    ]
+    S = TransferStatusEnum
+    P = TransferOrderStatusEnum
+    if not live:
+        order.status = P.CANCELLED.value
+    elif all(c.status == S.CLOSED.value for c in live):
+        order.status = P.CLOSED.value
+    elif any(c.status == S.CLOSED.value for c in live):
+        order.status = P.PARTIALLY_RECEIVED.value
+    elif all(c.status == S.SENT.value for c in live):
+        order.status = P.SENT.value
+    elif any(c.status == S.SENT.value for c in live):
+        order.status = P.PARTIALLY_SENT.value
+    else:
+        order.status = P.PENDING.value
     await db.flush()
-    return order
 
 
-async def accept_transfer_order(
-    db: AsyncSession,
-    *,
-    order: TransferOrder,
-    user: User,
-    approved: dict[uuid.UUID, Decimal] | None = None,
-) -> TransferOrder:
-    """
-    Accept a request, optionally trimming quantities.
-
-    A source branch that only has half of what was asked for should be able to
-    say so up front rather than silently short-shipping later.
-    """
-    order = await _lock_transfer_order(db, order.id)
-    if order.status != TransferOrderStatusEnum.PENDING.value:
-        raise ConflictError("Only submitted transfer orders can be accepted")
-
-    for line in order.items:
-        requested = _q(line.quantity)
-        granted = _q(approved.get(line.id, requested)) if approved else requested
-        if granted < 0 or granted > requested:
-            raise BadRequestError(
-                f"Approved quantity must be between 0 and the {requested} requested"
-            )
-        line.approved_quantity = granted
-
-    if all(_q(line.approved_quantity) == 0 for line in order.items):
-        raise BadRequestError("Accepting with every line at zero — decline instead")
-
-    order.status = TransferOrderStatusEnum.ACCEPTED.value
-    order.responder_id = user.id
-    order.responded_at = utcnow()
-    await db.flush()
-    return order
-
-
-async def decline_transfer_order(
-    db: AsyncSession, *, order: TransferOrder, user: User, notes: str | None = None
-) -> TransferOrder:
-    order = await _lock_transfer_order(db, order.id)
-    if order.status != TransferOrderStatusEnum.PENDING.value:
-        raise ConflictError("Only submitted transfer orders can be declined")
-    order.status = TransferOrderStatusEnum.DECLINED.value
-    order.responder_id = user.id
-    order.responded_at = utcnow()
-    if notes:
-        order.notes = notes
-    await db.flush()
-    return order
-
-
-# ─── Source-initiated push ────────────────────────────────────────────────────
-
-
-async def create_and_send(
+async def create_transfer_order(
     db: AsyncSession,
     *,
     source_branch: Branch,
-    destination_branch: Branch,
     user: User,
-    lines: list,
+    items: list,
     kind: str = TransferKindEnum.TRANSFER.value,
     notes: str | None = None,
-    client_request_id: str | None = None,
+    required_date=None,
     template_id: uuid.UUID | None = None,
+    client_request_id: str | None = None,
 ) -> TransferOrder:
-    """Raise a transfer at the *sending* branch and ship it in one step.
+    """Raise a parent order from one source branch, fanning out to many.
 
-    The till model is a push, not the request/accept pull the admin console uses:
-    a shop packs a box for another branch and sends it. So the order is created
-    already accepted (every line granted in full) and ``send_transfer`` posts the
-    ``TRANSFER_SEND`` immediately — the source's stock leaves the moment the box
-    does. The receiving branch then books what actually arrived.
+    ``items`` is a list of per-item allocations, each carrying ``item_id``,
+    ``unit``, an ``override`` flag and ``allocations`` — a list of
+    ``(branch_id, quantity)`` for the destinations this item goes to. One child
+    ``Transfer`` is created per destination that receives a nonzero quantity of
+    any item, each with its own lines. **No stock moves here.**
 
-    ``lines`` is any object list carrying ``item_id``, ``quantity``, ``unit`` and
-    an optional ``variance_reason`` (the reason a return line is going back).
-
-    When ``template_id`` is given, that exact template version is snapshotted onto
-    the order (``template_id``/``template_version``/``template_snapshot``) so the
-    order's provenance survives a later edit or deactivation of the live template —
-    downstream reads the snapshot, never the live row. Absent for a return or an
-    ad-hoc transfer, and the three columns stay null.
+    When the total of an item across all destinations exceeds the source's
+    on-hand, the admin must set ``override=True`` on that item: a shortfall
+    top-up ``QUANTITY_ADJUSTMENT`` is posted to the source at create time
+    (grouped under the order's ``adjustment_group_id``, so the mini
+    stock-adjustment report can read them back), raising on-hand to exactly cover
+    the fan-out so no later send goes negative. Without the flag the create is
+    refused, naming the shortfall.
     """
-    if source_branch.id == destination_branch.id:
-        raise BadRequestError("A branch cannot transfer to itself")
-    if not lines:
-        raise BadRequestError("A transfer needs at least one line")
+    if not items:
+        raise BadRequestError("A transfer order needs at least one line")
 
-    # A retried create+send (lost response) reuses its token; return the order
-    # already shipped rather than shipping the box a second time.
     if client_request_id:
         existing = (
             await db.execute(
@@ -305,29 +280,64 @@ async def create_and_send(
             db, template
         )
 
+    # Read on-hand and issue any override top-up under the source's inventory
+    # lock — the same lock the sends will take — so the on-hand the override
+    # corrects is the on-hand the sends draw down.
+    await source_event_service.lock_branch_inventory(db, source_branch.id)
+    source_warehouse = await inventory_service.default_warehouse(db, source_branch.id)
+
+    resolved: list[dict] = []
+    for entry in items:
+        item = await db.get(InventoryItem, entry.item_id)
+        if item is None:
+            raise BadRequestError(f"Inventory item {entry.item_id} not found")
+        unit = getattr(entry, "unit", "storage")
+        factor = (
+            Decimal("1")
+            if unit == "ingredient"
+            else Decimal(str(item.storage_to_ingredient_factor))
+        )
+        allocations = [
+            (a.branch_id, _q(a.quantity))
+            for a in entry.allocations
+            if _q(a.quantity) > 0
+        ]
+        if not allocations:
+            continue
+        if any(branch_id == source_branch.id for branch_id, _ in allocations):
+            raise BadRequestError("A branch cannot transfer to itself")
+        total_ingredient = sum((qty * factor for _b, qty in allocations), Decimal("0"))
+        resolved.append(
+            {
+                "item": item,
+                "unit": unit,
+                "factor": factor,
+                "allocations": allocations,
+                "override": bool(getattr(entry, "override", False)),
+                "total_ingredient": total_ingredient,
+            }
+        )
+
+    if not resolved:
+        raise BadRequestError("A transfer order needs at least one line")
+
     order = TransferOrder(
-        reference=await next_transfer_reference(db),
+        reference=await next_transfer_order_reference(db),
         kind=kind,
-        client_request_id=client_request_id,
-        status=TransferOrderStatusEnum.ACCEPTED.value,
-        branch_id=destination_branch.id,
+        status=TransferOrderStatusEnum.PENDING.value,
         source_branch_id=source_branch.id,
+        source_warehouse_id=source_warehouse.id,
         business_date=await business_day_service.current_business_date(
             db, source_branch
         ),
+        required_date=required_date,
         notes=notes,
+        client_request_id=client_request_id,
         creator_id=user.id,
-        submitter_id=user.id,
-        responder_id=user.id,
-        submitted_at=utcnow(),
-        responded_at=utcnow(),
         template_id=template_id,
         template_version=template_version,
         template_snapshot=template_snapshot,
     )
-    # The pre-check above catches a sequential retry; this catches two truly
-    # concurrent submits — the unique index refuses the loser, and we return the
-    # order the winner already made rather than 500ing.
     try:
         async with db.begin_nested():
             db.add(order)
@@ -345,14 +355,157 @@ async def create_and_send(
                 return await load_transfer_order(db, existing.id)
         raise
 
+    # Override top-ups first, so a later send cannot trip prevent-negative.
+    adjustment_group: uuid.UUID | None = None
+    for row in resolved:
+        item = row["item"]
+        level = await inventory_service.level_for(db, item.id, source_warehouse.id)
+        on_hand = _q(level.quantity)
+        shortfall = _q(row["total_ingredient"] - on_hand)
+        if shortfall <= 0:
+            continue
+        if not row["override"]:
+            raise BadRequestError(
+                f"{item.name}: transferring {row['total_ingredient']} "
+                f"{item.ingredient_unit} but only {on_hand} on hand. "
+                "Set override to adjust stock and proceed."
+            )
+        if adjustment_group is None:
+            adjustment_group = uuid.uuid4()
+            order.adjustment_group_id = adjustment_group
+        await inventory_service.adjust_level(
+            db,
+            branch=source_branch,
+            user=user,
+            item_id=item.id,
+            quantity_delta=shortfall,
+            warehouse_id=source_warehouse.id,
+            source_type="transfer_shortfall_adjustment",
+            source_id=str(order.id),
+            correction_group_id=adjustment_group,
+            notes=f"Shortfall top-up for {order.reference}",
+        )
+
+    # One child per destination branch, with that branch's lines.
+    by_branch: dict[uuid.UUID, list[dict]] = {}
+    for row in resolved:
+        for branch_id, qty in row["allocations"]:
+            by_branch.setdefault(branch_id, []).append({"row": row, "qty": qty})
+
+    for branch_id, lines in by_branch.items():
+        child = Transfer(
+            transfer_order_id=order.id,
+            reference=await next_transfer_reference(db),
+            kind=kind,
+            status=TransferStatusEnum.PENDING.value,
+            branch_id=branch_id,
+            source_branch_id=source_branch.id,
+            source_warehouse_id=source_warehouse.id,
+            business_date=order.business_date,
+            creator_id=user.id,
+        )
+        db.add(child)
+        await db.flush()
+        for line in lines:
+            row = line["row"]
+            db.add(
+                TransferLine(
+                    transfer_id=child.id,
+                    item_id=row["item"].id,
+                    quantity=line["qty"],
+                    approved_quantity=line["qty"],
+                    unit=row["unit"],
+                    conversion_factor=row["factor"],
+                )
+            )
+    await db.flush()
+    return await load_transfer_order(db, order.id)
+
+
+async def create_return_order(
+    db: AsyncSession,
+    *,
+    source_branch: Branch,
+    destination_branch: Branch,
+    user: User,
+    lines: list,
+    notes: str | None = None,
+    client_request_id: str | None = None,
+) -> TransferOrder:
+    """A return is a single-child order (source → its return branch) that ships
+    immediately: the till packs a box of goods going back and sends it, so the
+    one child is created, marked sent, and — when the destination runs no POS —
+    received straight away. It reuses the whole transfer machinery, differing only
+    in kind and that each line carries a reason.
+    """
+    if not lines:
+        raise BadRequestError("A return needs at least one line")
+    if source_branch.id == destination_branch.id:
+        raise BadRequestError("A branch cannot return to itself")
+
+    if client_request_id:
+        existing = (
+            await db.execute(
+                select(TransferOrder).where(
+                    TransferOrder.client_request_id == client_request_id
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return await load_transfer_order(db, existing.id)
+
+    source_warehouse = await inventory_service.default_warehouse(db, source_branch.id)
+    order = TransferOrder(
+        reference=await next_transfer_order_reference(db),
+        kind=TransferKindEnum.RETURN.value,
+        status=TransferOrderStatusEnum.PENDING.value,
+        source_branch_id=source_branch.id,
+        source_warehouse_id=source_warehouse.id,
+        business_date=await business_day_service.current_business_date(
+            db, source_branch
+        ),
+        notes=notes,
+        client_request_id=client_request_id,
+        creator_id=user.id,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(order)
+            await db.flush()
+    except IntegrityError:
+        if client_request_id:
+            existing = (
+                await db.execute(
+                    select(TransferOrder).where(
+                        TransferOrder.client_request_id == client_request_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return await load_transfer_order(db, existing.id)
+        raise
+
+    child = Transfer(
+        transfer_order_id=order.id,
+        reference=await next_transfer_reference(db),
+        kind=TransferKindEnum.RETURN.value,
+        status=TransferStatusEnum.PENDING.value,
+        branch_id=destination_branch.id,
+        source_branch_id=source_branch.id,
+        source_warehouse_id=source_warehouse.id,
+        business_date=order.business_date,
+        creator_id=user.id,
+    )
+    db.add(child)
+    await db.flush()
     for line in lines:
         item = await db.get(InventoryItem, line.item_id)
         if item is None:
             raise BadRequestError(f"Inventory item {line.item_id} not found")
         unit = getattr(line, "unit", "storage")
         db.add(
-            TransferOrderItem(
-                transfer_order_id=order.id,
+            TransferLine(
+                transfer_id=child.id,
                 item_id=line.item_id,
                 quantity=_q(line.quantity),
                 approved_quantity=_q(line.quantity),
@@ -367,44 +520,42 @@ async def create_and_send(
         )
     await db.flush()
 
-    order = await load_transfer_order(db, order.id)
-    await send_transfer(db, order=order, user=user)
-
-    # A branch that does not run the POS (DSO, Karama) has no till to receive on:
-    # book the whole shipment straight into it so its on-hand is correct and the
-    # transfer is not left forever "to receive" at a branch that cannot act on it.
+    child = await load_transfer(db, child.id)
+    await mark_transfer_sent(db, transfer=child, user=user)
     if not getattr(destination_branch, "uses_pos", True):
-        order = await load_transfer_order(db, order.id)
-        await receive_transfer(db, order=order, user=user)
-
+        child = await load_transfer(db, child.id)
+        await receive_transfer(db, transfer=child, user=user)
     return await load_transfer_order(db, order.id)
 
 
 # ─── Movement ─────────────────────────────────────────────────────────────────
 
 
-async def send_transfer(
-    db: AsyncSession, *, order: TransferOrder, user: User
+async def mark_transfer_sent(
+    db: AsyncSession, *, transfer: Transfer, user: User
 ) -> InventoryTransaction:
-    """Ship an accepted transfer, decrementing the source location."""
-    order = await _lock_transfer_order(db, order.id)
-    if order.sent_transaction_id is not None:
-        return await inventory_service.load_transaction(db, order.sent_transaction_id)
-    if order.status != TransferOrderStatusEnum.ACCEPTED.value:
-        raise ConflictError("Only accepted transfer orders can be sent")
+    """Ship one child from the source, decrementing its stock. Idempotent: a
+    second call returns the transaction already posted."""
+    transfer = await _lock_transfer(db, transfer.id)
+    if transfer.sent_transaction_id is not None:
+        return await inventory_service.load_transaction(
+            db, transfer.sent_transaction_id
+        )
+    if transfer.status == TransferStatusEnum.CANCELLED.value:
+        raise ConflictError("This transfer was cancelled")
 
-    source = await db.get(Branch, order.source_branch_id)
+    source = await db.get(Branch, transfer.source_branch_id)
     if source is None:
         raise NotFoundError("Source branch not found")
-    # The source moving average is part of the immutable transfer snapshot, so
-    # it must be read under the same branch lock that will issue the stock.
-    await source_event_service.lock_branch_inventory(db, order.source_branch_id)
+    # The source moving average is part of the immutable transfer snapshot, so it
+    # must be read under the same branch lock that will issue the stock.
+    await source_event_service.lock_branch_inventory(db, transfer.source_branch_id)
     source_warehouse = (
         await inventory_service.assert_warehouse_for_branch(
-            db, order.source_warehouse_id, order.source_branch_id
+            db, transfer.source_warehouse_id, transfer.source_branch_id
         )
-        if order.source_warehouse_id is not None
-        else await inventory_service.default_warehouse(db, order.source_branch_id)
+        if transfer.source_warehouse_id is not None
+        else await inventory_service.default_warehouse(db, transfer.source_branch_id)
     )
 
     transaction = InventoryTransaction(
@@ -413,21 +564,21 @@ async def send_transfer(
         ),
         type=InventoryTransactionTypeEnum.TRANSFER_SEND.value,
         status=TransactionStatusEnum.DRAFT.value,
-        branch_id=order.source_branch_id,
+        branch_id=transfer.source_branch_id,
         warehouse_id=source_warehouse.id,
-        other_branch_id=order.branch_id,
-        other_warehouse_id=order.warehouse_id,
+        other_branch_id=transfer.branch_id,
+        other_warehouse_id=transfer.warehouse_id,
         business_date=await business_day_service.current_business_date(db, source),
         creator_id=user.id,
-        idempotency_key=f"transfer:{order.id}:send",
-        source_type="transfer_order",
-        source_id=str(order.id),
-        notes=f"Transfer {order.reference}",
+        idempotency_key=f"transfer:{transfer.id}:send",
+        source_type="transfer",
+        source_id=str(transfer.id),
+        notes=f"Transfer {transfer.reference}",
     )
     db.add(transaction)
     await db.flush()
 
-    for line in order.items:
+    for line in transfer.items:
         quantity = _q(
             line.approved_quantity
             if line.approved_quantity is not None
@@ -464,46 +615,53 @@ async def send_transfer(
     posted = await inventory_service.post_transaction(
         db, transaction=transaction, user=user
     )
-    order.sent_transaction_id = posted.id
+    transfer.sent_transaction_id = posted.id
+    transfer.status = TransferStatusEnum.SENT.value
     await db.flush()
+    await _recompute_parent_status(db, transfer.transfer_order_id)
+
+    # A destination that runs no POS (DSO, Karama) has no till to receive on:
+    # book the shipment straight in so its on-hand is right and it is not left
+    # forever "to receive" at a branch that cannot act on it.
+    destination = await db.get(Branch, transfer.branch_id)
+    if destination is not None and not getattr(destination, "uses_pos", True):
+        fresh = await load_transfer(db, transfer.id)
+        await receive_transfer(db, transfer=fresh, user=user)
     return posted
 
 
 async def receive_transfer(
     db: AsyncSession,
     *,
-    order: TransferOrder,
+    transfer: Transfer,
     user: User,
     received: dict[uuid.UUID, Decimal] | None = None,
     reasons: dict[uuid.UUID, str] | None = None,
 ) -> InventoryTransaction:
     """
-    Book a shipped transfer into the destination — what actually arrived, which
-    may be less **or more** than was sent.
+    Book a shipped child into the destination — what actually arrived, which may
+    be less **or more** than was sent.
 
-    The destination rises by ``received`` and the source has already fallen by
-    ``sent``, so the sent-vs-received difference is never silently absorbed: a
-    short receipt leaves the shortfall on the *sender's* books (the goods left
-    their shelf and did not arrive — a transit loss they own), and an over-receipt
-    is a genuine gain at the destination. Both are recorded on the line as a
-    ``received_quantity`` that differs from ``sent_quantity``, with the receiver's
-    ``reason`` (``reasons`` keyed by line id), so the transfer record itself
-    explains every unit. Posting a *separate* shrinkage/found movement here would
-    double-count, because the send already moved the stock.
+    Same two-leg cost-carry as before: the sent leg's snapshot cost is read back
+    off the ``transfer_item:{line.id}`` note; a short receipt leaves the shortfall
+    on the sender's books (a transit loss they own), an over-receipt is a gain at
+    the destination, both recorded on the line with the receiver's ``reason``.
+    Posting a separate shrinkage/found movement here would double-count, because
+    the send already moved the stock.
     """
-    order = await _lock_transfer_order(db, order.id)
-    if order.received_transaction_id is not None:
+    transfer = await _lock_transfer(db, transfer.id)
+    if transfer.received_transaction_id is not None:
         return await inventory_service.load_transaction(
-            db, order.received_transaction_id
+            db, transfer.received_transaction_id
         )
-    if order.sent_transaction_id is None:
+    if transfer.sent_transaction_id is None:
         raise ConflictError("This transfer has not been sent yet")
 
-    destination = await db.get(Branch, order.branch_id)
+    destination = await db.get(Branch, transfer.branch_id)
     if destination is None:
         raise NotFoundError("Destination branch not found")
     sent_transaction = await inventory_service.load_transaction(
-        db, order.sent_transaction_id
+        db, transfer.sent_transaction_id
     )
     sent_costs = {
         sent_line.notes: _c(sent_line.unit_cost)
@@ -517,37 +675,31 @@ async def receive_transfer(
         ),
         type=InventoryTransactionTypeEnum.TRANSFER_RECEIVE.value,
         status=TransactionStatusEnum.DRAFT.value,
-        branch_id=order.branch_id,
-        warehouse_id=order.warehouse_id,
-        other_branch_id=order.source_branch_id,
-        other_warehouse_id=order.source_warehouse_id,
+        branch_id=transfer.branch_id,
+        warehouse_id=transfer.warehouse_id,
+        other_branch_id=transfer.source_branch_id,
+        other_warehouse_id=transfer.source_warehouse_id,
         business_date=await business_day_service.current_business_date(db, destination),
         creator_id=user.id,
-        idempotency_key=f"transfer:{order.id}:receive",
-        source_type="transfer_order",
-        source_id=str(order.id),
-        notes=f"Transfer {order.reference}",
+        idempotency_key=f"transfer:{transfer.id}:receive",
+        source_type="transfer",
+        source_id=str(transfer.id),
+        notes=f"Transfer {transfer.reference}",
     )
     db.add(transaction)
     await db.flush()
 
-    for line in order.items:
+    for line in transfer.items:
         sent = _q(line.sent_quantity)
         quantity = _q(received.get(line.id, sent)) if received else sent
-        # The receiver's note explains a discrepancy — short (lost in transit) or
-        # over (found). Recorded whether or not anything is booked below.
         if reasons is not None and line.id in reasons:
             line.variance_reason = reasons[line.id] or None
         line.received_quantity = quantity if quantity > 0 else _q(0)
         if quantity <= 0:
             continue
-        # An over-receipt is valued at the sent unit cost — the same goods, more of
-        # them than the paperwork said.
         sent_cost = sent_costs.get(f"transfer_item:{line.id}")
         if sent_cost is None:
             if _q(line.sent_quantity) <= 0:
-                # Nothing shipped on this line, so there is no cost to value a
-                # receipt against — a "found extra" here belongs on a stock count.
                 raise BadRequestError(
                     "This line had nothing sent, so it cannot be received. "
                     "Record found stock as a count instead."
@@ -572,9 +724,10 @@ async def receive_transfer(
     posted = await inventory_service.post_transaction(
         db, transaction=transaction, user=user
     )
-    order.received_transaction_id = posted.id
-    order.status = TransferOrderStatusEnum.CLOSED.value
+    transfer.received_transaction_id = posted.id
+    transfer.status = TransferStatusEnum.CLOSED.value
     await db.flush()
+    await _recompute_parent_status(db, transfer.transfer_order_id)
     return posted
 
 

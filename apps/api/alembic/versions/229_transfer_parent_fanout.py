@@ -22,8 +22,8 @@ Steps:
 8. Grant the new ``inventory.transfers.send``/``.receive`` slugs to any role
    already holding ``inventory.transfers.manage``.
 
-Revision ID: 228_transfer_parent_fanout
-Revises: 227_lalamove_slider_fallback
+Revision ID: 229_transfer_parent_fanout
+Revises: 228_order_delivery_courier_eta
 Create Date: 2026-09-11
 """
 
@@ -34,8 +34,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from alembic import op
 
-revision: str = "228_transfer_parent_fanout"
-down_revision: Union[str, None] = "227_lalamove_slider_fallback"
+revision: str = "229_transfer_parent_fanout"
+down_revision: Union[str, None] = "228_order_delivery_courier_eta"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -93,7 +93,10 @@ def upgrade() -> None:
         "ck_transfers_business_date_format"
     )
 
-    # ── 2. Child status vocabulary, derived from the two link columns. ──
+    # ── 2. Child status vocabulary, derived from the two link columns. Drop the
+    #    old CHECK first — the new values (sent/cancelled) would violate it — then
+    #    migrate the data, then add the new CHECK. ──
+    op.drop_constraint("ck_transfer_orders_status_allowed", "transfers", type_="check")
     op.execute(
         """
         UPDATE transfers SET status = CASE
@@ -104,7 +107,6 @@ def upgrade() -> None:
         END
         """
     )
-    op.drop_constraint("ck_transfer_orders_status_allowed", "transfers", type_="check")
     op.create_check_constraint(
         "ck_transfers_status_allowed", "transfers", f"status IN {CHILD_STATUS}"
     )

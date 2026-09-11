@@ -31,6 +31,7 @@ from app.models import (
     Supplier,
     SupplierItem,
     TransactionStatusEnum,
+    Transfer,
     TransferOrder,
     Warehouse,
 )
@@ -454,10 +455,19 @@ async def _resolve_source_references(
         except (ValueError, AttributeError):
             return None
 
+    # Transfer legs carry source_type "transfer" and a *child* transfer id; the
+    # old spelling "transfer_order" is kept as a read-compat clause for any row a
+    # migration has not re-pointed.
     transfer_ids = {
         parsed
         for t in transactions
-        if t.source_type == "transfer_order"
+        if t.source_type in ("transfer", "transfer_order")
+        and (parsed := _as_uuid(t.source_id)) is not None
+    }
+    shortfall_order_ids = {
+        parsed
+        for t in transactions
+        if t.source_type == "transfer_shortfall_adjustment"
         and (parsed := _as_uuid(t.source_id)) is not None
     }
     report_ids = {
@@ -480,8 +490,23 @@ async def _resolve_source_references(
         ).all()
         return {row[0]: row[1] for row in rows}
 
-    transfers = await _map(
-        TransferOrder, transfer_ids, TransferOrder.id, TransferOrder.reference
+    # A transfer leg's source is the child; the ledger shows the child reference
+    # but deep-links to its parent order, where both legs and every branch sit.
+    transfers: dict[uuid.UUID, tuple[str, uuid.UUID]] = {}
+    if transfer_ids:
+        rows = (
+            await db.execute(
+                select(
+                    Transfer.id, Transfer.reference, Transfer.transfer_order_id
+                ).where(Transfer.id.in_(transfer_ids))
+            )
+        ).all()
+        transfers = {row[0]: (row[1], row[2]) for row in rows}
+    shortfall_orders = await _map(
+        TransferOrder,
+        shortfall_order_ids,
+        TransferOrder.id,
+        TransferOrder.reference,
     )
     orders = await _map(Order, order_ids, Order.id, Order.order_number)
     pos = await _map(PurchaseOrder, po_ids, PurchaseOrder.id, PurchaseOrder.reference)
@@ -515,11 +540,23 @@ async def _resolve_source_references(
                 "reference": f"Reversal of {reversals[t.reverses_transaction_id]}",
                 "link": None,
             }
-        elif t.source_type == "transfer_order" and (sid := _as_uuid(t.source_id)):
-            ref = transfers.get(sid)
-            if ref:
+        elif t.source_type in ("transfer", "transfer_order") and (
+            sid := _as_uuid(t.source_id)
+        ):
+            entry = transfers.get(sid)
+            if entry:
+                ref, parent_id = entry
                 resolved[t.id] = {
                     "reference": ref,
+                    "link": f"/inventory/transfers/{parent_id}",
+                }
+        elif t.source_type == "transfer_shortfall_adjustment" and (
+            sid := _as_uuid(t.source_id)
+        ):
+            ref = shortfall_orders.get(sid)
+            if ref:
+                resolved[t.id] = {
+                    "reference": f"Shortfall top-up · {ref}",
                     "link": f"/inventory/transfers/{sid}",
                 }
         elif t.source_type == "shift_inventory_report" and (
