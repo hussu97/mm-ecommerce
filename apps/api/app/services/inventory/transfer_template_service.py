@@ -132,8 +132,13 @@ async def upsert_template(db: AsyncSession, *, payload) -> InventoryTransferTemp
                 f"Inventory item {item_data.item_id} appears more than once"
             )
         seen.add(item_data.item_id)
-        if await db.get(InventoryItem, item_data.item_id) is None:
+        candidate = await db.get(InventoryItem, item_data.item_id)
+        if candidate is None:
             raise BadRequestError(f"Inventory item {item_data.item_id} not found")
+        if candidate.deleted_at is not None or not candidate.is_active:
+            raise BadRequestError(
+                f"Inventory item {candidate.name} is inactive and cannot be added"
+            )
         db.add(
             InventoryTransferTemplateItem(
                 template_id=template.id,

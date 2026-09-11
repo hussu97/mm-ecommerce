@@ -468,17 +468,21 @@ async def _serialise_template(
         )
         lookup = {r.id: r for r in rows}
         categories = await _category_map(db, [r.id for r in rows])
+        visible = []
         for line in payload.items:
             item = lookup.get(line.item_id)
-            if item:
-                line.item_name = item.name
-                line.item_sku = item.sku
-                category = (
-                    categories.get(item.category_id) if item.category_id else None
-                )
-                if category is not None:
-                    line.category_name = category.name
-                    line.category_order = int(category.display_order or 0)
+            # Drop lines whose item has since been deactivated or deleted — a
+            # stale template must not offer an item nobody can transfer.
+            if item is None or item.deleted_at is not None or not item.is_active:
+                continue
+            line.item_name = item.name
+            line.item_sku = item.sku
+            category = categories.get(item.category_id) if item.category_id else None
+            if category is not None:
+                line.category_name = category.name
+                line.category_order = int(category.display_order or 0)
+            visible.append(line)
+        payload.items = visible
     return payload
 
 
@@ -673,6 +677,7 @@ async def pos_on_hand(
         .where(
             Warehouse.branch_id == branch_id,
             InventoryItem.deleted_at.is_(None),
+            InventoryItem.is_active.is_(True),
         )
         .order_by(InventoryItem.name)
     )
@@ -1392,7 +1397,10 @@ async def inventory_dashboard(
     stmt = (
         select(InventoryLevel, InventoryItem)
         .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
-        .where(InventoryItem.deleted_at.is_(None))
+        .where(
+            InventoryItem.deleted_at.is_(None),
+            InventoryItem.is_active.is_(True),
+        )
     )
     if branch_id:
         stmt = stmt.join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id).where(

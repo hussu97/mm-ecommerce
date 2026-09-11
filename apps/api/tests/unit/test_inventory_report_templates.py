@@ -46,7 +46,12 @@ async def test_new_report_template_has_required_columns_before_first_flush():
     flush_snapshots: list[dict[str, object]] = []
     db = SimpleNamespace(
         get=AsyncMock(
-            side_effect=[SimpleNamespace(id=branch_id), SimpleNamespace(id=item_id)]
+            side_effect=[
+                SimpleNamespace(id=branch_id),
+                SimpleNamespace(
+                    id=item_id, name="Item", deleted_at=None, is_active=True
+                ),
+            ]
         ),
         add=MagicMock(side_effect=added.append),
         flush=AsyncMock(),
@@ -167,7 +172,12 @@ async def test_template_update_appends_a_same_name_revision():
     added: list[object] = []
     db = SimpleNamespace(
         get=AsyncMock(
-            side_effect=[SimpleNamespace(id=branch_id), SimpleNamespace(id=item_id)]
+            side_effect=[
+                SimpleNamespace(id=branch_id),
+                SimpleNamespace(
+                    id=item_id, name="Item", deleted_at=None, is_active=True
+                ),
+            ]
         ),
         add=MagicMock(side_effect=added.append),
         flush=AsyncMock(),

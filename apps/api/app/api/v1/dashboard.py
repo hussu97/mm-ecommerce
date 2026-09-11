@@ -515,6 +515,7 @@ async def _operational_snapshot(
         .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
         .where(
             InventoryItem.deleted_at.is_(None),
+            InventoryItem.is_active.is_(True),
             InventoryLevel.quantity < InventoryItem.minimum_level,
         ),
     )

@@ -288,10 +288,12 @@ function CreateOrder({
                 <Select
                   value={line.item_id}
                   onChange={(e) => updateLine(index, { item_id: e.target.value })}
-                  options={items.map((i) => ({
-                    value: i.id,
-                    label: `${i.sku} — ${i.name} (${i.storage_unit})`,
-                  }))}
+                  options={items
+                    .filter((i) => i.is_active && !i.deleted_at)
+                    .map((i) => ({
+                      value: i.id,
+                      label: `${i.sku} — ${i.name} (${i.storage_unit})`,
+                    }))}
                   placeholder="Choose item…"
                 />
               </td>

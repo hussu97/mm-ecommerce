@@ -329,8 +329,13 @@ async def upsert_template(
                 f"Inventory item {item_data.item_id} appears more than once"
             )
         seen.add(item_data.item_id)
-        if await db.get(InventoryItem, item_data.item_id) is None:
+        candidate = await db.get(InventoryItem, item_data.item_id)
+        if candidate is None:
             raise BadRequestError(f"Inventory item {item_data.item_id} not found")
+        if candidate.deleted_at is not None or not candidate.is_active:
+            raise BadRequestError(
+                f"Inventory item {candidate.name} is inactive and cannot be added"
+            )
         db.add(
             InventoryReportTemplateItem(
                 template_id=template.id,
@@ -825,7 +830,9 @@ async def _create_report(
     categories = await _category_map(db, [row.item_id for row in template.items])
     for template_item in sorted(template.items, key=lambda row: row.display_order):
         item = await db.get(InventoryItem, template_item.item_id)
-        if item is None:
+        # Skip items since deactivated or deleted — a stale template line must not
+        # put an item nobody stocks any more onto the count sheet.
+        if item is None or item.deleted_at is not None or not item.is_active:
             continue
         level = await inventory_service.level_for(db, item.id, warehouse.id)
         expected = quantity(level.quantity)

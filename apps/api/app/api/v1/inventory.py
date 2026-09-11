@@ -342,7 +342,10 @@ async def list_levels(
         .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
         .join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id)
         .join(Branch, Branch.id == Warehouse.branch_id)
-        .where(InventoryItem.deleted_at.is_(None))
+        .where(
+            InventoryItem.deleted_at.is_(None),
+            InventoryItem.is_active.is_(True),
+        )
     )
     if warehouse_id:
         warehouse = await crud_service.get_or_404(db, Warehouse, warehouse_id)
