@@ -207,10 +207,17 @@ def _upsert(ids, *, name="Daily run", is_active=True, items=None):
     )
 
 
-def _line(item_id, quantity):
-    return SimpleNamespace(
-        item_id=item_id, quantity=Decimal(str(quantity)), unit="storage"
-    )
+def _order_items(item_id, dest_id, quantity):
+    return [
+        SimpleNamespace(
+            item_id=item_id,
+            unit="storage",
+            override=False,
+            allocations=[
+                SimpleNamespace(branch_id=dest_id, quantity=Decimal(str(quantity)))
+            ],
+        )
+    ]
 
 
 async def _revisions(db, source_id, name) -> list[InventoryTransferTemplate]:
@@ -345,14 +352,12 @@ async def test_transfer_snapshot_is_frozen_at_raise_and_survives_a_later_edit(en
 
     async with Session() as db:
         source = await db.get(Branch, ids.source)
-        dest = await db.get(Branch, ids.dest)
         user = await db.get(User, ids.user)
-        order = await transfer_service.create_and_send(
+        order = await transfer_service.create_transfer_order(
             db,
             source_branch=source,
-            destination_branch=dest,
             user=user,
-            lines=[_line(ids.items[0], 5)],
+            items=_order_items(ids.items[0], ids.dest, 5),
             template_id=template_v1_id,
         )
         await db.commit()
@@ -390,14 +395,12 @@ async def test_ad_hoc_transfer_without_a_template_leaves_the_columns_null(env):
     Session, ids = env
     async with Session() as db:
         source = await db.get(Branch, ids.source)
-        dest = await db.get(Branch, ids.dest)
         user = await db.get(User, ids.user)
-        order = await transfer_service.create_and_send(
+        order = await transfer_service.create_transfer_order(
             db,
             source_branch=source,
-            destination_branch=dest,
             user=user,
-            lines=[_line(ids.items[0], 3)],
+            items=_order_items(ids.items[0], ids.dest, 3),
         )
         await db.commit()
         order_id = order.id

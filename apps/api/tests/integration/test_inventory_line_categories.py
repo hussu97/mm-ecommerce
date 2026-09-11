@@ -35,7 +35,7 @@ from app.models.inventory import (
     Warehouse,
 )
 from app.models.inventory_v2 import BranchInventorySettings
-from app.models.operations import TransferOrder, TransferOrderStatusEnum
+from app.models.operations import TransferOrder
 from app.models.user import User
 from app.services.inventory import inventory_service, transfer_service
 
@@ -187,33 +187,59 @@ async def env():
     await engine.dispose()
 
 
-def _line(item_id, quantity):
+def _alloc(branch_id, quantity):
+    return SimpleNamespace(branch_id=branch_id, quantity=Decimal(str(quantity)))
+
+
+def _item(item_id, allocations):
     return SimpleNamespace(
-        item_id=item_id, quantity=Decimal(str(quantity)), unit="storage"
+        item_id=item_id, unit="storage", override=False, allocations=allocations
     )
 
 
+async def _order_and_send(db, ids, quantity):
+    """Create a one-destination order and mark its child sent."""
+    source = await db.get(Branch, ids.source)
+    user = await db.get(User, ids.user)
+    order = await transfer_service.create_transfer_order(
+        db,
+        source_branch=source,
+        user=user,
+        items=[_item(ids.item, [_alloc(ids.dest, quantity)])],
+    )
+    child = order.children[0]
+    fresh = await transfer_service.load_transfer(db, child.id)
+    await transfer_service.mark_transfer_sent(db, transfer=fresh, user=user)
+    return child.id
+
+
 async def test_transfer_line_serialises_with_category(env):
-    """A transfer order line carries the item's category name + display order, and
+    """A transfer child line carries the item's category name + display order, and
     an uncategorised item's line leaves both null."""
     _engine, Session, ids = env
     async with Session() as db:
         source = await db.get(Branch, ids.source)
-        dest = await db.get(Branch, ids.dest)
         user = await db.get(User, ids.user)
-        order = await transfer_service.create_and_send(
+        order = await transfer_service.create_transfer_order(
             db,
             source_branch=source,
-            destination_branch=dest,
             user=user,
-            lines=[_line(ids.item, 5), _line(ids.loose, 3)],
+            items=[
+                _item(ids.item, [_alloc(ids.dest, 5)]),
+                _item(ids.loose, [_alloc(ids.dest, 3)]),
+            ],
         )
         await db.commit()
+        order_id = order.id
 
     async with Session() as db:
-        order = await transfer_service.load_transfer_order(db, order.id)
-        payload = await operations_api._serialise_transfer(db, order)
-        by_item = {line.item_id: line for line in payload.items}
+        order = await transfer_service.load_transfer_order(db, order_id)
+        payload = await operations_api._serialise_order(db, order)
+        by_item = {
+            line.item_id: line
+            for child in payload.children
+            for line in child.items
+        }
 
         categorised = by_item[ids.item]
         assert categorised.category_name == f"{MARKER} Dry goods"
@@ -268,80 +294,50 @@ async def test_transaction_line_serialises_with_category(env):
         assert uncategorised.category_order is None
 
 
-async def test_admin_receive_persists_variance_reason(env):
-    """The admin receive endpoint records the receiver's per-line reason on the
-    line when one is supplied."""
+async def test_receive_persists_variance_reason(env):
+    """Receiving records the receiver's per-line reason on the line when one is
+    supplied."""
     _engine, Session, ids = env
     async with Session() as db:
-        source = await db.get(Branch, ids.source)
-        dest = await db.get(Branch, ids.dest)
+        child_id = await _order_and_send(db, ids, 10)
+        await db.commit()
+
+    async with Session() as db:
         user = await db.get(User, ids.user)
-        order = await transfer_service.create_and_send(
+        child = await transfer_service.load_transfer(db, child_id)
+        line_id = child.items[0].id
+        await transfer_service.receive_transfer(
             db,
-            source_branch=source,
-            destination_branch=dest,
+            transfer=child,
             user=user,
-            lines=[_line(ids.item, 10)],
-        )
-        await db.commit()
-        order_id = order.id
-
-    async with Session() as db:
-        user = await db.get(User, ids.user)
-        order = await transfer_service.load_transfer_order(db, order_id)
-        line_id = order.items[0].id
-        data = operations_api.AdminTransferReceive(
-            lines=[
-                operations_api.AdminTransferReceiveLine(
-                    transfer_order_item_id=line_id,
-                    quantity=Decimal("8"),
-                    reason="two bags split in transit",
-                )
-            ]
-        )
-        await operations_api.receive_transfer(
-            order_id=order_id, data=data, db=db, user=user
+            received={line_id: Decimal("8")},
+            reasons={line_id: "two bags split in transit"},
         )
         await db.commit()
 
     async with Session() as db:
-        order = await transfer_service.load_transfer_order(db, order_id)
-        assert order.status == TransferOrderStatusEnum.CLOSED.value
-        assert Decimal(str(order.items[0].received_quantity)) == Decimal("8")
-        assert order.items[0].variance_reason == "two bags split in transit"
+        child = await transfer_service.load_transfer(db, child_id)
+        assert child.status == "closed"
+        assert Decimal(str(child.items[0].received_quantity)) == Decimal("8")
+        assert child.items[0].variance_reason == "two bags split in transit"
 
 
-async def test_admin_receive_empty_lines_accepts_all_as_sent(env):
-    """An empty ``lines`` list receives every line as sent — the "force receive"
-    case that needs no extra endpoint code."""
+async def test_receive_defaults_to_the_full_sent_quantity(env):
+    """Receiving with no explicit quantities books every line in as sent, with no
+    reason recorded."""
     _engine, Session, ids = env
     async with Session() as db:
-        source = await db.get(Branch, ids.source)
-        dest = await db.get(Branch, ids.dest)
-        user = await db.get(User, ids.user)
-        order = await transfer_service.create_and_send(
-            db,
-            source_branch=source,
-            destination_branch=dest,
-            user=user,
-            lines=[_line(ids.item, 6)],
-        )
-        await db.commit()
-        order_id = order.id
-
-    async with Session() as db:
-        user = await db.get(User, ids.user)
-        await operations_api.receive_transfer(
-            order_id=order_id,
-            data=operations_api.AdminTransferReceive(lines=[]),
-            db=db,
-            user=user,
-        )
+        child_id = await _order_and_send(db, ids, 6)
         await db.commit()
 
     async with Session() as db:
-        order = await transfer_service.load_transfer_order(db, order_id)
-        assert order.status == TransferOrderStatusEnum.CLOSED.value
-        # Received defaulted to the full sent quantity with no reason recorded.
-        assert Decimal(str(order.items[0].received_quantity)) == Decimal("6")
-        assert order.items[0].variance_reason is None
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        await transfer_service.receive_transfer(db, transfer=child, user=user)
+        await db.commit()
+
+    async with Session() as db:
+        child = await transfer_service.load_transfer(db, child_id)
+        assert child.status == "closed"
+        assert Decimal(str(child.items[0].received_quantity)) == Decimal("6")
+        assert child.items[0].variance_reason is None
