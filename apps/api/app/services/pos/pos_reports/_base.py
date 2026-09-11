@@ -183,15 +183,7 @@ _DISCOUNT_SOURCES = {
 
 
 #: Dimensions reached through the table an order was seated at.
-_TABLE_DIMENSIONS = {"section", "revenue_center"}
-
-
-#: Tags attached to something other than the order or the product.
-_ENTITY_TAG_DIMENSIONS = {
-    "branch_tag": "branch",
-    "product_tag": "product",
-    "order_tag": "order",
-}
+_TABLE_DIMENSIONS = {"section"}
 
 
 SUPPORTED_DIMENSIONS = (
@@ -199,7 +191,6 @@ SUPPORTED_DIMENSIONS = (
     | _LINE_DIMENSIONS
     | set(_DISCOUNT_SOURCES)
     | _TABLE_DIMENSIONS
-    | set(_ENTITY_TAG_DIMENSIONS)
     | {"product", "category", "modifier_option", "delivery_zone"}
 )
 

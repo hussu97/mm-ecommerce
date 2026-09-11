@@ -21,13 +21,11 @@ from app.models.pos_order import (
 )
 from app.models.pos_table import PosTable, Section
 from app.models.product import Product
-from app.models.tag import Tag, TaggedEntity
 from app.services.pos import business_day_service
 
 from ._base import (
     _COMPLETED_SALE,
     _DISCOUNT_SOURCES,
-    _ENTITY_TAG_DIMENSIONS,
     _LINE_DIMENSIONS,
     _ORDER_DIMENSIONS,
     _TABLE_DIMENSIONS,
@@ -206,16 +204,6 @@ async def sales_by_dimension(
     if dimension == "delivery_zone":
         return await _sales_by_delivery_zone(
             db, branch_id=branch_id, date_from=date_from, date_to=date_to, limit=limit
-        )
-
-    if dimension in _ENTITY_TAG_DIMENSIONS:
-        return await _sales_by_tag(
-            db,
-            dimension=dimension,
-            branch_id=branch_id,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
         )
 
     if dimension in _DISCOUNT_SOURCES or dimension in _LINE_DIMENSIONS:
@@ -562,27 +550,11 @@ async def _sales_by_seating(
     date_to: str | None,
     limit: int,
 ) -> list[dict]:
-    """Sales by the section, or revenue centre, an order was seated in."""
-    if dimension == "section":
-        key, label = Section.id, Section.name
-        joined = (
-            select()
-            .join(PosTable, PosTable.id == Order.table_id)
-            .join(Section, Section.id == PosTable.section_id)
-        )
-    else:
-        # Foodics models a revenue centre as a tag on the table, and so do we.
-        key, label = Tag.id, Tag.name
-        joined = (
-            select()
-            .join(PosTable, PosTable.id == Order.table_id)
-            .join(Tag, Tag.id == PosTable.revenue_center_tag_id)
-        )
-
+    """Sales by the section an order was seated in."""
     stmt = (
         _scope(
             select(
-                label.label("key"),
+                Section.name.label("key"),
                 func.count(func.distinct(Order.id)),
                 func.coalesce(func.sum(Order.total), 0),
                 func.coalesce(func.sum(Order.discount_amount), 0),
@@ -593,18 +565,12 @@ async def _sales_by_seating(
         )
         .select_from(Order)
         .join(PosTable, PosTable.id == Order.table_id)
-        .join(
-            Section if dimension == "section" else Tag,
-            (Section.id == PosTable.section_id)
-            if dimension == "section"
-            else (Tag.id == PosTable.revenue_center_tag_id),
-        )
+        .join(Section, Section.id == PosTable.section_id)
         .where(_COMPLETED_SALE)
-        .group_by(label)
+        .group_by(Section.name)
         .order_by(func.coalesce(func.sum(Order.total), 0).desc())
         .limit(limit)
     )
-    del key, joined
     rows = (await db.execute(stmt)).all()
     return [
         {
@@ -615,103 +581,6 @@ async def _sales_by_seating(
             "discounts": money(d),
         }
         for k, c, t, d in rows
-    ]
-
-
-async def _sales_by_tag(
-    db: AsyncSession,
-    *,
-    dimension: str,
-    branch_id: uuid.UUID | None,
-    date_from: str | None,
-    date_to: str | None,
-    limit: int,
-) -> list[dict]:
-    """
-    Sales grouped by a tag on the product, or on the order itself.
-
-    Product tags sum the lines carrying them; order tags sum whole orders. A
-    product tag must not claim the whole check — a "vegan" tag on one slice
-    says nothing about the coffee next to it.
-    """
-    if dimension == "branch_tag":
-        stmt = (
-            _scope(
-                select(
-                    Tag.name.label("key"),
-                    func.count(func.distinct(Order.id)),
-                    func.coalesce(func.sum(Order.total), 0),
-                ),
-                branch_id=branch_id,
-                date_from=date_from,
-                date_to=date_to,
-            )
-            .select_from(Order)
-            .join(
-                TaggedEntity,
-                (TaggedEntity.entity_id == Order.branch_id)
-                & (TaggedEntity.entity_type == "branch"),
-            )
-            .join(Tag, Tag.id == TaggedEntity.tag_id)
-        )
-    elif dimension == "product_tag":
-        stmt = (
-            _scope(
-                select(
-                    Tag.name.label("key"),
-                    func.count(func.distinct(Order.id)),
-                    func.coalesce(func.sum(OrderItem.total_price), 0),
-                ),
-                branch_id=branch_id,
-                date_from=date_from,
-                date_to=date_to,
-            )
-            .select_from(Order)
-            .join(OrderItem, OrderItem.order_id == Order.id)
-            .join(
-                TaggedEntity,
-                (TaggedEntity.entity_id == OrderItem.product_id)
-                & (TaggedEntity.entity_type == "product"),
-            )
-            .join(Tag, Tag.id == TaggedEntity.tag_id)
-        )
-    else:
-        stmt = (
-            _scope(
-                select(
-                    Tag.name.label("key"),
-                    func.count(func.distinct(Order.id)),
-                    func.coalesce(func.sum(Order.total), 0),
-                ),
-                branch_id=branch_id,
-                date_from=date_from,
-                date_to=date_to,
-            )
-            .select_from(Order)
-            .join(
-                TaggedEntity,
-                (TaggedEntity.entity_id == Order.id)
-                & (TaggedEntity.entity_type == "order"),
-            )
-            .join(Tag, Tag.id == TaggedEntity.tag_id)
-        )
-
-    stmt = (
-        stmt.where(_COMPLETED_SALE)
-        .group_by(Tag.name)
-        .order_by(func.count(func.distinct(Order.id)).desc())
-        .limit(limit)
-    )
-    rows = (await db.execute(stmt)).all()
-    return [
-        {
-            "key": k,
-            "label": k,
-            "orders": int(c or 0),
-            "net_sales": money(t),
-            "discounts": money(0),
-        }
-        for k, c, t in rows
     ]
 
 

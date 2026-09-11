@@ -13,7 +13,7 @@ import type {
   KitchenFlow, PaymentMethod,
   PermissionCatalogue, Printer, PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
-  Supplier, Tag, Tax,
+  Supplier, Tax,
   TaxGroup, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
@@ -108,13 +108,6 @@ export const reasonsApi = {
   create: (d: Partial<Reason>) => api.post<Reason>('/reasons', d),
   update: (id: string, d: Partial<Reason>) => api.put<Reason>(`/reasons/${id}`, d),
   remove: (id: string) => api.delete<void>(`/reasons/${id}`),
-};
-
-export const tagsApi = {
-  list: (type?: string) => api.get<Tag[]>(`/tags${buildQs({ type })}`),
-  create: (d: Partial<Tag>) => api.post<Tag>('/tags', d),
-  update: (id: string, d: Partial<Tag>) => api.put<Tag>(`/tags/${id}`, d),
-  remove: (id: string) => api.delete<void>(`/tags/${id}`),
 };
 
 export const kitchenFlowsApi = {

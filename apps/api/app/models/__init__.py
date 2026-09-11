@@ -217,7 +217,6 @@ from .role import (  # noqa: F401
     Role,
     UserBranch,
 )
-from .tag import Tag, TaggedEntity, TagTypeEnum  # noqa: F401
 from .tax import Tax, TaxGroup, TaxGroupTax, TaxTypeEnum  # noqa: F401
 from .till import (  # noqa: F401
     DRAWER_SIGN,
@@ -305,9 +304,6 @@ __all__ = [
     "ChargeTypeEnum",
     "Reason",
     "ReasonTypeEnum",
-    "Tag",
-    "TaggedEntity",
-    "TagTypeEnum",
     "KitchenFlow",
     "KitchenFlowCategory",
     "Device",

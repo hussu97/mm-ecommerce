@@ -7701,84 +7701,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/tags": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Items */
-        get: operations["list_items_api_v1_tags_get"];
-        put?: never;
-        /** Create Item */
-        post: operations["create_item_api_v1_tags_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tags/assigned/{entity_type}/{entity_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Entity Tags
-         * @description Tags currently attached to any taggable entity.
-         */
-        get: operations["list_entity_tags_api_v1_tags_assigned__entity_type___entity_id__get"];
-        /**
-         * Set Entity Tags
-         * @description Replace the full tag set for an entity.
-         */
-        put: operations["set_entity_tags_api_v1_tags_assigned__entity_type___entity_id__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tags/{item_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Item */
-        get: operations["get_item_api_v1_tags__item_id__get"];
-        /** Update Item */
-        put: operations["update_item_api_v1_tags__item_id__put"];
-        post?: never;
-        /** Delete Item */
-        delete: operations["delete_item_api_v1_tags__item_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/tags/{item_id}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restore Item */
-        post: operations["restore_item_api_v1_tags__item_id__restore_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/tax-groups": {
         parameters: {
             query?: never;
@@ -16084,8 +16006,6 @@ export interface components {
             branch_ids?: string[];
             /** Category Ids */
             category_ids?: string[];
-            /** Customer Tag Ids */
-            customer_tag_ids?: string[];
             /** From Date */
             from_date?: string | null;
             /**
@@ -18004,8 +17924,6 @@ export interface components {
             };
             /** Name */
             name: string;
-            /** Revenue Center Tag Id */
-            revenue_center_tag_id?: string | null;
             /**
              * Seats
              * @default 4
@@ -18045,8 +17963,6 @@ export interface components {
             name: string;
             /** Parent Id */
             parent_id: string | null;
-            /** Revenue Center Tag Id */
-            revenue_center_tag_id: string | null;
             /** Seats */
             seats: number;
             /**
@@ -18078,90 +17994,12 @@ export interface components {
             name?: string | null;
             /** Parent Id */
             parent_id?: string | null;
-            /** Revenue Center Tag Id */
-            revenue_center_tag_id?: string | null;
             /** Seats */
             seats?: number | null;
             /** Section Id */
             section_id?: string | null;
             /** Status */
             status?: ("free" | "occupied" | "check_printed" | "reserved") | null;
-        };
-        /** TagAssignment */
-        TagAssignment: {
-            /** Tag Ids */
-            tag_ids: string[];
-        };
-        /** TagCreate */
-        TagCreate: {
-            /** Color */
-            color?: string | null;
-            /** Name */
-            name: string;
-            /** Name Localized */
-            name_localized?: string | null;
-            /** Translations */
-            translations?: {
-                [key: string]: {
-                    [key: string]: string;
-                };
-            };
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "order" | "customer" | "product" | "inventory_item" | "revenue_center";
-        };
-        /** TagResponse */
-        TagResponse: {
-            /** Color */
-            color: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Deleted At */
-            deleted_at: string | null;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Name */
-            name: string;
-            /** Name Localized */
-            name_localized: string | null;
-            /** Translations */
-            translations: {
-                [key: string]: {
-                    [key: string]: string;
-                };
-            };
-            /** Type */
-            type: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            updated_at: string;
-        };
-        /** TagUpdate */
-        TagUpdate: {
-            /** Color */
-            color?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Name Localized */
-            name_localized?: string | null;
-            /** Translations */
-            translations?: {
-                [key: string]: {
-                    [key: string]: string;
-                };
-            } | null;
-            /** Type */
-            type?: ("order" | "customer" | "product" | "inventory_item" | "revenue_center") | null;
         };
         /** TaxCreate */
         TaxCreate: {
@@ -34471,267 +34309,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_items_api_v1_tags_get: {
-        parameters: {
-            query?: {
-                include_deleted?: boolean;
-                include_inactive?: boolean;
-                /** @description Filter by type where supported */
-                type?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_item_api_v1_tags_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TagCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_entity_tags_api_v1_tags_assigned__entity_type___entity_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entity_type: string;
-                entity_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_entity_tags_api_v1_tags_assigned__entity_type___entity_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                entity_type: string;
-                entity_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TagAssignment"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_item_api_v1_tags__item_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_item_api_v1_tags__item_id__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TagUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_item_api_v1_tags__item_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restore_item_api_v1_tags__item_id__restore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TagResponse"];
-                };
             };
             /** @description Validation Error */
             422: {

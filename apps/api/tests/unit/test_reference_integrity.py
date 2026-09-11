@@ -129,7 +129,6 @@ async def test_duplicate_ids_are_asked_about_once():
         (Promotion, "branch_ids", "Branch"),
         (Promotion, "trigger_product_ids", "Product"),
         (Promotion, "reward_product_ids", "Product"),
-        (Promotion, "customer_tag_ids", "Tag"),
         (TimedEvent, "branch_ids", "Branch"),
         (TimedEvent, "product_ids", "Product"),
         (TimedEvent, "category_ids", "Category"),

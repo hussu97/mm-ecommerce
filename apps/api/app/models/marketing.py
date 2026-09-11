@@ -208,9 +208,6 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     order_types: Mapped[Any] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default="{}"
     )
-    customer_tag_ids: Mapped[list[uuid.UUID]] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
-    )
     #: The order channels this promotion may fire on — `OrderSourceEnum` values
     #: (`cashier`, `online`, `aggregator`, …). Empty = every channel.
     #:

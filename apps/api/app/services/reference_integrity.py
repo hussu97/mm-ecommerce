@@ -1,9 +1,9 @@
 """
 Referential integrity for the columns the database cannot enforce it on.
 
-Nine columns across five tables store a `UUID[]` instead of a join table:
+Eight columns across five tables store a `UUID[]` instead of a join table:
 `devices.category_ids`, `discounts.branch_ids`, `promotions.branch_ids` /
-`trigger_product_ids` / `reward_product_ids` / `customer_tag_ids`,
+`trigger_product_ids` / `reward_product_ids`,
 `timed_events.branch_ids` / `product_ids` / `category_ids`, and
 `notification_rules.branch_ids` / `recipient_user_ids`.
 
@@ -61,7 +61,6 @@ REFERENCES: dict[str, dict[str, str]] = {
         # or one whose free product cannot be granted.
         "trigger_product_ids": "Product",
         "reward_product_ids": "Product",
-        "customer_tag_ids": "Tag",
     },
     "TimedEvent": {
         "branch_ids": "Branch",

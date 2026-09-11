@@ -32,8 +32,6 @@ from app.models import (
     KitchenFlowCategory,
     PaymentMethod,
     Reason,
-    Tag,
-    TaggedEntity,
     Tax,
     TaxGroup,
     TaxGroupTax,
@@ -56,10 +54,6 @@ from app.schemas.pos import (
     ReasonCreate,
     ReasonResponse,
     ReasonUpdate,
-    TagAssignment,
-    TagCreate,
-    TagResponse,
-    TagUpdate,
     TaxCreate,
     TaxGroupCreate,
     TaxGroupResponse,
@@ -252,75 +246,6 @@ courses_router = build_crud_router(
     response_schema=CourseResponse,
     entity_type="course",
 )
-
-tags_router = build_crud_router(
-    model=Tag,
-    create_schema=TagCreate,
-    update_schema=TagUpdate,
-    response_schema=TagResponse,
-    entity_type="tag",
-)
-
-
-# ─── Tag assignment ───────────────────────────────────────────────────────────
-
-
-async def _entity_tags(
-    db: AsyncSession, entity_type: str, entity_id: uuid.UUID
-) -> list[Tag]:
-    stmt = (
-        select(Tag)
-        .join(TaggedEntity, TaggedEntity.tag_id == Tag.id)
-        .where(
-            TaggedEntity.entity_type == entity_type,
-            TaggedEntity.entity_id == entity_id,
-            Tag.deleted_at.is_(None),
-        )
-        .order_by(Tag.name)
-    )
-    return list((await db.execute(stmt)).scalars().all())
-
-
-@tags_router.get(
-    "/assigned/{entity_type}/{entity_id}", response_model=list[TagResponse]
-)
-async def list_entity_tags(
-    entity_type: str,
-    entity_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("admin.settings.manage")),
-):
-    """Tags currently attached to any taggable entity."""
-    return await _entity_tags(db, entity_type, entity_id)
-
-
-@tags_router.put(
-    "/assigned/{entity_type}/{entity_id}", response_model=list[TagResponse]
-)
-async def set_entity_tags(
-    entity_type: str,
-    entity_id: uuid.UUID,
-    data: TagAssignment,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("admin.settings.manage")),
-):
-    """Replace the full tag set for an entity."""
-    await db.execute(
-        delete(TaggedEntity).where(
-            TaggedEntity.entity_type == entity_type,
-            TaggedEntity.entity_id == entity_id,
-        )
-    )
-    for tag_id in dict.fromkeys(data.tag_ids):
-        tag = await db.get(Tag, tag_id)
-        if tag is None or tag.deleted_at is not None:
-            raise BadRequestError(f"Tag {tag_id} does not exist")
-        db.add(
-            TaggedEntity(tag_id=tag_id, entity_type=entity_type, entity_id=entity_id)
-        )
-    await db.flush()
-    return await _entity_tags(db, entity_type, entity_id)
-
 
 # ─── Tax groups (membership needs bespoke handling) ───────────────────────────
 
@@ -606,7 +531,6 @@ __all__ = [
     "kitchen_flows_router",
     "payment_methods_router",
     "reasons_router",
-    "tags_router",
     "tax_groups_router",
     "taxes_router",
 ]

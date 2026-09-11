@@ -54,7 +54,6 @@ from app.models import (  # noqa: E402
     Reason,
     Role,
     Supplier,
-    Tag,
     Tax,
     TaxGroup,
     TaxGroupTax,
@@ -79,15 +78,8 @@ PAYMENT_TYPE_BY_CODE = {
 SKIPPED_PAYMENT_TYPES = {"gift_card", "house_account"}
 
 #: Foodics enumerates these as integers too. The observed values in this
-#: account are tags 3–4, reasons 1–3 and charges 1; anything else falls back to
-#: the safest bucket rather than failing the whole import.
-TAG_TYPE_BY_CODE = {
-    1: "order",
-    2: "customer",
-    3: "inventory_item",
-    4: "product",
-    5: "revenue_center",
-}
+#: account are reasons 1–3 and charges 1; anything else falls back to the
+#: safest bucket rather than failing the whole import.
 REASON_TYPE_BY_CODE = {
     1: "void_return",
     2: "drawer_operation",
@@ -771,16 +763,6 @@ class Importer:
                 await self.db.flush()
 
     async def import_reference_data(self) -> None:
-        for row in self.export.get("tags", []):
-            await self.upsert(
-                Tag,
-                {"name": row["name"]},
-                {
-                    "name_localized": row.get("name_localized"),
-                    "type": TAG_TYPE_BY_CODE.get(row.get("type"), "product"),
-                    "color": row.get("color"),
-                },
-            )
         for row in self.export.get("reasons", []):
             await self.upsert(
                 Reason,

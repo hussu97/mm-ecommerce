@@ -157,7 +157,6 @@ class PromotionCreate(ScheduleFields):
     #: Channels this promotion may fire on; empty = every channel. A
     #: counter-only offer carries `["cashier"]`.
     sources: list[SourceLiteral] = Field(default_factory=list)
-    customer_tag_ids: list[uuid.UUID] = Field(default_factory=list)
     priority: int = Field(100, ge=0, le=10000)
     max_uses_per_order: int = Field(1, ge=1, le=100)
     #: When true, the pricing engine applies this promotion with no cashier

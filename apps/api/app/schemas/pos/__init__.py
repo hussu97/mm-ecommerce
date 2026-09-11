@@ -69,10 +69,6 @@ from .tags import (
     CourseCreate,
     CourseResponse,
     CourseUpdate,
-    TagAssignment,
-    TagCreate,
-    TagResponse,
-    TagUpdate,
 )
 from .taxes import (
     TaxCreate,
@@ -150,10 +146,6 @@ __all__ = [
     "TableCreate",
     "TableResponse",
     "TableUpdate",
-    "TagAssignment",
-    "TagCreate",
-    "TagResponse",
-    "TagUpdate",
     "TaxCreate",
     "TaxGroupCreate",
     "TaxGroupResponse",

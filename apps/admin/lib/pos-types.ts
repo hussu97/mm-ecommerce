@@ -172,15 +172,6 @@ export interface Reason {
   deleted_at: string | null;
 }
 
-export type TagType = 'order' | 'customer' | 'product' | 'inventory_item' | 'revenue_center';
-
-export interface Tag {
-  id: string;
-  name: string;
-  type: TagType;
-  color: string | null;
-  deleted_at: string | null;
-}
 
 // ─── Staff ────────────────────────────────────────────────────────────────────
 

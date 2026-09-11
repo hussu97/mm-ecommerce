@@ -100,9 +100,6 @@ class PosTable(Base, UUIDMixin, TimestampMixin):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tables.id", ondelete="SET NULL"), nullable=True
     )
-    revenue_center_tag_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tags.id", ondelete="SET NULL"), nullable=True
-    )
     # {"x":, "y":, "width":, "height":, "shape": "round"|"square"|"rect", "rotation":}
     layout: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="{}")
     display_order: Mapped[int] = mapped_column(

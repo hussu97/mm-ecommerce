@@ -35,7 +35,6 @@ class TableCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     seats: int = Field(4, ge=1, le=100)
     accepts_reservations: bool = True
-    revenue_center_tag_id: UUID | None = None
     layout: dict = Field(default_factory=dict)
     display_order: int = 0
     is_active: bool = True
@@ -48,7 +47,6 @@ class TableUpdate(BaseModel):
     status: Literal["free", "occupied", "check_printed", "reserved"] | None = None
     accepts_reservations: bool | None = None
     parent_id: UUID | None = None
-    revenue_center_tag_id: UUID | None = None
     layout: dict | None = None
     display_order: int | None = None
     is_active: bool | None = None
@@ -62,7 +60,6 @@ class TableResponse(ORMModel):
     status: str
     accepts_reservations: bool
     parent_id: UUID | None
-    revenue_center_tag_id: UUID | None
     layout: dict
     display_order: int
     is_active: bool

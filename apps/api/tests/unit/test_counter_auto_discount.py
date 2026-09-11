@@ -43,7 +43,6 @@ def _promo(**overrides) -> Promotion:
         branch_ids=[],
         order_types=[],
         sources=["cashier"],
-        customer_tag_ids=[],
         auto_apply=True,
         priority=100,
         max_uses_per_order=1,

@@ -130,7 +130,6 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("shift_inventory_reports", "submitted_by"): _AUDIT_ACTOR,
     ("shift_inventory_reports", "transaction_id"): _INVENTORY_LOWER_TRAFFIC,
     ("tables", "parent_id"): _SMALL_LOOKUP,
-    ("tables", "revenue_center_tag_id"): _SMALL_LOOKUP,
     ("tills", "closed_by_id"): _AUDIT_ACTOR,
     ("transfer_orders", "creator_id"): _AUDIT_ACTOR,
     ("transfer_orders", "received_transaction_id"): _INVENTORY_LOWER_TRAFFIC,

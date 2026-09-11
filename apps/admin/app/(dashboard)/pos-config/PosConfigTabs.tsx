@@ -6,12 +6,12 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 /**
- * The sub-navigation shared by the five POS Configuration screens.
+ * The sub-navigation shared by the POS Configuration screens.
  *
- * Payment methods, taxes, charges, reasons and tags used to be five tabs of one
- * in-page `TabBar`; they are five tabs of one section now. Links, not buttons,
- * because each is its own route, and the active one is decided by the URL.
- * Styling mirrors `LogsTabs`/`AnalyticsTabs`/`TabBar` so it reads as one section.
+ * Payment methods, taxes, charges and reasons used to be tabs of one in-page
+ * `TabBar`; they are tabs of one section now. Links, not buttons, because each
+ * is its own route, and the active one is decided by the URL. Styling mirrors
+ * `LogsTabs`/`AnalyticsTabs`/`TabBar` so it reads as one section.
  *
  * `/pos-config` is a prefix of every tab, so the active tab is the *most
  * specific* href that covers the path. (`/pos-config` itself only ever redirects
@@ -22,7 +22,6 @@ const TABS = [
   { href: '/pos-config/taxes', label: 'Taxes' },
   { href: '/pos-config/charges', label: 'Charges' },
   { href: '/pos-config/reasons', label: 'Reasons' },
-  { href: '/pos-config/tags', label: 'Tags' },
 ];
 
 export function PosConfigTabs() {

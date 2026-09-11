@@ -37,7 +37,6 @@ from .pos_config import (
     kitchen_flows_router,
     payment_methods_router,
     reasons_router,
-    tags_router,
     tax_groups_router,
     taxes_router,
 )
@@ -84,7 +83,6 @@ pos_api_router.include_router(charges_router, prefix="/charges", tags=["Charges"
 pos_api_router.include_router(reasons_router, prefix="/reasons", tags=["Reasons"])
 pos_api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
 pos_api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
-pos_api_router.include_router(tags_router, prefix="/tags", tags=["Tags"])
 
 # ─── Money off ────────────────────────────────────────────────────────────────
 pos_api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
