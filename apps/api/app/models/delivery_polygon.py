@@ -67,9 +67,11 @@ class FulfilmentProviderEnum(str, enum.Enum):
 #: Keyed on the zone's preferred courier, because that is what decides which
 #: alternates are even plausible:
 #:
-#: * **Lalamove** zones get third party and *not* noon Send. noon Send cannot
-#:   cross an emirate boundary and will not carry a run past 20 km, so a zone we
-#:   gave to Lalamove is a zone they probably cannot reach at all.
+#: * **Lalamove** zones fall back to Slider (car) first, then third party, and
+#:   *not* noon Send. Slider serves every Lalamove zone (Dubai, RAK, UAQ) and is
+#:   the steadier courier, so it is the escape to try before the manual one. noon
+#:   Send cannot cross an emirate boundary and will not carry a run past 20 km, so
+#:   a zone we gave to Lalamove is a zone they probably cannot reach at all.
 #: * **third party** zones get Lalamove — the escape that already existed, and
 #:   the reason this whole thing was built.
 #: * **noon Send** zones get both. They are inside Sharjah by construction, so
@@ -84,7 +86,13 @@ class FulfilmentProviderEnum(str, enum.Enum):
 #: describing the database as it was, so it cannot import this. The two are held
 #: together by `tests/unit/test_zone_alternate_defaults.py`.
 DEFAULT_ALTERNATES: dict[str, list[str]] = {
-    FulfilmentProviderEnum.LALAMOVE.value: [FulfilmentProviderEnum.THIRD_PARTY.value],
+    #: Slider (car) first — it serves every Lalamove zone (Dubai, RAK, UAQ) and is
+    #: the steadier courier — then the third party as the manual escape. Still
+    #: *not* noon Send: a Lalamove zone is one noon Send probably cannot reach.
+    FulfilmentProviderEnum.LALAMOVE.value: [
+        FulfilmentProviderEnum.SLIDER_CAR.value,
+        FulfilmentProviderEnum.THIRD_PARTY.value,
+    ],
     FulfilmentProviderEnum.THIRD_PARTY.value: [FulfilmentProviderEnum.LALAMOVE.value],
     FulfilmentProviderEnum.NOON_SEND.value: [
         FulfilmentProviderEnum.THIRD_PARTY.value,

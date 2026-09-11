@@ -36,6 +36,7 @@ NOW = datetime(2026, 8, 21, 9, 0, tzinfo=timezone.utc)
 LALAMOVE = "lalamove"
 NOON_SEND = "noon_send"
 THIRD_PARTY = "third_party"
+SLIDER_CAR = "slider_car"
 
 
 class _Db:
@@ -224,7 +225,7 @@ async def test_an_order_with_no_zone_left_falls_back_to_the_default_matrix():
     db = _Db(delivery, None)
     preferred, allowed = await reassign.allowed_targets(db, order, delivery)
     assert preferred == LALAMOVE
-    assert allowed == (THIRD_PARTY,)
+    assert allowed == (SLIDER_CAR, THIRD_PARTY)
 
 
 @pytest.mark.asyncio

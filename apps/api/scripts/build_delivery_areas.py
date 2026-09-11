@@ -162,7 +162,7 @@ THIRD_PARTY_FEE = Decimal("80")
 #: import the constant; the same test keeps the two in step). A Slider **bike**
 #: may be upgraded to a car (one-way); a car has no Slider alternate.
 ALTERNATES = {
-    "lalamove": ["third_party"],
+    "lalamove": ["slider_car", "third_party"],
     "third_party": ["lalamove"],
     "noon_send": ["third_party", "lalamove"],
     "slider": ["lalamove", "third_party"],

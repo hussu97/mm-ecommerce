@@ -66,7 +66,7 @@ depends_on: Union[str, Sequence[str], None] = None
 #: Mirrored by `DEFAULT_ALTERNATES` in `app/models/delivery_polygon.py`. Spelled
 #: out here rather than imported, on purpose: see the module docstring.
 DEFAULTS: tuple[tuple[str, str], ...] = (
-    ("lalamove", '["third_party"]'),
+    ("lalamove", '["slider_car", "third_party"]'),
     ("third_party", '["lalamove"]'),
     ("noon_send", '["third_party", "lalamove"]'),
 )
