@@ -243,6 +243,18 @@ class ReportActionRequest(BaseModel):
     reason: str | None = Field(None, max_length=1000)
 
 
+class ReportCommentRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=2000)
+
+
+class ShiftReportCommentResponse(ORMModel):
+    id: UUID
+    author_id: UUID | None
+    author_name: str | None
+    body: str
+    created_at: datetime
+
+
 class ShiftReportLineResponse(ORMModel):
     id: UUID
     item_id: UUID
@@ -257,6 +269,7 @@ class ShiftReportLineResponse(ORMModel):
     transfer_out_quantity: Decimal
     waste_quantity: Decimal
     internal_use_quantity: Decimal
+    adjustment_quantity: Decimal
     expected_quantity: Decimal
     entered_quantity: Decimal | None
     confirmed: bool
@@ -290,6 +303,10 @@ class ShiftReportResponse(ORMModel):
     submitted_by_name: str | None = None
     approved_by_name: str | None = None
     lines: list[ShiftReportLineResponse] = []
+    #: The reviewer thread, oldest first — populated from the report's own
+    #: relationship on every read, so the register shows an approver's note back
+    #: to the shop and the console shows the same conversation.
+    comments: list[ShiftReportCommentResponse] = []
 
     @computed_field  # type: ignore[prop-decorator]
     @property

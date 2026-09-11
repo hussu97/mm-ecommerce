@@ -43,7 +43,6 @@ def test_a_manual_adjustment_is_accepted():
         "waste_from_orders",
         "consumption_from_production",
         "production",
-        "return_from_transfers",
     ],
 )
 def test_system_coupled_types_are_refused(blocked_type):

@@ -12,12 +12,15 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -47,6 +50,20 @@ class TransferOrderStatusEnum(str, enum.Enum):
     CLOSED = "closed"  # sent and received
 
 
+class TransferKindEnum(str, enum.Enum):
+    """What a transfer order is for.
+
+    A ``return`` is a transfer to a branch's mapped return branch (goods sent
+    back — expired, damaged, surplus). It reuses the whole transfer machinery,
+    differing only in how the destination is chosen and that each line carries a
+    reason. Keeping them in one table means the ledger, the two-leg send/receive
+    and the variance handling are written once.
+    """
+
+    TRANSFER = "transfer"
+    RETURN = "return"
+
+
 class TransferOrder(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "transfer_orders"
     __table_args__ = (
@@ -54,6 +71,19 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
         status_vocabulary("transfer_orders", "status", TransferOrderStatusEnum),
         # Migration 100.
         business_date_format("transfer_orders"),
+        # Migration 222 — mirrored here so the model states the same rule the DB does.
+        CheckConstraint(
+            "kind IN ('transfer', 'return')", name="ck_transfer_orders_kind"
+        ),
+        # Migration 224 — a till that retries a create+send (lost response) must not
+        # ship the same box twice. The client sends a stable id; a second create
+        # with it is refused, and the service returns the order already made.
+        Index(
+            "uq_transfer_orders_client_request_id",
+            "client_request_id",
+            unique=True,
+            postgresql_where=text("client_request_id IS NOT NULL"),
+        ),
     )
 
     reference: Mapped[str] = mapped_column(
@@ -63,6 +93,14 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
         String(20),
         nullable=False,
         server_default=TransferOrderStatusEnum.DRAFT.value,
+        index=True,
+    )
+    #: `transfer` (branch → branch) or `return` (branch → its return branch). See
+    #: `TransferKindEnum`. Returns run the identical send/receive/variance flow.
+    kind: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=TransferKindEnum.TRANSFER.value,
         index=True,
     )
     #: Who is asking.
@@ -92,6 +130,9 @@ class TransferOrder(Base, UUIDMixin, TimestampMixin):
     business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     required_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Client-supplied idempotency token for a POS create+send, unique when set.
+    #: A retried create with the same token returns the order already made.
+    client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     creator_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -162,6 +203,9 @@ class TransferOrderItem(Base, UUIDMixin):
         Numeric(16, 6), nullable=False, server_default="1"
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: For a return, why the goods are going back (expiry / damaged / missing); for
+    #: a transfer, the receiver's note when what arrived differs from what was sent.
+    variance_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     transfer_order: Mapped[TransferOrder] = relationship(
         "TransferOrder", back_populates="items"
@@ -169,6 +213,68 @@ class TransferOrderItem(Base, UUIDMixin):
 
     def __repr__(self) -> str:
         return f"<TransferOrderItem item={self.item_id} qty={self.quantity}>"
+
+
+class InventoryTransferTemplate(Base, UUIDMixin, TimestampMixin):
+    """A saved list of items a branch typically transfers, so a cashier creating a
+    transfer picks a template and fills quantities rather than searching the whole
+    catalogue — the same idea as a shift-report template, at the sending branch.
+
+    ``destination_branch_id`` is optional: a template can be for one destination or
+    left open for the cashier to choose. Editable in place (not versioned) — a
+    transfer posts by its own ledger movement, so a template is only a starting
+    point, never an audit record the way a report snapshot is.
+    """
+
+    __tablename__ = "inventory_transfer_templates"
+
+    source_branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    destination_branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    display_order: Mapped[int] = mapped_column(
+        Numeric(6, 0), nullable=False, server_default="0"
+    )
+    items: Mapped[list[InventoryTransferTemplateItem]] = relationship(
+        "InventoryTransferTemplateItem",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InventoryTransferTemplateItem.display_order",
+    )
+
+
+class InventoryTransferTemplateItem(Base, UUIDMixin):
+    __tablename__ = "inventory_transfer_template_items"
+
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transfer_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    display_order: Mapped[int] = mapped_column(
+        Numeric(6, 0), nullable=False, server_default="0"
+    )
+    template: Mapped[InventoryTransferTemplate] = relationship(
+        "InventoryTransferTemplate", back_populates="items"
+    )
 
 
 class NotificationRule(Base, UUIDMixin, TimestampMixin):

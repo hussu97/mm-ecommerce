@@ -54,7 +54,12 @@ class CostingMethodEnum(str, enum.Enum):
 
 
 class InventoryTransactionTypeEnum(str, enum.Enum):
-    """The twelve ways stock moves, mirroring Foodics' transaction types."""
+    """The ways stock moves, mirroring Foodics' transaction types.
+
+    Every quantity or value change in the ledger is one of these. Their direction
+    is in ``TRANSACTION_SIGN`` below and their human labels live in the admin
+    ledger's movement-label map.
+    """
 
     PURCHASING = "purchasing"
     TRANSFER_SEND = "transfer_send"
@@ -65,7 +70,6 @@ class InventoryTransactionTypeEnum(str, enum.Enum):
     CONSUMPTION_FROM_PRODUCTION = "consumption_from_production"
     CONSUMPTION_FROM_ORDERS = "consumption_from_orders"
     RETURN_FROM_ORDERS = "return_from_orders"
-    RETURN_FROM_TRANSFERS = "return_from_transfers"
     WASTE_FROM_ORDERS = "waste_from_orders"
     WASTE_FROM_PRODUCTION = "waste_from_production"
     COST_ADJUSTMENT = "cost_adjustment"
@@ -86,7 +90,6 @@ TRANSACTION_SIGN: dict[str, int] = {
     InventoryTransactionTypeEnum.TRANSFER_RECEIVE.value: 1,
     InventoryTransactionTypeEnum.PRODUCTION.value: 1,
     InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value: 1,
-    InventoryTransactionTypeEnum.RETURN_FROM_TRANSFERS.value: 1,
     InventoryTransactionTypeEnum.TRANSFER_SEND.value: -1,
     InventoryTransactionTypeEnum.RETURN_TO_SUPPLIER.value: -1,
     InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value: -1,

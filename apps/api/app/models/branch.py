@@ -142,6 +142,21 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     cash_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: Whether this branch runs the POS register at all. A few branches (DSO,
+    #: Karama) do not, so a transfer or return sent to one has no till to receive
+    #: it: the system auto-completes the receive leg on their behalf and sends no
+    #: "to receive" push. True for every ordinary shop.
+    uses_pos: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    #: Where this branch sends returns — surplus, expired or damaged goods go back
+    #: to a central branch (e.g. Sharjah). A self-reference; null means returns are
+    #: not routed from here. Set once in admin so the till never picks a destination.
+    return_branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: Whether a customer may choose to collect from here.
     #:
     #: Separate from `receives_online_orders`, which says the branch bakes

@@ -43,6 +43,11 @@ class BranchCreate(BaseModel):
     #: Whether a customer may choose to collect from here. False by default —
     #: a kitchen that bakes website orders is not automatically a counter.
     offers_pickup: bool = False
+    #: Whether this branch runs the POS. False for a branch (DSO, Karama) with no
+    #: till — a transfer/return to it is auto-received on its behalf.
+    uses_pos: bool = True
+    #: The branch this one returns stock to (surplus/expired/damaged). Null = none.
+    return_branch_id: UUID | None = None
     accepts_reservations: bool = False
     reservation_duration: int = Field(60, ge=5, le=600)
     reservation_times: dict | None = None
@@ -75,6 +80,8 @@ class BranchUpdate(BaseModel):
     receives_online_orders: bool | None = None
     cash_enabled: bool | None = None
     offers_pickup: bool | None = None
+    uses_pos: bool | None = None
+    return_branch_id: UUID | None = None
     accepts_reservations: bool | None = None
     reservation_duration: int | None = Field(None, ge=5, le=600)
     reservation_times: dict | None = None
@@ -108,6 +115,8 @@ class BranchResponse(ORMModel):
     receives_online_orders: bool
     cash_enabled: bool
     offers_pickup: bool
+    uses_pos: bool
+    return_branch_id: UUID | None
     accepts_reservations: bool
     reservation_duration: int
     reservation_times: dict | None

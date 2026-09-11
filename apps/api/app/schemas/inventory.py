@@ -23,7 +23,6 @@ TransactionTypeLiteral = Literal[
     "consumption_from_production",
     "consumption_from_orders",
     "return_from_orders",
-    "return_from_transfers",
     "waste_from_orders",
     "waste_from_production",
     "cost_adjustment",
@@ -391,6 +390,11 @@ class InventoryTransactionResponse(ORMModel):
     created_at: datetime
     updated_at: datetime
     items: list[TransactionLineResponse] = []
+    #: The human reference of the document that caused this movement — the order
+    #: number, the transfer/return reference, the PO reference, or "Reversal of …".
+    #: Filled by the list endpoint so the ledger reads without a second lookup;
+    #: null where the source is manual or not resolved.
+    source_reference: str | None = None
 
 
 # ─── Purchase orders ──────────────────────────────────────────────────────────

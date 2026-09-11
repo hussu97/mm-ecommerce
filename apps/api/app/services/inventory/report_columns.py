@@ -83,12 +83,16 @@ _PRODUCED = ColumnSpec(
 _RECEIVED = ColumnSpec(
     "purchasing_quantity", "Received", ROLE_IN, SOURCE_ENTERED, TX.PURCHASING.value
 )
+# Transfers (and returns) post their own ledger movement when the document is
+# created/received — see transfer_service. So the report *reads* these from the
+# ledger like sales, rather than the shop re-typing them: a value typed here as
+# well would post the same movement twice. The prefill in report_service already
+# fills them from the day's TRANSFER_RECEIVE / TRANSFER_SEND totals.
 _TRANSFER_IN = ColumnSpec(
     "transfer_in_quantity",
     "Transfer in",
     ROLE_IN,
-    SOURCE_ENTERED,
-    TX.TRANSFER_RECEIVE.value,
+    SOURCE_LEDGER,
 )
 _SOLD = ColumnSpec("sales_consumption_quantity", "Sold", ROLE_OUT, SOURCE_LEDGER)
 _PRODUCTION_USE = ColumnSpec(
@@ -109,11 +113,16 @@ _TRANSFER_OUT = ColumnSpec(
     "transfer_out_quantity",
     "Transfer out",
     ROLE_OUT,
-    SOURCE_ENTERED,
-    TX.TRANSFER_SEND.value,
+    SOURCE_LEDGER,
 )
+# The shop-entered "Waste" column records stock thrown away — spoiled, dropped,
+# expired. That is general waste (WASTE_FROM_ORDERS, the same type record_waste
+# defaults to), on every report kind. WASTE_FROM_PRODUCTION is reserved for the
+# automatic yield loss produce() posts, and never for a typed column — a
+# raw-material's waste was being mis-booked as production waste, corrupting the
+# split between the two in the wastage report.
 _WASTE = ColumnSpec(
-    "waste_quantity", "Waste", ROLE_OUT, SOURCE_ENTERED, TX.WASTE_FROM_PRODUCTION.value
+    "waste_quantity", "Waste", ROLE_OUT, SOURCE_ENTERED, TX.WASTE_FROM_ORDERS.value
 )
 _INTERNAL = ColumnSpec(
     "internal_use_quantity",
@@ -122,6 +131,13 @@ _INTERNAL = ColumnSpec(
     SOURCE_ENTERED,
     TX.INTERNAL_USE.value,
 )
+# The catch-all: the net of every ledger movement in the window that has no column
+# of its own — a customer restock (RETURN_FROM_ORDERS), a manual quantity
+# adjustment, a return to supplier. Ledger-filled and read-only, and a *signed*
+# value: role IN so it adds to the net exactly as its sign says (a net removal is
+# a negative here and subtracts). Without it these movements folded invisibly into
+# Opening and the sheet did not reconcile.
+_ADJUSTMENTS = ColumnSpec("adjustment_quantity", "Adjustments", ROLE_IN, SOURCE_LEDGER)
 
 
 # Per report kind, in the order the grid shows them. Opening leads, then movements
@@ -136,6 +152,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _INTERNAL,
         _TRANSFER_OUT,
         _WASTE,
+        _ADJUSTMENTS,
         _NET,
         _PHYSICAL,
         _DIFFERENCE,
@@ -149,6 +166,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _INTERNAL,
         _TRANSFER_OUT,
         _WASTE,
+        _ADJUSTMENTS,
         _NET,
         _PHYSICAL,
         _DIFFERENCE,
@@ -163,6 +181,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _INTERNAL,
         _WASTE,
         _TRANSFER_OUT,
+        _ADJUSTMENTS,
         _NET,
         _PHYSICAL,
         _DIFFERENCE,
@@ -181,6 +200,7 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
         _SOLD,
         _INTERNAL,
         _TRANSFER_OUT,
+        _ADJUSTMENTS,
         _NET,
         _PHYSICAL,
         _DIFFERENCE,

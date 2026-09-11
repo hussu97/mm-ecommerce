@@ -84,3 +84,52 @@ def test_net_tracks_an_edited_production_column():
     # The shop records 82 produced; the closing the count is measured against rises.
     line.production_quantity = Decimal("82")
     assert _net_quantity(line) == Decimal("98")
+
+
+def test_uncolumned_movements_land_in_adjustments_and_the_sheet_reconciles():
+    """A customer restock, a manual adjustment and a supplier return have no column
+    of their own. Their signed net must land in Adjustments so Opening + Σcolumns
+    still equals the system closing — otherwise they fold invisibly into Opening
+    and the count's variance is measured against an incomplete closing."""
+    line = ShiftInventoryReportLine(
+        item_id=uuid4(),
+        unit="unit",
+        source_summary={"required_input": "physical_count"},
+    )
+    movements = {
+        InventoryTransactionTypeEnum.PURCHASING.value: Decimal("8"),
+        InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value: Decimal("3"),
+        InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value: Decimal("-1"),
+        InventoryTransactionTypeEnum.RETURN_TO_SUPPLIER.value: Decimal("-1"),
+    }
+
+    _apply_source_columns(
+        line,
+        expected=Decimal("30"),
+        item_movements=movements,
+        through_sequence=1,
+    )
+
+    # net of the three un-columned movements: 3 − 1 − 1 = 1.
+    assert line.adjustment_quantity == Decimal("1.0000")
+    assert line.opening_quantity == Decimal("21.0000")
+    # The sheet ties: Opening + Received + Adjustments (no outs here) = closing.
+    net = line.opening_quantity + line.purchasing_quantity + line.adjustment_quantity
+    assert net == line.expected_quantity == Decimal("30")
+
+
+def test_a_net_negative_adjustment_subtracts_from_the_closing():
+    line = ShiftInventoryReportLine(
+        item_id=uuid4(),
+        unit="unit",
+        source_summary={"required_input": "physical_count"},
+    )
+    movements = {
+        InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value: Decimal("-4"),
+    }
+    _apply_source_columns(
+        line, expected=Decimal("10"), item_movements=movements, through_sequence=1
+    )
+    assert line.adjustment_quantity == Decimal("-4.0000")
+    assert line.opening_quantity == Decimal("14.0000")
+    assert line.opening_quantity + line.adjustment_quantity == line.expected_quantity

@@ -43,6 +43,7 @@ from app.schemas.inventory_v2 import (
     RecipeReadinessResponse,
     RecipeVersionResponse,
     ReportActionRequest,
+    ReportCommentRequest,
     ReportSaveRequest,
     ReportTemplateResponse,
     ReportTemplateUpsert,
@@ -613,6 +614,26 @@ async def reject_shift_report_console(
     report = await report_service.reject_report(
         db, report=report, reason=data.reason or ""
     )
+    await _enrich_report_names(db, [report])
+    return report
+
+
+@control_router.post(
+    "/shift-reports/{report_id}/comments", response_model=ShiftReportResponse
+)
+async def add_shift_report_comment(
+    report_id: uuid.UUID,
+    data: ReportCommentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.counts.approve")),
+):
+    """A reviewer leaves a note on a report; the shop reads it back on the till.
+    Gated on the same approver permission as edit/approve/reject, because a
+    comment is part of reviewing the count."""
+    report = await report_service.load_report(db, report_id)
+    await _assert_branch_access(db, user, report.branch_id)
+    await report_service.add_comment(db, report=report, user=user, body=data.body)
+    report = await report_service.load_report(db, report_id)
     await _enrich_report_names(db, [report])
     return report
 

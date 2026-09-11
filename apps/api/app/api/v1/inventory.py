@@ -22,6 +22,7 @@ from app.models import (
     InventoryTransactionItem,
     ModifierOption,
     ModifierOptionIngredient,
+    Order,
     Product,
     ProductIngredient,
     PurchaseOrder,
@@ -30,6 +31,7 @@ from app.models import (
     Supplier,
     SupplierItem,
     TransactionStatusEnum,
+    TransferOrder,
     Warehouse,
 )
 from app.models.inventory import InventoryTransactionTypeEnum
@@ -386,7 +388,9 @@ transactions_router = APIRouter()
 
 
 def _serialise_transaction(
-    transaction: InventoryTransaction, names: dict[uuid.UUID, InventoryItem]
+    transaction: InventoryTransaction,
+    names: dict[uuid.UUID, InventoryItem],
+    references: dict[uuid.UUID, str] | None = None,
 ) -> InventoryTransactionResponse:
     payload = InventoryTransactionResponse.model_validate(transaction)
     for line in payload.items:
@@ -394,7 +398,70 @@ def _serialise_transaction(
         if item is not None:
             line.item_name = item.name
             line.item_sku = item.sku
+    if references is not None:
+        payload.source_reference = references.get(transaction.id)
     return payload
+
+
+async def _resolve_source_references(
+    db: AsyncSession, transactions: list[InventoryTransaction]
+) -> dict[uuid.UUID, str]:
+    """Resolve each movement's source document to a human reference in one pass —
+    the order number, the transfer/return reference, the PO reference, or the
+    reversed movement — so the ledger reads without the reader chasing a UUID."""
+
+    def _as_uuid(value: str | None) -> uuid.UUID | None:
+        # A malformed source_id must not 500 the whole ledger page — skip it.
+        try:
+            return uuid.UUID(value) if value else None
+        except (ValueError, AttributeError):
+            return None
+
+    transfer_ids = {
+        parsed
+        for t in transactions
+        if t.source_type == "transfer_order"
+        and (parsed := _as_uuid(t.source_id)) is not None
+    }
+    order_ids = {t.order_id for t in transactions if t.order_id}
+    po_ids = {t.purchase_order_id for t in transactions if t.purchase_order_id}
+    reversed_ids = {
+        t.reverses_transaction_id for t in transactions if t.reverses_transaction_id
+    }
+
+    async def _map(model, ids, id_col, label_col):
+        if not ids:
+            return {}
+        rows = (
+            await db.execute(select(id_col, label_col).where(id_col.in_(ids)))
+        ).all()
+        return {row[0]: row[1] for row in rows}
+
+    transfers = await _map(
+        TransferOrder, transfer_ids, TransferOrder.id, TransferOrder.reference
+    )
+    orders = await _map(Order, order_ids, Order.id, Order.order_number)
+    pos = await _map(PurchaseOrder, po_ids, PurchaseOrder.id, PurchaseOrder.reference)
+    reversals = await _map(
+        InventoryTransaction,
+        reversed_ids,
+        InventoryTransaction.id,
+        InventoryTransaction.reference,
+    )
+
+    resolved: dict[uuid.UUID, str] = {}
+    for t in transactions:
+        if t.reverses_transaction_id and t.reverses_transaction_id in reversals:
+            resolved[t.id] = f"Reversal of {reversals[t.reverses_transaction_id]}"
+        elif t.source_type == "transfer_order" and (sid := _as_uuid(t.source_id)):
+            ref = transfers.get(sid)
+            if ref:
+                resolved[t.id] = ref
+        elif t.order_id and t.order_id in orders:
+            resolved[t.id] = orders[t.order_id]
+        elif t.purchase_order_id and t.purchase_order_id in pos:
+            resolved[t.id] = pos[t.purchase_order_id]
+    return resolved
 
 
 async def _item_lookup(
@@ -496,7 +563,11 @@ async def list_transactions(
 
     transactions = list((await db.execute(stmt)).scalars().unique().all())
     names = await _item_lookup_for_transactions(db, transactions)
-    return [_serialise_transaction(transaction, names) for transaction in transactions]
+    references = await _resolve_source_references(db, transactions)
+    return [
+        _serialise_transaction(transaction, names, references)
+        for transaction in transactions
+    ]
 
 
 @transactions_router.post(
@@ -1177,7 +1248,10 @@ async def list_counts(
     )
     rows = list((await db.execute(stmt)).scalars().unique().all())
     names = await _item_lookup_for_transactions(db, rows)
-    return [_serialise_transaction(transaction, names) for transaction in rows]
+    references = await _resolve_source_references(db, rows)
+    return [
+        _serialise_transaction(transaction, names, references) for transaction in rows
+    ]
 
 
 @counts_router.post("/{count_id}/close")

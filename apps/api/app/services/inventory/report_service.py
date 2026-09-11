@@ -32,6 +32,7 @@ from app.models.inventory_v2 import (
     InventoryReportTemplateItem,
     InventoryReportTypeEnum,
     ShiftInventoryReport,
+    ShiftInventoryReportComment,
     ShiftInventoryReportLine,
     ShiftInventoryReportStatusEnum,
 )
@@ -54,6 +55,9 @@ _NET_IN_COLUMNS = (
     "purchasing_quantity",
     "transfer_in_quantity",
     "production_quantity",
+    # Signed: the net of the movements no other column carries. Role IN so it adds
+    # to the net exactly as its sign says (a net removal is negative here).
+    "adjustment_quantity",
 )
 _NET_OUT_COLUMNS = (
     "sales_consumption_quantity",
@@ -62,6 +66,25 @@ _NET_OUT_COLUMNS = (
     "transfer_out_quantity",
     "waste_quantity",
     "internal_use_quantity",
+)
+
+# The transaction types that have a dedicated report column. Everything else that
+# moved the item in the window nets into the signed "Adjustments" column, so no
+# movement is invisible and Opening + Σcolumns ties to the closing. Cost
+# adjustments carry no quantity (sign 0) so they never appear here anyway.
+_COLUMNED_MOVEMENT_TYPES: frozenset[str] = frozenset(
+    {
+        InventoryTransactionTypeEnum.PURCHASING.value,
+        InventoryTransactionTypeEnum.TRANSFER_RECEIVE.value,
+        InventoryTransactionTypeEnum.PRODUCTION.value,
+        InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+        InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value,
+        InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value,
+        InventoryTransactionTypeEnum.TRANSFER_SEND.value,
+        InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value,
+        InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
+        InventoryTransactionTypeEnum.INTERNAL_USE.value,
+    }
 )
 
 # The non-count per-item ``required_input`` values, each mapped to the transaction
@@ -152,6 +175,29 @@ async def load_report(db: AsyncSession, report_id: uuid.UUID) -> ShiftInventoryR
     if report is None:
         raise NotFoundError("Inventory report not found")
     return report
+
+
+async def add_comment(
+    db: AsyncSession,
+    *,
+    report: ShiftInventoryReport,
+    user: User,
+    body: str,
+) -> ShiftInventoryReportComment:
+    """Record a reviewer note on a report. The author's name is snapshotted so the
+    note keeps its attribution if the user row is later removed."""
+    cleaned = body.strip()
+    if not cleaned:
+        raise BadRequestError("A comment cannot be empty")
+    comment = ShiftInventoryReportComment(
+        report_id=report.id,
+        author_id=user.id,
+        author_name=user.display_name or user.email,
+        body=cleaned,
+    )
+    db.add(comment)
+    await db.flush()
+    return comment
 
 
 async def _lock_report(db: AsyncSession, report_id: uuid.UUID) -> ShiftInventoryReport:
@@ -529,6 +575,17 @@ def _apply_source_columns(
     )
     line.internal_use_quantity = moved(
         InventoryTransactionTypeEnum.INTERNAL_USE.value, outward=True
+    )
+    # Everything else that moved this item in the window and has no column of its
+    # own — a customer restock, a manual adjustment, a return to supplier. Its
+    # signed net keeps Opening + Σcolumns equal to the system closing, so the
+    # count's variance is measured against the whole picture, not a subset.
+    line.adjustment_quantity = quantity(
+        net_movement
+        - sum(
+            (item_movements.get(t, Decimal("0")) for t in _COLUMNED_MOVEMENT_TYPES),
+            Decimal("0"),
+        )
     )
     # The proposed production drawdown is not on the ledger, so the current stock
     # level (``expected``) does not reflect it yet; the anticipated closing is the

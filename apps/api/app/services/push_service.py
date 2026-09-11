@@ -43,6 +43,7 @@ __all__ = [
     "is_enabled",
     "notify_order_placed",
     "notify_rider_assigned",
+    "notify_transfer_created",
     "register_token",
     "tokens_for_branch",
 ]
@@ -165,6 +166,46 @@ async def _send_to_branch(
             )
 
     return delivered
+
+
+async def notify_transfer_created(
+    db: AsyncSession,
+    *,
+    destination_branch_id: uuid.UUID,
+    reference: str,
+    item_count: int,
+    kind: str = "transfer",
+) -> int:
+    """Tell the receiving branch's tills a transfer (or return) is on its way.
+
+    A quiet notification, deliberately unlike the order alarm: interruption level
+    ``active`` and a standard sound, no ``content-available`` wake. Nothing is
+    time-critical about receiving stock — it should sit as a badge on POS actions,
+    not ring a counter. The app turns ``event: transfer_created`` into that badge.
+    """
+    if not is_enabled():
+        return 0
+    noun = "return" if kind == "return" else "transfer"
+    plural = "s" if item_count != 1 else ""
+    payload = {
+        "aps": {
+            "alert": {
+                "title": f"Incoming {noun}",
+                "body": f"{reference}: {item_count} item{plural} to receive",
+            },
+            "sound": "default",
+            "interruption-level": "active",
+        },
+        "event": "transfer_created",
+        "kind": kind,
+        "reference": reference,
+    }
+    return await _send_to_branch(
+        db,
+        destination_branch_id,
+        payload=payload,
+        collapse_id=f"transfer:{reference}",
+    )
 
 
 def _alert(

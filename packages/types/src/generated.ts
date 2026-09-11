@@ -4201,6 +4201,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/shift-reports/{report_id}/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Shift Report Comment
+         * @description A reviewer leaves a note on a report; the shop reads it back on the till.
+         *     Gated on the same approver permission as edit/approve/reject, because a
+         *     comment is part of reviewing the count.
+         */
+        post: operations["add_shift_report_comment_api_v1_inventory_shift_reports__report_id__comments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/source-events/{event_id}/retry": {
         parameters: {
             query?: never;
@@ -4574,6 +4596,42 @@ export interface paths {
         /** Submit Transfer */
         post: operations["submit_transfer_api_v1_inventory_transfer_orders__order_id__submit_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/transfer-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Transfer Templates */
+        get: operations["list_transfer_templates_api_v1_inventory_transfer_templates_get"];
+        put?: never;
+        /** Create Transfer Template */
+        post: operations["create_transfer_template_api_v1_inventory_transfer_templates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/transfer-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Transfer Template */
+        put: operations["update_transfer_template_api_v1_inventory_transfer_templates__template_id__put"];
+        post?: never;
+        /** Delete Transfer Template */
+        delete: operations["delete_transfer_template_api_v1_inventory_transfer_templates__template_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9713,6 +9771,8 @@ export interface components {
             reservation_times?: {
                 [key: string]: unknown;
             } | null;
+            /** Return Branch Id */
+            return_branch_id?: string | null;
             /** Tax Group Id */
             tax_group_id?: string | null;
             /** Tax Number */
@@ -9731,6 +9791,11 @@ export interface components {
              * @enum {string}
              */
             type: "restaurant" | "kitchen" | "warehouse";
+            /**
+             * Uses Pos
+             * @default true
+             */
+            uses_pos: boolean;
         };
         /**
          * BranchDriftReport
@@ -10012,6 +10077,8 @@ export interface components {
             reservation_times: {
                 [key: string]: unknown;
             } | null;
+            /** Return Branch Id */
+            return_branch_id: string | null;
             /** Tax Group Id */
             tax_group_id: string | null;
             /** Tax Number */
@@ -10031,6 +10098,8 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /** Uses Pos */
+            uses_pos: boolean;
         };
         /** BranchUpdate */
         BranchUpdate: {
@@ -10084,6 +10153,8 @@ export interface components {
             reservation_times?: {
                 [key: string]: unknown;
             } | null;
+            /** Return Branch Id */
+            return_branch_id?: string | null;
             /** Tax Group Id */
             tax_group_id?: string | null;
             /** Tax Number */
@@ -10098,6 +10169,8 @@ export interface components {
             } | null;
             /** Type */
             type?: ("restaurant" | "kitchen" | "warehouse") | null;
+            /** Uses Pos */
+            uses_pos?: boolean | null;
         };
         /** BranchesDashboard */
         BranchesDashboard: {
@@ -12668,6 +12741,8 @@ export interface components {
             source_accepted_sequence?: number | null;
             /** Source Id */
             source_id?: string | null;
+            /** Source Reference */
+            source_reference?: string | null;
             /** Source Type */
             source_type?: string | null;
             /** Status */
@@ -16918,6 +16993,11 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** ReportCommentRequest */
+        ReportCommentRequest: {
+            /** Body */
+            body: string;
+        };
         /** ReportLineSave */
         ReportLineSave: {
             /**
@@ -17423,8 +17503,29 @@ export interface components {
             /** Statement Net Payable */
             statement_net_payable?: string | null;
         };
+        /** ShiftReportCommentResponse */
+        ShiftReportCommentResponse: {
+            /** Author Id */
+            author_id: string | null;
+            /** Author Name */
+            author_name: string | null;
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /** ShiftReportLineResponse */
         ShiftReportLineResponse: {
+            /** Adjustment Quantity */
+            adjustment_quantity: string;
             /** Confirmed */
             confirmed: boolean;
             /** Entered Quantity */
@@ -17501,6 +17602,11 @@ export interface components {
             readonly columns: {
                 [key: string]: unknown;
             }[];
+            /**
+             * Comments
+             * @default []
+             */
+            comments: components["schemas"]["ShiftReportCommentResponse"][];
             /** Deferred Reason */
             deferred_reason: string | null;
             /**
@@ -18902,6 +19008,8 @@ export interface components {
             sent_quantity: string;
             /** Unit */
             unit: string;
+            /** Variance Reason */
+            variance_reason?: string | null;
         };
         /** TransferOrderResponse */
         TransferOrderResponse: {
@@ -18927,6 +19035,8 @@ export interface components {
              * @default []
              */
             items: components["schemas"]["TransferOrderLineResponse"][];
+            /** Kind */
+            kind: string;
             /** Notes */
             notes: string | null;
             /** Received Transaction Id */
@@ -18948,6 +19058,88 @@ export interface components {
             status: string;
             /** Submitted At */
             submitted_at: string | null;
+        };
+        /** TransferTemplateItemInput */
+        TransferTemplateItemInput: {
+            /**
+             * Display Order
+             * @default 0
+             */
+            display_order: number;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+        };
+        /** TransferTemplateItemResponse */
+        TransferTemplateItemResponse: {
+            /** Display Order */
+            display_order: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Item Sku */
+            item_sku?: string | null;
+        };
+        /** TransferTemplateResponse */
+        TransferTemplateResponse: {
+            /** Destination Branch Id */
+            destination_branch_id: string | null;
+            /** Display Order */
+            display_order: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /**
+             * Items
+             * @default []
+             */
+            items: components["schemas"]["TransferTemplateItemResponse"][];
+            /** Name */
+            name: string;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+        };
+        /** TransferTemplateUpsert */
+        TransferTemplateUpsert: {
+            /** Destination Branch Id */
+            destination_branch_id?: string | null;
+            /**
+             * Display Order
+             * @default 0
+             */
+            display_order: number;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /** Items */
+            items: components["schemas"]["TransferTemplateItemInput"][];
+            /** Name */
+            name: string;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
         };
         /** TranslationBulkUpsert */
         TranslationBulkUpsert: {
@@ -27596,6 +27788,41 @@ export interface operations {
             };
         };
     };
+    add_shift_report_comment_api_v1_inventory_shift_reports__report_id__comments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportCommentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShiftReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     retry_inventory_source_event_api_v1_inventory_source_events__event_id__retry_post: {
         parameters: {
             query?: never;
@@ -28442,6 +28669,134 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TransferOrderResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_transfer_templates_api_v1_inventory_transfer_templates_get: {
+        parameters: {
+            query?: {
+                source_branch_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferTemplateResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_transfer_template_api_v1_inventory_transfer_templates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferTemplateUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferTemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_transfer_template_api_v1_inventory_transfer_templates__template_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferTemplateUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferTemplateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_transfer_template_api_v1_inventory_transfer_templates__template_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

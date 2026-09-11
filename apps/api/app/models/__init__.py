@@ -150,7 +150,10 @@ from .menu import (  # noqa: F401
 )
 from .modifier import Modifier, ModifierOption, ProductModifier  # noqa: F401
 from .operations import (  # noqa: F401
+    InventoryTransferTemplate,
+    InventoryTransferTemplateItem,
     NotificationRule,
+    TransferKindEnum,
     TransferOrder,
     TransferOrderItem,
     TransferOrderStatusEnum,
@@ -384,6 +387,9 @@ __all__ = [
     "TimedEvent",
     "TimedEventTypeEnum",
     # Operations
+    "InventoryTransferTemplate",
+    "InventoryTransferTemplateItem",
+    "TransferKindEnum",
     "TransferOrder",
     "TransferOrderItem",
     "TransferOrderStatusEnum",

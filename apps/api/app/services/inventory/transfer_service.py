@@ -23,6 +23,7 @@ import uuid
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -45,7 +46,9 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.operations import (
+    TransferKindEnum,
     TransferOrder,
+    TransferOrderItem,
     TransferOrderStatusEnum,
 )
 from app.models.user import User
@@ -60,6 +63,7 @@ __all__ = [
     "production_output",
     "production_unit_cost",
     "accept_transfer_order",
+    "create_and_send",
     "decline_transfer_order",
     "produce",
     "receive_transfer",
@@ -227,6 +231,121 @@ async def decline_transfer_order(
     return order
 
 
+# ─── Source-initiated push ────────────────────────────────────────────────────
+
+
+async def create_and_send(
+    db: AsyncSession,
+    *,
+    source_branch: Branch,
+    destination_branch: Branch,
+    user: User,
+    lines: list,
+    kind: str = TransferKindEnum.TRANSFER.value,
+    notes: str | None = None,
+    client_request_id: str | None = None,
+) -> TransferOrder:
+    """Raise a transfer at the *sending* branch and ship it in one step.
+
+    The till model is a push, not the request/accept pull the admin console uses:
+    a shop packs a box for another branch and sends it. So the order is created
+    already accepted (every line granted in full) and ``send_transfer`` posts the
+    ``TRANSFER_SEND`` immediately — the source's stock leaves the moment the box
+    does. The receiving branch then books what actually arrived.
+
+    ``lines`` is any object list carrying ``item_id``, ``quantity``, ``unit`` and
+    an optional ``variance_reason`` (the reason a return line is going back).
+    """
+    if source_branch.id == destination_branch.id:
+        raise BadRequestError("A branch cannot transfer to itself")
+    if not lines:
+        raise BadRequestError("A transfer needs at least one line")
+
+    # A retried create+send (lost response) reuses its token; return the order
+    # already shipped rather than shipping the box a second time.
+    if client_request_id:
+        existing = (
+            await db.execute(
+                select(TransferOrder).where(
+                    TransferOrder.client_request_id == client_request_id
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return await load_transfer_order(db, existing.id)
+
+    order = TransferOrder(
+        reference=await next_transfer_reference(db),
+        kind=kind,
+        client_request_id=client_request_id,
+        status=TransferOrderStatusEnum.ACCEPTED.value,
+        branch_id=destination_branch.id,
+        source_branch_id=source_branch.id,
+        business_date=await business_day_service.current_business_date(
+            db, source_branch
+        ),
+        notes=notes,
+        creator_id=user.id,
+        submitter_id=user.id,
+        responder_id=user.id,
+        submitted_at=utcnow(),
+        responded_at=utcnow(),
+    )
+    # The pre-check above catches a sequential retry; this catches two truly
+    # concurrent submits — the unique index refuses the loser, and we return the
+    # order the winner already made rather than 500ing.
+    try:
+        async with db.begin_nested():
+            db.add(order)
+            await db.flush()
+    except IntegrityError:
+        if client_request_id:
+            existing = (
+                await db.execute(
+                    select(TransferOrder).where(
+                        TransferOrder.client_request_id == client_request_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return await load_transfer_order(db, existing.id)
+        raise
+
+    for line in lines:
+        item = await db.get(InventoryItem, line.item_id)
+        if item is None:
+            raise BadRequestError(f"Inventory item {line.item_id} not found")
+        unit = getattr(line, "unit", "storage")
+        db.add(
+            TransferOrderItem(
+                transfer_order_id=order.id,
+                item_id=line.item_id,
+                quantity=_q(line.quantity),
+                approved_quantity=_q(line.quantity),
+                unit=unit,
+                conversion_factor=(
+                    Decimal("1")
+                    if unit == "ingredient"
+                    else Decimal(str(item.storage_to_ingredient_factor))
+                ),
+                variance_reason=getattr(line, "variance_reason", None),
+            )
+        )
+    await db.flush()
+
+    order = await load_transfer_order(db, order.id)
+    await send_transfer(db, order=order, user=user)
+
+    # A branch that does not run the POS (DSO, Karama) has no till to receive on:
+    # book the whole shipment straight into it so its on-hand is correct and the
+    # transfer is not left forever "to receive" at a branch that cannot act on it.
+    if not getattr(destination_branch, "uses_pos", True):
+        order = await load_transfer_order(db, order.id)
+        await receive_transfer(db, order=order, user=user)
+
+    return await load_transfer_order(db, order.id)
+
+
 # ─── Movement ─────────────────────────────────────────────────────────────────
 
 
@@ -322,13 +441,21 @@ async def receive_transfer(
     order: TransferOrder,
     user: User,
     received: dict[uuid.UUID, Decimal] | None = None,
+    reasons: dict[uuid.UUID, str] | None = None,
 ) -> InventoryTransaction:
     """
-    Book a shipped transfer into the destination.
+    Book a shipped transfer into the destination — what actually arrived, which
+    may be less **or more** than was sent.
 
-    A shortfall between sent and received is left as a visible difference rather
-    than being quietly reconciled — that gap is exactly what an investigation
-    needs to see.
+    The destination rises by ``received`` and the source has already fallen by
+    ``sent``, so the sent-vs-received difference is never silently absorbed: a
+    short receipt leaves the shortfall on the *sender's* books (the goods left
+    their shelf and did not arrive — a transit loss they own), and an over-receipt
+    is a genuine gain at the destination. Both are recorded on the line as a
+    ``received_quantity`` that differs from ``sent_quantity``, with the receiver's
+    ``reason`` (``reasons`` keyed by line id), so the transfer record itself
+    explains every unit. Posting a *separate* shrinkage/found movement here would
+    double-count, because the send already moved the stock.
     """
     order = await _lock_transfer_order(db, order.id)
     if order.received_transaction_id is not None:
@@ -373,14 +500,24 @@ async def receive_transfer(
     for line in order.items:
         sent = _q(line.sent_quantity)
         quantity = _q(received.get(line.id, sent)) if received else sent
+        # The receiver's note explains a discrepancy — short (lost in transit) or
+        # over (found). Recorded whether or not anything is booked below.
+        if reasons is not None and line.id in reasons:
+            line.variance_reason = reasons[line.id] or None
+        line.received_quantity = quantity if quantity > 0 else _q(0)
         if quantity <= 0:
             continue
-        if quantity > sent:
-            raise BadRequestError(
-                f"Cannot receive {quantity} when only {sent} was sent"
-            )
+        # An over-receipt is valued at the sent unit cost — the same goods, more of
+        # them than the paperwork said.
         sent_cost = sent_costs.get(f"transfer_item:{line.id}")
         if sent_cost is None:
+            if _q(line.sent_quantity) <= 0:
+                # Nothing shipped on this line, so there is no cost to value a
+                # receipt against — a "found extra" here belongs on a stock count.
+                raise BadRequestError(
+                    "This line had nothing sent, so it cannot be received. "
+                    "Record found stock as a count instead."
+                )
             raise ConflictError(
                 "The sent transfer is missing its immutable line cost snapshot"
             )
@@ -395,7 +532,6 @@ async def receive_transfer(
                 notes=f"transfer_item:{line.id}",
             )
         )
-        line.received_quantity = quantity
 
     await db.flush()
     transaction = await inventory_service.load_transaction(db, transaction.id)

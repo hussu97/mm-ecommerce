@@ -101,7 +101,6 @@ REFERENCE_PREFIX = {
     InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value: "CFP",
     InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value: "CFO",
     InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value: "RFO",
-    InventoryTransactionTypeEnum.RETURN_FROM_TRANSFERS.value: "RFT",
     InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value: "WFO",
     InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value: "WFP",
     InventoryTransactionTypeEnum.COST_ADJUSTMENT.value: "CAD",

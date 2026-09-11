@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
 from app.core.deps import get_current_staff_user, get_db
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.permissions import require
 from app.models import (
     Branch,
@@ -155,6 +155,8 @@ async def update_branch(
         db, Branch, "reference", data.reference, exclude_id=branch_id
     ):
         raise ConflictError(f"Branch reference '{data.reference}' is already in use")
+    if data.return_branch_id == branch_id:
+        raise BadRequestError("A branch cannot return stock to itself")
     branch = await crud_service.update(db, branch, data)
     await audit_service.log_action(
         db,

@@ -30,7 +30,7 @@ from .marketing import (
 )
 from .menu_groups import router as menu_groups_router
 from .modifiers import router as modifiers_router
-from .operations import dashboard_router
+from .operations import dashboard_router, pos_transfers_router
 from .pos_config import (
     charges_router,
     courses_router,
@@ -107,6 +107,10 @@ pos_api_router.include_router(
 )
 pos_api_router.include_router(
     pos_inventory_router, prefix="/pos/inventory", tags=["POS Inventory"]
+)
+# Create and receive transfers/returns from the till.
+pos_api_router.include_router(
+    pos_transfers_router, prefix="/pos/inventory", tags=["POS Inventory"]
 )
 # Manager inventory screens use the same POS hostname as every other terminal.
 # Mount only the three read endpoints the companion consumes; report entry and

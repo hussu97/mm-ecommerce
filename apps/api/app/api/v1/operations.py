@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
-from app.core.exceptions import BadRequestError
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.money import money
 from app.core.permissions import require
 from app.models import (
@@ -27,6 +27,8 @@ from app.models import (
     Device,
     InventoryItem,
     InventoryLevel,
+    InventoryTransferTemplate,
+    InventoryTransferTemplateItem,
     NotificationRule,
     Order,
     PosOrderStatusEnum,
@@ -35,13 +37,14 @@ from app.models import (
     TableStatusEnum,
     Till,
     TillStatusEnum,
+    TransferKindEnum,
     TransferOrder,
     TransferOrderItem,
     Warehouse,
 )
 from app.models.base import utcnow
 from app.models.user import User
-from app.services import crud_service
+from app.services import crud_service, push_service
 from app.services.inventory import access_service, inventory_service, transfer_service
 from app.services.pos import business_day_service
 
@@ -92,6 +95,7 @@ class TransferOrderLineResponse(ORMModel):
     received_quantity: Decimal
     unit: str
     notes: str | None
+    variance_reason: str | None = None
     item_name: str | None = None
     item_sku: str | None = None
 
@@ -100,6 +104,7 @@ class TransferOrderResponse(ORMModel):
     id: uuid.UUID
     reference: str
     status: str
+    kind: str
     branch_id: uuid.UUID
     source_branch_id: uuid.UUID
     business_date: str
@@ -301,6 +306,470 @@ async def receive_transfer(
     await transfer_service.receive_transfer(
         db, order=order, user=user, received=received or None
     )
+    return await _serialise_transfer(db, order)
+
+
+# ─── Transfer templates (admin) ───────────────────────────────────────────────
+
+transfer_templates_router = APIRouter()
+
+
+class TransferTemplateItemInput(BaseModel):
+    item_id: uuid.UUID
+    display_order: int = 0
+
+
+class TransferTemplateUpsert(BaseModel):
+    source_branch_id: uuid.UUID
+    destination_branch_id: uuid.UUID | None = None
+    name: str = Field(min_length=1, max_length=150)
+    is_active: bool = True
+    display_order: int = 0
+    items: list[TransferTemplateItemInput] = Field(min_length=1)
+
+
+class TransferTemplateItemResponse(ORMModel):
+    id: uuid.UUID
+    item_id: uuid.UUID
+    display_order: int
+    item_name: str | None = None
+    item_sku: str | None = None
+
+
+class TransferTemplateResponse(ORMModel):
+    id: uuid.UUID
+    source_branch_id: uuid.UUID
+    destination_branch_id: uuid.UUID | None
+    name: str
+    is_active: bool
+    display_order: int
+    items: list[TransferTemplateItemResponse] = []
+
+
+async def _serialise_template(
+    db: AsyncSession, template: InventoryTransferTemplate
+) -> TransferTemplateResponse:
+    payload = TransferTemplateResponse.model_validate(template)
+    ids = {line.item_id for line in template.items}
+    if ids:
+        rows = (
+            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        lookup = {r.id: r for r in rows}
+        for line in payload.items:
+            item = lookup.get(line.item_id)
+            if item:
+                line.item_name = item.name
+                line.item_sku = item.sku
+    return payload
+
+
+async def _load_template(
+    db: AsyncSession, template_id: uuid.UUID
+) -> InventoryTransferTemplate:
+    template = await db.get(InventoryTransferTemplate, template_id)
+    if template is None:
+        raise NotFoundError("Transfer template not found")
+    return template
+
+
+@transfer_templates_router.get("", response_model=list[TransferTemplateResponse])
+async def list_transfer_templates(
+    source_branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    stmt = select(InventoryTransferTemplate)
+    if source_branch_id:
+        await access_service.assert_branch_access(db, user, source_branch_id)
+        stmt = stmt.where(
+            InventoryTransferTemplate.source_branch_id == source_branch_id
+        )
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            InventoryTransferTemplate.source_branch_id.in_(
+                access_service.branch_ids_for(user)
+            )
+        )
+    stmt = stmt.order_by(
+        InventoryTransferTemplate.display_order, InventoryTransferTemplate.name
+    )
+    templates = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_template(db, t) for t in templates]
+
+
+@transfer_templates_router.post(
+    "", response_model=TransferTemplateResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_transfer_template(
+    data: TransferTemplateUpsert,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    await access_service.assert_branch_access(db, user, data.source_branch_id)
+    await crud_service.get_or_404(db, Branch, data.source_branch_id)
+    if data.destination_branch_id:
+        await crud_service.get_or_404(db, Branch, data.destination_branch_id)
+    template = InventoryTransferTemplate(
+        source_branch_id=data.source_branch_id,
+        destination_branch_id=data.destination_branch_id,
+        name=data.name,
+        is_active=data.is_active,
+        display_order=data.display_order,
+    )
+    db.add(template)
+    await db.flush()
+    for line in data.items:
+        db.add(
+            InventoryTransferTemplateItem(
+                template_id=template.id,
+                item_id=line.item_id,
+                display_order=line.display_order,
+            )
+        )
+    await db.flush()
+    return await _serialise_template(db, await _load_template(db, template.id))
+
+
+@transfer_templates_router.put(
+    "/{template_id}", response_model=TransferTemplateResponse
+)
+async def update_transfer_template(
+    template_id: uuid.UUID,
+    data: TransferTemplateUpsert,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    template = await _load_template(db, template_id)
+    await access_service.assert_branch_access(db, user, template.source_branch_id)
+    template.name = data.name
+    template.is_active = data.is_active
+    template.display_order = data.display_order
+    template.destination_branch_id = data.destination_branch_id
+    # Replace the item list wholesale — the template is editable in place, not
+    # versioned, so the latest list is the template.
+    for existing in list(template.items):
+        await db.delete(existing)
+    await db.flush()
+    for line in data.items:
+        db.add(
+            InventoryTransferTemplateItem(
+                template_id=template.id,
+                item_id=line.item_id,
+                display_order=line.display_order,
+            )
+        )
+    await db.flush()
+    return await _serialise_template(db, await _load_template(db, template.id))
+
+
+@transfer_templates_router.delete(
+    "/{template_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_transfer_template(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    template = await _load_template(db, template_id)
+    await access_service.assert_branch_access(db, user, template.source_branch_id)
+    await db.delete(template)
+    await db.flush()
+
+
+# ─── Transfers on the till (POS) ──────────────────────────────────────────────
+
+pos_transfers_router = APIRouter()
+
+
+class PosTransferLineInput(BaseModel):
+    item_id: uuid.UUID
+    quantity: Decimal = Field(gt=0)
+    unit: Literal["storage", "ingredient"] = "storage"
+    variance_reason: str | None = None
+
+
+class PosTransferCreate(BaseModel):
+    source_branch_id: uuid.UUID
+    destination_branch_id: uuid.UUID
+    notes: str | None = None
+    #: A stable token so a retried create+send does not ship the box twice.
+    client_request_id: str | None = Field(None, max_length=64)
+    lines: list[PosTransferLineInput] = Field(min_length=1)
+
+
+class PosReturnLineInput(BaseModel):
+    item_id: uuid.UUID
+    quantity: Decimal = Field(gt=0)
+    unit: Literal["storage", "ingredient"] = "storage"
+    #: Why the goods are going back — required on a return.
+    variance_reason: str = Field(min_length=1, max_length=255)
+
+
+class PosReturnCreate(BaseModel):
+    source_branch_id: uuid.UUID
+    notes: str | None = None
+    client_request_id: str | None = Field(None, max_length=64)
+    lines: list[PosReturnLineInput] = Field(min_length=1)
+
+
+class PosTransferReceiveLine(BaseModel):
+    transfer_order_item_id: uuid.UUID
+    received_quantity: Decimal = Field(ge=0)
+    reason: str | None = None
+
+
+class PosTransferReceive(BaseModel):
+    lines: list[PosTransferReceiveLine] = Field(default_factory=list)
+
+
+class TransferBranchResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    reference: str
+    uses_pos: bool
+
+
+@pos_transfers_router.get("/branches", response_model=list[TransferBranchResponse])
+async def pos_transfer_branches(
+    exclude_branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """The branches a transfer can be sent to — every active branch, so a cashier
+    can pick a destination. Excludes the current branch when it is named."""
+    stmt = select(Branch).where(Branch.is_active.is_(True))
+    if exclude_branch_id:
+        stmt = stmt.where(Branch.id != exclude_branch_id)
+    stmt = stmt.order_by(Branch.display_order, Branch.name)
+    branches = list((await db.execute(stmt)).scalars().all())
+    return [
+        TransferBranchResponse(
+            id=b.id,
+            name=b.name,
+            reference=b.reference,
+            uses_pos=b.uses_pos,
+        )
+        for b in branches
+    ]
+
+
+class PosOnHandResponse(BaseModel):
+    item_id: uuid.UUID
+    quantity: Decimal
+    item_name: str | None = None
+    item_sku: str | None = None
+    ingredient_unit: str | None = None
+
+
+@pos_transfers_router.get("/on-hand", response_model=list[PosOnHandResponse])
+async def pos_on_hand(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """What the branch holds, to build a return from — gated on the transfers
+    permission (not the broader reports one), so the returns picker works for a
+    user who can only transfer. Aggregated per item across warehouses, so a branch
+    with more than one stock location shows each item once."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    stmt = (
+        select(InventoryLevel, InventoryItem)
+        .join(InventoryItem, InventoryItem.id == InventoryLevel.item_id)
+        .join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id)
+        .where(
+            Warehouse.branch_id == branch_id,
+            InventoryItem.deleted_at.is_(None),
+        )
+        .order_by(InventoryItem.name)
+    )
+    agg: dict[uuid.UUID, PosOnHandResponse] = {}
+    for level, item in (await db.execute(stmt)).all():
+        quantity = Decimal(str(level.quantity))
+        existing = agg.get(item.id)
+        if existing is not None:
+            existing.quantity += quantity
+        else:
+            agg[item.id] = PosOnHandResponse(
+                item_id=item.id,
+                quantity=quantity,
+                item_name=item.name,
+                item_sku=item.sku,
+                ingredient_unit=item.ingredient_unit,
+            )
+    return list(agg.values())
+
+
+@pos_transfers_router.get(
+    "/transfer-templates", response_model=list[TransferTemplateResponse]
+)
+async def pos_transfer_templates(
+    source_branch_id: uuid.UUID,
+    destination_branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """The active templates the current branch transfers from, to seed the create
+    screen. A template pinned to one destination is offered only for that one."""
+    await access_service.assert_branch_access(db, user, source_branch_id)
+    stmt = select(InventoryTransferTemplate).where(
+        InventoryTransferTemplate.source_branch_id == source_branch_id,
+        InventoryTransferTemplate.is_active.is_(True),
+    )
+    if destination_branch_id:
+        stmt = stmt.where(
+            or_(
+                InventoryTransferTemplate.destination_branch_id
+                == destination_branch_id,
+                InventoryTransferTemplate.destination_branch_id.is_(None),
+            )
+        )
+    stmt = stmt.order_by(
+        InventoryTransferTemplate.display_order, InventoryTransferTemplate.name
+    )
+    templates = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_template(db, t) for t in templates]
+
+
+@pos_transfers_router.get(
+    "/transfers/incoming", response_model=list[TransferOrderResponse]
+)
+async def pos_incoming_transfers(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """Transfers and returns sent to this branch and not yet booked in — the list
+    the receiving tills work from."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    stmt = (
+        select(TransferOrder)
+        .where(
+            TransferOrder.branch_id == branch_id,
+            TransferOrder.sent_transaction_id.isnot(None),
+            TransferOrder.received_transaction_id.is_(None),
+        )
+        .order_by(TransferOrder.created_at.desc())
+    )
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_transfer(db, o) for o in orders]
+
+
+@pos_transfers_router.post(
+    "/transfers",
+    response_model=TransferOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def pos_create_transfer(
+    data: PosTransferCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """Create and immediately ship a transfer from the current branch. Auto-accepted
+    (the sender decides what leaves) and auto-sent — the source stock leaves now."""
+    await access_service.assert_branch_access(db, user, data.source_branch_id)
+    source = await crud_service.get_or_404(db, Branch, data.source_branch_id)
+    destination = await crud_service.get_or_404(db, Branch, data.destination_branch_id)
+    order = await transfer_service.create_and_send(
+        db,
+        source_branch=source,
+        destination_branch=destination,
+        user=user,
+        lines=data.lines,
+        kind=TransferKindEnum.TRANSFER.value,
+        notes=data.notes,
+        client_request_id=data.client_request_id,
+    )
+    # Tell the receiving branch's tills, the same way a new website order is
+    # announced — quietly, as a badge on POS actions rather than an alarm. A
+    # non-POS branch has no tills and its receive was auto-completed above, so it
+    # is not notified.
+    if getattr(destination, "uses_pos", True):
+        await push_service.notify_transfer_created(
+            db,
+            destination_branch_id=destination.id,
+            reference=order.reference,
+            item_count=len(data.lines),
+            kind=TransferKindEnum.TRANSFER.value,
+        )
+    return await _serialise_transfer(db, order)
+
+
+@pos_transfers_router.post(
+    "/transfers/{order_id}/receive", response_model=TransferOrderResponse
+)
+async def pos_receive_transfer(
+    order_id: uuid.UUID,
+    data: PosTransferReceive,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """Book in what arrived — short or over. The difference stays on the record with
+    the receiver's reason; no separate movement is posted (the send already moved
+    the stock)."""
+    order = await transfer_service.load_transfer_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.branch_id)
+    received = {
+        line.transfer_order_item_id: line.received_quantity for line in data.lines
+    }
+    reasons = {
+        line.transfer_order_item_id: line.reason
+        for line in data.lines
+        if line.reason is not None
+    }
+    await transfer_service.receive_transfer(
+        db, order=order, user=user, received=received or None, reasons=reasons or None
+    )
+    return await _serialise_transfer(
+        db, await transfer_service.load_transfer_order(db, order_id)
+    )
+
+
+@pos_transfers_router.post(
+    "/returns",
+    response_model=TransferOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def pos_create_return(
+    data: PosReturnCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """Send goods back to this branch's return branch (surplus, expired, damaged).
+
+    A return is a transfer whose destination is fixed by the branch's
+    ``return_branch_id`` — the till never picks it — and whose every line carries a
+    reason. It runs the identical create+send+receive flow, so the return branch
+    receives it exactly as it would a transfer, and it is received in that same
+    "to receive" list, distinguished by its ``return`` kind.
+    """
+    await access_service.assert_branch_access(db, user, data.source_branch_id)
+    source = await crud_service.get_or_404(db, Branch, data.source_branch_id)
+    if source.return_branch_id is None:
+        raise BadRequestError(
+            "This branch has no return branch configured. Set one in the admin console."
+        )
+    destination = await crud_service.get_or_404(db, Branch, source.return_branch_id)
+    order = await transfer_service.create_and_send(
+        db,
+        source_branch=source,
+        destination_branch=destination,
+        user=user,
+        lines=data.lines,
+        kind=TransferKindEnum.RETURN.value,
+        notes=data.notes,
+        client_request_id=data.client_request_id,
+    )
+    if getattr(destination, "uses_pos", True):
+        await push_service.notify_transfer_created(
+            db,
+            destination_branch_id=destination.id,
+            reference=order.reference,
+            item_count=len(data.lines),
+            kind=TransferKindEnum.RETURN.value,
+        )
     return await _serialise_transfer(db, order)
 
 

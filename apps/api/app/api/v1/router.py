@@ -72,6 +72,7 @@ from .operations import (
     notification_rules_router,
     production_router,
     transfer_orders_router,
+    transfer_templates_router,
 )
 from .orders import router as orders_router
 from .payment_gateways import router as payment_gateways_router
@@ -241,6 +242,11 @@ api_router.include_router(
 # ─── Operations ───────────────────────────────────────────────────────────────
 api_router.include_router(
     transfer_orders_router, prefix="/inventory/transfer-orders", tags=["Inventory"]
+)
+api_router.include_router(
+    transfer_templates_router,
+    prefix="/inventory/transfer-templates",
+    tags=["Inventory"],
 )
 api_router.include_router(
     production_router, prefix="/inventory/production", tags=["Inventory"]

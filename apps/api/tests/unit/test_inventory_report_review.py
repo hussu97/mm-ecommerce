@@ -93,3 +93,35 @@ def test_submission_email_renders_with_a_link_to_the_report():
     assert "Finished goods closing count" in html
     assert "Sharjah" in html
     assert "https://admin.example.com/inventory/reports/abc-123" in html
+
+
+@pytest.mark.asyncio
+async def test_add_comment_snapshots_author_name_and_trims_body():
+    """A reviewer note snapshots the author's name (so it survives the user row
+    being deleted) and stores a trimmed body."""
+    report = SimpleNamespace(id=uuid4())
+    user = SimpleNamespace(id=uuid4(), display_name="Aisha Khan", email="a@x.com")
+    added: list = []
+    db = SimpleNamespace(add=added.append, flush=AsyncMock())
+
+    comment = await report_service.add_comment(
+        db, report=report, user=user, body="  recount the flour  "
+    )
+
+    assert added == [comment]
+    assert comment.report_id == report.id
+    assert comment.author_id == user.id
+    assert comment.author_name == "Aisha Khan"
+    assert comment.body == "recount the flour"
+    db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_add_comment_falls_back_to_email_without_a_display_name():
+    report = SimpleNamespace(id=uuid4())
+    user = SimpleNamespace(id=uuid4(), display_name=None, email="ops@x.com")
+    db = SimpleNamespace(add=lambda _o: None, flush=AsyncMock())
+
+    comment = await report_service.add_comment(db, report=report, user=user, body="ok")
+
+    assert comment.author_name == "ops@x.com"

@@ -59,15 +59,18 @@ def test_editable_columns_are_only_the_entered_movements_and_carry_a_posting() -
     keys = {c.key for c in editable}
     assert keys == {
         "purchasing_quantity",
-        "transfer_in_quantity",
         "extra_production_consumption_quantity",
         "internal_use_quantity",
         "waste_quantity",
-        "transfer_out_quantity",
     }
     # Never the derived ends, the physical count, or the ledger-filled columns.
     assert "entered_quantity" not in keys
     assert "sales_consumption_quantity" not in keys
+    # Transfers post their own movement from the transfer/return document at the
+    # moment it is created or received, so the report reads them from the ledger
+    # and never re-posts them — typing them here as well would double-count.
+    assert "transfer_in_quantity" not in keys
+    assert "transfer_out_quantity" not in keys
     # The recipe-derived production drawdown stays ledger-filled and non-editable;
     # only the extra, off-recipe drawdown beside it is typed.
     assert "production_consumption_quantity" not in keys
@@ -75,6 +78,18 @@ def test_editable_columns_are_only_the_entered_movements_and_carry_a_posting() -
     for column in editable:
         assert column.posts is not None, f"{column.key} must name the movement it posts"
         assert column.role in (rc.ROLE_IN, rc.ROLE_OUT)
+
+
+def test_transfers_are_ledger_filled_not_typed() -> None:
+    # Flipped from entered to ledger in the WMS work: the transfer/return document
+    # posts the movement, the report displays it, so it must be read-only and post
+    # nothing of its own.
+    for report_type in ("raw_materials", "packaging"):
+        cols = _by_key(report_type)
+        for key in ("transfer_in_quantity", "transfer_out_quantity"):
+            assert cols[key].source == rc.SOURCE_LEDGER
+            assert cols[key].editable is False
+            assert cols[key].posts is None
 
 
 def test_packaging_subtracts_the_consumption_it_actually_incurs() -> None:

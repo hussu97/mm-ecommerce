@@ -519,6 +519,17 @@ class ShiftInventoryReport(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    #: Reviewer comments, oldest first — how an approver tells the shop why a
+    #: report was rejected or what to check, read back on the till. Selectin so a
+    #: report always carries its thread without a per-report follow-up query; a
+    #: report has a handful of comments at most.
+    comments: Mapped[list[ShiftInventoryReportComment]] = relationship(
+        "ShiftInventoryReportComment",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="ShiftInventoryReportComment.created_at",
+    )
 
 
 class ShiftInventoryReportLine(Base, UUIDMixin):
@@ -566,6 +577,13 @@ class ShiftInventoryReportLine(Base, UUIDMixin):
     internal_use_quantity: Mapped[Any] = mapped_column(
         Numeric(20, 6), nullable=False, server_default="0"
     )
+    #: The net of every ledger movement in the window that has no column of its
+    #: own — a customer restock, a manual adjustment, a return to supplier. Signed
+    #: (may be negative), ledger-filled and read-only, so Opening + Σcolumns ties
+    #: to the system closing and the count's variance is measured against it.
+    adjustment_quantity: Mapped[Any] = mapped_column(
+        Numeric(20, 6), nullable=False, server_default="0"
+    )
     #: Raw material consumed in production beyond the recipe (off-recipe use, or
     #: producing a good not set up in the system). Shop-entered on the
     #: raw-materials/packaging report; posts an EXTRA_PRODUCTION_USE movement. It
@@ -589,4 +607,32 @@ class ShiftInventoryReportLine(Base, UUIDMixin):
     )
     report: Mapped[ShiftInventoryReport] = relationship(
         "ShiftInventoryReport", back_populates="lines"
+    )
+
+
+class ShiftInventoryReportComment(Base, UUIDMixin, TimestampMixin):
+    """One reviewer note on a submitted report, shown back to the shop on the till.
+
+    The report's own free-text ``notes``/``deferred_reason`` are the shop's and
+    the rejection's single fields; this is the conversation on top — why a count
+    was queried, what to recheck. ``author_name`` is snapshotted at write time so
+    the note keeps its attribution even after the user row is removed
+    (``author_id`` then goes null via SET NULL).
+    """
+
+    __tablename__ = "shift_inventory_report_comments"
+
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("shift_inventory_reports.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    author_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    report: Mapped[ShiftInventoryReport] = relationship(
+        "ShiftInventoryReport", back_populates="comments"
     )

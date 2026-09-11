@@ -3327,6 +3327,18 @@
             ],
             "title": "Reservation Times"
           },
+          "return_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Branch Id"
+          },
           "tax_group_id": {
             "anyOf": [
               {
@@ -3382,6 +3394,11 @@
             ],
             "title": "Type",
             "type": "string"
+          },
+          "uses_pos": {
+            "default": true,
+            "title": "Uses Pos",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4206,6 +4223,18 @@
             ],
             "title": "Reservation Times"
           },
+          "return_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Branch Id"
+          },
           "tax_group_id": {
             "anyOf": [
               {
@@ -4258,6 +4287,10 @@
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
+          },
+          "uses_pos": {
+            "title": "Uses Pos",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4286,6 +4319,8 @@
           "receives_online_orders",
           "cash_enabled",
           "offers_pickup",
+          "uses_pos",
+          "return_branch_id",
           "accepts_reservations",
           "reservation_duration",
           "reservation_times",
@@ -4591,6 +4626,18 @@
             ],
             "title": "Reservation Times"
           },
+          "return_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Branch Id"
+          },
           "tax_group_id": {
             "anyOf": [
               {
@@ -4659,6 +4706,17 @@
               }
             ],
             "title": "Type"
+          },
+          "uses_pos": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uses Pos"
           }
         },
         "title": "BranchUpdate",
@@ -12502,6 +12560,17 @@
               }
             ],
             "title": "Source Id"
+          },
+          "source_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Reference"
           },
           "source_type": {
             "anyOf": [
@@ -25249,6 +25318,21 @@
         "title": "ReportActionRequest",
         "type": "object"
       },
+      "ReportCommentRequest": {
+        "properties": {
+          "body": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "ReportCommentRequest",
+        "type": "object"
+      },
       "ReportLineSave": {
         "properties": {
           "confirmed": {
@@ -26631,8 +26715,63 @@
         "title": "SettlementStatementRecon",
         "type": "object"
       },
+      "ShiftReportCommentResponse": {
+        "properties": {
+          "author_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author_id",
+          "author_name",
+          "body",
+          "created_at"
+        ],
+        "title": "ShiftReportCommentResponse",
+        "type": "object"
+      },
       "ShiftReportLineResponse": {
         "properties": {
+          "adjustment_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Adjustment Quantity",
+            "type": "string"
+          },
           "confirmed": {
             "title": "Confirmed",
             "type": "boolean"
@@ -26773,6 +26912,7 @@
           "transfer_out_quantity",
           "waste_quantity",
           "internal_use_quantity",
+          "adjustment_quantity",
           "expected_quantity",
           "entered_quantity",
           "confirmed",
@@ -26860,6 +27000,14 @@
             },
             "readOnly": true,
             "title": "Columns",
+            "type": "array"
+          },
+          "comments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ShiftReportCommentResponse"
+            },
+            "title": "Comments",
             "type": "array"
           },
           "deferred_reason": {
@@ -31178,6 +31326,17 @@
           "unit": {
             "title": "Unit",
             "type": "string"
+          },
+          "variance_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance Reason"
           }
         },
         "required": [
@@ -31221,6 +31380,10 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
           },
           "notes": {
             "anyOf": [
@@ -31311,6 +31474,7 @@
           "id",
           "reference",
           "status",
+          "kind",
           "branch_id",
           "source_branch_id",
           "business_date",
@@ -31323,6 +31487,180 @@
           "created_at"
         ],
         "title": "TransferOrderResponse",
+        "type": "object"
+      },
+      "TransferTemplateItemInput": {
+        "properties": {
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "TransferTemplateItemInput",
+        "type": "object"
+      },
+      "TransferTemplateItemResponse": {
+        "properties": {
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "item_sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Sku"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "display_order"
+        ],
+        "title": "TransferTemplateItemResponse",
+        "type": "object"
+      },
+      "TransferTemplateResponse": {
+        "properties": {
+          "destination_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Branch Id"
+          },
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "items": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TransferTemplateItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_branch_id",
+          "destination_branch_id",
+          "name",
+          "is_active",
+          "display_order"
+        ],
+        "title": "TransferTemplateResponse",
+        "type": "object"
+      },
+      "TransferTemplateUpsert": {
+        "properties": {
+          "destination_branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Branch Id"
+          },
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TransferTemplateItemInput"
+            },
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_branch_id",
+          "name",
+          "items"
+        ],
+        "title": "TransferTemplateUpsert",
         "type": "object"
       },
       "TranslationBulkUpsert": {
@@ -47092,6 +47430,65 @@
         ]
       }
     },
+    "/api/v1/inventory/shift-reports/{report_id}/comments": {
+      "post": {
+        "description": "A reviewer leaves a note on a report; the shop reads it back on the till.\nGated on the same approver permission as edit/approve/reject, because a\ncomment is part of reviewing the count.",
+        "operationId": "add_shift_report_comment_api_v1_inventory_shift_reports__report_id__comments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShiftReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Add Shift Report Comment",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/source-events/{event_id}/retry": {
       "post": {
         "description": "Re-snapshot a stranded order event so a newly-activated recipe consumes.\n\nRecovers ``missing_recipe`` events (and any never-posted exception): it re-runs\nthe recipe expansion against the live graph and posts. Guarded against\ndouble-posting an event that already moved stock.",
@@ -48599,6 +48996,206 @@
           }
         ],
         "summary": "Submit Transfer",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/transfer-templates": {
+      "get": {
+        "operationId": "list_transfer_templates_api_v1_inventory_transfer_templates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source_branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Branch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TransferTemplateResponse"
+                  },
+                  "title": "Response List Transfer Templates Api V1 Inventory Transfer Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Transfer Templates",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "post": {
+        "operationId": "create_transfer_template_api_v1_inventory_transfer_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferTemplateUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Transfer Template",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/transfer-templates/{template_id}": {
+      "delete": {
+        "operationId": "delete_transfer_template_api_v1_inventory_transfer_templates__template_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Transfer Template",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "put": {
+        "operationId": "update_transfer_template_api_v1_inventory_transfer_templates__template_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "template_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Template Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferTemplateUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferTemplateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Transfer Template",
         "tags": [
           "Inventory"
         ]
