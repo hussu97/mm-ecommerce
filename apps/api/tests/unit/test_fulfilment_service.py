@@ -666,6 +666,37 @@ async def test_a_rider_collecting_does_not_sharpen_a_day_promise():
 
 
 @pytest.mark.asyncio
+async def test_a_rider_collecting_sharpens_a_day_promise_on_a_courier_we_booked():
+    """
+    The mirror of the case above, and the bug it fixes: an order we booked
+    ourselves from the start (`original_provider` is not a third party) is one
+    whose pickup we hear about end to end. When such an order was quoted to the
+    *day* at checkout — a next-day/day-precision integrator courier — the OFD
+    email used to fall to the flat "before 10 PM" bound, ignoring the pickup we
+    actually recorded. Now the pickup event sharpens it: we know when the rider
+    collected, so we say pickup + the promised delivery duration. That can push
+    the estimate past the original day promise, which is honest — the rider left
+    when they left.
+    """
+    promised = NOW + timedelta(days=1)
+    picked_up = NOW - timedelta(minutes=5)
+    result = await _fulfilment(
+        _order(
+            status=OrderStatusEnum.OUT_FOR_DELIVERY,
+            promised_at=promised,
+            promised_precision="day",
+        ),
+        # A genuine integrator order: booked on Lalamove, never reassigned.
+        _delivery(provider="lalamove", original_provider=None),
+        reached={"out_for_delivery": picked_up},
+    )
+    assert result.precision == "time", "a pickup we own sharpens even a day promise"
+    assert result.estimated_at == picked_up.astimezone(TZ) + (
+        fulfilment_service.RIDER_TO_DOOR - fulfilment_service.COLLECTION_ALLOWANCE
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_time_promise_still_sharpens_as_it_always_did():
     """The pinning must not flatten the orders that were promised an hour."""
     result = await _fulfilment(

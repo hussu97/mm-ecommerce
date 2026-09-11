@@ -440,15 +440,34 @@ def _estimate(
     # A day promise is therefore a ceiling for the life of the order. Who ends
     # up driving it is ours to change; what the customer was told is not.
     promised_a_time = order.promised_precision != "day"
+    # Whether *we* booked the courier that is carrying it — read off the provider
+    # at booking (`original_provider`), not the one carrying it now, so a
+    # third-party order an admin reassigned to us does not count. For an order we
+    # booked ourselves the pickup event below is a fact we own end to end, so it
+    # may sharpen even a day-precision promise; a reassigned third-party one may
+    # not (see the ceiling reasoning above).
+    originally = (
+        delivery.original_provider if delivery is not None else None
+    ) or provider
+    booked_by_us = originally in _BOOKED_BY_US
 
     if stage == "on_the_way":
         # The sharpest answer we ever have: one rider, one route, measured from
-        # an event the courier reported rather than from anything we assumed.
-        # This is the one case that is allowed to overrule the promise, because
-        # it is the only one built from a fact rather than from a schedule —
-        # but it may still only sharpen a promise that was made as a time.
+        # the pickup event the courier reported plus the delivery duration the
+        # customer was promised — not from anything we assumed now. This is the
+        # one case built from a fact rather than a schedule, so it overrules the
+        # promise. For a courier we booked ourselves it does so even when the
+        # checkout promise was a day ("before 10 PM"): we know when the rider
+        # actually collected, so an end-of-day bound is needlessly vague. That
+        # pushes the estimate past the original day promise, which is honest —
+        # the rider left when they left. A reassigned third-party order may still
+        # only sharpen a promise that was itself made as a time.
         picked_up = (reached or {}).get(OrderStatusEnum.OUT_FOR_DELIVERY.value)
-        if picked_up is not None and provider in _BOOKED_BY_US and promised_a_time:
+        if (
+            picked_up is not None
+            and provider in _BOOKED_BY_US
+            and (promised_a_time or booked_by_us)
+        ):
             # The promise minus what it had already spent by the time the rider
             # was holding the box. A flat 45 minutes here was the same number
             # for a Dubai run and a northern one, which differ by half an hour.
@@ -460,10 +479,10 @@ def _estimate(
             # one saying "any moment".
             return max(arriving, _local(now) + timedelta(minutes=5)), "time"
         # Either it is on somebody else's van and the shop marked it by hand, or
-        # it is on a rider we booked against a day promise. Both get the day,
-        # bounded by the hour rather than left open: "before 10 PM" is a
-        # commitment a customer can plan around, and "some time on Tuesday" is
-        # not.
+        # it is a reassigned third-party order still bound by its day promise.
+        # Both get the day, bounded by the hour rather than left open: "before
+        # 10 PM" is a commitment a customer can plan around, and "some time on
+        # Tuesday" is not.
         #
         # The promised date where there is one, not today. A rider collecting an
         # order early does not move the day it was promised for, and quietly
