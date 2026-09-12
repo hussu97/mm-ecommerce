@@ -830,6 +830,105 @@ def test_parse_finance_bill_xlsx_lines_map_real_columns():
     assert (order2, "commission") not in lines
 
 
+def _build_bill_xlsx_b64_with_refunds() -> str:
+    """An 'Order Summary' workbook exercising the refund/compensation/adjustment
+    columns (c18/c29/c20/c32) and the per-order Notes (c34)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Order Summary"
+    ws.append(["Order information"])
+    ws.append([])
+    ws.append(["Brand Name"])  # header row 3
+    rows = [
+        {  # vendor-fault: a merchant-liability deduction (money clawed back)
+            4: "1644336388",
+            6: "9 Sep 2026",
+            9: "5197841390944816",
+            10: "Completed",
+            16: 70.0,
+            22: -0.9,
+            33: -21.4,
+            35: -16.5,
+            18: 0.0,  # no Keeta compensation
+            29: -70.0,  # merchant liability (vendor-fault refund)
+            34: "Missing item — platform refunded, merchant liable",
+        },
+        {  # clean order: every refund/comp/adjustment column is 0 → no such lines
+            4: "1644336388",
+            6: "9 Sep 2026",
+            9: "5197840000000001",
+            10: "Completed",
+            16: 40.0,
+            22: -0.8,
+            33: 26.2,
+            35: -9.0,
+            18: 0.0,
+            29: 0.0,
+            20: 0.0,
+            32: 0.0,
+        },
+        {  # Keeta-fault: a compensation TO the merchant (money in, sale unaffected)
+            4: "1644336388",
+            6: "9 Sep 2026",
+            9: "5197840000000002",
+            10: "Completed",
+            16: 40.0,
+            22: -0.8,
+            33: 66.2,
+            35: -9.0,
+            18: 30.0,  # compensation (Keeta-fault)
+            29: 0.0,
+            34: "Late delivery — Keeta compensation",
+        },
+    ]
+    for spec in rows:
+        values = [None] * 40
+        for col, value in spec.items():
+            values[col - 1] = value
+        ws.append(values)
+    buffer = _io.BytesIO()
+    wb.save(buffer)
+    return _base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def test_parse_finance_bill_captures_refund_and_compensation_lines():
+    payload = {
+        "statement_id": "DTREF",
+        "shopId": "1644336388",
+        "displayTimeText": "8 Sep 2026 ~ 14 Sep 2026",
+        "bill_xlsx_b64": _build_bill_xlsx_b64_with_refunds(),
+    }
+    stmt = keeta.parse_finance(payload).statements[0]
+    lines = {(ln.external_order_id, ln.fee_category): ln for ln in stmt.lines}
+
+    # Vendor-fault: merchant-liability deduction captured, Notes carried as reason.
+    liable = "5197841390944816"
+    ded = lines[(liable, "merchant_liability")]
+    assert ded.amount == Decimal("-70.0")
+    assert ded.line_type == "deduction"
+    assert "merchant liable" in (ded.description or "").lower()
+    # c18 was 0 → no compensation line fabricated for it.
+    assert (liable, "merchant_compensation") not in lines
+
+    # Clean order: no refund/comp/adjustment lines at all, but the money legs stay.
+    clean = "5197840000000001"
+    assert (clean, "gross_sales") in lines
+    assert (clean, "merchant_liability") not in lines
+    assert (clean, "merchant_compensation") not in lines
+    assert (clean, "adjustment_increase") not in lines
+    assert (clean, "adjustment_decrease") not in lines
+
+    # Keeta-fault: compensation captured (money in), Notes carried, no deduction.
+    comp = "5197840000000002"
+    c = lines[(comp, "merchant_compensation")]
+    assert c.amount == Decimal("30.0")
+    assert c.line_type == "compensation"
+    assert "keeta compensation" in (c.description or "").lower()
+    assert (comp, "merchant_liability") not in lines
+
+
 def test_parse_finance_commission_zip_is_archived_and_stamped():
     from app.services.aggregators.statement_docs import StoredStatementInvoice
 

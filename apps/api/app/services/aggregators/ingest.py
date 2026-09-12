@@ -660,6 +660,9 @@ async def _upsert_statement(
     await _stamp_orders_from_settled_ids(
         db, channel, statement.statement_id, settled_order_ids
     )
+    # Book settled vendor-fault deductions as the order's refund, so the next
+    # promote lowers net sales to match the payout (see `apply_statement_refunds`).
+    await apply_statement_refunds(db, channel, settled_order_ids)
 
 
 async def _stamp_orders_from_settled_ids(
@@ -685,6 +688,71 @@ async def _stamp_orders_from_settled_ids(
         .execution_options(synchronize_session=False)
     )
     return int(result.rowcount or 0)
+
+
+async def apply_statement_refunds(
+    db: AsyncSession, channel: str, order_ids: set[str] | None = None
+) -> int:
+    """Roll settled vendor-fault deductions onto `aggregator_order.refund_amount`.
+
+    For a channel whose refunds surface only on the settlement file (Keeta), the
+    `merchant_liability` statement lines are money clawed back from our payout for
+    an order WE were liable for — a partial refund that overstates the sale until
+    it is booked. Sum them per order (as a magnitude), stamp it onto `refund_amount`
+    capped at the order's gross, and bump `updated_at` so the next promote re-books
+    `orders.refunded_amount` (the same field `order_economics` net revenue
+    subtracts). Keeta-FAULT `compensation` lines are deliberately excluded: the
+    platform makes our payout whole, so they never reduce the sale.
+
+    Channel-agnostic and self-scoping — a channel that emits no `merchant_liability`
+    line (every channel but Keeta today) matches nothing, so Talabat's sales-derived
+    `refund_amount` is never disturbed. Idempotent: only writes when the value
+    actually changes. `order_ids` narrows the scan to one statement's orders; None
+    sweeps the whole channel. Returns aggregator orders updated.
+    """
+    conditions = [
+        AggregatorStatementLine.channel == channel,
+        AggregatorStatementLine.fee_category == "merchant_liability",
+    ]
+    if order_ids is not None:
+        cleaned = {str(i) for i in order_ids if i}
+        if not cleaned:
+            return 0
+        conditions.append(AggregatorStatementLine.external_order_id.in_(cleaned))
+    rows = (
+        await db.execute(
+            select(
+                AggregatorStatementLine.external_order_id,
+                func.sum(AggregatorStatementLine.amount),
+            )
+            .where(*conditions)
+            .group_by(AggregatorStatementLine.external_order_id)
+        )
+    ).all()
+    updated = 0
+    for external_order_id, summed in rows:
+        if external_order_id is None or summed is None:
+            continue
+        # Deductions land negative (money out, like commission); a refund is the
+        # magnitude, sign-robust either way.
+        magnitude = abs(Decimal(str(summed)))
+        if magnitude <= 0:
+            continue
+        capped = func.least(
+            magnitude, func.coalesce(AggregatorOrder.gross_sales, magnitude)
+        )
+        result = await db.execute(
+            sql_update(AggregatorOrder)
+            .where(
+                AggregatorOrder.channel == channel,
+                _order_matches_line_ids({str(external_order_id)}),
+                AggregatorOrder.refund_amount.is_distinct_from(capped),
+            )
+            .values(refund_amount=capped, updated_at=utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        updated += int(result.rowcount or 0)
+    return updated
 
 
 async def link_orders_to_statements(db: AsyncSession, channel: str) -> int:

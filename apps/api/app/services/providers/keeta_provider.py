@@ -426,13 +426,36 @@ def _strip_blobs(row: dict[str, Any]) -> dict[str, Any]:
 _BILL_SHEET = "Order Summary"
 _BILL_ORDER_NO_COL = 9  # 16-digit Order Number == sales external_order_id
 _BILL_TXN_DATE_COL = 6  # "15 Aug 2026"
-#: category → (source column, line_type, fee_category).
-_BILL_LINE_SPEC: tuple[tuple[str, int, str, str], ...] = (
-    ("gross", 16, "sales", "gross_sales"),  # Original item price (VAT incl)
-    ("commission", 35, "commission", "commission"),  # Total Commission (VAT incl)
-    ("bank_fee", 22, "fee", "bank_fee"),  # Bank fee (VAT incl)
-    ("net", 33, "payout", "net_payable"),  # Payable to Restaurant (net)
+_BILL_NOTES_COL = 34  # per-order "Notes" — the refund/fault reason text
+#: category → (source column, line_type, fee_category, keep_zero).
+#: `keep_zero` keeps a real 0.00 for the four always-present money legs; the
+#: refund/compensation/adjustment legs are near-always 0 (Keeta refunds are rare —
+#: 0 of 301 settled rows in a two-week sample), so they are emitted ONLY when
+#: non-zero. A 0 there means "none", not a row worth keeping across thousands of
+#: orders. Column indices verified 2026-09-12 against a live billing XLSX (the
+#: "Order Summary" sheet, header row 3), cross-checked with its "Explanation" tab.
+_BILL_LINE_SPEC: tuple[tuple[str, int, str, str, bool], ...] = (
+    ("gross", 16, "sales", "gross_sales", True),  # Original item price (VAT incl)
+    ("commission", 35, "commission", "commission", True),  # Total Commission (incl)
+    ("bank_fee", 22, "fee", "bank_fee", True),  # Bank fee (VAT incl)
+    ("net", 33, "payout", "net_payable", True),  # Payable to Restaurant (net)
+    # Refund / fault legs (per the "Explanation" tab):
+    #  c18 "Total Compensation to Merchant" — "refunds NOT due to merchant
+    #      responsibility" → KEETA-FAULT: the platform pays the merchant, our
+    #      payout is made whole, so this is other-revenue and must NEVER reduce the
+    #      sale. It is the signal for "refunded but it was Keeta's fault".
+    #  c29 "Total Platform Deductions from Merchant (Merchant's Liability)" —
+    #      VENDOR-FAULT: money clawed from our payout, the Talabat-equivalent that
+    #      overstates net sales until booked as a refund (see the ingest step that
+    #      rolls this onto `aggregator_order.refund_amount`).
+    ("compensation", 18, "compensation", "merchant_compensation", False),
+    ("merchant_liability", 29, "deduction", "merchant_liability", False),
+    ("adjustment_increase", 20, "adjustment", "adjustment_increase", False),
+    ("adjustment_decrease", 32, "adjustment", "adjustment_decrease", False),
 )
+
+#: Fee categories that carry the per-order Notes text (the refund/fault reason).
+_BILL_NOTE_CATEGORIES = frozenset({"merchant_compensation", "merchant_liability"})
 
 
 def _cell(values: tuple[Any, ...], col: int) -> Any:
@@ -478,9 +501,15 @@ def _parse_bill_xlsx(
                 continue
             order_no = str(order_no).strip()
             line_date = _date_str(_keeta_short_date(_cell(values, _BILL_TXN_DATE_COL)))
-            for category, col, line_type, fee_category in _BILL_LINE_SPEC:
+            notes_val = _cell(values, _BILL_NOTES_COL)
+            notes = str(notes_val).strip() if notes_val not in (None, "") else None
+            for category, col, line_type, fee_category, keep_zero in _BILL_LINE_SPEC:
                 amount = _money(_cell(values, col))
                 if amount is None:
+                    continue
+                # A 0 refund/compensation/adjustment leg is "none", not a row — only
+                # the four always-present money legs keep an explicit 0.00.
+                if not keep_zero and amount == 0:
                     continue
                 lines.append(
                     StandardStatementLine(
@@ -490,6 +519,9 @@ def _parse_bill_xlsx(
                         line_date=line_date,
                         line_type=line_type,
                         fee_category=fee_category,
+                        description=(
+                            notes if fee_category in _BILL_NOTE_CATEGORIES else None
+                        ),
                         amount=amount,
                         currency="AED",
                     )

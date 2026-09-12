@@ -857,6 +857,11 @@ async def _fees_from_statement_lines(
     is_commission = and_(fc == "commission", ~is_vat)
     is_gross = or_(fc == "gross_sales", lt.in_(["gross_sales", "sales", "sale"]))
     is_net = or_(fc == "net_payable", lt.in_(["net_payable", "payout", "settlement"]))
+    # Money that comes IN to the merchant (a Keeta-fault compensation, an upward
+    # adjustment) is other-revenue, NOT a fee — `net_payable` already includes it,
+    # so abs()'ing it into `other_fees` would both double-count and inflate the fee
+    # total. Keep only cost-side lines (deductions/downward adjustments) in fees.
+    is_other_revenue = fc.in_(["merchant_compensation", "adjustment_increase"])
     amt = func.abs(ln.amount)
 
     def _sum(cond):
@@ -867,7 +872,9 @@ async def _fees_from_statement_lines(
         _sum(is_gross).label("gross_sales"),
         _sum(is_commission).label("commission"),
         _sum(is_vat).label("vat"),
-        _sum(and_(~is_gross, ~is_net, ~is_commission, ~is_vat)).label("other_fees"),
+        _sum(
+            and_(~is_gross, ~is_net, ~is_commission, ~is_vat, ~is_other_revenue)
+        ).label("other_fees"),
         _sum(is_net).label("net_payable"),
         func.count(distinct(ln.external_order_id)).label("orders"),
     ).group_by(ln.channel)
