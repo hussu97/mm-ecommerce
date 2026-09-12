@@ -34,8 +34,12 @@ RS256 = COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256
 
 
 def test_supported_algs_cover_both_apple_and_windows_hello() -> None:
-    assert ES256 in WEBAUTHN_SUPPORTED_PUB_KEY_ALGS, "ES256 (-7) missing — Apple passkeys"
-    assert RS256 in WEBAUTHN_SUPPORTED_PUB_KEY_ALGS, "RS256 (-257) missing — Windows Hello"
+    assert ES256 in WEBAUTHN_SUPPORTED_PUB_KEY_ALGS, (
+        "ES256 (-7) missing — Apple passkeys"
+    )
+    assert RS256 in WEBAUTHN_SUPPORTED_PUB_KEY_ALGS, (
+        "RS256 (-257) missing — Windows Hello"
+    )
 
 
 def test_registration_options_advertise_rs256_to_the_browser() -> None:
