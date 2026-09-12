@@ -95,7 +95,9 @@ async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
     # staleness and no invalidation to keep in step with the location map. Purely
     # an optimisation — a test double without a real `.info` dict skips the cache.
     info = getattr(db, "info", None)
-    cache = info.setdefault("_branch_has_grubops", {}) if isinstance(info, dict) else None
+    cache = (
+        info.setdefault("_branch_has_grubops", {}) if isinstance(info, dict) else None
+    )
     if cache is not None and branch_id in cache:
         return cache[branch_id]
     result = bool(
