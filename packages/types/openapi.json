@@ -31310,6 +31310,11 @@
             ],
             "title": "Destination Branch Name"
           },
+          "has_sending_variance": {
+            "default": false,
+            "title": "Has Sending Variance",
+            "type": "boolean"
+          },
           "item_count": {
             "title": "Item Count",
             "type": "integer"

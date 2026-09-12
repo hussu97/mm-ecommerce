@@ -225,6 +225,117 @@ async def test_creating_an_order_moves_no_stock_until_it_is_sent(env):
         assert Decimal(str(child.items[0].sent_quantity)) == Decimal("10")
 
 
+async def test_sending_a_modified_quantity_records_a_sending_variance(env):
+    """The picker ships fewer than requested: only what left moves stock, the
+    requested quantity is preserved as the baseline, and the report flags it."""
+    from app.api.v1.operations import _build_report
+
+    _engine, Session, ids = env
+    async with Session() as db:
+        order = await _order(db, ids, 10)
+        await db.commit()
+        order_id = order.id
+        child_id = order.children[0].id
+
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        line_id = child.items[0].id
+        await transfer_service.mark_transfer_sent(
+            db, transfer=child, user=user, sent={line_id: Decimal("6")}
+        )
+        await db.commit()
+
+    async with Session() as db:
+        # Only the 6 that actually left moved stock; requested (10) is untouched.
+        assert await _level(db, ids.item, ids.source_wh) == Decimal("94")
+        child = await transfer_service.load_transfer(db, child_id)
+        assert Decimal(str(child.items[0].sent_quantity)) == Decimal("6")
+        assert Decimal(str(child.items[0].quantity)) == Decimal("10")
+
+        order = await transfer_service.load_transfer_order(db, order_id)
+        report = await _build_report(db, order)
+        assert report.children[0].has_sending_variance is True
+
+
+async def test_sending_the_requested_quantity_has_no_variance(env):
+    from app.api.v1.operations import _build_report
+
+    _engine, Session, ids = env
+    async with Session() as db:
+        order = await _order(db, ids, 10)
+        await db.commit()
+        order_id = order.id
+        child_id = order.children[0].id
+
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        # A bodyless send (no map) ships every line as requested.
+        await transfer_service.mark_transfer_sent(db, transfer=child, user=user)
+        await db.commit()
+
+    async with Session() as db:
+        order = await transfer_service.load_transfer_order(db, order_id)
+        report = await _build_report(db, order)
+        assert report.children[0].has_sending_variance is False
+
+
+async def test_completed_query_returns_both_sent_and_received_legs(env):
+    """The POS completed list surfaces a leg this branch sent and a leg it
+    received; a still-pending leg is absent."""
+    from sqlalchemy import and_, or_
+
+    from app.models.operations import Transfer
+
+    _engine, Session, ids = env
+    # Send a leg from source → dest (source's completed *send*; dest's completed
+    # *receive* once booked in). Source has POS, so it stays "sent" until received.
+    async with Session() as db:
+        order = await _order(db, ids, 5)
+        await db.commit()
+        child_id = order.children[0].id
+
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        await transfer_service.mark_transfer_sent(db, transfer=child, user=user)
+        await db.commit()
+
+    async def _completed(db, branch_id):
+        stmt = select(Transfer).where(
+            or_(
+                and_(
+                    Transfer.source_branch_id == branch_id,
+                    Transfer.sent_transaction_id.isnot(None),
+                ),
+                and_(
+                    Transfer.branch_id == branch_id,
+                    Transfer.received_transaction_id.isnot(None),
+                ),
+            )
+        )
+        return list((await db.execute(stmt)).scalars().unique().all())
+
+    async with Session() as db:
+        # Source sees it as a completed send; dest not yet (not received).
+        assert [t.id for t in await _completed(db, ids.source)] == [child_id]
+        assert await _completed(db, ids.dest) == []
+
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        line_id = child.items[0].id
+        await transfer_service.receive_transfer(
+            db, transfer=child, user=user, received={line_id: Decimal("5")}
+        )
+        await db.commit()
+
+    async with Session() as db:
+        # Now the destination sees it as a completed receive too.
+        assert [t.id for t in await _completed(db, ids.dest)] == [child_id]
+
+
 async def test_short_receipt_leaves_the_loss_on_the_sender(env):
     _engine, Session, ids = env
     async with Session() as db:

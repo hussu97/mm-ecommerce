@@ -530,10 +530,20 @@ async def create_return_order(
 
 
 async def mark_transfer_sent(
-    db: AsyncSession, *, transfer: Transfer, user: User
+    db: AsyncSession,
+    *,
+    transfer: Transfer,
+    user: User,
+    sent: dict[uuid.UUID, Decimal] | None = None,
 ) -> InventoryTransaction:
     """Ship one child from the source, decrementing its stock. Idempotent: a
-    second call returns the transaction already posted."""
+    second call returns the transaction already posted.
+
+    ``sent`` optionally overrides how much of each line actually leaves, keyed by
+    ``TransferLine.id``. A line absent from the map ships its requested quantity,
+    so a bodyless send is unchanged. A line whose sent quantity differs from its
+    requested ``quantity`` is a *sending variance*, recorded on ``sent_quantity``
+    (the requested ``quantity`` is left untouched as the baseline)."""
     transfer = await _lock_transfer(db, transfer.id)
     if transfer.sent_transaction_id is not None:
         return await inventory_service.load_transaction(
@@ -577,11 +587,18 @@ async def mark_transfer_sent(
     await db.flush()
 
     for line in transfer.items:
-        quantity = _q(
-            line.approved_quantity
-            if line.approved_quantity is not None
-            else line.quantity
-        )
+        if sent is not None and line.id in sent:
+            quantity = _q(sent[line.id])
+        else:
+            quantity = _q(
+                line.approved_quantity
+                if line.approved_quantity is not None
+                else line.quantity
+            )
+        # Record what left even when it is zero, so a line the picker dropped
+        # reads as a shipped 0 (a variance against its request) rather than the
+        # requested amount. Only a positive quantity moves stock.
+        line.sent_quantity = quantity
         if quantity <= 0:
             continue
         item = await db.get(InventoryItem, line.item_id)
@@ -606,7 +623,6 @@ async def mark_transfer_sent(
                 notes=f"transfer_item:{line.id}",
             )
         )
-        line.sent_quantity = quantity
 
     await db.flush()
     transaction = await inventory_service.load_transaction(db, transaction.id)

@@ -18829,6 +18829,11 @@ export interface components {
             destination_branch_id: string;
             /** Destination Branch Name */
             destination_branch_name?: string | null;
+            /**
+             * Has Sending Variance
+             * @default false
+             */
+            has_sending_variance: boolean;
             /** Item Count */
             item_count: number;
             /** Received Value */

@@ -79,6 +79,10 @@ OWNER_ORDER_RECIPIENTS = (
 #: Who is told when a shift inventory report is submitted, so the count can be
 #: reviewed (and, when it needs approval, approved) from the admin console.
 INVENTORY_REPORT_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
+#: Who is told when a transfer ships with a sending variance (a picker sent more
+#: or fewer than requested). Kept separate from the report recipients so the two
+#: notifications can be routed independently later.
+TRANSFER_VARIANCE_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
 
 #: The clock every date in an email is printed on. A customer in Sharjah reading
 #: "ready at 16:30" is standing on this one, and a UTC stamp would be four hours
@@ -176,6 +180,10 @@ def _admin_order_url(order_number: str) -> str:
 
 def _admin_report_url(report_id: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/inventory/reports/{report_id}"
+
+
+def _admin_transfer_url(order_id: str) -> str:
+    return f"{settings.ADMIN_URL.rstrip('/')}/inventory/transfers/{order_id}"
 
 
 # ─── Building the picture an order email paints ───────────────────────────────
@@ -893,6 +901,64 @@ async def send_inventory_report_submitted(
             subject,
             result,
             report_id,
+        )
+
+
+async def send_transfer_sending_variance(
+    *,
+    order_id: str,
+    order_reference: str,
+    transfer_reference: str,
+    source_branch_name: str,
+    destination_branch_name: str,
+    business_date: str,
+    sent_by: str,
+    lines: list[dict[str, Any]],
+) -> None:
+    """Tell the office a transfer shipped with a sending variance — the till sent
+    more or fewer of at least one item than the order requested. Fired only when
+    ``lines`` is non-empty (the caller passes just the varying lines). Always
+    English; links to the parent order in the English-only admin console.
+
+    Each ``lines`` entry carries ``item_name``, ``requested`` and ``sent`` (both
+    already formatted strings); the template shows the signed delta itself."""
+    if not lines:
+        return
+    subject = (
+        f"Transfer sending variance — {transfer_reference} · "
+        f"{source_branch_name} → {destination_branch_name}"
+    )
+    for recipient in TRANSFER_VARIANCE_RECIPIENTS:
+        try:
+            html = _render(
+                "transfer_sending_variance.html",
+                recipient_email=recipient,
+                locale="en",
+                order_reference=order_reference,
+                transfer_reference=transfer_reference,
+                source_branch_name=source_branch_name,
+                destination_branch_name=destination_branch_name,
+                business_date=business_date,
+                sent_by=sent_by,
+                lines=lines,
+                admin_transfer_url=_admin_transfer_url(order_id),
+            )
+            result = await asyncio.to_thread(_send, recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "transfer_sending_variance render/send failed for %s to %s: %s",
+                transfer_reference,
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log(
+            "transfer_sending_variance",
+            recipient,
+            subject,
+            result,
+            transfer_reference,
         )
 
 

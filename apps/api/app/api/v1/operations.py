@@ -63,8 +63,9 @@ from app.schemas.transfers import (
     TransferOrderTotalLine,
     TransferReceive,
     TransferResponse,
+    TransferSend,
 )
-from app.services import crud_service, push_service
+from app.services import crud_service, email_service, push_service
 from app.services.inventory import (
     access_service,
     inventory_service,
@@ -282,6 +283,13 @@ async def _build_report(db: AsyncSession, order: TransferOrder) -> TransferOrder
             ),
             sent_value=tx_totals.get(child.sent_transaction_id, Decimal("0")),
             received_value=tx_totals.get(child.received_transaction_id, Decimal("0")),
+            # A sending variance can only exist once the leg has shipped; before
+            # that sent_quantity is still 0 against every requested line.
+            has_sending_variance=child.sent_transaction_id is not None
+            and any(
+                Decimal(str(line.sent_quantity)) != Decimal(str(line.quantity))
+                for line in child.items
+            ),
         )
         for child in order.children
     ]
@@ -785,6 +793,41 @@ async def pos_outgoing_transfers(
     return [await _serialise_child(db, t) for t in transfers]
 
 
+@pos_transfers_router.get("/transfers/completed", response_model=list[TransferResponse])
+async def pos_completed_transfers(
+    branch_id: uuid.UUID,
+    limit: int = Query(200, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """This branch's finished transfers, both directions, for the completed-transfer
+    report: legs it has *sent* (source, shipped) and legs it has *received*
+    (destination, booked in). The client tells the two apart by comparing
+    ``source_branch_id``/``branch_id`` to its own branch. Gated on the broad
+    ``manage`` permission — same as the report link that opens it."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    stmt = (
+        select(Transfer)
+        .where(
+            or_(
+                and_(
+                    Transfer.source_branch_id == branch_id,
+                    Transfer.sent_transaction_id.isnot(None),
+                ),
+                and_(
+                    Transfer.branch_id == branch_id,
+                    Transfer.received_transaction_id.isnot(None),
+                ),
+            )
+        )
+        .options(selectinload(Transfer.items))
+        .order_by(Transfer.updated_at.desc())
+        .limit(limit)
+    )
+    transfers = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_child(db, t) for t in transfers]
+
+
 @pos_transfers_router.post(
     "/transfers/claim-autoprint", response_model=list[TransferResponse]
 )
@@ -855,15 +898,29 @@ async def pos_claim_autoprint_transfers(
 )
 async def pos_send_transfer(
     transfer_id: uuid.UUID,
+    data: TransferSend | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.send")),
 ):
     """Mark a pending transfer sent from the source — its stock leaves now, and the
-    destination's tills are told there is one to receive."""
+    destination's tills are told there is one to receive.
+
+    ``data`` optionally carries the actual per-line sent quantities the picker
+    keyed in; a line left out (or a bodyless call) ships its requested quantity.
+    When any line ships with sent ≠ requested, the office is emailed the variance."""
+    sent_map = (
+        {line.transfer_line_id: line.sent_quantity for line in data.lines}
+        if data and data.lines
+        else None
+    )
     transfer = await transfer_service.load_transfer(db, transfer_id)
     await access_service.assert_branch_access(db, user, transfer.source_branch_id)
-    await transfer_service.mark_transfer_sent(db, transfer=transfer, user=user)
+    await transfer_service.mark_transfer_sent(
+        db, transfer=transfer, user=user, sent=sent_map
+    )
     transfer = await transfer_service.load_transfer(db, transfer_id)
+    payload = await _serialise_child(db, transfer)
+
     destination = await db.get(Branch, transfer.branch_id)
     if destination is not None and getattr(destination, "uses_pos", True):
         await push_service.notify_transfer_created(
@@ -873,7 +930,34 @@ async def pos_send_transfer(
             item_count=len(transfer.items),
             kind=transfer.kind,
         )
-    return await _serialise_child(db, transfer)
+
+    # A sending variance — the till shipped more or fewer of a line than the
+    # order requested — is worth telling the office about, once per shipment.
+    variance_lines = [
+        {
+            "item_name": line.item_name or line.item_sku or str(line.item_id),
+            "requested": f"{Decimal(str(line.quantity)):f}",
+            "sent": f"{Decimal(str(line.sent_quantity)):f}",
+            "delta": f"{Decimal(str(line.sent_quantity)) - Decimal(str(line.quantity)):+f}",
+        }
+        for line in payload.items
+        if Decimal(str(line.sent_quantity)) != Decimal(str(line.quantity))
+    ]
+    if variance_lines:
+        order = await db.get(TransferOrder, transfer.transfer_order_id)
+        source = await db.get(Branch, transfer.source_branch_id)
+        await email_service.send_transfer_sending_variance(
+            order_id=str(transfer.transfer_order_id),
+            order_reference=order.reference if order else transfer.reference,
+            transfer_reference=transfer.reference,
+            source_branch_name=source.name if source else "",
+            destination_branch_name=destination.name if destination else "",
+            business_date=transfer.business_date,
+            sent_by=user.display_name or user.email,
+            lines=variance_lines,
+        )
+
+    return payload
 
 
 @pos_transfers_router.post(

@@ -1,0 +1,77 @@
+{#
+  A transfer shipped with a sending variance: the source till sent more or fewer
+  of at least one item than the order requested.
+
+  Sent to the office so the discrepancy can be reviewed against the transfer in
+  the admin console. Fired only when there is a variance. Always English: it is
+  an internal notification and the admin it links to is English-only.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}Transfer sending variance — {{ transfer_reference }}{% endblock %}
+{% block preheader %}{{ source_branch_name }} &rarr; {{ destination_branch_name }} &middot; {{ business_date }} &middot; sent &ne; requested{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Transfer sending variance</p>
+    <h2 class="hero-title">{{ transfer_reference }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>
+      This transfer was shipped with a <strong>sending variance</strong> — the
+      quantity sent differs from what the order requested on one or more lines.
+      The stock that actually left has already moved; review the lines below.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 140px; padding: 5px 0;">Order</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ order_reference }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">From</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ source_branch_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">To</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ destination_branch_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Business date</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ business_date }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Sent by</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="auto">{{ sent_by }}</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px;">
+      <tr>
+        <td class="kv-label" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Item</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Requested</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Sent</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Variance</td>
+      </tr>
+      {% for line in lines %}
+      <tr>
+        <td class="kv-value" style="padding: 6px 0;" dir="auto">{{ line.item_name }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.requested }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.sent }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;"><strong>{{ line.delta }}</strong></td>
+      </tr>
+      {% endfor %}
+    </table>
+  </td></tr>
+</table>
+
+{{ parts.button(admin_transfer_url, 'Open the transfer in the admin') }}
+{% endblock %}

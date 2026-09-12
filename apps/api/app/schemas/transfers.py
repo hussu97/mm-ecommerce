@@ -58,6 +58,25 @@ class TransferOrderCreate(BaseModel):
     items: list[TransferOrderItemInput] = Field(min_length=1)
 
 
+# ─── Send (source till) ───────────────────────────────────────────────────────
+
+
+class TransferSendLine(BaseModel):
+    """How much of one line the source is actually shipping — which may differ
+    from the requested ``quantity`` (a sending variance)."""
+
+    #: The child transfer line (``TransferLine``) being shipped.
+    transfer_line_id: UUID
+    sent_quantity: Decimal = Field(ge=0)
+
+
+class TransferSend(BaseModel):
+    """Optional per-line sent quantities. Empty ⇒ ship every line as requested
+    (the historical bodyless behaviour)."""
+
+    lines: list[TransferSendLine] = Field(default_factory=list)
+
+
 # ─── Receive (source/destination till + admin) ────────────────────────────────
 
 
@@ -161,6 +180,9 @@ class TransferOrderReportChild(BaseModel):
     total_received: Decimal
     sent_value: Decimal
     received_value: Decimal
+    #: True when this leg shipped and any line left with sent ≠ requested — a
+    #: sending variance the picker recorded at send time.
+    has_sending_variance: bool = False
 
 
 class TransferOrderAdjustmentEntry(BaseModel):
