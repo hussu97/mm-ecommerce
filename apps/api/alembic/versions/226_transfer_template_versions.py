@@ -109,8 +109,15 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_transfer_orders_template_id", table_name="transfer_orders")
-    op.drop_constraint(
-        "fk_transfer_orders_template_id", "transfer_orders", type_="foreignkey"
+    # `IF EXISTS`: on a full `downgrade base`, `230_transfer_parent_fanout` has
+    # already round-tripped this table (renaming it to `transfers` and back) and
+    # its downgrade restores the `template_id` column and index but not this
+    # FK's original name — so by the time we reach here the constraint may be
+    # gone. Dropping `template_id` below removes any FK on it regardless; this
+    # guard just keeps the explicit drop from crashing the round trip (F-OPS-29).
+    op.execute(
+        "ALTER TABLE transfer_orders "
+        "DROP CONSTRAINT IF EXISTS fk_transfer_orders_template_id"
     )
     op.drop_column("transfer_orders", "template_snapshot")
     op.drop_column("transfer_orders", "template_version")
