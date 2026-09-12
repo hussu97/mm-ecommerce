@@ -33,6 +33,8 @@ class _FakeDB:
     def __init__(self, *, execute_results=None, get_result=None):
         self._queue = list(execute_results or [])
         self._get = get_result
+        # Mirrors AsyncSession.info — resolve() memoises per (branch, channel) here.
+        self.info: dict = {}
 
     async def execute(self, _stmt):
         return _FakeResult(self._queue.pop(0) if self._queue else None)

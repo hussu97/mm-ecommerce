@@ -24,7 +24,7 @@ from decimal import Decimal
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from app.models.aggregator import (
     CHANNEL_CAREEM,
@@ -87,13 +87,22 @@ async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
     """
     if branch_id is None:
         return False
-    return bool(
-        await db.scalar(
-            select(GrubOpsLocationMap.id).where(
-                GrubOpsLocationMap.branch_id == branch_id,
+    # Session-scoped memo. This is stable per-branch config, but it is queried
+    # once per order in BOTH the reconcile and promote sweeps — thousands of
+    # identical `branch_id` lookups per pass (measured at 4,874 calls in a 20-min
+    # window). Cache the answer on the session: resolved once per branch per pass
+    # and discarded when the session closes, so there is no cross-pass staleness
+    # and no invalidation to keep in step with the location map.
+    cache = db.info.setdefault("_branch_has_grubops", {})
+    if branch_id not in cache:
+        cache[branch_id] = bool(
+            await db.scalar(
+                select(GrubOpsLocationMap.id).where(
+                    GrubOpsLocationMap.branch_id == branch_id,
+                )
             )
         )
-    )
+    return cache[branch_id]
 
 
 #: GrubTech's own `source.channel` string for a channel — what actually lands in
@@ -502,6 +511,12 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
     recon = AggregatorReconciliation
     orders = await db.scalars(
         select(AggregatorOrder)
+        # `raw` is the full marketplace payload (keeta averages ~3.7KB/row, ~7MB
+        # across a channel's orders) and the reconcile path never reads it — only
+        # promote does. Defer it so a whole-channel pass does not materialise
+        # megabytes of JSONB it will not touch. Safe precisely because nothing in
+        # reconcile_order accesses `.raw`; if that changes, the column lazy-loads.
+        .options(defer(AggregatorOrder.raw))
         .outerjoin(
             recon,
             and_(

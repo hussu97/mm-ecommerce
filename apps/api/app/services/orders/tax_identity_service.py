@@ -62,11 +62,31 @@ async def resolve(
     even the default is missing (a database seeded before `237` — not a state a
     deployed environment reaches), which the callers treat as VAT-registered and
     stamp nothing.
+
+    Session-scoped memo: the aggregator promote sweep calls this once per order
+    (measured ~4,100 `legal_entities` loads plus a config lookup each in a 20-min
+    window), and the answer is identical for every order sharing a
+    `(branch, channel)`. The cache lives on the session, so it dedupes to one
+    resolution per `(branch, channel)` per sweep pass and is discarded when the
+    session closes — a config change (a branch's VAT registration) is picked up
+    on the very next pass, so there is no staleness window on the money path.
     """
+    channel_class = channel_class_for(source)
+    cache = db.info.setdefault("_tax_identity_cache", {})
+    key = (branch_id, channel_class)
+    if key not in cache:
+        cache[key] = await _resolve_entity(
+            db, branch_id=branch_id, channel_class=channel_class
+        )
+    return cache[key]
+
+
+async def _resolve_entity(
+    db: AsyncSession, *, branch_id: uuid.UUID | None, channel_class: str
+) -> LegalEntity | None:
     if branch_id is None:
         return await _default_entity(db)
 
-    channel_class = channel_class_for(source)
     config = (
         await db.execute(
             select(BranchChannelTaxConfig).where(
