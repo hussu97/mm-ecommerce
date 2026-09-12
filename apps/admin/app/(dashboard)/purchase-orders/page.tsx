@@ -80,7 +80,7 @@ export default function PurchaseOrdersPage() {
   }
 
   return (
-    <div className="p-6 max-w-[1400px]">
+    <div>
       <header className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-xl text-primary tracking-wide">Purchase Orders</h1>

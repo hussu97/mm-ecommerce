@@ -238,7 +238,7 @@ export default function ReportDetailPage() {
   })();
 
   return (
-    <div className="p-6 max-w-[1400px] space-y-5">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/inventory" className="text-xs text-gray-400 hover:text-primary">← Inventory</Link>

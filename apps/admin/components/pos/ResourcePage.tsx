@@ -278,9 +278,10 @@ export function ResourcePage<T extends { id: string }>({
   const activeFields = fields.filter((f) => (creating ? !f.editOnly : !f.createOnly));
 
   return (
-    // No padding of its own: the dashboard shell already sets the page gutter,
-    // and setting it twice cost 96px of a 390px screen.
-    <div className="max-w-[1400px]">
+    // No padding and no width cap of its own: the dashboard shell owns the page
+    // gutter (rule 1), and a list should take the whole content column so a wide
+    // table fills the window instead of scrolling inside a boxed 1400px.
+    <div>
       <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="font-display text-xl text-primary tracking-wide">{title}</h1>

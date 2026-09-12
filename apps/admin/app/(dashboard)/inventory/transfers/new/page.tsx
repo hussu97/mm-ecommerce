@@ -220,7 +220,7 @@ export default function NewTransferOrderPage() {
   const colCount = 2 + destinationBranches.length + 2; // item, on-hand, branches…, total, override
 
   return (
-    <div className="p-6 max-w-[1600px] space-y-5">
+    <div className="max-w-[var(--content-max)] space-y-5">
       <div>
         <Link href="/inventory/submissions/transfers" className="text-xs text-gray-400 hover:text-primary">← Transfers &amp; returns</Link>
         <h1 className="font-display text-xl text-primary tracking-wide">New transfer order</h1>

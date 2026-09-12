@@ -105,7 +105,7 @@ export default function TransferOrderDetailPage() {
   const colCount = 2 + children.length + 1; // item, unit, children…, total
 
   return (
-    <div className="p-6 max-w-[1600px] space-y-5">
+    <div className="max-w-[var(--content-max)] space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/inventory/submissions/transfers" className="text-xs text-gray-400 hover:text-primary">← Transfers &amp; returns</Link>

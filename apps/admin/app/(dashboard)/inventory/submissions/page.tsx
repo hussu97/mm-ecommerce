@@ -97,7 +97,7 @@ export default function ShiftReportsPage() {
   const pageRows = visible.slice((page - 1) * perPage, page * perPage);
 
   return (
-    <div className="max-w-[1400px] space-y-4">
+    <div className="space-y-4">
       <p className="text-sm text-gray-500">Every inventory report submitted from the register. Click a row to review its counts and, when it is awaiting approval, edit, approve or reject it. The stock ledger updates when a report is approved.</p>
       <div className="flex flex-wrap items-end gap-3">
         <Select label="Branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder="All branches" className="w-56" options={branches.map((b) => ({ value: b.id, label: b.name }))} />

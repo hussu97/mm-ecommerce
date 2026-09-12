@@ -42,7 +42,7 @@ export default function RolesTab() {
   }
 
   return (
-    <div className="p-6 max-w-[1400px]">
+    <div>
       {error && (
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           {error}

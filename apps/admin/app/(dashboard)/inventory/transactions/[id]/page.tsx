@@ -76,7 +76,7 @@ export default function TransactionDetailPage() {
   );
 
   return (
-    <div className="p-6 max-w-[1100px] space-y-5">
+    <div className="max-w-[var(--content-max)] space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link href="/inventory" className="text-xs text-gray-400 hover:text-primary">← Inventory</Link>
