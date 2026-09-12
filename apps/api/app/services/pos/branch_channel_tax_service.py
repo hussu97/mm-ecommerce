@@ -54,11 +54,8 @@ async def replace_configs(
                 branch_id=branch_id, channel_class=channel_class
             )
             db.add(row)
-        row.vat_registered = payload.vat_registered
+        row.legal_entity_id = payload.legal_entity_id
         row.tax_group_id = payload.tax_group_id
-        row.tax_number = payload.tax_number
-        row.tax_registration_name = payload.tax_registration_name
-        row.invoice_title = payload.invoice_title
         row.is_active = payload.is_active
 
     for channel_class, row in existing.items():

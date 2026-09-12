@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.branch import Branch
 from app.models.device import Device
+from app.models.legal_entity import LegalEntity
 from app.models.order import Order, OrderStatusEnum
 from app.models.pos_order import (
     PosOrderStatusEnum,
@@ -148,13 +149,12 @@ _CHANNEL_COLUMN = case(
 _ORDER_DIMENSIONS = {
     "source": Order.source,
     "channel": _CHANNEL_COLUMN,
-    # The trade-license / legal entity the order was issued under, frozen onto it
-    # at creation from the (branch, channel) tax config. A branch can trade under
-    # more than one — Barsha's counter is a different, non-VAT-registered license
-    # from its website/aggregator sales — so a manager (or the accountant filing
-    # each license's VAT return) needs the split by entity, not just by branch.
-    # Null on an order issued under the inherited default; labelled "Unknown".
-    "legal_entity": Order.tax_registration_name,
+    # The legal entity (trade licence) the order was issued under, frozen onto it
+    # at creation. A branch can trade under more than one — Barsha's counter is a
+    # different, non-VAT-registered licence from its website/aggregator sales — so
+    # the accountant filing each licence's VAT return needs the split by entity,
+    # not just by branch. Grouped by id and labelled with the legal name.
+    "legal_entity": Order.legal_entity_id,
     "business_date": Order.business_date,
     # Foodics separates "cashier" (who closed it) from "creator" (who rang it
     # up); on a single-terminal shift they are the same person, on a busy one
@@ -257,6 +257,14 @@ async def _labels_for(
             (await db.execute(select(Branch).where(Branch.id.in_(ids)))).scalars().all()
         )
         return {str(b.id): b.name for b in branches}
+
+    if dimension == "legal_entity":
+        entities = (
+            (await db.execute(select(LegalEntity).where(LegalEntity.id.in_(ids))))
+            .scalars()
+            .all()
+        )
+        return {str(e.id): e.legal_name for e in entities}
 
     if dimension == "table":
         tables = (

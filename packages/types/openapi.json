@@ -3110,20 +3110,14 @@
             "title": "Id",
             "type": "string"
           },
-          "invoice_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Invoice Title"
-          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
+          },
+          "legal_entity_id": {
+            "format": "uuid",
+            "title": "Legal Entity Id",
+            "type": "string"
           },
           "tax_group_id": {
             "anyOf": [
@@ -3137,47 +3131,18 @@
             ],
             "title": "Tax Group Id"
           },
-          "tax_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Number"
-          },
-          "tax_registration_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Registration Name"
-          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
             "type": "string"
-          },
-          "vat_registered": {
-            "title": "Vat Registered",
-            "type": "boolean"
           }
         },
         "required": [
           "id",
           "branch_id",
           "channel_class",
-          "vat_registered",
+          "legal_entity_id",
           "tax_group_id",
-          "tax_number",
-          "tax_registration_name",
-          "invoice_title",
           "is_active",
           "created_at",
           "updated_at"
@@ -3197,22 +3162,15 @@
             "title": "Channel Class",
             "type": "string"
           },
-          "invoice_title": {
-            "anyOf": [
-              {
-                "maxLength": 120,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Invoice Title"
-          },
           "is_active": {
             "default": true,
             "title": "Is Active",
             "type": "boolean"
+          },
+          "legal_entity_id": {
+            "format": "uuid",
+            "title": "Legal Entity Id",
+            "type": "string"
           },
           "tax_group_id": {
             "anyOf": [
@@ -3225,39 +3183,11 @@
               }
             ],
             "title": "Tax Group Id"
-          },
-          "tax_number": {
-            "anyOf": [
-              {
-                "maxLength": 50,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Number"
-          },
-          "tax_registration_name": {
-            "anyOf": [
-              {
-                "maxLength": 200,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Registration Name"
-          },
-          "vat_registered": {
-            "default": true,
-            "title": "Vat Registered",
-            "type": "boolean"
           }
         },
         "required": [
-          "channel_class"
+          "channel_class",
+          "legal_entity_id"
         ],
         "title": "BranchChannelTaxConfigUpsert",
         "type": "object"
@@ -14303,6 +14233,283 @@
         "title": "LanguageUpdate",
         "type": "object"
       },
+      "LegalEntityCreate": {
+        "properties": {
+          "brand_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Brand Name",
+            "type": "string"
+          },
+          "invoice_title": {
+            "default": "Tax Invoice",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Invoice Title",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "legal_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Legal Name",
+            "type": "string"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "reference": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Reference",
+            "type": "string"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "trade_license_number": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Number"
+          },
+          "vat_registered": {
+            "default": true,
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reference",
+          "legal_name",
+          "brand_name"
+        ],
+        "title": "LegalEntityCreate",
+        "type": "object"
+      },
+      "LegalEntityResponse": {
+        "properties": {
+          "brand_name": {
+            "title": "Brand Name",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_title": {
+            "title": "Invoice Title",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "legal_name": {
+            "title": "Legal Name",
+            "type": "string"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "trade_license_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Number"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vat_registered": {
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "legal_name",
+          "brand_name",
+          "vat_registered",
+          "tax_number",
+          "invoice_title",
+          "trade_license_number",
+          "logo_url",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LegalEntityResponse",
+        "type": "object"
+      },
+      "LegalEntityUpdate": {
+        "properties": {
+          "brand_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Name"
+          },
+          "invoice_title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Title"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "trade_license_number": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade License Number"
+          },
+          "vat_registered": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vat Registered"
+          }
+        },
+        "title": "LegalEntityUpdate",
+        "type": "object"
+      },
       "LiveCart": {
         "description": "One basket that currently holds items, and everything needed to judge it.",
         "properties": {
@@ -17120,6 +17327,70 @@
         "title": "OrderInventorySourceEvent",
         "type": "object"
       },
+      "OrderLegalEntity": {
+        "description": "The subset of a legal entity a receipt / order reader needs \u2014 served\nnested on the order so the till prints the brand, TRN, title and logo, and\nthe admin shows who the order was issued under.",
+        "properties": {
+          "brand_name": {
+            "title": "Brand Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_title": {
+            "title": "Invoice Title",
+            "type": "string"
+          },
+          "legal_name": {
+            "title": "Legal Name",
+            "type": "string"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "vat_registered": {
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "legal_name",
+          "brand_name",
+          "vat_registered",
+          "tax_number",
+          "invoice_title",
+          "logo_url"
+        ],
+        "title": "OrderLegalEntity",
+        "type": "object"
+      },
       "OrderListResponse": {
         "description": "One row on the admin's orders screen, whichever channel it came from.\n\nWeb and POS orders share one table, so they share one row shape. The\nchannel-specific fields are null for the other channel rather than split\nacross two models \u2014 a single list that has to union two shapes is how the\nadmin ended up with two screens in the first place.",
         "properties": {
@@ -17874,17 +18145,6 @@
             "title": "Id",
             "type": "string"
           },
-          "invoice_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Invoice Title"
-          },
           "items": {
             "default": [],
             "items": {
@@ -17892,6 +18152,16 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "legal_entity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderLegalEntity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "locale": {
             "default": "en",
@@ -18026,28 +18296,6 @@
           "subtotal": {
             "title": "Subtotal",
             "type": "number"
-          },
-          "tax_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Number"
-          },
-          "tax_registration_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Registration Name"
           },
           "total": {
             "title": "Total",
@@ -20344,17 +20592,6 @@
             "title": "Id",
             "type": "string"
           },
-          "invoice_title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Invoice Title"
-          },
           "items": {
             "default": [],
             "items": {
@@ -20373,6 +20610,16 @@
               }
             ],
             "title": "Kitchen Notes"
+          },
+          "legal_entity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrderLegalEntity"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "may_auto_accept": {
             "default": true,
@@ -20515,28 +20762,6 @@
               }
             ],
             "title": "Table Id"
-          },
-          "tax_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Number"
-          },
-          "tax_registration_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tax Registration Name"
           },
           "till_id": {
             "anyOf": [
@@ -50319,6 +50544,321 @@
         "summary": "Update Kitchen Flow",
         "tags": [
           "Kitchen Flows"
+        ]
+      }
+    },
+    "/api/v1/legal-entities": {
+      "get": {
+        "operationId": "list_items_api_v1_legal_entities_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_inactive",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Inactive",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Filter by type where supported",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by type where supported",
+              "title": "Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LegalEntityResponse"
+                  },
+                  "title": "Response List Items Api V1 Legal Entities Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Items",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "post": {
+        "operationId": "create_item_api_v1_legal_entities_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegalEntityCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Item",
+        "tags": [
+          "Legal Entities"
+        ]
+      }
+    },
+    "/api/v1/legal-entities/{item_id}": {
+      "delete": {
+        "operationId": "delete_item_api_v1_legal_entities__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Item",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "get": {
+        "operationId": "get_item_api_v1_legal_entities__item_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Item",
+        "tags": [
+          "Legal Entities"
+        ]
+      },
+      "put": {
+        "operationId": "update_item_api_v1_legal_entities__item_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegalEntityUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Item",
+        "tags": [
+          "Legal Entities"
+        ]
+      }
+    },
+    "/api/v1/legal-entities/{item_id}/restore": {
+      "post": {
+        "operationId": "restore_item_api_v1_legal_entities__item_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalEntityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Restore Item",
+        "tags": [
+          "Legal Entities"
         ]
       }
     },

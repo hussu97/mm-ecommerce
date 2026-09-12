@@ -23,6 +23,7 @@ from app.models.order import DeliveryMethodEnum, OrderStatusEnum
 # still in it.
 from app.models.payment_gateway import PaymentMethodEnum  # noqa: F401
 from app.schemas.courier import CourierBadge
+from app.schemas.pos.legal_entity import OrderLegalEntity
 
 from .address import AddressCreate
 from .fulfilment import FulfilmentResponse
@@ -215,13 +216,9 @@ class OrderResponse(BaseModel):
     vat_rate: float
     vat_amount: float
     total_excl_vat: float
-    #: The trade-license identity this order was issued under, frozen at creation
-    #: from the (branch, channel) tax config. Null inherits the branch/business
-    #: identity. Zero `vat_amount` with null identity is an ordinary order; a
-    #: non-VAT-registered channel produces zero VAT and its own identity.
-    tax_number: str | None = None
-    tax_registration_name: str | None = None
-    invoice_title: str | None = None
+    #: The legal entity (trade licence) this order was issued under. Null on a
+    #: historical order.
+    legal_entity: OrderLegalEntity | None = None
     notes: str | None
     # The internal `admin_notes` is NOT here — it would be served to the customer
     # on every order read (F-ORD-10). Its one legitimate customer-facing use, the

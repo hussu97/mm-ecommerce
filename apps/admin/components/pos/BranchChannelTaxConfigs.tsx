@@ -1,29 +1,27 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { branchesApi, taxGroupsApi } from '@/lib/pos-api';
+import { branchesApi, legalEntitiesApi, taxGroupsApi } from '@/lib/pos-api';
 import { ApiError } from '@/lib/api';
 import type {
   Branch,
   BranchChannelTaxConfig,
   ChannelClass,
+  LegalEntity,
   TaxGroup,
 } from '@/lib/pos-types';
-import { Button, Input, Select, Spinner } from '@/components/ui';
+import { Button, Select, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/feedback';
 
 /**
- * A branch's VAT + trade-license identity, per sales channel.
+ * Which legal entity each of a branch's sales channels trades under.
  *
- * A branch can trade under more than one license: Barsha's counter is not
- * VAT-registered (under the threshold), while its website and aggregator sales
- * are, under the Melting Moments license. Each row here is one channel; leaving
- * a channel VAT-registered with blank identity is the default (it inherits the
- * branch's own tax number / name), so this only needs editing where a channel
- * genuinely differs.
- *
- * Changes apply to orders created from the next request — an order already
- * placed keeps the identity frozen onto it.
+ * A branch can bill under more than one licence: Barsha's counter is Najm
+ * AlShamal Coffee Shop (not VAT-registered), while its website and aggregator
+ * sales are Fatema Cake Sweets (registered). Pick the entity per channel; a
+ * channel with no explicit config falls back to the registered default. The
+ * entity decides whether VAT is charged and what brand/TRN/logo the receipt
+ * shows. Applies to orders created from the next request.
  */
 
 const CHANNELS: { key: ChannelClass; label: string; hint: string }[] = [
@@ -37,31 +35,19 @@ const CHANNELS: { key: ChannelClass; label: string; hint: string }[] = [
 ];
 
 interface Row {
-  vat_registered: boolean;
+  legal_entity_id: string;
   tax_group_id: string;
-  tax_number: string;
-  tax_registration_name: string;
-  invoice_title: string;
 }
 
-function emptyRow(): Row {
-  return {
-    vat_registered: true,
-    tax_group_id: '',
-    tax_number: '',
-    tax_registration_name: '',
-    invoice_title: '',
-  };
+function emptyRow(entities: LegalEntity[]): Row {
+  // Default to the registered entity where one exists, so a fresh row is never
+  // saved pointing at nothing.
+  const registered = entities.find((e) => e.vat_registered) ?? entities[0];
+  return { legal_entity_id: registered?.id ?? '', tax_group_id: '' };
 }
 
 function toRow(c: BranchChannelTaxConfig): Row {
-  return {
-    vat_registered: c.vat_registered,
-    tax_group_id: c.tax_group_id ?? '',
-    tax_number: c.tax_number ?? '',
-    tax_registration_name: c.tax_registration_name ?? '',
-    invoice_title: c.invoice_title ?? '',
-  };
+  return { legal_entity_id: c.legal_entity_id, tax_group_id: c.tax_group_id ?? '' };
 }
 
 export function BranchChannelTaxConfigs() {
@@ -69,6 +55,7 @@ export function BranchChannelTaxConfigs() {
   // Fetched here, not passed down: the branch list owns its own reloads, so a
   // prop copy would be stale the moment a branch is renamed.
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [entities, setEntities] = useState<LegalEntity[]>([]);
   const [taxGroups, setTaxGroups] = useState<TaxGroup[]>([]);
   const servable = useMemo(
     () => branches.filter((b) => !b.deleted_at && b.is_active),
@@ -84,6 +71,10 @@ export function BranchChannelTaxConfigs() {
       .list()
       .then(setBranches)
       .catch((err) => setError(err instanceof ApiError ? err.message : String(err)));
+    legalEntitiesApi
+      .list()
+      .then((es) => setEntities(es.filter((e) => e.is_active)))
+      .catch(() => setEntities([]));
     taxGroupsApi
       .list()
       .then(setTaxGroups)
@@ -94,25 +85,28 @@ export function BranchChannelTaxConfigs() {
     if (!branchId && servable.length) setBranchId(servable[0].id);
   }, [servable, branchId]);
 
+  const rowsFrom = useCallback(
+    (configs: BranchChannelTaxConfig[]): Record<ChannelClass, Row> => {
+      const byChannel = new Map(configs.map((c) => [c.channel_class, c]));
+      const pick = (ch: ChannelClass) =>
+        byChannel.has(ch) ? toRow(byChannel.get(ch)!) : emptyRow(entities);
+      return { counter: pick('counter'), website: pick('website'), aggregator: pick('aggregator') };
+    },
+    [entities],
+  );
+
   const load = useCallback(async () => {
     if (!branchId) return;
     setRows(null);
     try {
       const configs = await branchesApi.channelTaxConfigs(branchId);
-      const byChannel = new Map(configs.map((c) => [c.channel_class, c]));
-      setRows({
-        counter: byChannel.has('counter') ? toRow(byChannel.get('counter')!) : emptyRow(),
-        website: byChannel.has('website') ? toRow(byChannel.get('website')!) : emptyRow(),
-        aggregator: byChannel.has('aggregator')
-          ? toRow(byChannel.get('aggregator')!)
-          : emptyRow(),
-      });
+      setRows(rowsFrom(configs));
       setError('');
     } catch (err) {
-      setRows({ counter: emptyRow(), website: emptyRow(), aggregator: emptyRow() });
-      setError(err instanceof ApiError ? err.message : 'Could not load the tax configs.');
+      setRows(rowsFrom([]));
+      setError(err instanceof ApiError ? err.message : 'Could not load the configs.');
     }
-  }, [branchId]);
+  }, [branchId, rowsFrom]);
 
   useEffect(() => {
     load();
@@ -123,33 +117,23 @@ export function BranchChannelTaxConfigs() {
 
   const save = async () => {
     if (!rows) return;
+    if (CHANNELS.some(({ key }) => !rows[key].legal_entity_id)) {
+      setError('Pick a legal entity for every channel.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
       const res = await branchesApi.setChannelTaxConfigs(branchId, {
-        configs: CHANNELS.map(({ key }) => {
-          const row = rows[key];
-          const trimmed = (s: string) => (s.trim() ? s.trim() : null);
-          return {
-            channel_class: key,
-            vat_registered: row.vat_registered,
-            tax_group_id: row.tax_group_id || null,
-            tax_number: trimmed(row.tax_number),
-            tax_registration_name: trimmed(row.tax_registration_name),
-            invoice_title: trimmed(row.invoice_title),
-            is_active: true,
-          };
-        }),
+        configs: CHANNELS.map(({ key }) => ({
+          channel_class: key,
+          legal_entity_id: rows[key].legal_entity_id,
+          tax_group_id: rows[key].tax_group_id || null,
+          is_active: true,
+        })),
       });
-      const byChannel = new Map(res.map((c) => [c.channel_class, c]));
-      setRows({
-        counter: byChannel.has('counter') ? toRow(byChannel.get('counter')!) : emptyRow(),
-        website: byChannel.has('website') ? toRow(byChannel.get('website')!) : emptyRow(),
-        aggregator: byChannel.has('aggregator')
-          ? toRow(byChannel.get('aggregator')!)
-          : emptyRow(),
-      });
-      toast.success('Channel tax configs saved');
+      setRows(rowsFrom(res));
+      toast.success('Channel legal entities saved');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed');
       toast.error(err instanceof ApiError ? err.message : 'Save failed');
@@ -157,6 +141,9 @@ export function BranchChannelTaxConfigs() {
       setSaving(false);
     }
   };
+
+  const entityLabel = (e: LegalEntity) =>
+    `${e.brand_name} — ${e.legal_name}${e.vat_registered ? '' : ' (no VAT)'}`;
 
   if (!servable.length) {
     return (
@@ -170,13 +157,13 @@ export function BranchChannelTaxConfigs() {
     <div className="bg-white border border-gray-200">
       <header className="px-4 py-3 border-b border-gray-100 flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-sm font-body text-gray-800">VAT & trade license by channel</h2>
+          <h2 className="text-sm font-body text-gray-800">Legal entity by channel</h2>
           <p className="text-[11px] font-body text-gray-400 mt-1 max-w-2xl">
-            The VAT treatment and the legal identity printed on each channel&apos;s
-            invoices. Leave a channel VAT-registered with blank identity to inherit
-            this branch&apos;s own tax number and name — only fill a row where a channel
-            trades under a different license. A channel switched off VAT charges none and
-            must not be titled &quot;Tax Invoice&quot;. Applies from the next order.
+            Which trade licence each channel trades under. The entity decides whether
+            VAT is charged and what brand / TRN / logo the receipt shows — e.g. Barsha&apos;s
+            counter is Najm AlShamal (no VAT) while its website and aggregator sales are
+            Fatema (registered). Manage the entities on the Legal entities page. Applies
+            from the next order.
           </p>
         </div>
         <Button size="sm" onClick={save} loading={saving} disabled={!rows}>
@@ -208,51 +195,23 @@ export function BranchChannelTaxConfigs() {
             const row = rows[key];
             return (
               <div key={key} className="px-4 py-3">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <span className="text-sm font-body text-gray-800">{label}</span>
-                    <span className="text-[11px] font-body text-gray-400 ml-2">{hint}</span>
-                  </div>
-                  <label className="flex items-center gap-2 text-xs font-body text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={row.vat_registered}
-                      onChange={(e) =>
-                        setRow(key, { vat_registered: e.target.checked })
-                      }
-                    />
-                    VAT-registered
-                  </label>
+                <div className="mb-2">
+                  <span className="text-sm font-body text-gray-800">{label}</span>
+                  <span className="text-[11px] font-body text-gray-400 ml-2">{hint}</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
-                  <Input
-                    placeholder="Tax registration name (legal entity)"
-                    value={row.tax_registration_name}
-                    onChange={(e) =>
-                      setRow(key, { tax_registration_name: e.target.value })
-                    }
-                  />
-                  <Input
-                    placeholder={
-                      row.vat_registered ? 'TRN (tax number)' : 'No TRN (not registered)'
-                    }
-                    value={row.tax_number}
-                    disabled={!row.vat_registered}
-                    onChange={(e) => setRow(key, { tax_number: e.target.value })}
-                  />
-                  <Input
-                    placeholder={
-                      row.vat_registered ? 'Invoice title (e.g. Tax Invoice)' : 'Invoice'
-                    }
-                    value={row.invoice_title}
-                    onChange={(e) => setRow(key, { invoice_title: e.target.value })}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Select
+                    label="Legal entity"
+                    value={row.legal_entity_id}
+                    onChange={(e) => setRow(key, { legal_entity_id: e.target.value })}
+                    options={entities.map((e) => ({ value: e.id, label: entityLabel(e) }))}
                   />
                   <Select
+                    label="VAT group override (optional)"
                     value={row.tax_group_id}
-                    disabled={!row.vat_registered}
                     onChange={(e) => setRow(key, { tax_group_id: e.target.value })}
                     options={[
-                      { value: '', label: 'VAT group: inherit from products' },
+                      { value: '', label: 'Inherit from products' },
                       ...taxGroups.map((g) => ({ value: g.id, label: g.name })),
                     ]}
                   />

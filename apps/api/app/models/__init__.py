@@ -129,6 +129,7 @@ from .inventory_v2 import (  # noqa: F401
 )
 from .kitchen_flow import KitchenFlow, KitchenFlowCategory  # noqa: F401
 from .language import Language, UiTranslation  # noqa: F401
+from .legal_entity import LegalEntity  # noqa: F401
 from .marketing import (  # noqa: F401
     Discount,
     DiscountQualificationEnum,
@@ -300,6 +301,7 @@ __all__ = [
     "BranchHoliday",
     "BranchTypeEnum",
     "ChannelClassEnum",
+    "LegalEntity",
     "Role",
     "UserBranch",
     "ALL_PERMISSIONS",

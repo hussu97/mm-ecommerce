@@ -30,6 +30,7 @@ from app.models import (
     Course,
     KitchenFlow,
     KitchenFlowCategory,
+    LegalEntity,
     PaymentMethod,
     Reason,
     Tax,
@@ -48,6 +49,9 @@ from app.schemas.pos import (
     KitchenFlowCreate,
     KitchenFlowResponse,
     KitchenFlowUpdate,
+    LegalEntityCreate,
+    LegalEntityResponse,
+    LegalEntityUpdate,
     PaymentMethodCreate,
     PaymentMethodResponse,
     PaymentMethodUpdate,
@@ -237,6 +241,18 @@ reasons_router = build_crud_router(
     update_schema=ReasonUpdate,
     response_schema=ReasonResponse,
     entity_type="reason",
+)
+
+# The trade licences orders are booked under. The register reads them at launch
+# (a receipt prints the entity's brand/TRN/logo), so it shares the same
+# read-permission as taxes/charges; writes are admin-only.
+legal_entities_router = build_crud_router(
+    model=LegalEntity,
+    create_schema=LegalEntityCreate,
+    update_schema=LegalEntityUpdate,
+    response_schema=LegalEntityResponse,
+    entity_type="legal_entity",
+    label_field="legal_name",
 )
 
 courses_router = build_crud_router(

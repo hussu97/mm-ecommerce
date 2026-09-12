@@ -81,6 +81,7 @@ from .pos_config import (
     charges_router,
     courses_router,
     kitchen_flows_router,
+    legal_entities_router,
     payment_methods_router,
     reasons_router,
     tax_groups_router,
@@ -165,6 +166,9 @@ api_router.include_router(
 api_router.include_router(branches_router, prefix="/branches", tags=["Branches"])
 api_router.include_router(taxes_router, prefix="/taxes", tags=["Taxes"])
 api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Taxes"])
+api_router.include_router(
+    legal_entities_router, prefix="/legal-entities", tags=["Legal Entities"]
+)
 api_router.include_router(
     payment_methods_router, prefix="/payment-methods", tags=["Payment Methods"]
 )

@@ -24,21 +24,15 @@ from app.services.orders.order_service import (
     create_order,
     update_status,
 )
-from app.services.orders.tax_identity_service import TaxIdentity
 
 DELIVERY_SETTINGS = DeliverySettings(
     pickup_fee=Decimal("0.00"),
 )
 
-#: The inherited default — VAT-registered, nothing stamped — used to stub the
-#: tax-identity resolver in the arithmetic tests below.
-_DEFAULT_TAX_IDENTITY = TaxIdentity(
-    vat_registered=True,
-    tax_group_id=None,
-    tax_number=None,
-    tax_registration_name=None,
-    invoice_title=None,
-)
+#: The registered default entity — used to stub the tax-identity resolver in the
+#: arithmetic tests below (`is_vat_registered` reads `.vat_registered`, the write
+#: path stamps `.id`). Its real resolution is covered in `test_tax_identity_service`.
+_DEFAULT_ENTITY = SimpleNamespace(id=uuid.uuid4(), vat_registered=True)
 
 
 def _zone(fee: str, pricing_mode: str = "static", *, free: bool = True) -> Zone:
@@ -173,7 +167,7 @@ def mock_fulfilment():
         patch(
             "app.services.orders.order_service.tax_identity_service.resolve",
             new_callable=AsyncMock,
-            return_value=_DEFAULT_TAX_IDENTITY,
+            return_value=_DEFAULT_ENTITY,
         ),
         patch(
             "app.services.orders.order_service.pos_order_service.attach_online_order",
@@ -317,11 +311,9 @@ def _order_mock(
     o.vat_rate = Decimal("0.0500")
     o.vat_amount = vat_amount
     o.total_excl_vat = total_excl_vat
-    # The frozen tax identity — None (inherited) here, or a bare MagicMock would
-    # fail `str | None` on OrderResponse, the same trap as the fields above.
-    o.tax_number = None
-    o.tax_registration_name = None
-    o.invoice_title = None
+    # The frozen legal entity — None here, or a bare MagicMock would fail the
+    # nested `OrderLegalEntity | None` on OrderResponse.
+    o.legal_entity = None
     o.notes = None
     o.admin_notes = None
     # `cancellation_reason` is a derived OrderResponse field `to_response` fills

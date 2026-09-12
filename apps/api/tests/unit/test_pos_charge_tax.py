@@ -96,6 +96,13 @@ async def _run(monkeypatch, order, *, configured_tax_group, resolved_rate):
         AsyncMock(),
     )
     monkeypatch.setattr(pos_order_service, "get_order", AsyncMock(return_value=order))
+    # The legal-entity resolver runs a real query; this test is about charge tax
+    # under the ordinary registered entity, so stub it.
+    monkeypatch.setattr(
+        pos_order_service.tax_identity_service,
+        "resolve",
+        AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4(), vat_registered=True)),
+    )
     monkeypatch.setattr(
         pos_order_service,
         "_settings",

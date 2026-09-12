@@ -1,4 +1,4 @@
-"""Per-(branch, sales-channel) VAT and trade-license configuration."""
+"""Per-(branch, sales-channel) legal-entity mapping."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 from ._base import ORMModel
 
@@ -15,17 +15,13 @@ ChannelClassLiteral = Literal["counter", "website", "aggregator"]
 
 class BranchChannelTaxConfigBase(BaseModel):
     channel_class: ChannelClassLiteral
-    #: When false, this channel charges no VAT — the order stamps zero VAT and
-    #: prints no VAT line, regardless of the products' tax groups.
-    vat_registered: bool = True
+    #: The legal entity this channel trades under — its `vat_registered` decides
+    #: whether VAT is charged, and its brand/TRN/title/logo are what the receipt
+    #: shows.
+    legal_entity_id: UUID
     #: Optional per-channel VAT-group override. Null keeps the existing
     #: per-product/per-branch tax-group resolution.
     tax_group_id: UUID | None = None
-    #: Identity to print. Null inherits the branch's `tax_number` /
-    #: `tax_registration_name` and the business `invoice_title`.
-    tax_number: str | None = Field(None, max_length=50)
-    tax_registration_name: str | None = Field(None, max_length=200)
-    invoice_title: str | None = Field(None, max_length=120)
     is_active: bool = True
 
 
@@ -59,11 +55,8 @@ class BranchChannelTaxConfigResponse(ORMModel):
     id: UUID
     branch_id: UUID
     channel_class: str
-    vat_registered: bool
+    legal_entity_id: UUID
     tax_group_id: UUID | None
-    tax_number: str | None
-    tax_registration_name: str | None
-    invoice_title: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime

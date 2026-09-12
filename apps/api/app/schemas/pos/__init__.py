@@ -44,6 +44,12 @@ from .devices import (
     PrinterUpdate,
 )
 from .kitchen_flows import KitchenFlowCreate, KitchenFlowResponse, KitchenFlowUpdate
+from .legal_entity import (
+    LegalEntityCreate,
+    LegalEntityResponse,
+    LegalEntityUpdate,
+    OrderLegalEntity,
+)
 from .payment_methods import (
     PaymentMethodCreate,
     PaymentMethodResponse,
@@ -100,6 +106,10 @@ __all__ = [
     "BranchChannelTaxConfigResponse",
     "BranchChannelTaxConfigsUpdate",
     "BranchChannelTaxConfigUpsert",
+    "LegalEntityCreate",
+    "LegalEntityResponse",
+    "LegalEntityUpdate",
+    "OrderLegalEntity",
     "BranchHolidayBase",
     "BranchHolidayCreate",
     "BranchHolidayResponse",

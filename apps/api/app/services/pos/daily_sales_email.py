@@ -48,6 +48,7 @@ from app.models.aggregator import (
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.daily_sales_send import DailySalesSend
+from app.models.legal_entity import LegalEntity
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
 from app.services import branch_hours_service, email_service
@@ -124,6 +125,7 @@ class Cell:
     discount: Decimal = _ZERO
     charges: Decimal = _ZERO  # commission + payment + marketing + courier, our costs
     refunds: Decimal = _ZERO
+    vat: Decimal = _ZERO  # output VAT — what the registered entity owes on it
     count: int = 0
 
     @property
@@ -154,6 +156,9 @@ _SECTIONS: list[tuple[str, "callable[[Cell], Decimal | int]"]] = [
     ("Sales Discount", lambda c: -c.discount),
     ("Charges", lambda c: -c.charges),
     ("Net Revenue", lambda c: c.net),
+    # Output VAT the registered entity owes on this trade — the Totals row of
+    # this block, summed across every branch and channel, is the VAT to pay.
+    ("VAT (output tax)", lambda c: c.vat),
 ]
 
 
@@ -189,6 +194,7 @@ async def _fetch(
             func.coalesce(func.sum(func.coalesce(Order.marketing_fee, 0)), 0),
             func.coalesce(func.sum(func.coalesce(courier_cost, 0)), 0),
             func.coalesce(func.sum(func.coalesce(Order.refunded_amount, 0)), 0),
+            func.coalesce(func.sum(func.coalesce(Order.vat_amount, 0)), 0),
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
@@ -236,6 +242,7 @@ async def build(
         mkt_fee,
         cour_cost,
         refunds,
+        vat,
     ) in raw:
         col = _column_for(source, channel)
         if col is None:
@@ -250,6 +257,7 @@ async def build(
         cell.discount += discount
         cell.charges += agg_fee + pay_fee + mkt_fee + cour_cost
         cell.refunds += refunds
+        cell.vat += vat
         cell.count += int(cnt or 0)
 
     columns = _FIXED_COLUMNS + extra_columns
@@ -280,12 +288,20 @@ async def build(
 class ReportDetail:
     """The per-record backing sheets, all scoped to the same frozen business date
     range as the summary matrix: one row per order, per statement, per statement
-    line, per payout."""
+    line, per payout, plus the VAT-by-entity roll-up."""
 
     orders: list = field(default_factory=list)
     statements: list = field(default_factory=list)
     statement_lines: list = field(default_factory=list)
     payouts: list = field(default_factory=list)
+    #: (business_date, legal entity name, orders, gross, net-excl-VAT, VAT, refund)
+    #: — one row per (day, entity). The VAT column, totalled, is the VAT to pay.
+    vat_by_entity: list = field(default_factory=list)
+
+    @property
+    def vat_to_pay(self) -> Decimal:
+        """Total output VAT across every entity — what the business owes."""
+        return sum((r[5] for r in self.vat_by_entity), _ZERO)
 
 
 async def build_detail(
@@ -328,17 +344,20 @@ async def build_detail(
             # "Promotion funded by merchant", scraped onto aggregator_order and
             # propagated to the order). Appended (o[16]) so earlier positions hold.
             func.coalesce(Order.marketing_fee, 0),
-            # The trade-license / legal entity the order was issued under, frozen
-            # onto it at creation. A branch can bill under more than one (Barsha's
-            # counter is a different, non-VAT-registered license from its
-            # website/aggregator sales), and each entity files its own VAT return,
-            # so the accountant needs the split. Appended (o[17]); null on an order
-            # issued under the inherited default.
-            Order.tax_registration_name,
+            # The legal entity (trade licence) the order was issued under. A branch
+            # can bill under more than one (Barsha's counter is a different,
+            # non-VAT-registered licence from its website/aggregator sales), and
+            # each entity files its own VAT return, so the accountant needs the
+            # split. Appended (o[17]).
+            LegalEntity.legal_name,
+            # The order value net of VAT (o[18]) — beside the VAT amount so the
+            # sheet reconciles total = excl-VAT + VAT.
+            Order.total_excl_vat,
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
         .outerjoin(Branch, Branch.id == Order.branch_id)
+        .outerjoin(LegalEntity, LegalEntity.id == Order.legal_entity_id)
         .where(Order.is_pos.is_(True))
         .where(Order.business_date >= date_from, Order.business_date <= date_to)
         .where(_DELIVERED)
@@ -390,11 +409,38 @@ async def build_detail(
     )
     payouts = (await db.execute(payout_stmt)).scalars().all()
 
+    # VAT by (trading day, legal entity): the filing view. Each registered
+    # entity's VAT column is what it owes the FTA; a non-registered entity (the
+    # Barsha counter's Najm AlShamal) shows zero. Same delivered-trade set as the
+    # summary, keyed on the frozen business date.
+    vat_stmt = (
+        select(
+            Order.business_date,
+            func.coalesce(LegalEntity.legal_name, "(unattributed)"),
+            func.count(Order.id),
+            func.coalesce(func.sum(Order.total), 0),
+            func.coalesce(func.sum(Order.total_excl_vat), 0),
+            func.coalesce(func.sum(Order.vat_amount), 0),
+            func.coalesce(func.sum(func.coalesce(Order.refunded_amount, 0)), 0),
+        )
+        .select_from(Order)
+        .outerjoin(LegalEntity, LegalEntity.id == Order.legal_entity_id)
+        .where(Order.is_pos.is_(True))
+        .where(Order.business_date >= date_from, Order.business_date <= date_to)
+        .where(_DELIVERED)
+        .group_by(Order.business_date, LegalEntity.legal_name)
+        .order_by(Order.business_date, LegalEntity.legal_name)
+    )
+    if branch_id is not None:
+        vat_stmt = vat_stmt.where(Order.branch_id == branch_id)
+    vat_by_entity = (await db.execute(vat_stmt)).all()
+
     return ReportDetail(
         orders=orders,
         statements=statements,
         statement_lines=lines,
         payouts=payouts,
+        vat_by_entity=vat_by_entity,
     )
 
 
@@ -499,6 +545,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                 "status",
                 "customer",
                 "total",
+                "total excl vat",
                 "vat",
                 "commission",
                 "payment fee",
@@ -511,7 +558,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                 # positional: 0 date,1 order#,2 branch,3 source,4 channel,5 status,
                 # 6 pos_status,7 customer,8 total,9 vat,10 commission,11 payfee,
                 # 12 courier,13 refund,14 external_reference,15 display_code,
-                # 16 marketing_fee,17 legal_entity
+                # 16 marketing_fee,17 legal_entity,18 total_excl_vat
                 [
                     o[0],
                     o[1],
@@ -525,6 +572,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                     (o[5] or o[6] or ""),
                     o[7] or "",
                     _dec(o[8]),
+                    _dec(o[18]),
                     _dec(o[9]),
                     _dec(o[10]),
                     _dec(o[11]),
@@ -627,6 +675,37 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
             ],
             bold,
         )
+        # VAT by (day, legal entity) — the filing view. The VAT column totalled is
+        # the VAT to pay; a non-registered entity shows zero.
+        vat_rows = [
+            [v[0], v[1], int(v[2] or 0), _dec(v[3]), _dec(v[4]), _dec(v[5]), _dec(v[6])]
+            for v in detail.vat_by_entity
+        ]
+        vat_rows.append(
+            [
+                "TOTAL",
+                "",
+                sum(int(v[2] or 0) for v in detail.vat_by_entity),
+                _dec(sum((v[3] for v in detail.vat_by_entity), _ZERO)),
+                _dec(sum((v[4] for v in detail.vat_by_entity), _ZERO)),
+                _dec(detail.vat_to_pay),
+                _dec(sum((v[6] for v in detail.vat_by_entity), _ZERO)),
+            ]
+        )
+        _write_sheet(
+            wb.create_sheet("VAT by legal entity"),
+            [
+                "date",
+                "legal entity",
+                "orders",
+                "gross (incl vat)",
+                "net (excl vat)",
+                "vat",
+                "refund",
+            ],
+            vat_rows,
+            bold,
+        )
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -644,15 +723,32 @@ def _order_channel_label(source: str | None, aggregator_channel: str | None) -> 
 
 
 def _body_html(label: str, detail: ReportDetail) -> str:
+    vat_lines = "".join(
+        f"<li>{v[1]}: <strong>AED {_num(v[5]):,.2f}</strong></li>"
+        # One line per entity, VAT summed across the days in range.
+        for v in _vat_by_entity_totals(detail)
+    )
     return (
         f"<p>Daily sales for <strong>{label}</strong> is attached as a "
-        f"spreadsheet.</p><p>Five tabs, all for this trading day: <strong>Summary"
-        f"</strong> (branch×channel matrix with totals), <strong>Orders</strong> "
-        f"({len(detail.orders)}), <strong>Statements</strong> "
-        f"({len(detail.statements)}), <strong>Statement Lines</strong> "
-        f"({len(detail.statement_lines)}) and <strong>Payouts</strong> "
-        f"({len(detail.payouts)}). Delivered trade only.</p>"
+        f"spreadsheet.</p>"
+        f"<p><strong>VAT to pay: AED {_num(detail.vat_to_pay):,.2f}</strong> "
+        f"(output VAT on delivered trade, this period)."
+        f"<ul>{vat_lines}</ul></p>"
+        f"<p>Six tabs, all for this trading day: <strong>Summary</strong> "
+        f"(branch×channel matrix with totals, incl. VAT), <strong>Orders</strong> "
+        f"({len(detail.orders)}), <strong>VAT by legal entity</strong>, "
+        f"<strong>Statements</strong> ({len(detail.statements)}), "
+        f"<strong>Statement Lines</strong> ({len(detail.statement_lines)}) and "
+        f"<strong>Payouts</strong> ({len(detail.payouts)}). Delivered trade only.</p>"
     )
+
+
+def _vat_by_entity_totals(detail: ReportDetail) -> list[tuple]:
+    """VAT summed per legal entity across the range, for the email body."""
+    totals: dict[str, Decimal] = {}
+    for v in detail.vat_by_entity:
+        totals[v[1]] = totals.get(v[1], _ZERO) + v[5]
+    return [(None, name, None, None, None, amount) for name, amount in totals.items()]
 
 
 async def _settle_aggregator_orders() -> None:

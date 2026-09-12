@@ -1033,16 +1033,15 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     order = await get_order(db, order.id)
     settings = await _settings(db)
 
-    # The trade-license identity this counter check trades under, resolved from
-    # the (branch, channel) tax config. A branch whose counter is not
-    # VAT-registered (Barsha) zeroes the tax below; every branch stamps its
-    # resolved identity so the receipt reproduces what it was issued under. The
-    # inherited default (registered, null identity) is a no-op.
-    identity = await tax_identity_service.resolve(
+    # The legal entity this counter check trades under. A branch whose counter is
+    # not VAT-registered (Barsha → Najm AlShamal) zeroes the tax below; the
+    # resolved entity is stamped so the receipt and reports read its brand/TRN.
+    entity = await tax_identity_service.resolve(
         db,
         branch_id=getattr(order, "branch_id", None),
         source=getattr(order, "source", None),
     )
+    entity_registered = tax_identity_service.is_vat_registered(entity)
 
     # Standing promotions (e.g. "every counter order is 15% off") add or remove
     # their order-level discount here, before the basket is priced, so the saving
@@ -1077,7 +1076,7 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
         # charges no VAT: the rate goes to zero, and because the price is
         # inclusive the customer's total is unchanged (`split_inclusive_tax(x,0)
         # -> (x,0)`). `calculate_order` then emits no tax row for the line.
-        if not identity.vat_registered:
+        if not entity_registered:
             rate = Decimal("0")
 
         lines.append(
@@ -1120,7 +1119,7 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
         if charge_tax_group_id not in tax_cache:
             tax_cache[charge_tax_group_id] = await _resolve_tax(db, charge_tax_group_id)
         rate, tax_name, tax_id, inclusive = tax_cache[charge_tax_group_id]
-        if not identity.vat_registered:
+        if not entity_registered:
             rate = Decimal("0")
         charge_inputs.append(
             ChargeInput(
@@ -1216,9 +1215,9 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     order.rounding_amount = totals.rounding
     order.total = totals.total
 
-    # Freeze the trade-license identity this check was issued under (inherited
-    # default writes nulls; every reader then falls back to branch/business).
-    tax_identity_service.stamp_identity(order, identity)
+    # Freeze the legal entity this check was issued under, so the receipt and the
+    # reports read its brand/TRN/logo.
+    tax_identity_service.stamp(order, entity)
 
     await db.flush()
     return await get_order(db, order.id)

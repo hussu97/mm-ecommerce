@@ -4781,6 +4781,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/legal-entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Items */
+        get: operations["list_items_api_v1_legal_entities_get"];
+        put?: never;
+        /** Create Item */
+        post: operations["create_item_api_v1_legal_entities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Item */
+        get: operations["get_item_api_v1_legal_entities__item_id__get"];
+        /** Update Item */
+        put: operations["update_item_api_v1_legal_entities__item_id__put"];
+        post?: never;
+        /** Delete Item */
+        delete: operations["delete_item_api_v1_legal_entities__item_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/legal-entities/{item_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Item */
+        post: operations["restore_item_api_v1_legal_entities__item_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/menu-groups": {
         parameters: {
             query?: never;
@@ -9541,23 +9595,20 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Invoice Title */
-            invoice_title: string | null;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
             /** Tax Group Id */
             tax_group_id: string | null;
-            /** Tax Number */
-            tax_number: string | null;
-            /** Tax Registration Name */
-            tax_registration_name: string | null;
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
-            /** Vat Registered */
-            vat_registered: boolean;
         };
         /**
          * BranchChannelTaxConfigUpsert
@@ -9569,24 +9620,18 @@ export interface components {
              * @enum {string}
              */
             channel_class: "counter" | "website" | "aggregator";
-            /** Invoice Title */
-            invoice_title?: string | null;
             /**
              * Is Active
              * @default true
              */
             is_active: boolean;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
             /** Tax Group Id */
             tax_group_id?: string | null;
-            /** Tax Number */
-            tax_number?: string | null;
-            /** Tax Registration Name */
-            tax_registration_name?: string | null;
-            /**
-             * Vat Registered
-             * @default true
-             */
-            vat_registered: boolean;
         };
         /**
          * BranchChannelTaxConfigsUpdate
@@ -13205,6 +13250,91 @@ export interface components {
             /** Native Name */
             native_name?: string | null;
         };
+        /** LegalEntityCreate */
+        LegalEntityCreate: {
+            /** Brand Name */
+            brand_name: string;
+            /**
+             * Invoice Title
+             * @default Tax Invoice
+             */
+            invoice_title: string;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /** Legal Name */
+            legal_name: string;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Reference */
+            reference: string;
+            /** Tax Number */
+            tax_number?: string | null;
+            /** Trade License Number */
+            trade_license_number?: string | null;
+            /**
+             * Vat Registered
+             * @default true
+             */
+            vat_registered: boolean;
+        };
+        /** LegalEntityResponse */
+        LegalEntityResponse: {
+            /** Brand Name */
+            brand_name: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Invoice Title */
+            invoice_title: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Legal Name */
+            legal_name: string;
+            /** Logo Url */
+            logo_url: string | null;
+            /** Reference */
+            reference: string;
+            /** Tax Number */
+            tax_number: string | null;
+            /** Trade License Number */
+            trade_license_number: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Vat Registered */
+            vat_registered: boolean;
+        };
+        /** LegalEntityUpdate */
+        LegalEntityUpdate: {
+            /** Brand Name */
+            brand_name?: string | null;
+            /** Invoice Title */
+            invoice_title?: string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Legal Name */
+            legal_name?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Tax Number */
+            tax_number?: string | null;
+            /** Trade License Number */
+            trade_license_number?: string | null;
+            /** Vat Registered */
+            vat_registered?: boolean | null;
+        };
         /**
          * LiveCart
          * @description One basket that currently holds items, and everything needed to judge it.
@@ -14141,6 +14271,33 @@ export interface components {
             status: string;
         };
         /**
+         * OrderLegalEntity
+         * @description The subset of a legal entity a receipt / order reader needs — served
+         *     nested on the order so the till prints the brand, TRN, title and logo, and
+         *     the admin shows who the order was issued under.
+         */
+        OrderLegalEntity: {
+            /** Brand Name */
+            brand_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Invoice Title */
+            invoice_title: string;
+            /** Legal Name */
+            legal_name: string;
+            /** Logo Url */
+            logo_url: string | null;
+            /** Reference */
+            reference: string;
+            /** Tax Number */
+            tax_number: string | null;
+            /** Vat Registered */
+            vat_registered: boolean;
+        };
+        /**
          * OrderListResponse
          * @description One row on the admin's orders screen, whichever channel it came from.
          *
@@ -14388,13 +14545,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Invoice Title */
-            invoice_title?: string | null;
             /**
              * Items
              * @default []
              */
             items: components["schemas"]["app__schemas__order__OrderItemResponse"][];
+            legal_entity?: components["schemas"]["OrderLegalEntity"] | null;
             /**
              * Locale
              * @default en
@@ -14440,10 +14596,6 @@ export interface components {
             status_history: components["schemas"]["OrderStatusStamp"][];
             /** Subtotal */
             subtotal: number;
-            /** Tax Number */
-            tax_number?: string | null;
-            /** Tax Registration Name */
-            tax_registration_name?: string | null;
             /** Total */
             total: number;
             /** Total Excl Vat */
@@ -15205,8 +15357,6 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Invoice Title */
-            invoice_title?: string | null;
             /**
              * Items
              * @default []
@@ -15214,6 +15364,7 @@ export interface components {
             items: components["schemas"]["app__schemas__pos_order__OrderItemResponse"][];
             /** Kitchen Notes */
             kitchen_notes: string | null;
+            legal_entity?: components["schemas"]["OrderLegalEntity"] | null;
             /**
              * May Auto Accept
              * @default true
@@ -15261,10 +15412,6 @@ export interface components {
             subtotal: string;
             /** Table Id */
             table_id: string | null;
-            /** Tax Number */
-            tax_number?: string | null;
-            /** Tax Registration Name */
-            tax_registration_name?: string | null;
             /** Till Id */
             till_id: string | null;
             /** Tips Amount */
@@ -29207,6 +29354,199 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_items_api_v1_legal_entities_get: {
+        parameters: {
+            query?: {
+                include_deleted?: boolean;
+                include_inactive?: boolean;
+                /** @description Filter by type where supported */
+                type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_item_api_v1_legal_entities_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalEntityCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_item_api_v1_legal_entities__item_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_item_api_v1_legal_entities__item_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LegalEntityUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_item_api_v1_legal_entities__item_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_item_api_v1_legal_entities__item_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalEntityResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

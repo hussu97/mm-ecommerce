@@ -1,9 +1,9 @@
-"""The (branch, channel) VAT + trade-license resolver and the VAT-stripping helper.
+"""The (branch, channel) → legal-entity resolver and the VAT-stripping helper.
 
-Covers what the write paths depend on: a branch with no config behaves exactly
-as today (registered, inherited), a non-registered channel books no VAT and
-never inherits the branch's TRN, and stripping VAT off a priced order leaves the
-customer's total untouched while the reconciliation invariant still holds.
+Covers what the write paths depend on: the channel→class map, the fallback to
+the registered default entity, a channel pointing at a non-registered entity,
+and that stripping VAT off a priced order leaves the customer's total untouched
+while the reconciliation invariant holds.
 """
 
 from __future__ import annotations
@@ -24,121 +24,82 @@ class _FakeResult:
     def scalar_one_or_none(self):
         return self._value
 
-    def scalars(self):
-        return SimpleNamespace(first=lambda: self._value)
-
 
 class _FakeDB:
-    """A session that answers the two queries `resolve` makes, in order.
+    """Answers `resolve`'s queries. `execute_results` are returned in order by
+    `execute(...).scalar_one_or_none()` (the config lookup, then the default-entity
+    lookup); `get_result` is what `db.get(LegalEntity, id)` returns."""
 
-    `resolve` runs `execute(config query)` first and, only when the resolved
-    invoice title is null, `execute(business settings)` — so the queue holds the
-    config result then the settings result. `get(Branch, id)` returns `branch`.
-    """
-
-    def __init__(self, *, config, branch, settings):
-        self._results = [_FakeResult(config), _FakeResult(settings)]
-        self._branch = branch
+    def __init__(self, *, execute_results=None, get_result=None):
+        self._queue = list(execute_results or [])
+        self._get = get_result
 
     async def execute(self, _stmt):
-        return self._results.pop(0)
+        return _FakeResult(self._queue.pop(0) if self._queue else None)
 
     async def get(self, _model, _id):
-        return self._branch
+        return self._get
 
 
-def _config(**over):
-    base = dict(
-        vat_registered=True,
-        tax_group_id=None,
-        tax_number=None,
-        tax_registration_name=None,
-        invoice_title=None,
-        is_active=True,
-    )
-    base.update(over)
-    return SimpleNamespace(**base)
-
-
-_BRANCH = SimpleNamespace(
-    tax_number="100123456700003",
-    tax_registration_name="Melting Moments Cakes LLC",
+_FATEMA = SimpleNamespace(
+    id=uuid.uuid4(), reference="fatema", vat_registered=True, brand_name="MM Cakes"
 )
-_SETTINGS = SimpleNamespace(invoice_title="Tax Invoice")
+_NAJM = SimpleNamespace(
+    id=uuid.uuid4(), reference="najm", vat_registered=False, brand_name="Attibassi"
+)
 
 
 def test_channel_class_maps_the_three_sources_and_defaults_to_website():
     assert tax_identity_service.channel_class_for("cashier") == "counter"
     assert tax_identity_service.channel_class_for("online") == "website"
     assert tax_identity_service.channel_class_for("aggregator") == "aggregator"
-    # Anything unexpected resolves to website (VAT-registered), never to a
-    # silently non-registered class.
     assert tax_identity_service.channel_class_for(None) == "website"
     assert tax_identity_service.channel_class_for("api") == "website"
 
 
-@pytest.mark.asyncio
-async def test_no_branch_is_the_registered_inherited_default():
-    identity = await tax_identity_service.resolve(
-        _FakeDB(config=None, branch=None, settings=None),
-        branch_id=None,
-        source="cashier",
-    )
-    assert identity.vat_registered is True
-    assert identity.tax_number is None
-    assert identity.tax_registration_name is None
-    assert identity.invoice_title is None
+def test_is_vat_registered_defaults_true_for_a_missing_entity():
+    assert tax_identity_service.is_vat_registered(None) is True
+    assert tax_identity_service.is_vat_registered(_FATEMA) is True
+    assert tax_identity_service.is_vat_registered(_NAJM) is False
+
+
+def test_stamp_sets_the_legal_entity_id():
+    order = SimpleNamespace(legal_entity_id=None)
+    tax_identity_service.stamp(order, _NAJM)
+    assert order.legal_entity_id == _NAJM.id
+    # A missing entity leaves it untouched (never silently nulled).
+    order2 = SimpleNamespace(legal_entity_id="keep")
+    tax_identity_service.stamp(order2, None)
+    assert order2.legal_entity_id == "keep"
 
 
 @pytest.mark.asyncio
-async def test_no_config_row_is_the_registered_inherited_default():
-    db = _FakeDB(config=None, branch=_BRANCH, settings=_SETTINGS)
-    identity = await tax_identity_service.resolve(
+async def test_no_branch_falls_back_to_the_registered_default():
+    # No branch → the default-entity query, which returns Fatema.
+    db = _FakeDB(execute_results=[_FATEMA])
+    entity = await tax_identity_service.resolve(db, branch_id=None, source="cashier")
+    assert entity is _FATEMA
+
+
+@pytest.mark.asyncio
+async def test_no_config_row_falls_back_to_the_registered_default():
+    # First execute() → None (no config), then the default-entity query → Fatema.
+    db = _FakeDB(execute_results=[None, _FATEMA])
+    entity = await tax_identity_service.resolve(
         db, branch_id=uuid.uuid4(), source="online"
     )
-    assert identity == tax_identity_service.TaxIdentity(
-        vat_registered=True,
-        tax_group_id=None,
-        tax_number=None,
-        tax_registration_name=None,
-        invoice_title=None,
-    )
+    assert entity is _FATEMA
 
 
 @pytest.mark.asyncio
-async def test_registered_config_inherits_branch_identity_per_field():
-    # A seeded default row: registered, all identity fields null → inherits the
-    # branch TRN/name and the business invoice title.
-    db = _FakeDB(config=_config(), branch=_BRANCH, settings=_SETTINGS)
-    identity = await tax_identity_service.resolve(
-        db, branch_id=uuid.uuid4(), source="online"
-    )
-    assert identity.vat_registered is True
-    assert identity.tax_number == "100123456700003"
-    assert identity.tax_registration_name == "Melting Moments Cakes LLC"
-    assert identity.invoice_title == "Tax Invoice"
-
-
-@pytest.mark.asyncio
-async def test_non_registered_config_books_no_vat_and_never_inherits_the_branch_trn():
-    # Barsha's counter: not registered, its own entity name, no TRN configured.
-    db = _FakeDB(
-        config=_config(
-            vat_registered=False,
-            tax_registration_name="Barsha Sweets Trading LLC",
-        ),
-        branch=_BRANCH,
-        settings=_SETTINGS,
-    )
-    identity = await tax_identity_service.resolve(
+async def test_a_config_row_resolves_its_entity():
+    config = SimpleNamespace(legal_entity_id=_NAJM.id)
+    db = _FakeDB(execute_results=[config], get_result=_NAJM)
+    entity = await tax_identity_service.resolve(
         db, branch_id=uuid.uuid4(), source="cashier"
     )
-    assert identity.vat_registered is False
-    # Never the branch's registered TRN.
-    assert identity.tax_number is None
-    assert identity.tax_registration_name == "Barsha Sweets Trading LLC"
-    # A non-registered business may not issue a "Tax Invoice".
-    assert identity.invoice_title == "Invoice"
+    assert entity is _NAJM
+    assert tax_identity_service.is_vat_registered(entity) is False
 
 
 def test_apply_non_registered_zeroes_vat_and_keeps_the_total():
@@ -161,8 +122,6 @@ def test_apply_non_registered_zeroes_vat_and_keeps_the_total():
     assert out.vat_amount == Decimal("0")
     assert out.vat_rate == Decimal("0")
     assert out.taxes == []
-    # The customer pays the same; VAT simply moves into the net.
     assert out.total == Decimal("100.00")
     assert out.total_excl_vat == Decimal("100.00")
-    # The invoice-reconciliation invariant still holds.
     assert out.total_excl_vat + out.vat_amount == out.subtotal - out.discount_amount

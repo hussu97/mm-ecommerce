@@ -811,13 +811,14 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     }
     products, options = await _reverse_maps(db, recipe_ids, modifier_ids)
 
-    # The trade-license identity this branch's marketplace sales trade under.
-    # VAT-registered for every branch today; a non-registered aggregator config
-    # books no VAT and still freezes the identity onto the order.
-    identity = await tax_identity_service.resolve(
+    # The legal entity this branch's marketplace sales trade under. Registered
+    # (Fatema) for every branch today; a non-registered aggregator config books
+    # no VAT and still freezes the entity onto the order.
+    entity = await tax_identity_service.resolve(
         db, branch_id=branch_id, source=OrderSourceEnum.AGGREGATOR.value
     )
-    money_fields = money_fields_from_info(info, vat_registered=identity.vat_registered)
+    entity_registered = tax_identity_service.is_vat_registered(entity)
+    money_fields = money_fields_from_info(info, vat_registered=entity_registered)
 
     # Name, normalised phone (E.164) with its country and line type, any Deliveroo
     # access code, and email — sorted out per channel; see `_customer_fields`.
@@ -905,16 +906,14 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             # any discount are the POS's, not the scrape's — otherwise the sale reads
             # low forever (adopt used to `return` here without touching the money).
             # A no-op for an order already carrying the push figures.
-            push_money = money_fields_from_info(
-                info, vat_registered=identity.vat_registered
-            )
+            push_money = money_fields_from_info(info, vat_registered=entity_registered)
             # subtotal is the gross (pre-discount) the lines add up to; the payload
             # often omits it, so derive it as net + discount rather than let it fall
             # to 0 and hide the gross a discounted order is meant to show.
             push_money["subtotal"] = push_money["total"] + push_money["discount_amount"]
             for field, value in push_money.items():
                 setattr(adopted, field, value)
-            tax_identity_service.stamp_identity(adopted, identity)
+            tax_identity_service.stamp(adopted, entity)
             # Rebuild the lines from the push too. The gap-fill's lines are the
             # marketplace scrape's — for Talabat that means no per-line price and a
             # box split into mangled fragments ("…Box of 3 [Tiramisu", "Brookie]").
@@ -964,11 +963,8 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             header, order_map.external_id, info, channel=channel
         ),
         external_reference=order_map.external_id,
-        # The seller identity this marketplace order is issued under, frozen from
-        # the (branch, aggregator) tax config. Null inherits branch/business.
-        tax_number=identity.tax_number,
-        tax_registration_name=identity.tax_registration_name,
-        invoice_title=identity.invoice_title,
+        # The legal entity this marketplace order is issued under.
+        legal_entity_id=entity.id if entity is not None else None,
         branch_id=branch_id,
         # What the customer actually paid with, so the console and reports read
         # true. `paymentStatus` is the reliable discriminator — `POSTPAID` is cash,

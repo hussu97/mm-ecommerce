@@ -312,15 +312,19 @@ export interface Order {
   vat_amount: number;
   total_excl_vat: number;
   /**
-   * The trade-license identity this order was issued under, frozen from the
-   * (branch, channel) tax config. Null inherits the branch/business identity.
-   * A branch can trade under more than one license (Barsha's counter is not
-   * VAT-registered while its website/aggregator sales are), so this is the
-   * order's own, not necessarily the branch's.
+   * The legal entity (trade licence) this order was issued under — brand, TRN,
+   * invoice title and logo. Null on a historical order.
    */
-  tax_number: string | null;
-  tax_registration_name: string | null;
-  invoice_title: string | null;
+  legal_entity: {
+    id: string;
+    reference: string;
+    legal_name: string;
+    brand_name: string;
+    vat_registered: boolean;
+    tax_number: string | null;
+    invoice_title: string;
+    logo_url: string | null;
+  } | null;
   status: OrderStatus;
   promo_code_used: string | null;
   shipping_address_snapshot: Record<string, string> | null;

@@ -10,6 +10,7 @@ import type { Schemas } from '@mm/types';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, Device, DrawerOperation,
   BranchChannelTaxConfig, BranchChannelTaxConfigsWrite,
+  LegalEntity, LegalEntityWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
   PermissionCatalogue, Printer, PurchaseOrder,
@@ -106,6 +107,17 @@ export const taxGroupsApi = {
   create: (d: Record<string, unknown>) => api.post<TaxGroup>('/tax-groups', d),
   update: (id: string, d: Record<string, unknown>) => api.put<TaxGroup>(`/tax-groups/${id}`, d),
   remove: (id: string) => api.delete<void>(`/tax-groups/${id}`),
+};
+
+// The trade licences orders are booked under (Fatema / Najm AlShamal). Their
+// VAT-registered flag, brand, TRN, invoice title and logo drive the receipt and
+// the VAT-by-entity reporting.
+export const legalEntitiesApi = {
+  list: () => api.get<LegalEntity[]>('/legal-entities'),
+  create: (d: LegalEntityWrite) => api.post<LegalEntity>('/legal-entities', d),
+  update: (id: string, d: Partial<LegalEntityWrite>) =>
+    api.put<LegalEntity>(`/legal-entities/${id}`, d),
+  remove: (id: string) => api.delete<void>(`/legal-entities/${id}`),
 };
 
 export const paymentMethodsApi = {

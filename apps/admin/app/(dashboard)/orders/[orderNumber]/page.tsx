@@ -1053,14 +1053,16 @@ export default function OrderDetailPage() {
               <span>VAT included ({Math.round(order.vat_rate * 100)}%)</span><span>{formatCurrency(order.vat_amount)}</span>
             </div>
           )}
-          {/* The trade licence this order was issued under, when it carries its
-              own (a branch trading under more than one license per channel). */}
-          {order.tax_registration_name && (
+          {/* The legal entity this order was issued under (brand on the receipt,
+              legal name for records, TRN when registered). */}
+          {order.legal_entity && (
             <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
-              <span>{order.invoice_title || 'Issued by'}</span>
+              <span>{order.legal_entity.invoice_title}</span>
               <span className="text-right">
-                {order.tax_registration_name}
-                {order.tax_number ? ` · TRN ${order.tax_number}` : ''}
+                {order.legal_entity.brand_name} · {order.legal_entity.legal_name}
+                {order.legal_entity.tax_number
+                  ? ` · TRN ${order.legal_entity.tax_number}`
+                  : ''}
               </span>
             </div>
           )}

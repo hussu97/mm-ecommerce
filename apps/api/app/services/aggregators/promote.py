@@ -785,14 +785,14 @@ def _display_code(external_reference: str | None) -> str | None:
 async def _build_order(
     db: AsyncSession, agg: AggregatorOrder, label: str, *, draw_stock: bool
 ) -> Order:
-    # The trade-license identity this branch's marketplace sales trade under.
-    # Registered for every branch today (aggregator sales run under the Melting
-    # Moments license), so this is a no-op unless a branch's aggregator channel
-    # is configured non-registered — then no VAT is booked and the identity is
-    # still frozen onto the order.
-    identity = await tax_identity_service.resolve(
+    # The legal entity this branch's marketplace sales trade under — Fatema
+    # (registered) for every branch today, so booking VAT is unchanged; a
+    # non-registered aggregator config would zero it. The entity is frozen on
+    # the order for the receipt/reports.
+    entity = await tax_identity_service.resolve(
         db, branch_id=agg.branch_id, source=OrderSourceEnum.AGGREGATOR.value
     )
+    entity_registered = tax_identity_service.is_vat_registered(entity)
     order = Order(
         order_number=await _order_number(db),
         user_id=None,
@@ -833,10 +833,8 @@ async def _build_order(
         # timeline. `placed_at` is that moment; fall back to now only if the scrape
         # carried no timestamp.
         created_at=agg.placed_at or utcnow(),
-        tax_number=identity.tax_number,
-        tax_registration_name=identity.tax_registration_name,
-        invoice_title=identity.invoice_title,
-        **_money_fields(agg, vat_registered=identity.vat_registered),
+        legal_entity_id=entity.id if entity is not None else None,
+        **_money_fields(agg, vat_registered=entity_registered),
     )
     db.add(order)
     await db.flush()
@@ -848,9 +846,7 @@ async def _build_order(
             agg.external_order_id,
             unmapped,
         )
-    await _reconcile_total_to_lines(
-        db, order, agg, vat_registered=identity.vat_registered
-    )
+    await _reconcile_total_to_lines(db, order, agg, vat_registered=entity_registered)
     # Load the collection now: driving status to cancelled walks order.items in
     # `_move_stock`, and an async lazy-load there would be a MissingGreenlet.
     await db.refresh(order, ["items"])
@@ -928,22 +924,19 @@ def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
 async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:
     """Bring an already-promoted order back in line with the ledger — its money
     and status, in case the marketplace mutated the order after we first filed it."""
-    identity = await tax_identity_service.resolve(
+    entity = await tax_identity_service.resolve(
         db,
         branch_id=getattr(order, "branch_id", None),
         source=OrderSourceEnum.AGGREGATOR.value,
     )
-    for field, value in _money_fields(
-        agg, vat_registered=identity.vat_registered
-    ).items():
+    entity_registered = tax_identity_service.is_vat_registered(entity)
+    for field, value in _money_fields(agg, vat_registered=entity_registered).items():
         setattr(order, field, value)
-    tax_identity_service.stamp_identity(order, identity)
+    tax_identity_service.stamp(order, entity)
     # The lines are the truth for the total (see helper); reapply after the scrape's
     # header money so a re-promote cannot revert a Careem order to its low gross or
     # re-inflate a discounted Noon order.
-    await _reconcile_total_to_lines(
-        db, order, agg, vat_registered=identity.vat_registered
-    )
+    await _reconcile_total_to_lines(db, order, agg, vat_registered=entity_registered)
     # Backfill the customer + rider the scraper captured onto an order first filed
     # without it — one promoted before its channel exposed the customer, or one this
     # pass converged onto by `(source, external_reference)`. Fill-only (see helper);

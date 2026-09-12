@@ -115,23 +115,50 @@ export type WeeklyHoursWrite = { shifts: WeeklyShift[] };
 export type ChannelClass = 'counter' | 'website' | 'aggregator';
 
 /**
- * VAT treatment and trade-license identity for one (branch, sales channel).
- *
- * A branch can trade under different licenses per channel — Barsha's counter is
- * not VAT-registered, while its website and aggregator sales are, under the
- * Melting Moments license. A channel with no row here inherits the branch's own
- * tax identity and is VAT-registered (the default). Identity fields left null
- * inherit the branch / business identity per-field.
+ * A trade licence, optionally VAT-registered, that orders are booked under.
+ * Melting Moments trades under two: Fatema Cake Sweets (brand "Melting Moments
+ * Cakes", registered) and Najm AlShamal Coffee Shop LLC (brand "Attibassi
+ * Coffee") at the Barsha counter. The receipt shows the brand + TRN + the
+ * entity's logo; the legal name is for records / the VAT return.
+ */
+export interface LegalEntity {
+  id: string;
+  reference: string;
+  legal_name: string;
+  brand_name: string;
+  vat_registered: boolean;
+  tax_number: string | null;
+  invoice_title: string;
+  trade_license_number: string | null;
+  logo_url: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LegalEntityWrite {
+  reference?: string;
+  legal_name: string;
+  brand_name: string;
+  vat_registered: boolean;
+  tax_number: string | null;
+  invoice_title: string;
+  trade_license_number: string | null;
+  logo_url: string | null;
+  is_active: boolean;
+}
+
+/**
+ * Which legal entity a (branch, sales channel) trades under. A branch can trade
+ * under more than one — Barsha's counter is Najm AlShamal (not VAT-registered)
+ * while its website/aggregator sales are Fatema (registered).
  */
 export interface BranchChannelTaxConfig {
   id: string;
   branch_id: string;
   channel_class: ChannelClass;
-  vat_registered: boolean;
+  legal_entity_id: string;
   tax_group_id: string | null;
-  tax_number: string | null;
-  tax_registration_name: string | null;
-  invoice_title: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -139,11 +166,8 @@ export interface BranchChannelTaxConfig {
 
 export interface BranchChannelTaxConfigWrite {
   channel_class: ChannelClass;
-  vat_registered: boolean;
+  legal_entity_id: string;
   tax_group_id: string | null;
-  tax_number: string | null;
-  tax_registration_name: string | null;
-  invoice_title: string | null;
   is_active: boolean;
 }
 

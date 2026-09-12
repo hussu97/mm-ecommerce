@@ -32,6 +32,7 @@ from .pos_order import OrderItemStatusEnum, OrderTypeEnum, PosOrderStatusEnum
 
 if TYPE_CHECKING:
     from .branch import Branch
+    from .legal_entity import LegalEntity
     from .order_delivery import OrderDelivery
     from .order_driver import OrderDriver
     from .order_status_event import OrderStatusEvent
@@ -324,24 +325,18 @@ class Order(Base, UUIDMixin, TimestampMixin):
     total_excl_vat: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")
     )
-    #: The seller's trade-license identity this order was issued under, frozen at
+    #: The legal entity (trade licence) this order was issued under, frozen at
     #: creation from the (branch, channel) tax config — because a branch can trade
-    #: under different licenses per channel (`branch_channel_tax_configs`), and a
-    #: receipt read live off the branch would mislabel a website order printed at
-    #: a branch whose counter is a different, non-VAT-registered entity. Null on
-    #: every historical order and wherever the config inherits the branch/business
-    #: identity; every reader falls back to `Branch`/`BusinessSettings` then.
-    #: Stored rather than derived for the same reason `order_taxes` is: a tax
-    #: document must reproduce what it was issued under even after the config
-    #: changes.
-    tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    tax_registration_name: Mapped[str | None] = mapped_column(
-        String(200), nullable=True
+    #: under more than one licence per channel (Barsha's counter is a different,
+    #: non-VAT-registered entity from its website/aggregator sales). The receipt's
+    #: brand/TRN/title/logo, and the VAT-by-entity report, all read through this.
+    #: The frozen VAT numbers stay on `vat_rate`/`vat_amount`/`order_taxes`.
+    legal_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
     )
-    #: The document title to print ("Tax Invoice" for a registered channel, a
-    #: plain "Invoice"/"Receipt" for one that is not). Null inherits
-    #: `BusinessSettings.invoice_title`.
-    invoice_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     #: Whether this order is currently holding stock it drew down from the shelf, so
     #: a cancellation returns exactly what was taken and no more. Set true by the
     #: draw paths (website checkout, and the aggregator promote / GrubOps ingest
@@ -651,6 +646,11 @@ class Order(Base, UUIDMixin, TimestampMixin):
     )
     order_taxes: Mapped[list[OrderTax]] = relationship(
         "OrderTax", cascade="all, delete-orphan"
+    )
+    #: The trade licence this order was issued under. `selectin` so the receipt
+    #: and admin read its brand/TRN/title/logo without an N+1.
+    legal_entity: Mapped[LegalEntity | None] = relationship(
+        "LegalEntity", lazy="selectin"
     )
     #: How this order reaches the customer, and what the courier charged us.
     #: Admin-facing only — never serialised into a storefront response.

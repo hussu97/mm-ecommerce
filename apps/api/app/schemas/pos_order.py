@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.courier import CourierBadge
 from app.schemas.pos.charges import percentage_is_fraction
+from app.schemas.pos.legal_entity import OrderLegalEntity
 
 OrderTypeLiteral = Literal["pickup", "delivery"]
 
@@ -341,12 +342,9 @@ class PosOrderResponse(ORMModel):
     vat_rate: Decimal = Decimal("0")
     vat_amount: Decimal
     total_excl_vat: Decimal
-    #: The trade-license identity this order was issued under, frozen at creation
-    #: from the (branch, channel) tax config. Null inherits the branch/business
-    #: identity, which every reader (receipt, admin) falls back to.
-    tax_number: str | None = None
-    tax_registration_name: str | None = None
-    invoice_title: str | None = None
+    #: The legal entity (trade licence) this order was issued under — the receipt
+    #: reads its brand/TRN/title/logo from here. Null on a historical order.
+    legal_entity: OrderLegalEntity | None = None
     rounding_amount: Decimal
     tips_amount: Decimal
     total: Decimal

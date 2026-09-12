@@ -1,92 +1,70 @@
-"""Resolve the VAT treatment and trade-license identity for one order.
+"""Resolve the legal entity (trade licence) an order is issued under.
 
-A branch can trade under different licenses per sales channel — Barsha's counter
-is not VAT-registered while its website and aggregator sales are, under the
-Melting Moments license. This service is the one place `Order.source` maps to a
-channel class and the `branch_channel_tax_configs` row (if any) is turned into a
-concrete decision the write paths freeze onto the order.
+A branch can trade under more than one licence per sales channel — Barsha's
+counter is Najm AlShamal (not VAT-registered) while its website and aggregator
+sales are Fatema Cake Sweets (registered). This service is the one place
+`Order.source` maps to a channel class and the `branch_channel_tax_configs` row
+turns into the `LegalEntity` the write paths freeze onto the order.
 
 The three order writers (website `order_service`, counter
 `pos_order_service.recalculate`, aggregator `promote`/`grubops_orders_service`)
-all call `resolve()` and then, when `not vat_registered`, force VAT to zero and
-`stamp_identity()` onto the order. A branch/channel with no active row resolves
-to VAT-registered + inherited identity, so nothing changes for branches that
-trade under one identity.
+call `resolve()`, force VAT to zero when the entity is `not vat_registered`, and
+`stamp()` the entity id onto the order. A branch/channel with no config row falls
+back to the registered default entity, so every order is attributed.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.branch import Branch
 from app.models.branch_channel_tax_config import (
     BranchChannelTaxConfig,
     ChannelClassEnum,
 )
-from app.models.business_settings import BusinessSettings
+from app.models.legal_entity import LegalEntity
 
 #: `Order.source` → channel class. The one place the mapping is decided; anything
-#: unexpected falls to `website` (the VAT-registered default), never to a
-#: silently non-registered class.
+#: unexpected falls to `website` (a registered channel), never to a silently
+#: non-registered one.
 CHANNEL_CLASS_BY_SOURCE: dict[str, str] = {
     "cashier": ChannelClassEnum.COUNTER.value,
     "online": ChannelClassEnum.WEBSITE.value,
     "aggregator": ChannelClassEnum.AGGREGATOR.value,
 }
 
+#: The registered entity every order falls back to when a branch/channel has no
+#: config row — seeded by migration `237` in every environment.
+DEFAULT_ENTITY_REFERENCE = "fatema"
+
 
 def channel_class_for(source: str | None) -> str:
     return CHANNEL_CLASS_BY_SOURCE.get(source or "", ChannelClassEnum.WEBSITE.value)
 
 
-@dataclass(frozen=True)
-class TaxIdentity:
-    """The VAT treatment and identity resolved for one (branch, channel).
-
-    `vat_registered` drives whether VAT is charged at all. The identity fields
-    are what a receipt/invoice/report should print for this order; each is null
-    when nothing overrides the branch/business default, and every reader falls
-    back to `Branch`/`BusinessSettings` on null. `tax_group_id` is an optional
-    per-channel VAT-group override — null leaves the existing per-product/branch
-    tax-group resolution unchanged.
-    """
-
-    vat_registered: bool
-    tax_group_id: uuid.UUID | None
-    tax_number: str | None
-    tax_registration_name: str | None
-    invoice_title: str | None
-
-
-#: What a branch with no configured row resolves to: registered, everything
-#: inherited. Behaviourally identical to the pre-feature codebase.
-_DEFAULT_IDENTITY = TaxIdentity(
-    vat_registered=True,
-    tax_group_id=None,
-    tax_number=None,
-    tax_registration_name=None,
-    invoice_title=None,
-)
+async def _default_entity(db: AsyncSession) -> LegalEntity | None:
+    return (
+        await db.execute(
+            select(LegalEntity).where(LegalEntity.reference == DEFAULT_ENTITY_REFERENCE)
+        )
+    ).scalar_one_or_none()
 
 
 async def resolve(
     db: AsyncSession, *, branch_id: uuid.UUID | None, source: str | None
-) -> TaxIdentity:
-    """The tax identity for an order on `branch_id` from channel `source`.
+) -> LegalEntity | None:
+    """The legal entity for an order on `branch_id` from channel `source`.
 
-    No branch, or no active config row → the default (registered, inherited), so
-    the caller stamps nothing new and behaves exactly as today. A row present →
-    its `vat_registered`, with each identity field falling back per-field to the
-    branch's `tax_number`/`tax_registration_name` and the business
-    `invoice_title` when the row leaves it null. That lets a row flip only
-    `vat_registered` without re-typing the inherited identity.
+    The `(branch, channel)` config names the entity; with no branch or no active
+    config row it falls back to the registered default (Fatema). `None` only when
+    even the default is missing (a database seeded before `237` — not a state a
+    deployed environment reaches), which the callers treat as VAT-registered and
+    stamp nothing.
     """
     if branch_id is None:
-        return _DEFAULT_IDENTITY
+        return await _default_entity(db)
 
     channel_class = channel_class_for(source)
     config = (
@@ -99,47 +77,17 @@ async def resolve(
         )
     ).scalar_one_or_none()
     if config is None:
-        return _DEFAULT_IDENTITY
-
-    branch = await db.get(Branch, branch_id)
-    # A non-VAT-registered entity has no TRN, so its channel never inherits the
-    # branch's — the branch's TRN belongs to the registered entity its other
-    # channels trade under, and printing it here would put a real TRN on a
-    # document that must carry none. A registered channel inherits it as before.
-    if config.vat_registered:
-        tax_number = config.tax_number or (branch.tax_number if branch else None)
-    else:
-        tax_number = config.tax_number
-    tax_registration_name = config.tax_registration_name or (
-        branch.tax_registration_name if branch else None
-    )
-    invoice_title = config.invoice_title
-    if invoice_title is None:
-        if config.vat_registered:
-            settings = (
-                (await db.execute(select(BusinessSettings).limit(1))).scalars().first()
-            )
-            invoice_title = settings.invoice_title if settings else None
-        else:
-            # A business that is not VAT-registered may not issue a "Tax Invoice";
-            # default its document to a plain "Invoice" unless the config names one.
-            invoice_title = "Invoice"
-
-    return TaxIdentity(
-        vat_registered=config.vat_registered,
-        tax_group_id=config.tax_group_id,
-        tax_number=tax_number,
-        tax_registration_name=tax_registration_name,
-        invoice_title=invoice_title,
-    )
+        return await _default_entity(db)
+    return await db.get(LegalEntity, config.legal_entity_id)
 
 
-def stamp_identity(order, identity: TaxIdentity) -> None:
-    """Freeze the resolved identity onto the order.
+def is_vat_registered(entity: LegalEntity | None) -> bool:
+    """Whether VAT should be charged. A missing entity is treated as registered,
+    so a resolution gap never silently drops VAT."""
+    return entity.vat_registered if entity is not None else True
 
-    Always called (even for the inherited default, which writes nulls), so the
-    order row records the decision that was in force when it was issued.
-    """
-    order.tax_number = identity.tax_number
-    order.tax_registration_name = identity.tax_registration_name
-    order.invoice_title = identity.invoice_title
+
+def stamp(order, entity: LegalEntity | None) -> None:
+    """Freeze the resolved entity onto the order."""
+    if entity is not None:
+        order.legal_entity_id = entity.id

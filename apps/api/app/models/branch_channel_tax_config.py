@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from .legal_entity import LegalEntity
     from .tax import TaxGroup
 
 
@@ -67,10 +68,14 @@ class BranchChannelTaxConfig(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     channel_class: Mapped[str] = mapped_column(String(20), nullable=False)
-    #: When false, no VAT is charged on this channel regardless of a line's tax
-    #: group — the order stamps zero VAT and writes no `order_taxes` rows.
-    vat_registered: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default="true"
+    #: The legal entity (trade licence) this channel trades under. Its
+    #: `vat_registered` decides whether VAT is charged; its brand/TRN/title/logo
+    #: are what the receipt shows and what the reports group by.
+    legal_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
     #: Optional per-channel VAT-group override. Null keeps the product/branch
     #: tax-group resolution the pricing engine already does.
@@ -80,26 +85,15 @@ class BranchChannelTaxConfig(Base, UUIDMixin, TimestampMixin):
         nullable=True,
         index=True,
     )
-    #: TRN printed on the invoice. Null inherits `Branch.tax_number`. A
-    #: non-VAT-registered channel has none, so it stays null and the receipt
-    #: prints no TRN line.
-    tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    #: Legal entity name printed on the invoice. Null inherits
-    #: `Branch.tax_registration_name` (then `BusinessSettings.business_name`).
-    tax_registration_name: Mapped[str | None] = mapped_column(
-        String(200), nullable=True
-    )
-    #: Document title. Null inherits `BusinessSettings.invoice_title`. A
-    #: non-registered channel must not title its document "Tax Invoice".
-    invoice_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
 
+    legal_entity: Mapped[LegalEntity] = relationship("LegalEntity")
     tax_group: Mapped[TaxGroup | None] = relationship("TaxGroup")
 
     def __repr__(self) -> str:
         return (
             f"<BranchChannelTaxConfig {self.branch_id} {self.channel_class} "
-            f"vat_registered={self.vat_registered}>"
+            f"entity={self.legal_entity_id}>"
         )
