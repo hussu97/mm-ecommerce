@@ -18851,6 +18851,42 @@
         "title": "PaginatedOrders",
         "type": "object"
       },
+      "PaginatedRecipeOwners": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeOwnerRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "PaginatedRecipeOwners",
+        "type": "object"
+      },
       "PaginatedWebhookLogs": {
         "properties": {
           "items": {
@@ -25298,6 +25334,95 @@
           "quantity"
         ],
         "title": "RecipeLineResponse",
+        "type": "object"
+      },
+      "RecipeOwnerRow": {
+        "description": "One row in the Recipes console: a recipe owner and its recipe status.\n\nAn owner is a product, a modifier option, or a *made* inventory item \u2014 the\nthree things a recipe can belong to. ``recipe_status``/version numbers are\nderived from the owner's recipe versions, so the list can show at a glance\nwhich sellable things have an active recipe, a pending draft, or none.",
+        "properties": {
+          "active_version_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version Number"
+          },
+          "draft_version_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Version Number"
+          },
+          "has_recipe": {
+            "title": "Has Recipe",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "line_count": {
+            "default": 0,
+            "title": "Line Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "recipe_status": {
+            "enum": [
+              "none",
+              "draft",
+              "active"
+            ],
+            "title": "Recipe Status",
+            "type": "string"
+          },
+          "secondary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secondary"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_active",
+          "has_recipe",
+          "recipe_status"
+        ],
+        "title": "RecipeOwnerRow",
         "type": "object"
       },
       "RecipeReadinessResponse": {
@@ -47407,6 +47532,133 @@
         "summary": "Submit Purchase Order",
         "tags": [
           "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/recipe-owners/{owner_kind}": {
+      "get": {
+        "description": "The Recipes console list: owners of one kind with their recipe status.\n\nOne row per product / modifier option / made inventory item, showing whether\nit has an active recipe, a pending draft, or none \u2014 filterable, sortable and\npaginated server-side so the console never loads more than one page.",
+        "operationId": "list_recipe_owners_api_v1_inventory_recipe_owners__owner_kind__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner_kind",
+            "required": true,
+            "schema": {
+              "title": "Owner Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "active",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Active",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "recipe",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Recipe",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "name",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_dir",
+            "required": false,
+            "schema": {
+              "default": "asc",
+              "title": "Sort Dir",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedRecipeOwners"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Recipe Owners",
+        "tags": [
+          "Inventory Control"
         ]
       }
     },

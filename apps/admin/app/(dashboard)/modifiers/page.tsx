@@ -1,13 +1,13 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
 import type { Modifier, ModifierOption } from '@/lib/types';
 import { Badge, Button, Input, Pagination, TabBar, LoadError} from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { TranslationFields } from '@/components/TranslationFields';
 import { useLanguages } from '@/hooks/useLanguages';
-import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
 const BLANK_MODIFIER = { reference: '', name: '' };
 const BLANK_OPTION = { name: '', sku: '', price: '0', calories: '', is_active: true, display_order: '0' };
@@ -61,7 +61,6 @@ export default function ModifiersPage() {
 
   // Option delete
   const [deletingOptionId, setDeletingOptionId] = useState<string | null>(null);
-  const [recipeOptionId, setRecipeOptionId] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -540,7 +539,9 @@ export default function ModifiersPage() {
                                       <td className="py-2 text-right">
                                         <div className="flex items-center justify-end gap-1">
                                           <Button size="sm" variant="ghost" onClick={() => openEditOption(m.id, opt)}>Edit</Button>
-                                          <Button size="sm" variant="ghost" onClick={() => setRecipeOptionId(recipeOptionId === opt.id ? null : opt.id)}>Recipe</Button>
+                                          <Link href={`/recipes/modifiers?open=${opt.id}`}>
+                                            <Button size="sm" variant="ghost">Recipe</Button>
+                                          </Link>
                                           <Button
                                             size="sm"
                                             variant="danger"
@@ -555,11 +556,6 @@ export default function ModifiersPage() {
                               </tbody>
                             </table>
                           )}
-
-                          {recipeOptionId && (() => {
-                            const option = m.options.find((value) => value.id === recipeOptionId);
-                            return option ? <RecipeEditor ownerKind="modifier_option" ownerId={option.id} ownerLabel={`${m.name} — ${option.name}`} focusOnMount /> : null;
-                          })()}
 
                           {/* Add option form */}
                           {addingOptionFor === m.id && (

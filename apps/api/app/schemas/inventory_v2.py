@@ -89,6 +89,41 @@ class RecipeExpansionResponse(BaseModel):
     recipe_version_ids: list[UUID]
 
 
+RecipeStatus = Literal["none", "draft", "active"]
+
+
+class RecipeOwnerRow(BaseModel):
+    """One row in the Recipes console: a recipe owner and its recipe status.
+
+    An owner is a product, a modifier option, or a *made* inventory item — the
+    three things a recipe can belong to. ``recipe_status``/version numbers are
+    derived from the owner's recipe versions, so the list can show at a glance
+    which sellable things have an active recipe, a pending draft, or none.
+    """
+
+    id: UUID
+    name: str
+    # sku for an inventory item, the parent modifier's name for an option, the
+    # slug for a product — a second identifier line for the row.
+    secondary: str | None = None
+    # Inventory-item kind (``produced_good``/``semi_finished``); null otherwise.
+    kind: str | None = None
+    is_active: bool
+    has_recipe: bool
+    recipe_status: RecipeStatus
+    active_version_number: int | None = None
+    draft_version_number: int | None = None
+    line_count: int = 0
+
+
+class PaginatedRecipeOwners(BaseModel):
+    items: list[RecipeOwnerRow]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
 class BranchInventorySettingsUpdate(BaseModel):
     inventory_enabled: bool | None = None
     production_enabled: bool | None = None

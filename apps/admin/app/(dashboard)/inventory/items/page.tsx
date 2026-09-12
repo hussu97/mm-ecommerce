@@ -4,10 +4,11 @@
 // gone; instead each item carries one column per active branch showing its
 // on-hand quantity there, its single-value columns (including the per-branch
 // stock columns) are sortable from their headers, and a Stock filter surfaces
-// low / below-par items across the whole estate. The item CRUD and the
-// expandable RecipeEditor are unchanged.
+// low / below-par items across the whole estate. Recipes now live in their own
+// section; a made item's row links out to it rather than editing inline.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   branchesApi,
   inventoryApi,
@@ -17,7 +18,9 @@ import { Badge } from '@/components/ui';
 import { ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
-import { RecipeEditor } from '@/components/inventory/RecipeEditor';
+
+// Made items (produced or semi-finished) are the only kinds that can own a recipe.
+const MADE_KINDS = new Set(['produced_good', 'semi_finished']);
 
 type BranchStock = { quantity: number; is_below_minimum: boolean };
 type StockPivot = Map<string, Map<string, BranchStock>>;
@@ -26,7 +29,7 @@ export default function ItemsPage() {
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [pivot, setPivot] = useState<StockPivot>(new Map());
-  const [recipeItem, setRecipeItem] = useState<InventoryItem | null>(null);
+  const router = useRouter();
   const [categoryId, setCategoryId] = useState('');
   const [kind, setKind] = useState('');
   const [trackingMode, setTrackingMode] = useState('');
@@ -155,8 +158,11 @@ export default function ItemsPage() {
       searchKeys={['name', 'sku']}
       toolbar={toolbar}
       filterRows={filterRows}
-      rowActions={(item) => <RowAction onClick={() => setRecipeItem((current) => (current?.id === item.id ? null : item))}>{recipeItem?.id === item.id ? 'Close recipe' : 'Recipe'}</RowAction>}
-      expandedRow={(item) => (item.id === recipeItem?.id ? <div className="py-2"><RecipeEditor ownerKind="inventory_item" ownerId={item.id} ownerLabel={item.name} /></div> : null)}
+      rowActions={(item) =>
+        MADE_KINDS.has(item.kind) ? (
+          <RowAction onClick={() => router.push(`/recipes/inventory?open=${item.id}`)}>Recipe</RowAction>
+        ) : null
+      }
       defaults={{
         storage_unit: 'kg',
         ingredient_unit: 'g',

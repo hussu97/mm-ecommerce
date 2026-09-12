@@ -23,6 +23,8 @@ export type VersionedRecipe = Schemas['VersionedRecipeResponse'];
 export type RecipeVersion = Schemas['RecipeVersionResponse'];
 export type RecipeDraft = Schemas['RecipeDraftRequest'];
 export type RecipeExpansion = Schemas['RecipeExpansionResponse'];
+export type RecipeOwnerRow = Schemas['RecipeOwnerRow'];
+export type PaginatedRecipeOwners = Schemas['PaginatedRecipeOwners'];
 export type ReportTemplate = Schemas['ReportTemplateResponse'];
 export type ReportTemplateWrite = Schemas['ReportTemplateUpsert'];
 export type ShiftInventoryReport = Schemas['ShiftReportResponse'];
@@ -251,6 +253,16 @@ export const inventoryApi = {
   productRecipe: (productId: string) => api.get<Record<string, unknown>>(`/inventory/recipes/products/${productId}`),
   setProductRecipe: (productId: string, ingredients: unknown[]) =>
     api.put<Record<string, unknown>>(`/inventory/recipes/products/${productId}`, { ingredients }),
+
+  recipeOwners: (
+    ownerKind: string,
+    params: { search?: string; active?: string; recipe?: string; sort?: string; sort_dir?: string },
+    page: number,
+    perPage: number,
+  ) =>
+    api.get<PaginatedRecipeOwners>(
+      `/inventory/recipe-owners/${ownerKind}${buildQs({ ...params, page, per_page: perPage })}`,
+    ),
 
   versionedRecipe: (ownerKind: string, ownerId: string) =>
     api.get<VersionedRecipe>(`/inventory/recipes-v2/${ownerKind}/${ownerId}`),

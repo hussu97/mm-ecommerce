@@ -36,6 +36,7 @@ from app.schemas.inventory_v2 import (
     BranchInventorySettingsUpdate,
     OrderInventoryConsumptionResponse,
     OrderInventoryReturnRequest,
+    PaginatedRecipeOwners,
     ProjectionDriftResponse,
     RecipeDraftRequest,
     RecipeExpansionRequest,
@@ -58,6 +59,7 @@ from app.schemas.inventory_v2 import (
 from app.services.inventory import (
     access_service,
     ledger_service,
+    recipe_catalog_service,
     recipe_service,
     report_service,
     source_event_service,
@@ -74,6 +76,45 @@ order_inventory_router = APIRouter()
 
 _assert_branch_access = access_service.assert_branch_access
 _branch_ids_for = access_service.branch_ids_for
+
+
+@control_router.get("/recipe-owners/{owner_kind}", response_model=PaginatedRecipeOwners)
+async def list_recipe_owners(
+    owner_kind: str,
+    search: str | None = None,
+    active: str = Query("all"),
+    recipe: str = Query("all"),
+    sort: str = Query("name"),
+    sort_dir: str = Query("asc"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.recipes.read")),
+):
+    """The Recipes console list: owners of one kind with their recipe status.
+
+    One row per product / modifier option / made inventory item, showing whether
+    it has an active recipe, a pending draft, or none — filterable, sortable and
+    paginated server-side so the console never loads more than one page.
+    """
+    items, total = await recipe_catalog_service.list_recipe_owners(
+        db,
+        owner_kind=owner_kind,
+        search=search,
+        active=active,
+        recipe=recipe,
+        sort=sort,
+        sort_dir=sort_dir,
+        page=page,
+        per_page=per_page,
+    )
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+    }
 
 
 @control_router.get(

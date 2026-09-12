@@ -34,6 +34,7 @@ export const NAV: Array<NavEntry | NavSection> = [
   { href: '/products',      label: 'Products',        icon: 'inventory_2',  requires: 'catalogue.manage' },
   { href: '/categories',    label: 'Categories',      icon: 'category',     requires: 'catalogue.manage' },
   { href: '/modifiers',     label: 'Modifiers',       icon: 'tune',         requires: 'catalogue.manage' },
+  { href: '/recipes',       label: 'Recipes',         icon: 'menu_book',    match: '/recipes', requires: 'catalogue.recipes.read' },
   { href: '/menu-groups',   label: 'Menu Groups',     icon: 'account_tree', requires: 'catalogue.manage' },
   { href: '/catalog-sync',  label: 'Catalog Sync',    icon: 'sync_alt',     requires: 'catalogue.manage' },
 

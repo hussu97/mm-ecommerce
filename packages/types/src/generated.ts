@@ -3970,6 +3970,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/recipe-owners/{owner_kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Recipe Owners
+         * @description The Recipes console list: owners of one kind with their recipe status.
+         *
+         *     One row per product / modifier option / made inventory item, showing whether
+         *     it has an active recipe, a pending draft, or none — filterable, sortable and
+         *     paginated server-side so the console never loads more than one page.
+         */
+        get: operations["list_recipe_owners_api_v1_inventory_recipe_owners__owner_kind__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/recipes-v2/versions/{version_id}/activate": {
         parameters: {
             query?: never;
@@ -14795,6 +14819,19 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** PaginatedRecipeOwners */
+        PaginatedRecipeOwners: {
+            /** Items */
+            items: components["schemas"]["RecipeOwnerRow"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
         /** PaginatedWebhookLogs */
         PaginatedWebhookLogs: {
             /** Items */
@@ -16874,6 +16911,46 @@ export interface components {
             quantity: string;
             /** Unit Cost */
             unit_cost?: string | null;
+        };
+        /**
+         * RecipeOwnerRow
+         * @description One row in the Recipes console: a recipe owner and its recipe status.
+         *
+         *     An owner is a product, a modifier option, or a *made* inventory item — the
+         *     three things a recipe can belong to. ``recipe_status``/version numbers are
+         *     derived from the owner's recipe versions, so the list can show at a glance
+         *     which sellable things have an active recipe, a pending draft, or none.
+         */
+        RecipeOwnerRow: {
+            /** Active Version Number */
+            active_version_number?: number | null;
+            /** Draft Version Number */
+            draft_version_number?: number | null;
+            /** Has Recipe */
+            has_recipe: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Kind */
+            kind?: string | null;
+            /**
+             * Line Count
+             * @default 0
+             */
+            line_count: number;
+            /** Name */
+            name: string;
+            /**
+             * Recipe Status
+             * @enum {string}
+             */
+            recipe_status: "none" | "draft" | "active";
+            /** Secondary */
+            secondary?: string | null;
         };
         /** RecipeReadinessResponse */
         RecipeReadinessResponse: {
@@ -27532,6 +27609,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PurchaseOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_recipe_owners_api_v1_inventory_recipe_owners__owner_kind__get: {
+        parameters: {
+            query?: {
+                search?: string | null;
+                active?: string;
+                recipe?: string;
+                sort?: string;
+                sort_dir?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                owner_kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedRecipeOwners"];
                 };
             };
             /** @description Validation Error */
