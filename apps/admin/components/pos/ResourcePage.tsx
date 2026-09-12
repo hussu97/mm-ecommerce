@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, uploadsApi } from '@/lib/api';
-import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
+import { Badge, Button, Input, Select } from '@/components/ui';
 import {
-  DataTable,
   RowAction,
   sortByAccessor,
   sortKeyOf,
   type ColumnPriority,
   type SortState,
 } from '@/components/ui/DataTable';
+import { ListPage } from '@/components/ui/ListPage';
 import { cn } from '@/lib/utils';
 
 /**
@@ -278,86 +278,65 @@ export function ResourcePage<T extends { id: string }>({
   const activeFields = fields.filter((f) => (creating ? !f.editOnly : !f.createOnly));
 
   return (
-    // No padding and no width cap of its own: the dashboard shell owns the page
-    // gutter (rule 1), and a list should take the whole content column so a wide
-    // table fills the window instead of scrolling inside a boxed 1400px.
-    <div>
-      <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="font-display text-xl text-primary tracking-wide">{title}</h1>
-          {description && <p className="text-xs text-gray-500 font-body mt-1">{description}</p>}
-        </div>
-        {/* Search takes the width it can get on a phone and a fixed 12rem on a
-            desktop; "New" stays beside it rather than dropping to its own line,
-            because the pair is one thought. */}
-        <div className="flex items-center gap-2">
-          {toolbar}
-          {searchKeys.length > 0 && (
-            <Input
-              placeholder="Search…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full sm:w-48"
-            />
-          )}
-          {create && <Button className="shrink-0" onClick={openCreate}>New</Button>}
-        </div>
-      </header>
-
-      {error && (
-        <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="flex justify-center py-16">
-          <Spinner />
-        </div>
-      ) : (
-        <DataTable<T>
-          columns={columns}
-          rows={pageRows}
-          rowKey={(row) => row.id}
-          sort={sort}
-          onSortChange={setSort}
-          stickyHeader={stickyHeader}
-          expanded={expandedRow ? (row) => expandedRow(row, reload) : undefined}
-          empty={
-            <p className="py-16 text-center text-sm text-gray-400 font-body">{emptyMessage}</p>
-          }
-          actions={
-            update || remove || rowActions
-              ? (row) => (
-                  <>
-                    {rowActions?.(row, reload)}
-                    {update && <RowAction onClick={() => openEdit(row)}>Edit</RowAction>}
-                    {remove && (
-                      <RowAction danger onClick={() => setConfirmingDelete(row)}>
-                        Delete
-                      </RowAction>
-                    )}
-                  </>
-                )
-              : undefined
-          }
-        />
-      )}
-
-      {paginated && !loading && visible.length > 0 && (
-        <Pagination
-          page={page}
-          pages={pages}
-          total={visible.length}
-          perPage={perPage}
-          onPageChange={setPage}
-          onPerPageChange={setPerPage}
-          label={title.toLowerCase()}
-        />
-      )}
-
-      {belowTable}
-
+    // The list chrome — header, search, states, table, pagination — is the
+    // shared `ListPage`; this component keeps only the data logic above and the
+    // create/edit/delete modals below.
+    <ListPage<T>
+      title={title}
+      description={description}
+      search={
+        searchKeys.length > 0
+          ? { value: search, onChange: setSearch }
+          : undefined
+      }
+      toolbar={toolbar}
+      primaryAction={
+        create ? (
+          <Button className="shrink-0" onClick={openCreate}>
+            New
+          </Button>
+        ) : undefined
+      }
+      error={error}
+      loading={loading}
+      columns={columns}
+      rows={pageRows}
+      rowKey={(row) => row.id}
+      sort={sort}
+      onSortChange={setSort}
+      stickyHeader={stickyHeader}
+      expanded={expandedRow ? (row) => expandedRow(row, reload) : undefined}
+      emptyMessage={emptyMessage}
+      actions={
+        update || remove || rowActions
+          ? (row) => (
+              <>
+                {rowActions?.(row, reload)}
+                {update && <RowAction onClick={() => openEdit(row)}>Edit</RowAction>}
+                {remove && (
+                  <RowAction danger onClick={() => setConfirmingDelete(row)}>
+                    Delete
+                  </RowAction>
+                )}
+              </>
+            )
+          : undefined
+      }
+      pagination={
+        paginated && visible.length > 0
+          ? {
+              page,
+              pages,
+              total: visible.length,
+              perPage,
+              onPageChange: setPage,
+              onPerPageChange: setPerPage,
+              label: title.toLowerCase(),
+            }
+          : undefined
+      }
+      belowTable={belowTable}
+    >
       {formOpen && (
         <Modal title={editing ? `Edit ${title.replace(/s$/, '')}` : `New ${title.replace(/s$/, '')}`} onClose={closeForm}>
           <div className="space-y-3">
@@ -397,7 +376,7 @@ export function ResourcePage<T extends { id: string }>({
           </div>
         </Modal>
       )}
-    </div>
+    </ListPage>
   );
 }
 
