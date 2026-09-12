@@ -192,7 +192,14 @@ def needs_push(state: GrubOpsSyncState | None, desired: Desired) -> bool:
 
     A missing row means "never told", which is not the same as "told it was
     available" — the first tick after a mapping is approved has to say
-    something, or an item that is already out would stay on the aggregators.
+    something about an item that is already *out*, or it would stay on the
+    aggregators. But it must NOT push the *available* ones: GrubOps defaults a
+    known item to available, and its `available` endpoint rejects a MODIFIER
+    that is not currently marked unavailable with a 400 that sinks the whole
+    batch (recipes included) — so a fresh branch with nothing out would loop on
+    that rejection for ever. An already-available item already matches GrubOps'
+    default, so the first tick says nothing about it and reaches steady state
+    with zero calls.
 
     Only the flip matters. A moved return time used to count as a change, back
     when the return time was sent; it is not sent any more, so pushing on it
@@ -201,7 +208,7 @@ def needs_push(state: GrubOpsSyncState | None, desired: Desired) -> bool:
     have been a call every two minutes until closing.
     """
     if state is None or state.last_pushed_available is None:
-        return True
+        return not desired.available
     return state.last_pushed_available != desired.available
 
 

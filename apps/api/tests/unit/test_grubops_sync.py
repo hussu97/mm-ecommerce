@@ -146,15 +146,21 @@ def test_nothing_is_pushed_when_nothing_changed():
     assert svc.needs_push(_state(available=True), unchanged) is False
 
 
-def test_a_mapping_never_pushed_is_always_pushed():
+def test_a_mapping_never_pushed_pushes_only_when_out():
     """
     "Never told" is not "told it was available".
 
-    An item already out when its mapping is approved would otherwise stay on
-    the aggregators until somebody touched it again.
+    An item already *out* when its mapping is approved must be pushed, or it
+    would stay on the aggregators until somebody touched it again. An item that
+    is *available* must NOT be pushed on that first tick: GrubOps defaults a
+    known item to available (so the call changes nothing) and rejects a bulk
+    `available` on a modifier that isn't currently out with a 400 that sinks the
+    whole batch — a fresh branch with nothing out would loop on it for ever.
     """
-    assert svc.needs_push(None, _desired(available=True)) is True
-    assert svc.needs_push(_state(available=None), _desired(available=True)) is True
+    assert svc.needs_push(None, _desired(available=False)) is True
+    assert svc.needs_push(_state(available=None), _desired(available=False)) is True
+    assert svc.needs_push(None, _desired(available=True)) is False
+    assert svc.needs_push(_state(available=None), _desired(available=True)) is False
 
 
 def _client() -> GrubOpsClient:
