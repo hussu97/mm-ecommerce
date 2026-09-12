@@ -90,19 +90,24 @@ async def _branch_has_grubops(db: AsyncSession, branch_id) -> bool:
     # Session-scoped memo. This is stable per-branch config, but it is queried
     # once per order in BOTH the reconcile and promote sweeps — thousands of
     # identical `branch_id` lookups per pass (measured at 4,874 calls in a 20-min
-    # window). Cache the answer on the session: resolved once per branch per pass
-    # and discarded when the session closes, so there is no cross-pass staleness
-    # and no invalidation to keep in step with the location map.
-    cache = db.info.setdefault("_branch_has_grubops", {})
-    if branch_id not in cache:
-        cache[branch_id] = bool(
-            await db.scalar(
-                select(GrubOpsLocationMap.id).where(
-                    GrubOpsLocationMap.branch_id == branch_id,
-                )
+    # window). Cache the answer on `AsyncSession.info`: resolved once per branch
+    # per pass and discarded when the session closes, so there is no cross-pass
+    # staleness and no invalidation to keep in step with the location map. Purely
+    # an optimisation — a test double without a real `.info` dict skips the cache.
+    info = getattr(db, "info", None)
+    cache = info.setdefault("_branch_has_grubops", {}) if isinstance(info, dict) else None
+    if cache is not None and branch_id in cache:
+        return cache[branch_id]
+    result = bool(
+        await db.scalar(
+            select(GrubOpsLocationMap.id).where(
+                GrubOpsLocationMap.branch_id == branch_id,
             )
         )
-    return cache[branch_id]
+    )
+    if cache is not None:
+        cache[branch_id] = result
+    return result
 
 
 #: GrubTech's own `source.channel` string for a channel — what actually lands in

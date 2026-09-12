@@ -66,13 +66,20 @@ async def resolve(
     Session-scoped memo: the aggregator promote sweep calls this once per order
     (measured ~4,100 `legal_entities` loads plus a config lookup each in a 20-min
     window), and the answer is identical for every order sharing a
-    `(branch, channel)`. The cache lives on the session, so it dedupes to one
-    resolution per `(branch, channel)` per sweep pass and is discarded when the
-    session closes — a config change (a branch's VAT registration) is picked up
-    on the very next pass, so there is no staleness window on the money path.
+    `(branch, channel)`. The cache lives on `AsyncSession.info`, so it dedupes to
+    one resolution per `(branch, channel)` per sweep pass and is discarded when
+    the session closes — a config change (a branch's VAT registration) is picked
+    up on the very next pass, so there is no staleness window on the money path.
+    Purely an optimisation: when the session is a test double without a real
+    `.info` dict, we skip the cache and resolve directly — same answer.
     """
     channel_class = channel_class_for(source)
-    cache = db.info.setdefault("_tax_identity_cache", {})
+    info = getattr(db, "info", None)
+    if not isinstance(info, dict):
+        return await _resolve_entity(
+            db, branch_id=branch_id, channel_class=channel_class
+        )
+    cache = info.setdefault("_tax_identity_cache", {})
     key = (branch_id, channel_class)
     if key not in cache:
         cache[key] = await _resolve_entity(
