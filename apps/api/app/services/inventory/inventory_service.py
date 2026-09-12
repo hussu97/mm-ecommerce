@@ -936,6 +936,31 @@ async def deplete_for_order(
     return await db.get(InventoryTransaction, event_row.transaction_id)
 
 
+async def restock_for_void(db: AsyncSession, *, order: Order, user: User) -> None:
+    """
+    Put a voided order's consumed ingredients back on the shelf.
+
+    A counter sale posts a `CONSUMPTION_FROM_ORDERS` movement when it closes;
+    voiding it after the fact reverses that movement in full. Delegates to the
+    same return machinery the admin inventory-return endpoint uses, at a full
+    `restock` disposition — which also resolves the disposition-required
+    exception the cancellation logged against the frozen consumption. A no-op
+    for an order that never consumed anything (inventory off, or no recipes),
+    because `record_return` finds no original movement to reverse.
+    """
+    from app.services.inventory import source_event_service
+
+    await source_event_service.record_return(
+        db,
+        order=order,
+        user=user,
+        disposition="restock",
+        proportion=Decimal("1"),
+        idempotency_key=f"void:{order.id}",
+        notes="Counter sale voided",
+    )
+
+
 async def load_transaction(
     db: AsyncSession, transaction_id: uuid.UUID
 ) -> InventoryTransaction:

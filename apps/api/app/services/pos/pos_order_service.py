@@ -1640,17 +1640,77 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
     return await get_order(db, order.id)
 
 
+async def _refund_all_payments(db: AsyncSession, *, order: Order, user: User) -> None:
+    """
+    Give back everything still held on a check, tender by tender, so a post-sale
+    void nets to zero.
+
+    Each refund goes back on the method it was taken on — cash to the drawer
+    (which must therefore be open), a card refund recorded against the card —
+    and is capped at what is still held, so a sale a cashier already part-
+    refunded by hand is not over-returned. The idempotency key is per tender so
+    a replayed void cannot stack a second set of refunds. The card refund is a
+    recorded `OrderPayment`, not a gateway call: at the counter the physical
+    refund is the cashier's action on the card terminal, and this books it.
+    """
+    remaining = _net_paid(order)
+    if remaining <= 0:
+        return
+    # Snapshot the real tenders before `record_payment` adds refund rows to the
+    # same collection under us.
+    tenders = [p for p in order.payments if not p.is_refund]
+    for tender in tenders:
+        if remaining <= 0:
+            break
+        take = money(min(money(tender.amount), remaining))
+        if take <= 0:
+            continue
+        await record_payment(
+            db,
+            order=order,
+            user=user,
+            payment_method_id=tender.payment_method_id,
+            amount=take,
+            is_refund=True,
+            reference="Void refund",
+            # Keyed off the tender's own id so a replayed void cannot stack a
+            # second refund. Kept short: `order_payments.idempotency_key` is
+            # varchar(64), and a "void:{order}:refund:{tender}" form overran it.
+            idempotency_key=f"void-refund:{tender.id}",
+        )
+        remaining = money(remaining - take)
+
+
 async def void_order(
     db: AsyncSession, *, order: Order, user: User, reason_id: uuid.UUID | None = None
 ) -> Order:
-    _assert_open(order)
-    # What blocks a void is money still held against the order, not the fact
-    # that money once moved. Testing for payment rows means an order that has
-    # been fully refunded — net zero, nothing owed to anyone — can never be
-    # voided, and the refund itself is a payment row, so following the error's
-    # own instruction leaves the cashier exactly where they started.
-    if _net_paid(order) != 0:
-        raise ConflictError("This order has payments — refund them before voiding")
+    order = await get_order(db, order.id)
+
+    # A CLOSED counter sale is the one order that can be voided after it is done:
+    # the customer changed their mind once the sale was already rung off and
+    # collected. It is a different operation from voiding an open check — the
+    # money has to go back and the ingredients the sale consumed have to be put
+    # back on the shelf — so it takes its own path here. Everything else (an open
+    # draft/active check, or an attached online order) keeps the original rules.
+    post_sale = (
+        order.pos_status == PosOrderStatusEnum.CLOSED.value
+        and order.source == OrderSourceEnum.CASHIER.value
+    )
+
+    if post_sale:
+        # Give the money back first: a full refund of whatever is still held,
+        # which nets the check to zero — the same zero-balance state a plain void
+        # requires — before the void proceeds.
+        await _refund_all_payments(db, order=order, user=user)
+    else:
+        _assert_open(order)
+        # What blocks a void is money still held against the order, not the fact
+        # that money once moved. Testing for payment rows means an order that has
+        # been fully refunded — net zero, nothing owed to anyone — can never be
+        # voided, and the refund itself is a payment row, so following the
+        # error's own instruction leaves the cashier exactly where they started.
+        if _net_paid(order) != 0:
+            raise ConflictError("This order has payments — refund them before voiding")
 
     # The register-side ending first, so `transition`'s own pairing (which
     # voids any check still open) finds the work already done.
@@ -1658,13 +1718,17 @@ async def void_order(
     # Cancelling through the lifecycle brings the cancellation's consequences
     # with it: an attached online order gets its claimed stock back and its
     # card payment refunded — both of which voiding at the till used to skip.
-    # A pure counter sale is untouched by either (it claimed no stock, and
-    # `_net_paid` above guarantees there is nothing to refund).
     #
-    # `on_invalid="skip"`: the map does not let a packed order be cancelled —
-    # that is the console's call, with a refund conversation attached — so a
-    # till voiding one ends the *check* while the web order keeps its status
-    # for an admin to settle.
+    # For a post-sale counter void the order sits at `delivered` ("Collected"),
+    # which the map lets reach `cancelled` only through the admin `extra_from`
+    # hatch — so this caller names it, exactly as the console does. The
+    # cancellation logs a disposition-required exception against the consumed
+    # inventory, which the restock below resolves.
+    #
+    # `on_invalid="skip"`: the map does not let a packed *online* order be
+    # cancelled — that is the console's call, with a refund conversation attached
+    # — so a till voiding one ends the *check* while the web order keeps its
+    # status for an admin to settle.
     with acting_as(
         StatusSourceEnum.POS.value,
         actor_id=user.id,
@@ -1672,8 +1736,18 @@ async def void_order(
         note="check voided",
     ):
         await order_lifecycle.transition(
-            db, order, OrderStatusEnum.CANCELLED, on_invalid="skip"
+            db,
+            order,
+            OrderStatusEnum.CANCELLED,
+            extra_from=(OrderStatusEnum.DELIVERED,) if post_sale else (),
+            on_invalid="skip",
         )
+
+    # Put the ingredients a completed counter sale consumed back on the shelf.
+    # An open check consumed nothing, so this is only for the post-sale void.
+    if post_sale:
+        await inventory_service.restock_for_void(db, order=order, user=user)
+
     order.voided_at = utcnow()
     order.void_reason_id = reason_id
     order.closer_id = user.id
