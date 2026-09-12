@@ -50,6 +50,7 @@ def _agg(**over):
         cancellation_fee=None,
         marketing_fee=None,
         net_payable=None,
+        refund_amount=None,
         raw=None,
     )
     base.update(over)
@@ -322,6 +323,39 @@ def test_money_fields_derives_inclusive_vat_from_total():
     # MM books no delivery fee or discount for a promoted order.
     assert fields["delivery_fee"] == Decimal("0")
     assert fields["discount_amount"] == Decimal("0")
+
+
+def test_money_fields_books_item_reversal_onto_refunded_amount():
+    # A delivered order with a 70 missing-item reversal on a 140 gross: the gross
+    # stays on total/subtotal (what the customer was charged) and the 70 is booked
+    # on refunded_amount — the field net revenue subtracts — with refunded_at set
+    # to the delivery moment.
+    delivered = datetime(2026, 9, 9, 15, 48)
+    fields = promote._money_fields(
+        _agg(
+            gross_sales=Decimal("140.00"),
+            refund_amount=Decimal("70.00"),
+            delivered_at=delivered,
+        )
+    )
+    assert fields["total"] == Decimal("140.00")
+    assert fields["subtotal"] == Decimal("140.00")
+    assert fields["refunded_amount"] == Decimal("70.00")
+    assert fields["refunded_at"] == delivered
+
+
+def test_money_fields_no_reversal_leaves_refund_zero_and_unstamped():
+    fields = promote._money_fields(_agg(gross_sales=Decimal("40.00")))
+    assert fields["refunded_amount"] == Decimal("0")
+    assert fields["refunded_at"] is None
+
+
+def test_money_fields_caps_reversal_at_total():
+    fields = promote._money_fields(
+        _agg(gross_sales=Decimal("40.00"), refund_amount=Decimal("60.00"))
+    )
+    # Net can never go below zero — a reversal is capped at the sale.
+    assert fields["refunded_amount"] == Decimal("40.00")
 
 
 def test_money_fields_derives_vat_even_when_provider_reports_none():

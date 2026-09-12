@@ -336,6 +336,19 @@ def _money_fields(agg: AggregatorOrder) -> dict:
     # `vat_amount` — which is absent or zero on ~1 in 4 orders and would otherwise
     # book a real sale VAT-free, leaving the shop owing 5% it never recorded.
     excl, vat = pos_pricing.split_inclusive_tax(total, VAT_RATE)
+    # A post-delivery item reversal (Talabat "Operational Charges"/"Vendor Refunds",
+    # captured onto `agg.refund_amount` at ingest): the gross the customer was
+    # charged stays on `total`, and the money that went back is booked on
+    # `refunded_amount` — the exact field `order_economics`/`order_service` net
+    # revenue already subtracts — so a promoted order's net follows the ledger
+    # without lowering its gross. Capped at the total so net cannot go below zero.
+    # This is a recorded fact, not a gateway refund: the money already moved at the
+    # marketplace, so it is set here with the rest of the money rather than driven
+    # through `order_lifecycle` (which owns status + real refund/restock side effects,
+    # none of which apply — the order stays delivered). `refunded_at` is the delivery
+    # moment (when the sale and its reversal economically settled), null when there
+    # is no reversal so the refunds report ignores the order.
+    refunded = money(min(agg.refund_amount, total)) if agg.refund_amount else money(0)
     return {
         # `subtotal` is VAT-INCLUSIVE, matching every other order writer (the
         # counter, the website and the GrubOps ingest all put the gross line sum
@@ -354,6 +367,10 @@ def _money_fields(agg: AggregatorOrder) -> dict:
         "vat_rate": VAT_RATE if vat > 0 else Decimal("0"),
         "vat_amount": vat,
         "total_excl_vat": excl,
+        "refunded_amount": refunded,
+        "refunded_at": (agg.delivered_at or agg.placed_at or utcnow())
+        if refunded > 0
+        else None,
     }
 
 

@@ -424,6 +424,119 @@ def test_orders_from_csv_absent_cancellation_fee_column_is_none():
     assert [e.status for e in order.status_events] == ["received", "delivered"]
 
 
+def test_orders_from_csv_missing_item_reversal_sets_refund_amount():
+    # A delivered order the customer reported a missing item on: Talabat refunds
+    # them and bills it back as an "Operational Charges" line — carried as the
+    # order's refund so the promote step lowers net without touching gross.
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-4004",
+                "Store ID": "793319",
+                "Order status": "Delivered",
+                "Subtotal": "140.00",
+                "Order Items": "1 Brookie Cookie Melt (500 grams)",
+                "Operational Charges": "70.00",
+                "Vendor Refunds": "0.00",
+                "Order received at": "2026-09-09 15:14",
+                "Delivered at": "2026-09-09 15:48",
+                "Cancelled at": "",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    assert order.status == "Delivered"
+    assert order.gross_sales == Decimal("140.00")  # gross the customer was charged
+    assert order.refund_amount == Decimal("70.00")  # missing-item reversal
+
+
+def test_orders_from_csv_vendor_refund_adds_to_reversal():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-4005",
+                "Store ID": "793319",
+                "Order status": "Delivered",
+                "Subtotal": "100.00",
+                "Order Items": "1 Cake",
+                "Operational Charges": "10.00",
+                "Vendor Refunds": "15.00",
+                "Order received at": "2026-09-09 12:00",
+                "Delivered at": "2026-09-09 12:40",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    assert order.refund_amount == Decimal("25.00")
+
+
+def test_orders_from_csv_reversal_capped_at_subtotal():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-4006",
+                "Store ID": "793319",
+                "Order status": "Delivered",
+                "Subtotal": "40.00",
+                "Order Items": "1 Soda",
+                "Operational Charges": "60.00",
+                "Order received at": "2026-09-09 10:00",
+                "Delivered at": "2026-09-09 10:20",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    # Never book back more than the sale itself.
+    assert order.refund_amount == Decimal("40.00")
+
+
+def test_orders_from_csv_no_reversal_columns_leaves_refund_none():
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-4007",
+                "Store ID": "793319",
+                "Order status": "Delivered",
+                "Subtotal": "70.00",
+                "Order Items": "1 Brookie Cookie Melt (500 grams)",
+                "Operational Charges": "0.00",
+                "Vendor Refunds": "0.00",
+                "Order received at": "2026-09-09 16:24",
+                "Delivered at": "2026-09-09 17:06",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    assert order.refund_amount is None
+
+
+def test_orders_from_csv_cancelled_order_reversal_ignored():
+    # A cancelled order's whole value is handled by the cancellation path — its
+    # "Vendor Refunds" is not a partial reversal to book onto refund_amount.
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-4008",
+                "Store ID": "793319",
+                "Order status": "Cancelled",
+                "Subtotal": "110.00",
+                "Order Items": "1 Cake",
+                "Vendor Refunds": "33.00",
+                "Order received at": "2026-08-30 12:00",
+                "Cancelled at": "2026-08-30 12:05",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    assert order.status == "Cancelled"
+    assert order.refund_amount is None
+
+
 # ── 5. TalabatClient._parse_bundle_bytes ──────────────────────────────────────
 
 
