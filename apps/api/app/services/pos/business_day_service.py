@@ -19,7 +19,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, heartbeat
-from app.core.database import SchedulerSessionFactory
 from app.core.exceptions import ConflictError
 from app.models.base import utcnow
 from app.models.branch import Branch, BranchBusinessDay
@@ -361,20 +360,23 @@ async def run_forever() -> None:
             # Sleeps first: boot is busy and nothing here is urgent.
             await asyncio.sleep(_TICK_SECONDS)
             await heartbeat.beat("business_day_sweeper")
-            async with advisory_lock.held(
+            # One scheduler connection, not two: `held_session` runs the sweep on
+            # the lock's own connection instead of booking a second one. The commit
+            # is safe under it (the session-level lock is on the connection, not the
+            # transaction), and no third-party await is held across the session.
+            async with advisory_lock.held_session(
                 _ADVISORY_LOCK_KEY, name="business day sweeper"
-            ) as mine:
-                if not mine:
+            ) as db:
+                if db is None:
                     continue
-                async with SchedulerSessionFactory() as db:
-                    closed = await sweep_stale_business_days(db)
-                    await db.commit()
-                    if closed:
-                        logger.info(
-                            "Business day sweeper closed %s stranded day(s): %s",
-                            len(closed),
-                            closed,
-                        )
+                closed = await sweep_stale_business_days(db)
+                await db.commit()
+                if closed:
+                    logger.info(
+                        "Business day sweeper closed %s stranded day(s): %s",
+                        len(closed),
+                        closed,
+                    )
         except asyncio.CancelledError:
             logger.info("Business day sweeper stopping")
             raise

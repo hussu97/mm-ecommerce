@@ -1874,18 +1874,25 @@ async def sweep_promote_once() -> int:
     from app.models.aggregator import AGGREGATOR_CHANNELS
     from app.services.aggregators import promote
 
-    async with advisory_lock.held(_PROMOTE_LOCK_KEY, name="aggregator promote") as mine:
-        if not mine:
+    # One scheduler connection, not two: run the promotion on the lock's own
+    # connection (`held_session`) instead of booking a second scheduler session on
+    # top of the lock. Promotion is DB-only (no third-party await), and the
+    # per-channel commit/rollback is safe under the session-level lock, which lives
+    # on the connection and survives both. This is the 2→1 relief for one of the
+    # sweeps that was found pinning scheduler connections during the daily pass.
+    async with advisory_lock.held_session(
+        _PROMOTE_LOCK_KEY, name="aggregator promote"
+    ) as db:
+        if db is None:
             return 0
         touched = 0
-        async with AsyncSessionFactory() as db:
-            for channel in AGGREGATOR_CHANNELS:
-                try:
-                    touched += await promote.promote_channel(db, channel)
-                    await db.commit()
-                except Exception:  # noqa: BLE001 — one channel must not stop the rest
-                    await db.rollback()
-                    logger.exception("aggregator %s promotion failed", channel)
+        for channel in AGGREGATOR_CHANNELS:
+            try:
+                touched += await promote.promote_channel(db, channel)
+                await db.commit()
+            except Exception:  # noqa: BLE001 — one channel must not stop the rest
+                await db.rollback()
+                logger.exception("aggregator %s promotion failed", channel)
         return touched
 
 
@@ -1909,28 +1916,33 @@ async def sweep_reconcile_once() -> int:
         return 0
     from app.models.aggregator import AGGREGATOR_CHANNELS
 
-    async with advisory_lock.held(
+    # One scheduler connection, not two: reconcile on the lock's own connection
+    # (`held_session`) rather than a second scheduler session. Reconcile is DB-only
+    # (link + compare, no third-party await), and the per-channel commit/rollback is
+    # safe under the connection-held session lock. This is the sweep observed
+    # pinning a scheduler connection idle-in-transaction for tens of seconds during
+    # the daily pass — halving its cost is the point of this change.
+    async with advisory_lock.held_session(
         _RECONCILE_LOCK_KEY, name="aggregator reconcile"
-    ) as mine:
-        if not mine:
+    ) as db:
+        if db is None:
             return 0
         touched = 0
-        async with AsyncSessionFactory() as db:
-            for channel in AGGREGATOR_CHANNELS:
-                try:
-                    # Close the order→statement and statement→payout legs first so
-                    # a finance query joining payout↔statement↔line↔order sees the
-                    # freshest links. Channel-agnostic, so it covers the push
-                    # channels (Keeta/Deliveroo) the httpx sweep never touches —
-                    # and re-links Deliveroo orders whose invoice `Order ID` is
-                    # `drn_id`, not the sales UUID / short display_ref.
-                    await link_orders_to_statements(db, channel)
-                    await link_statements_to_payouts(db, channel)
-                    touched += await reconcile.reconcile_channel(db, channel)
-                    await db.commit()
-                except Exception:  # noqa: BLE001 — one channel must not stop the rest
-                    await db.rollback()
-                    logger.exception("aggregator %s reconcile failed", channel)
+        for channel in AGGREGATOR_CHANNELS:
+            try:
+                # Close the order→statement and statement→payout legs first so
+                # a finance query joining payout↔statement↔line↔order sees the
+                # freshest links. Channel-agnostic, so it covers the push
+                # channels (Keeta/Deliveroo) the httpx sweep never touches —
+                # and re-links Deliveroo orders whose invoice `Order ID` is
+                # `drn_id`, not the sales UUID / short display_ref.
+                await link_orders_to_statements(db, channel)
+                await link_statements_to_payouts(db, channel)
+                touched += await reconcile.reconcile_channel(db, channel)
+                await db.commit()
+            except Exception:  # noqa: BLE001 — one channel must not stop the rest
+                await db.rollback()
+                logger.exception("aggregator %s reconcile failed", channel)
         return touched
 
 

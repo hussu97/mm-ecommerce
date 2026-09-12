@@ -41,7 +41,6 @@ from sqlalchemy import delete
 
 from app.core import advisory_lock, heartbeat
 from app.core.config import settings
-from app.core.database import SchedulerSessionFactory
 from app.models.audit_log import AuditLog
 from app.models.email_log import EmailLog
 from app.models.webhook_event import WebhookEvent
@@ -70,35 +69,40 @@ async def sweep_once(now: datetime | None = None) -> dict[str, int]:
     Returns how many rows went, per table — `{}` when another worker held the
     lock, which is a normal outcome rather than a failure.
     """
-    async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="log retention") as mine:
-        if not mine:
+    # One scheduler connection, not two: `held_session` binds the work session to
+    # the lock's own connection, so the purge no longer books a second scheduler
+    # connection on top of the lock. Committing is safe — the session-level lock
+    # lives on the connection, not the transaction, so it survives the commit. No
+    # third-party await is held across this session, so the scheduler-session guard
+    # is satisfied.
+    async with advisory_lock.held_session(
+        _ADVISORY_LOCK_KEY, name="log retention"
+    ) as session:
+        if session is None:
             return {}
-        async with SchedulerSessionFactory() as session:
-            short = _cutoff(settings.LOG_RETENTION_DAYS, now)
-            long = _cutoff(settings.AUDIT_RETENTION_DAYS, now)
+        short = _cutoff(settings.LOG_RETENTION_DAYS, now)
+        long = _cutoff(settings.AUDIT_RETENTION_DAYS, now)
 
-            removed = {
-                "webhook_logs": await _purge(
-                    session, WebhookLog, WebhookLog.received_at, short
-                ),
-                "email_logs": await _purge(session, EmailLog, EmailLog.sent_at, short),
-                "webhook_events": await _purge(
-                    session, WebhookEvent, WebhookEvent.processed_at, short
-                ),
-                "audit_logs": await _purge(
-                    session, AuditLog, AuditLog.created_at, long
-                ),
-            }
-            await session.commit()
-            # Under the same lock, so one worker shouts once an hour rather
-            # than every worker shouting at once. Failure to count must not
-            # break the purge that just committed — the retention guarantee
-            # and the alerting are independent jobs sharing a ride.
-            try:
-                await email_service.report_failed_sends(session, now)
-            except Exception:  # noqa: BLE001 — the watch must not kill the sweep
-                logger.exception("Failed-email watch errored; purge unaffected")
-            return {table: count for table, count in removed.items() if count}
+        removed = {
+            "webhook_logs": await _purge(
+                session, WebhookLog, WebhookLog.received_at, short
+            ),
+            "email_logs": await _purge(session, EmailLog, EmailLog.sent_at, short),
+            "webhook_events": await _purge(
+                session, WebhookEvent, WebhookEvent.processed_at, short
+            ),
+            "audit_logs": await _purge(session, AuditLog, AuditLog.created_at, long),
+        }
+        await session.commit()
+        # Under the same lock, so one worker shouts once an hour rather
+        # than every worker shouting at once. Failure to count must not
+        # break the purge that just committed — the retention guarantee
+        # and the alerting are independent jobs sharing a ride.
+        try:
+            await email_service.report_failed_sends(session, now)
+        except Exception:  # noqa: BLE001 — the watch must not kill the sweep
+            logger.exception("Failed-email watch errored; purge unaffected")
+        return {table: count for table, count in removed.items() if count}
 
 
 async def _purge(session, model, column, cutoff: datetime) -> int:
