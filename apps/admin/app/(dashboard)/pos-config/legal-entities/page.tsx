@@ -72,7 +72,13 @@ export default function LegalEntitiesTab() {
         { name: 'tax_number', label: 'TRN (blank if not registered)' },
         { name: 'invoice_title', label: 'Invoice title (e.g. Tax Invoice / Invoice)', required: true },
         { name: 'trade_license_number', label: 'Trade licence number (optional)' },
-        { name: 'logo_url', label: 'Logo URL (public GCS image)' },
+        {
+          name: 'logo_url',
+          label: 'Logo',
+          type: 'image',
+          folder: 'logos',
+          helper: 'Printed on this entity’s receipts. PNG/JPEG; a clean, high-contrast image thresholds best on a thermal printer.',
+        },
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />

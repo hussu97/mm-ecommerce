@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiError } from '@/lib/api';
+import { ApiError, uploadsApi } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import {
   DataTable,
@@ -23,7 +23,14 @@ import { cn } from '@/lib/utils';
  * confirm-before-delete.
  */
 
-export type FieldType = 'text' | 'number' | 'password' | 'select' | 'checkbox' | 'textarea';
+export type FieldType =
+  | 'text'
+  | 'number'
+  | 'password'
+  | 'select'
+  | 'checkbox'
+  | 'textarea'
+  | 'image';
 
 export interface FieldDef {
   /**
@@ -41,6 +48,8 @@ export interface FieldDef {
   createOnly?: boolean;
   editOnly?: boolean;
   step?: string;
+  /** For `type: 'image'` — the GCS folder to upload into (default `logos`). */
+  folder?: string;
 }
 
 export interface ColumnDef<T> {
@@ -452,6 +461,10 @@ function FormField({
     );
   }
 
+  if (field.type === 'image') {
+    return <ImageField field={field} value={value} onChange={onChange} />;
+  }
+
   if (field.type === 'textarea') {
     return (
       <label className="block">
@@ -482,6 +495,84 @@ function FormField({
       placeholder={field.placeholder}
       helper={field.helper}
     />
+  );
+}
+
+/**
+ * An inline image field: shows the current image, and an Upload button that
+ * sends the chosen file to GCS (via `/uploads/image`) and stores the returned
+ * public URL. The URL is what is saved on the record, so nothing else changes —
+ * a receipt/report reads the same `logo_url` whether it was pasted or uploaded.
+ */
+function ImageField({
+  field,
+  value,
+  onChange,
+}: {
+  field: FieldDef;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const url = value === undefined || value === null ? '' : String(value);
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      const res = await uploadsApi.uploadImage(file, field.folder ?? 'logos');
+      onChange(res.url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div>
+      <span className="mb-1 block text-xs uppercase tracking-widest text-gray-500 font-body">
+        {field.label}
+      </span>
+      <div className="flex items-center gap-3">
+        {url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt=""
+            className="h-12 w-12 rounded border border-gray-200 object-contain bg-white"
+          />
+        ) : (
+          <div className="h-12 w-12 rounded border border-dashed border-gray-300" />
+        )}
+        <label className="cursor-pointer rounded border border-gray-300 px-3 py-1.5 text-xs font-body text-gray-700 hover:bg-gray-50">
+          {uploading ? 'Uploading…' : url ? 'Replace' : 'Upload'}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => void upload(e.target.files?.[0])}
+          />
+        </label>
+        {url && !uploading && (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="text-xs font-body text-gray-400 hover:text-red-600"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      {url && <p className="mt-1 text-[11px] font-body text-gray-400 break-all">{url}</p>}
+      {error && <p className="mt-1 text-xs font-body text-red-600">{error}</p>}
+      {field.helper && (
+        <p className="mt-1 text-[11px] font-body text-gray-400">{field.helper}</p>
+      )}
+    </div>
   );
 }
 
