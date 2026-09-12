@@ -98,6 +98,7 @@ export default function TransferOrderDetailPage() {
   );
 
   const isReturn = order.kind === 'return';
+  const hasSendingVariance = (report?.children ?? []).some((c) => c.has_sending_variance);
   const groups = groupByCategory(order.total_by_item);
   const children = order.children;
   const grandTotal = order.total_by_item.reduce((sum, l) => sum + num(l.total_quantity), 0);
@@ -113,8 +114,15 @@ export default function TransferOrderDetailPage() {
         <div className="flex items-center gap-2">
           <Badge variant={isReturn ? 'warning' : 'neutral'}>{isReturn ? 'Return' : 'Transfer'}</Badge>
           <Badge variant={transferStatusVariant(order.status)}>{transferStatusLabel(order.status)}</Badge>
+          {hasSendingVariance && <Badge variant="danger">Sending variance</Badge>}
         </div>
       </div>
+
+      {hasSendingVariance && (
+        <p className="border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          At least one leg shipped with a sending variance — the quantity sent differs from what was requested. The affected legs are marked below.
+        </p>
+      )}
 
       <div className="grid gap-3 border border-gray-200 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <Detail label="Source" value={branchName(order.source_branch_id)} />
@@ -196,6 +204,7 @@ export default function TransferOrderDetailPage() {
                   <th className="px-2 py-1 text-right">Received</th>
                   <th className="px-2 py-1 text-right">Sent value</th>
                   <th className="px-2 py-1 text-right">Received value</th>
+                  <th className="px-2 py-1">Variance</th>
                 </tr>
               </thead>
               <tbody>
@@ -209,10 +218,13 @@ export default function TransferOrderDetailPage() {
                     <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_received)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.sent_value)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.received_value)}</td>
+                    <td className="px-2 py-1">
+                      {child.has_sending_variance ? <Badge variant="danger">Sent ≠ requested</Badge> : <span className="text-gray-300">—</span>}
+                    </td>
                   </tr>
                 ))}
                 {report.children.length === 0 && (
-                  <tr><td colSpan={8} className="px-2 py-2 text-center text-sm text-gray-400">No legs.</td></tr>
+                  <tr><td colSpan={9} className="px-2 py-2 text-center text-sm text-gray-400">No legs.</td></tr>
                 )}
               </tbody>
             </table>
