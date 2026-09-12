@@ -16,7 +16,10 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["one_line", "recipient_name"]
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import NoInspectionAvailable
+
+__all__ = ["one_line", "recipient_name", "delivery_contact"]
 
 #: The order the parts are read in.
 #:
@@ -60,3 +63,33 @@ def recipient_name(snapshot: dict[str, Any] | None) -> str | None:
         str(snapshot.get(key) or "").strip() for key in ("first_name", "last_name")
     ]
     return " ".join(part for part in parts if part) or None
+
+
+def delivery_contact(order: Any) -> tuple[str | None, str | None]:
+    """The name and number a courier drop-off should carry for this order.
+
+    The gift recipient when one was given — an order placed for someone else is
+    handed to *them*, not to the person who paid, so their name and phone are
+    what the driver is given (`OrderReceiver`). Otherwise the shipping address's
+    own name and phone, as before. Centralised so all three courier builders
+    (Slider, Lalamove, noon Send) make the same choice — Slider carries only the
+    phone, the other two carry both.
+
+    Reads `order.receiver` only when it is already loaded: a bare relationship
+    access on an async ORM order that did not eager-load it is a `MissingGreenlet`,
+    not a query. The dispatch path loads it (`courier_service.dispatch` ensures
+    it); a quote or estimate path that did not simply falls back to the address,
+    which is all a quote needs. A stand-in that is not an ORM instance at all (a
+    test's `SimpleNamespace`) has no lazy load to trigger, so it is read directly.
+    `recipient_name` and the raw `phone` come from the snapshot exactly as they
+    did before this existed.
+    """
+    snapshot = order.shipping_address_snapshot or {}
+    try:
+        receiver_loaded = "receiver" not in sa_inspect(order).unloaded
+    except NoInspectionAvailable:
+        receiver_loaded = True
+    receiver = getattr(order, "receiver", None) if receiver_loaded else None
+    if receiver is not None:
+        return receiver.name, receiver.phone
+    return recipient_name(snapshot), (snapshot.get("phone") or None)

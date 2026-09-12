@@ -681,7 +681,7 @@ async def test_a_live_courier_eta_is_shown_verbatim_once_the_rider_has_it():
     eta = NOW + timedelta(minutes=35)
     result = await _fulfilment(
         _order(status=OrderStatusEnum.OUT_FOR_DELIVERY, promised_precision="day"),
-        _delivery(provider="slider", courier_eta_at=eta),
+        _delivery(provider="slider_car", courier_eta_at=eta),
         reached={"out_for_delivery": NOW - timedelta(minutes=5)},
     )
     assert result.precision == "time"

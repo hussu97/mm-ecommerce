@@ -471,6 +471,23 @@ export type AddressFormDraft = Omit<AddressCreate, 'latitude' | 'longitude'> & {
 
 // ─── Order (create) ───────────────────────────────────────────────────────────
 
+/** Who is collecting a store-pickup order. Required for a pickup order. */
+export interface PickupContactCreate {
+  first_name: string;
+  last_name: string;
+  phone: string;
+}
+
+/**
+ * A gift recipient — someone other than the orderer receiving a delivery.
+ * Optional, delivery only. Drives the courier drop-off contact; the orderer's
+ * own number stays what the coupon limits key on.
+ */
+export interface ReceiverCreate {
+  name: string;
+  phone: string;
+}
+
 export interface OrderCreate {
   /** Optional — a phone number is enough to run a delivery. */
   email?: string;
@@ -478,6 +495,10 @@ export interface OrderCreate {
   shipping_address?: AddressCreate;
   /** Which branch the customer is coming to. Pickup orders only. */
   pickup_branch_id?: string;
+  /** Name + phone for a pickup order. Required when `delivery_method` is pickup. */
+  pickup_contact?: PickupContactCreate;
+  /** An optional gift recipient. Delivery only; ignored for pickup. */
+  receiver?: ReceiverCreate;
   /** The checkout's language. Every email about this order is written in it. */
   locale?: string;
   promo_code?: string;

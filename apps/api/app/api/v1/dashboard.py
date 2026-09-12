@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -68,11 +68,33 @@ _REVENUE_STATUSES = Order.status != OrderStatusEnum.CANCELLED
 
 #: The trading pipeline, most human-readable label first. Kept explicit so the
 #: order the buckets appear in on screen is decided here, not by row order.
+#:
+#: The storefront (`online`) is split in two: a store-pickup order is its own
+#: channel ("Store Pickup") rather than folded into the website's delivery sales,
+#: because the shop tracks the two as different businesses. The split is by
+#: `delivery_method`, expressed in `_CHANNEL_EXPR` below — the counter and the
+#: marketplaces group on `source` unchanged.
 _CHANNEL_LABELS = {
-    OrderSourceEnum.ONLINE.value: "Storefront",
+    "website_delivery": "Website Delivery",
+    "website_pickup": "Store Pickup",
     OrderSourceEnum.CASHIER.value: "Counter",
     OrderSourceEnum.AGGREGATOR.value: "Aggregator",
 }
+
+#: The grouping key for `by_channel`: `online` orders split into
+#: `website_delivery` / `website_pickup` by fulfilment method; everything else
+#: keeps its `source`. Mirrors `order_query.WEBSITE_PICKUP_CODE`.
+_CHANNEL_EXPR = case(
+    (
+        and_(
+            Order.source == OrderSourceEnum.ONLINE.value,
+            Order.delivery_method == DeliveryMethodEnum.PICKUP,
+        ),
+        "website_pickup",
+    ),
+    (Order.source == OrderSourceEnum.ONLINE.value, "website_delivery"),
+    else_=Order.source,
+)
 
 
 async def _count(db: AsyncSession, stmt) -> int:
@@ -188,8 +210,9 @@ async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownR
     counter, `aggregator_channel` for a marketplace, the delivery record's
     provider for a dispatch courier) and there is no single column to group by.
     Delivered-only, so this reads as settled courier revenue. One row per known
-    courier code, busiest first; a delivered order with no resolvable carrier
-    (an online pickup) counts under none.
+    courier code, busiest first. A store-pickup order has no carrier but is its
+    own synthetic code (`website_pickup`), the way the counter is; an order with
+    no resolvable carrier at all counts under none.
     """
     provider = (
         select(OrderDelivery.provider)
@@ -203,6 +226,7 @@ async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownR
                 Order.source,
                 Order.aggregator_channel,
                 Order.total,
+                Order.delivery_method,
                 provider.label("provider"),
             ).where(
                 Order.created_at >= start,
@@ -213,9 +237,12 @@ async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownR
     ).all()
 
     totals: dict[str, list] = {code: [0, 0.0] for code in order_query.ALL_COURIER_CODES}
-    for source, channel, total, prov in rows:
+    for source, channel, total, method, prov in rows:
         code = order_query.courier_code_for(
-            getattr(source, "value", source), channel, prov
+            getattr(source, "value", source),
+            channel,
+            prov,
+            delivery_method=getattr(method, "value", method),
         )
         if code is None or code not in totals:
             continue
@@ -228,7 +255,7 @@ async def _by_courier(db: AsyncSession, *, start, end) -> list[CourierBreakdownR
             label=order_query.courier_label(code),
             logo_url=(
                 None
-                if code == order_query.COUNTER_CODE
+                if code in (order_query.COUNTER_CODE, order_query.WEBSITE_PICKUP_CODE)
                 else courier_catalog.logo_url_for(code)
             ),
             orders=orders,
@@ -397,7 +424,7 @@ async def dashboard_today(
 
     by_channel = await _breakdown(
         db,
-        Order.source,
+        _CHANNEL_EXPR,
         start=start,
         end=end,
         labels=_CHANNEL_LABELS,

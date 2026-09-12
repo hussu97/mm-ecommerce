@@ -24,6 +24,12 @@ def _data(**over) -> OrderCreate:
         email="jane@example.com",
         delivery_method=DeliveryMethodEnum.PICKUP,
         payment_method="cod",
+        # A pickup order now carries the collecting customer's contact.
+        pickup_contact={
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "phone": "+971501234567",
+        },
     )
     return OrderCreate(**{**base, **over})
 

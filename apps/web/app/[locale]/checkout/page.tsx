@@ -662,6 +662,20 @@ function CheckoutContent() {
         }
       : undefined,
     pickup_branch_id: isDelivery ? undefined : pickupBranchId || undefined,
+    // Who is collecting a pickup order. A pickup has no address to carry a name
+    // and number, so they travel on their own field — required by the API for a
+    // pickup, and what the counter reaches the customer on.
+    pickup_contact: isDelivery
+      ? undefined
+      : { first_name: form.firstName, last_name: form.lastName, phone: form.phone },
+    // A gift recipient, when the customer is ordering for someone else. Delivery
+    // only, and only when the toggle is on — the courier is given this name and
+    // number for the drop-off, while the orderer's own number (on the address)
+    // stays what the coupon limits key on.
+    receiver:
+      isDelivery && form.receiverEnabled
+        ? { name: form.receiverName.trim(), phone: form.receiverPhone }
+        : undefined,
     // Stamped on the order, and every email about it is written in it.
     locale,
     promo_code: form.promoDiscount > 0 ? form.promoCode : undefined,
@@ -821,7 +835,21 @@ function CheckoutContent() {
           found.pickupBranch = t('checkout.pickup_branch_required');
         }
         if (!form.firstName.trim()) found.firstName = t('checkout.first_name_required');
+        if (!form.lastName.trim()) found.lastName = t('checkout.last_name_required');
         if (!form.phone.trim() || !isValidPhone(form.phone)) found.phone = t('checkout.valid_phone_required');
+      }
+
+      // A gift recipient, when the customer turned it on. Delivery only, and the
+      // same phone validation as everywhere else — but no verification, since the
+      // recipient never signs in. Their name and number are what the courier is
+      // given for the drop-off.
+      if (isDelivery && form.receiverEnabled) {
+        if (!form.receiverName.trim()) {
+          found.receiverName = t('checkout.receiver_name_required');
+        }
+        if (!form.receiverPhone.trim() || !isValidPhone(form.receiverPhone)) {
+          found.receiverPhone = t('checkout.valid_phone_required');
+        }
       }
 
       // Required now, not merely checked-if-typed. `OrderCreate` demands an
@@ -1365,12 +1393,15 @@ function CheckoutContent() {
                   error={errors.firstName}
                 />
               </div>
-              <Input
-                aria-label={t('common.last_name')}
-                placeholder={t('checkout.last_name_placeholder')}
-                value={form.lastName}
-                onChange={(e) => onChange({ lastName: e.target.value })}
-              />
+              <div data-field="lastName" data-field-error={errors.lastName ? 'true' : undefined}>
+                <Input
+                  aria-label={t('common.last_name')}
+                  placeholder={t('checkout.last_name_placeholder')}
+                  value={form.lastName}
+                  onChange={(e) => { onChange({ lastName: e.target.value }); clearError('lastName'); }}
+                  error={errors.lastName}
+                />
+              </div>
             </div>
             <div data-field="phone" data-field-error={errors.phone ? 'true' : undefined}>
               <PhoneInput
@@ -1380,6 +1411,54 @@ function CheckoutContent() {
               />
             </div>
           </div>
+        </Section>
+      )}
+
+      {/* 2b — Someone else receiving it. Delivery only, and a gift: the courier
+             is given this name and number for the drop-off, while the orderer's
+             own contact (on the address above) stays who the confirmation and the
+             coupon limits are about. Not phone-verified. */}
+      {isDelivery && (
+        <Section label={t('checkout.receiver_section')}>
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary/40"
+              checked={form.receiverEnabled}
+              onChange={(e) => {
+                onChange({ receiverEnabled: e.target.checked });
+                if (!e.target.checked) { clearError('receiverName'); clearError('receiverPhone'); }
+              }}
+            />
+            <span className="flex-1">
+              <span className="block font-body text-sm text-gray-800">
+                {t('checkout.receiver_toggle')}
+              </span>
+              <span className="block font-body text-xs text-gray-400 mt-0.5">
+                {t('checkout.receiver_hint')}
+              </span>
+            </span>
+          </label>
+          {form.receiverEnabled && (
+            <div className="space-y-3 mt-3">
+              <div data-field="receiverName" data-field-error={errors.receiverName ? 'true' : undefined}>
+                <Input
+                  aria-label={t('checkout.receiver_name_label')}
+                  placeholder={t('checkout.receiver_name_placeholder')}
+                  value={form.receiverName}
+                  onChange={(e) => { onChange({ receiverName: e.target.value }); clearError('receiverName'); }}
+                  error={errors.receiverName}
+                />
+              </div>
+              <div data-field="receiverPhone" data-field-error={errors.receiverPhone ? 'true' : undefined}>
+                <PhoneInput
+                  value={form.receiverPhone}
+                  onChange={(v) => { onChange({ receiverPhone: v }); clearError('receiverPhone'); }}
+                  error={errors.receiverPhone}
+                />
+              </div>
+            </div>
+          )}
         </Section>
       )}
 

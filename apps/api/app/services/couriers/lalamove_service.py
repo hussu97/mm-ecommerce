@@ -511,7 +511,11 @@ def build_drop(
     if latitude is None or longitude is None:
         return None, "Order has no delivery coordinates"
 
-    phone = normalise_phone(str(address.get("phone") or ""))
+    # The gift recipient's name and number when the order was placed for someone
+    # else, else the address's own — this is who the driver is handed the box.
+    # See `address_format.delivery_contact`.
+    contact_name, contact_phone = address_format.delivery_contact(order)
+    phone = normalise_phone(str(contact_phone or ""))
     if not phone:
         return None, "Order has no reachable phone number"
 
@@ -522,7 +526,7 @@ def build_drop(
                 "coordinates": {"lat": f"{latitude:.7f}", "lng": f"{longitude:.7f}"},
                 "address": _drop_address(address),
             },
-            name=_recipient_name(address) or order.order_number,
+            name=contact_name or order.order_number,
             phone=phone,
             remarks=_remarks(order, address, reference),
         ),

@@ -63,6 +63,9 @@ def _order(**overrides) -> Order:
         # the relationship as unloaded and refreshes it.
         "legal_entity_id": None,
         "legal_entity": None,
+        # The gift recipient relationship — set (null) for the same reason, so
+        # `items` stays the only unloaded thing this file is about.
+        "receiver": None,
         # Every column, per the docstring — a detached instance treats anything
         # it was not given as unloaded, and the whole point of these tests is
         # that `items` is the only thing missing.

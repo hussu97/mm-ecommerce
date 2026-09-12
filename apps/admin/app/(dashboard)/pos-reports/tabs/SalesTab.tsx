@@ -52,6 +52,9 @@ export function SalesTab({ window }: { window: Window }) {
               { value: 'category', label: 'Category' },
               { value: 'modifier_option', label: 'Modifier option' },
               { value: 'source', label: 'Order source' },
+              // The fuller split: each marketplace apart, and the website divided
+              // into delivery vs store pickup (which `source` folds together).
+              { value: 'channel', label: 'Sales channel' },
               { value: 'legal_entity', label: 'Legal entity (trade license)' },
               { value: 'business_date', label: 'Day' },
               { value: 'hour', label: 'Hour of day' },

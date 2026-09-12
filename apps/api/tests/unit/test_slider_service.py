@@ -29,6 +29,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
+from app.models.order import Order
 from app.models.order_delivery import (
     SLIDER_FAILED_STATUSES,
     SLIDER_STATUS_RANK,
@@ -202,7 +203,12 @@ def _order(**overrides):
         },
     }
     values.update(overrides)
-    return SimpleNamespace(**values)
+    # A real (transient) ORM order rather than a SimpleNamespace: the courier
+    # drop-off contact now reads `order.receiver` only when loaded, guarding it
+    # with `sqlalchemy.inspect` (`address_format.delivery_contact`), and a
+    # transient instance answers that with no database — which is what a
+    # hand-built order is.
+    return Order(**values)
 
 
 PICKUP = SimpleNamespace(
@@ -726,10 +732,15 @@ def booked(monkeypatch, pickup):
     return sent
 
 
-def _row():
+def _row(provider="slider_car"):
     from app.models.order_delivery import OrderDelivery
 
-    return OrderDelivery(order_id=uuid.uuid4(), provider="slider")
+    # The bare legacy `slider` provider was retired (`241_drop_legacy_slider`);
+    # a delivery row now always names a tier. `slider_car` is the default (what
+    # the migration maps the old rows to and what a cross-emirate drop uses); a
+    # same-emirate/bike scenario passes `slider_bike`. The tier the row names is
+    # the vehicle the booking asks for (`vehicle_for_provider`).
+    return OrderDelivery(order_id=uuid.uuid4(), provider=provider)
 
 
 @pytest.mark.asyncio
@@ -774,7 +785,7 @@ async def test_a_drop_inside_sharjah_is_quoted_and_booked_on_the_bike(booked):
             "city": "Sharjah",
         }
     )
-    db = _Db(_row())
+    db = _Db(_row("slider_bike"))  # a Sharjah zone is a bike tier
 
     estimate, _ = await slider_service.estimate_for_point(
         db, 25.3213, 55.3820, drop_emirate="Sharjah"
@@ -984,7 +995,7 @@ async def test_the_vehicle_they_assigned_beats_the_one_we_asked_for(
 
     monkeypatch.setattr(slider_service.provider, "create_delivery", substituting)
     db = _Db(_row())
-    await slider_service.dispatch_order(db, _order(delivery_emirate="Sharjah"))
+    await slider_service.dispatch_order(db, _order())
 
     # Theirs, both of them.
     assert db.delivery.cost_total == Decimal("26.00")
@@ -1344,7 +1355,7 @@ async def test_a_checkout_quote_prices_the_tier_the_booking_will_use(booked):
     going to be booked at, which is exactly the disagreement `vehicle_for`
     exists to prevent, reintroduced one layer up.
     """
-    db = _Db(_row())
+    db = _Db(_row("slider_bike"))  # a Sharjah Core zone is a bike tier
 
     by_zone, _ = await slider_service.estimate_for_point(
         db, 25.3213, 55.3820, drop_emirate="Sharjah Core"

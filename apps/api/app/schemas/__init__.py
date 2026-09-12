@@ -22,6 +22,9 @@ from .order import (
     OrderListResponse,
     OrderResponse,
     OrderStatusUpdate,
+    PickupContactCreate,
+    ReceiverCreate,
+    ReceiverResponse,
 )
 from .product import ProductCreate, ProductResponse, ProductUpdate
 from .promo_code import (
@@ -79,6 +82,9 @@ __all__ = [
     "OrderResponse",
     "OrderListResponse",
     "OrderItemResponse",
+    "PickupContactCreate",
+    "ReceiverCreate",
+    "ReceiverResponse",
     # Promo
     "PromoCodeCreate",
     "PromoCodeUpdate",

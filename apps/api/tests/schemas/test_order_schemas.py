@@ -21,8 +21,40 @@ class TestOrderCreate:
             email="test@example.com",
             delivery_method=DeliveryMethodEnum.PICKUP,
             payment_method="stripe",
+            pickup_contact={
+                "first_name": "Test",
+                "last_name": "Customer",
+                "phone": "+971501234567",
+            },
         )
         assert order.delivery_method == DeliveryMethodEnum.PICKUP
+        assert order.pickup_contact is not None
+
+    def test_pickup_requires_a_contact(self):
+        # A pickup order has no address to carry a name and number, so it must
+        # bring its own — refused with a message the customer can act on.
+        with pytest.raises(ValidationError):
+            OrderCreate(
+                email="test@example.com",
+                delivery_method=DeliveryMethodEnum.PICKUP,
+                payment_method="stripe",
+            )
+
+    def test_receiver_is_dropped_on_a_pickup_order(self):
+        # A gift recipient is a delivery-only idea; it is dropped rather than
+        # rejected so an older client that always sends it cannot wedge.
+        order = OrderCreate(
+            email="test@example.com",
+            delivery_method=DeliveryMethodEnum.PICKUP,
+            payment_method="stripe",
+            pickup_contact={
+                "first_name": "Test",
+                "last_name": "Customer",
+                "phone": "+971501234567",
+            },
+            receiver={"name": "Someone Else", "phone": "+971502223333"},
+        )
+        assert order.receiver is None
 
     def test_invalid_delivery_method(self):
         with pytest.raises(ValidationError):

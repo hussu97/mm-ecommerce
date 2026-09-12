@@ -47,6 +47,39 @@ class OrderItemResponse(BaseModel):
     personalisation_note: str | None = None
 
 
+class PickupContactCreate(BaseModel):
+    """Who is collecting a store-pickup order, and how to reach them.
+
+    A pickup order has no address, so it used to carry no name and no number —
+    the shop was left with only an email. These are collected at checkout the
+    same way a delivery address collects them and land on `customer_name` /
+    `customer_phone`, so the counter can call the customer and the
+    new-customer coupon has a phone identity to key on. Validation of the
+    number itself is delegated to `describe_phone` in `_persist_order`, exactly
+    as the shipping address's phone is — the length bounds here only match
+    `AddressCreate.phone`.
+    """
+
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    phone: str = Field(min_length=7, max_length=20)
+
+
+class ReceiverCreate(BaseModel):
+    """Someone other than the orderer receiving a delivery — a gift.
+
+    Optional, and delivery only. The name and number here are what the courier
+    is given for the drop-off (see `address_format.delivery_contact`); the
+    orderer's own number stays on `Order.customer_phone` and remains what the
+    per-customer coupon rules key on, so ordering for someone else never spends
+    the recipient's coupon allowance. Not phone-verified. Same length bounds as
+    the shipping address's phone; normalised through `describe_phone` on write.
+    """
+
+    name: str = Field(min_length=1, max_length=150)
+    phone: str = Field(min_length=7, max_length=20)
+
+
 class OrderCreate(BaseModel):
     #: Where the confirmation goes, and half of who this customer is.
     #:
@@ -75,6 +108,14 @@ class OrderCreate(BaseModel):
     #: still has to be accepted, and falls back to the branch the shop would have
     #: resolved for it anyway.
     pickup_branch_id: UUID | None = None
+    #: Who is collecting a pickup order — required when `delivery_method` is
+    #: `pickup`, ignored otherwise (a delivery carries its contact on the
+    #: shipping address). See `_contact_matches_method`.
+    pickup_contact: PickupContactCreate | None = None
+    #: An optional gift recipient for a delivery order. Delivery only — dropped
+    #: on a pickup order rather than refused, so an old client can't wedge on it.
+    #: Drives the courier drop-off contact; never touches the coupon identity.
+    receiver: ReceiverCreate | None = None
     #: The language the checkout was in. Everything the shop writes about this
     #: order is written in it. Anything unrecognised is normalised to English by
     #: `order_service` rather than refused — a bad locale must not lose a sale.
@@ -145,6 +186,28 @@ class OrderCreate(BaseModel):
                 )
         return data
 
+    @model_validator(mode="after")
+    def _contact_matches_method(self) -> "OrderCreate":
+        """Tie the checkout-level contacts to the fulfilment method.
+
+        A pickup order has no address to carry a name and number, so it must
+        bring a `pickup_contact` of its own — refused with a message the
+        customer can act on, the same shape as the missing-email complaint. A
+        `receiver` is a delivery-only idea (it names who a courier hands the
+        order to); it is dropped on a pickup order rather than rejected, so a
+        browser holding an older bundle that always sends the field cannot wedge
+        on it.
+        """
+        if self.delivery_method == DeliveryMethodEnum.PICKUP:
+            if self.pickup_contact is None:
+                raise PydanticCustomError(
+                    "missing",
+                    "Please enter your name and phone number so we can reach "
+                    "you about your pickup order.",
+                )
+            self.receiver = None
+        return self
+
 
 class OrderStatusUpdate(BaseModel):
     status: OrderStatusEnum
@@ -165,6 +228,22 @@ class OrderStatusStamp(BaseModel):
 
     status: str
     at: datetime
+
+
+class ReceiverResponse(BaseModel):
+    """The gift recipient on an order placed for someone else.
+
+    Present only when a `receiver` was given at checkout (delivery orders). The
+    name and number here are what the courier was handed for the drop-off; the
+    orderer's own contact stays on the order's `customer_*` fields.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    phone: str
+    phone_country: str | None = None
+    phone_type: str | None = None
 
 
 class OrderResponse(BaseModel):
@@ -271,6 +350,11 @@ class OrderResponse(BaseModel):
     #: A code to enter after dialling the number to reach the customer — Deliveroo
     #: only, kept apart from the number and joined by the client for display.
     customer_phone_access_code: str | None = None
+    #: The gift recipient, when the order was placed for someone else. Their
+    #: name and number are what the courier was given for the drop-off; null on
+    #: an ordinary order. The orderer's own contact stays on `customer_*`, and
+    #: the coupon rules never key on the receiver.
+    receiver: ReceiverResponse | None = None
     #: For an aggregator order (`source == "aggregator"`), the channel it came
     #: in on. Drives the admin channel tab/badge and is null on everything else.
     aggregator_channel: str | None = None

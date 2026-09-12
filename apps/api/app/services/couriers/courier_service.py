@@ -43,7 +43,9 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
+from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import trading_hours
@@ -71,16 +73,16 @@ __all__ = [
 
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
 NOON_SEND = FulfilmentProviderEnum.NOON_SEND.value
-SLIDER = FulfilmentProviderEnum.SLIDER.value
 SLIDER_BIKE = FulfilmentProviderEnum.SLIDER_BIKE.value
 SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
 THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 
-#: The bare legacy value and the two tier-pinned ones. A zone naming any of them
-#: is Slider's — the tier only decides which vehicle, not which courier — so the
-#: routing here treats them together and `slider_service` is the one that cares
-#: about bike versus car.
-SLIDER_PROVIDERS = frozenset({SLIDER, SLIDER_BIKE, SLIDER_CAR})
+#: Slider's two tier-pinned providers. A zone naming either is Slider's — the
+#: tier only decides which vehicle, not which courier — so the routing here
+#: treats them together and `slider_service` is the one that cares about bike
+#: versus car. (The bare legacy `slider` was retired in
+#: `241_drop_legacy_slider`; its rows are now `slider_car`.)
+SLIDER_PROVIDERS = frozenset({SLIDER_BIKE, SLIDER_CAR})
 
 #: How long to wait between re-tries of a single order's dispatch, one rung per
 #: attempt. A failure that outlives the last rung stops retrying and goes on the
@@ -145,7 +147,6 @@ FALLBACKS: dict[str, tuple[str, ...]] = {
     # both go to the courier that carried that ground before. (Upgrading a bike
     # to a car is a manual, human-only move — `fulfilment_reassignment` — not an
     # automatic fallback the dispatcher takes on its own.)
-    SLIDER: (NOON_SEND, LALAMOVE),
     SLIDER_BIKE: (NOON_SEND, LALAMOVE),
     SLIDER_CAR: (NOON_SEND, LALAMOVE),
     # The long-standing one: noon Send cap a run at 20 km, cannot cross an
@@ -307,7 +308,33 @@ async def dispatch(
     if delivery is None or not books_itself(delivery.provider):
         return delivery
 
+    # The gift recipient drives the courier drop-off contact
+    # (`address_format.delivery_contact`), which reads `order.receiver` only when
+    # it is loaded — a lazy relationship access on an async order is a
+    # `MissingGreenlet`, not a query. Callers reach dispatch with the order
+    # loaded any number of ways, so it is guaranteed here rather than at each.
+    await _ensure_receiver_loaded(db, order)
+
     return await _record_outcome(db, order, await _dispatch_once(db, order, delivery))
+
+
+async def _ensure_receiver_loaded(db: AsyncSession, order: Order) -> None:
+    """Load `order.receiver` if the caller's order load did not.
+
+    Mirrors `order_service._ensure_items_loaded`: a transient/pending order (the
+    POS path, a hand-built test order) has no identity to refresh and its
+    relationship is already real, and an already-loaded one is left untouched. A
+    stand-in that is not an ORM instance at all (a test's `SimpleNamespace`) has
+    nothing to load and is skipped.
+    """
+    try:
+        state = sa_inspect(order)
+    except NoInspectionAvailable:
+        return
+    if state.transient or state.pending:
+        return
+    if "receiver" in state.unloaded:
+        await db.refresh(order, ["receiver"])
 
 
 async def _delivery_for_dispatch(

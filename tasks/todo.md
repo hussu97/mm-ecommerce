@@ -1,48 +1,44 @@
-# Task: Add Microsoft Windows Hello support (alongside Apple passkeys)
+# Checkout contacts, countries, gift receiver, pickup channel & slider cleanup
 
-## Finding
-The admin passkey feature (`apps/api/app/api/v1/auth.py`, `apps/admin`) is already
-standards-based WebAuthn via py_webauthn 3.0.0 + `@simplewebauthn/browser`. There is
-NO Apple-specific code — it is not Apple-locked. So Windows Hello is a supported
-authenticator in principle. The one real interop gap is the classic Windows Hello
-gotcha: Windows Hello's TPM-backed authenticators commonly produce **RS256 (RSA)**
-credentials, whereas Apple platform authenticators use **ES256**. Registration only
-succeeds if the RP advertises RS256 in `pubKeyCredParams`.
+Branch: `feat/checkout-contacts-receiver-pickup-channel`
 
-Today the code passes no `supported_pub_key_algs`, so it relies on py_webauthn's
-*default* (currently `[EdDSA, ES256, RS256]`). That default is an invisible dependency:
-if a future library version trims RS256, Windows Hello registration breaks silently
-while Apple keeps working — exactly the kind of silent, default-driven regression this
-repo's conventions exist to prevent (cf. the compose env-allowlist story in CLAUDE.md).
+## 1. Pickup contact (name + phone mandatory)
+- [x] API schema: `PickupContactCreate` + `OrderCreate.pickup_contact` + validator (pickup requires it)
+- [x] API service `_persist_order`: persist customer_name/phone from pickup_contact
+- [x] Web types: `PickupContactCreate` + `OrderCreate.pickup_contact`
+- [x] Web checkout: send pickup_contact in buildOrderCreate; require lastName
 
-## Plan
-- [x] Backend: make the supported algorithms **explicit and guarded** — a module-level
-      `WEBAUTHN_SUPPORTED_PUB_KEY_ALGS = [ES256, RS256, EdDSA]` constant, used in
-      `passkey_registration_options`, with a comment naming the Windows Hello / TPM RSA
-      requirement.
-- [x] Test: DB-free unit test asserting the generated registration options advertise
-      RS256 (-257) and ES256 (-7), so Windows Hello support can't silently regress.
-- [x] Frontend: update admin Security page copy + the "Passkey Name" placeholder so the
-      Apple-only framing ("MacBook Touch ID") acknowledges Windows Hello / Touch ID /
-      Face ID / security keys.
-- [x] Verify (lint/typecheck where runnable), commit, push, open PR.
+## 2. More countries
+- [x] PhoneInput PRIORITY: add `AU`
+- [x] Firebase SMS region policy (IN/PK/AU/GB/US) — applied via Identity Platform REST; allowlist now AE,IN,PK,AU,GB,US
 
-## Notes on scope (Simplicity First / Minimal Impact)
-- No schema change: `admin_passkeys.public_key` is `Text` (holds larger RSA COSE keys),
-  `credential_id` is `String(512)` (fits Windows Hello's longer wrapped IDs), and
-  `sign_count` already tracks the incrementing counter Windows Hello uses. So no
-  migration, no `packages/types` regen, no env/compose/analytics changes are triggered.
+## 3. Gift receiver (delivery only)
+- [x] Model `OrderReceiver` + `Order.receiver` relationship
+- [x] Migration `240_order_receivers` (verified up/down/up on throwaway PG)
+- [x] API schema: `ReceiverCreate` + `OrderCreate.receiver` (delivery-only validator); `ReceiverResponse` on OrderResponse
+- [x] API service: create OrderReceiver row; keep coupon/customer_phone on orderer
+- [x] `address_format.delivery_contact(order)` + use in slider/lalamove/noon_send builders; dispatch loads receiver
+- [x] Web: receiver toggle + fields in delivery branch; buildOrderCreate.receiver; web types
+- [x] Admin: receiver row on order detail; `Order.receiver` in admin types.ts
 
-## Review
-- `apps/api/app/api/v1/auth.py`: added `WEBAUTHN_SUPPORTED_PUB_KEY_ALGS`
-  (ES256, RS256, EdDSA) and passed it to `generate_registration_options`. RS256 is the
-  one that unlocks Windows Hello; making the set explicit means a py_webauthn default
-  change can't silently drop it.
-- `apps/api/tests/unit/test_admin_passkey_algorithms.py`: guard test — verified its
-  assertions against a real py_webauthn 3.0.0 install (advertised algs `[-257, -8, -7]`
-  in both the option struct and the serialised browser payload). Could not run the repo
-  suite here (no venv/node_modules in this session); `py_compile` clean.
-- `apps/admin/app/(dashboard)/security/page.tsx`: copy + placeholder now name Windows
-  Hello alongside Touch ID / Face ID / security keys (string-literal only, no type impact).
-- Confirmed no migration / `packages/types` / env-allowlist / analytics touch is needed
-  (existing columns already fit RSA keys, longer credential IDs, and the sign counter).
+## 4. Store-pickup sales channel (split online → Website Delivery + Store Pickup)
+- [x] order_query: `website_pickup` synthetic code + predicate/clause/label
+- [x] dashboard.py by_channel CASE + labels
+- [x] pos_reports/_base.py channel column + labels
+- [x] daily_sales_email.py columns/labels/_column_for
+- [x] admin couriers.ts option + CourierMark icon + orders/page.tsx channel label + SalesTab channel dimension
+
+## 5. Kill legacy `slider` courier (code only; keep status-family + webhook source)
+- [x] API: remove SLIDER from FulfilmentProviderEnum + catalog + courier_service + slider_service + fulfilment + orders refresh map
+- [x] Admin: remove slider from couriers.ts/types.ts/courier-labels(x2)/provider-labels/ZoneMap
+- [x] Migration `241_drop_legacy_slider` (data migrate → slider_car; delete couriers row; keep webhook provider) — verified
+- [~] Tests: swap `slider`→`slider_car` in routing/zone tests; keep status-family + webhook tests — SUBAGENT running
+
+## Cross-cutting
+- [x] i18n keys in seed_i18n.py (EN+AR)
+- [x] Regen OpenAPI + @mm/types (clean diff, only additions)
+- [x] ruff check + ruff format
+- [x] Verify migrations on throwaway Postgres
+- [x] Web + admin tsc --noEmit clean
+- [~] Full API unit suite green — after subagent; reconcile channel-split test files (daily_sales_email, pos_reports)
+- [ ] Commit

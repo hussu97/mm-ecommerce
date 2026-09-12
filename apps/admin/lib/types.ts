@@ -383,6 +383,15 @@ export interface Order {
   /** A code to enter after dialling to reach the customer (Deliveroo) — kept
    * apart from the number and joined only for display. */
   customer_phone_access_code?: string | null;
+  /** The gift recipient, when the order was placed for someone else. Their name
+   * and number are what the courier was given for the drop-off; the orderer's
+   * own contact stays on `customer_*`. Null on an ordinary order. */
+  receiver?: {
+    name: string;
+    phone: string;
+    phone_country?: string | null;
+    phone_type?: string | null;
+  } | null;
   /** For an aggregator order, the marketplace it came in on ("Talabat"…). */
   aggregator_channel?: string | null;
   /** The delivery charge the marketplace showed the customer — theirs, print
@@ -843,16 +852,14 @@ export interface PaginatedEmailLogs {
  *
  * `slider_bike` and `slider_car` are the two Slider fleets, priced apart because
  * a bike run inside Sharjah and a car to Jebel Ali cost nothing like each other.
- * Bare `slider` is the legacy single value they grew out of: still spoken by
- * older maps and historical orders, so it stays in the union rather than being
- * migrated away underneath them.
+ * (The bare legacy `slider` was retired — its rows were migrated to `slider_car`
+ * in `241_drop_legacy_slider`.)
  */
 export type FulfilmentProvider =
   | 'lalamove'
   | 'noon_send'
   | 'slider_bike'
   | 'slider_car'
-  | 'slider'
   | 'third_party';
 
 /**

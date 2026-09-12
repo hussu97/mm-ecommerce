@@ -14028,8 +14028,10 @@ export interface components {
             payment_method: components["schemas"]["PaymentMethodEnum"];
             /** Pickup Branch Id */
             pickup_branch_id?: string | null;
+            pickup_contact?: components["schemas"]["PickupContactCreate"] | null;
             /** Promo Code */
             promo_code?: string | null;
+            receiver?: components["schemas"]["ReceiverCreate"] | null;
             /** Session Id */
             session_id?: string | null;
             shipping_address?: components["schemas"]["AddressCreate"] | null;
@@ -14577,6 +14579,7 @@ export interface components {
             payment_provider: string | null;
             /** Promo Code Used */
             promo_code_used: string | null;
+            receiver?: components["schemas"]["ReceiverResponse"] | null;
             /**
              * Refunded Amount
              * @default 0
@@ -15167,6 +15170,27 @@ export interface components {
             phone?: string | null;
             /** Reference */
             reference: string;
+        };
+        /**
+         * PickupContactCreate
+         * @description Who is collecting a store-pickup order, and how to reach them.
+         *
+         *     A pickup order has no address, so it used to carry no name and no number —
+         *     the shop was left with only an email. These are collected at checkout the
+         *     same way a delivery address collects them and land on `customer_name` /
+         *     `customer_phone`, so the counter can call the customer and the
+         *     new-customer coupon has a phone identity to key on. Validation of the
+         *     number itself is delegated to `describe_phone` in `_persist_order`, exactly
+         *     as the shipping address's phone is — the length bounds here only match
+         *     `AddressCreate.phone`.
+         */
+        PickupContactCreate: {
+            /** First Name */
+            first_name: string;
+            /** Last Name */
+            last_name: string;
+            /** Phone */
+            phone: string;
         };
         /** PinLoginRequest */
         PinLoginRequest: {
@@ -16740,6 +16764,41 @@ export interface components {
         ReceivePurchaseOrderRequest: {
             /** Lines */
             lines: components["schemas"]["ReceiveLine"][];
+        };
+        /**
+         * ReceiverCreate
+         * @description Someone other than the orderer receiving a delivery — a gift.
+         *
+         *     Optional, and delivery only. The name and number here are what the courier
+         *     is given for the drop-off (see `address_format.delivery_contact`); the
+         *     orderer's own number stays on `Order.customer_phone` and remains what the
+         *     per-customer coupon rules key on, so ordering for someone else never spends
+         *     the recipient's coupon allowance. Not phone-verified. Same length bounds as
+         *     the shipping address's phone; normalised through `describe_phone` on write.
+         */
+        ReceiverCreate: {
+            /** Name */
+            name: string;
+            /** Phone */
+            phone: string;
+        };
+        /**
+         * ReceiverResponse
+         * @description The gift recipient on an order placed for someone else.
+         *
+         *     Present only when a `receiver` was given at checkout (delivery orders). The
+         *     name and number here are what the courier was handed for the drop-off; the
+         *     orderer's own contact stays on the order's `customer_*` fields.
+         */
+        ReceiverResponse: {
+            /** Name */
+            name: string;
+            /** Phone */
+            phone: string;
+            /** Phone Country */
+            phone_country?: string | null;
+            /** Phone Type */
+            phone_type?: string | null;
         };
         /** RecipeDraftRequest */
         RecipeDraftRequest: {

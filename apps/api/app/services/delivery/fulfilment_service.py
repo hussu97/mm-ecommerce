@@ -107,7 +107,6 @@ _SETTLED = {
 _BOOKED_BY_US = {
     FulfilmentProviderEnum.LALAMOVE.value,
     FulfilmentProviderEnum.NOON_SEND.value,
-    FulfilmentProviderEnum.SLIDER.value,
     FulfilmentProviderEnum.SLIDER_BIKE.value,
     FulfilmentProviderEnum.SLIDER_CAR.value,
 }

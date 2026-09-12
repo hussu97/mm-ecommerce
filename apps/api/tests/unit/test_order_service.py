@@ -336,6 +336,9 @@ def _order_mock(
     o.customer_phone_country = None
     o.customer_phone_type = None
     o.customer_phone_access_code = None
+    # The gift recipient — None here, or a bare MagicMock would fail the nested
+    # `ReceiverResponse | None` on OrderResponse (the same trap as `legal_entity`).
+    o.receiver = None
     o.aggregator_channel = None
     o.aggregator_delivery_fee = None
     o.aggregator_display_code = None
@@ -484,6 +487,16 @@ def _delivery_address() -> AddressCreate:
     )
 
 
+#: A pickup order now carries the collecting customer's name and number on its
+#: own field (required by `OrderCreate` for pickup), the way a delivery carries
+#: them on the address.
+_PICKUP_CONTACT = {
+    "first_name": "Test",
+    "last_name": "Customer",
+    "phone": "+971501234567",
+}
+
+
 def _pickup_data(promo_code: str | None = None) -> OrderCreate:
     return OrderCreate(
         email="test@example.com",
@@ -491,6 +504,7 @@ def _pickup_data(promo_code: str | None = None) -> OrderCreate:
         payment_method="stripe",
         session_id="sess_test",
         promo_code=promo_code,
+        pickup_contact=_PICKUP_CONTACT,
     )
 
 
@@ -512,6 +526,7 @@ def _cash_data() -> OrderCreate:
         delivery_method=DeliveryMethodEnum.PICKUP,
         payment_method="cod",
         session_id="sess_test",
+        pickup_contact=_PICKUP_CONTACT,
     )
 
 
@@ -795,6 +810,7 @@ class TestCreateOrderErrors:
             email="test@example.com",
             delivery_method=DeliveryMethodEnum.PICKUP,
             payment_method="stripe",
+            pickup_contact=_PICKUP_CONTACT,
         )
         with pytest.raises(BadRequestError, match="session_id"):
             await create_order(db, data, user_id=None)
@@ -1068,6 +1084,7 @@ class TestCreateOrderCalculations:
             delivery_method=DeliveryMethodEnum.PICKUP,
             payment_method="stripe",
             session_id="sess_test",
+            pickup_contact=_PICKUP_CONTACT,
         )
         await create_order(db, data, user_id=None)
 
@@ -1109,6 +1126,7 @@ class TestCreateOrderCalculations:
                 delivery_method=DeliveryMethodEnum.PICKUP,
                 payment_method=sent,
                 session_id="sess_test",
+                pickup_contact=_PICKUP_CONTACT,
             )
 
             await create_order(db, data, user_id=None)

@@ -21,8 +21,12 @@ import { Icon } from '@/components/ui/Icon';
  */
 
 // The UAE first because that is who orders, then the corridors its residents
-// most often carry a number from. Everything else follows alphabetically.
-const PRIORITY: CountryCode[] = ['AE', 'SA', 'OM', 'BH', 'KW', 'QA', 'IN', 'PK', 'GB', 'US'];
+// most often carry a number from — the Gulf, then the countries the storefront
+// now ships/signs customers in from (India, Pakistan, Australia, UK, USA).
+// Everything else follows alphabetically.
+const PRIORITY: CountryCode[] = [
+  'AE', 'SA', 'OM', 'BH', 'KW', 'QA', 'IN', 'PK', 'AU', 'GB', 'US',
+];
 
 /**
  * Several territories share a calling code, and libphonenumber resolves a
