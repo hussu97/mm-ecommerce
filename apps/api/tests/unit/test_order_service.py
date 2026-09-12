@@ -18,7 +18,17 @@ from app.services.couriers import lalamove_service
 from app.services.delivery import delivery_promise
 from app.services.delivery.delivery_zone_service import Zone
 from app.services.delivery.fulfilment_service import Fulfilment
+from app.services.orders import order_service
+from app.services.orders.order_service import (
+    VALID_TRANSITIONS,
+    create_order,
+    update_status,
+)
 from app.services.orders.tax_identity_service import TaxIdentity
+
+DELIVERY_SETTINGS = DeliverySettings(
+    pickup_fee=Decimal("0.00"),
+)
 
 #: The inherited default — VAT-registered, nothing stamped — used to stub the
 #: tax-identity resolver in the arithmetic tests below.
@@ -28,16 +38,6 @@ _DEFAULT_TAX_IDENTITY = TaxIdentity(
     tax_number=None,
     tax_registration_name=None,
     invoice_title=None,
-)
-from app.services.orders import order_service
-from app.services.orders.order_service import (
-    VALID_TRANSITIONS,
-    create_order,
-    update_status,
-)
-
-DELIVERY_SETTINGS = DeliverySettings(
-    pickup_fee=Decimal("0.00"),
 )
 
 

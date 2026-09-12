@@ -14,10 +14,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
-from unittest.mock import AsyncMock, patch
 
 from app.models.order import OrderStatusEnum
 from app.services.aggregators import promote
