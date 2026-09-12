@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { categoriesApi, uploadsApi, bulkApi, ApiError } from '@/lib/api';
 import type { Category } from '@/lib/types';
 import { Button, Input, LoadError, Pagination, TabBar, Textarea } from '@/components/ui';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { TranslationFields } from '@/components/TranslationFields';
@@ -335,81 +336,89 @@ export default function CategoriesPage() {
           {[1,2,3,4].map(i => <div key={i} className="h-12 bg-gray-100 animate-pulse" />)}
         </div>
       ) : (
-        <div className="bg-white border border-gray-200">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="px-4 py-3 w-8">
-                  <input
-                    type="checkbox"
-                    checked={paginatedCategories.length > 0 && paginatedCategories.every(c => selectedIds.has(c.id))}
-                    onChange={toggleSelectAll}
-                    className="accent-primary"
-                  />
-                </th>
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 w-8">Order</th>
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
-                <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Products</th>
-                <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {paginatedCategories.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No categories yet.</td>
-                </tr>
-              ) : (
-                paginatedCategories.map((cat, idx) => {
-                  const globalIdx = (page - 1) * perPage + idx;
-                  return (
-                    <tr key={cat.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.has(cat.id) ? 'bg-primary/5' : ''}`}>
-                      <td className="px-4 py-2.5 w-8">
-                        <input type="checkbox" checked={selectedIds.has(cat.id)} onChange={() => toggleSelect(cat.id)} className="accent-primary" />
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex flex-col gap-0.5">
-                          <button
-                            onClick={() => handleReorder(cat.slug, -1)}
-                            disabled={globalIdx === 0 || reorderingSlug === cat.slug}
-                            className="inline-flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0 text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
-                          >
-                            <span className="material-icons text-[14px]">arrow_drop_up</span>
-                          </button>
-                          <button
-                            onClick={() => handleReorder(cat.slug, 1)}
-                            disabled={globalIdx === filteredCategories.length - 1 || reorderingSlug === cat.slug}
-                            className="inline-flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0 text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
-                          >
-                            <span className="material-icons text-[14px]">arrow_drop_down</span>
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <div className="font-body font-medium text-gray-800">{cat.name}</div>
-                        <div className="text-[11px] text-gray-400 font-body">{cat.slug}</div>
-                      </td>
-                      <td className="px-4 py-2.5 text-center hidden sm:table-cell">
-                        <span className="text-xs font-body text-gray-500">{cat.product_count}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {activeTab === 'active' ? (
-                            <>
-                              <Button variant="ghost" size="sm" onClick={() => openEdit(cat)}>Edit</Button>
-                              <Button variant="danger" size="sm" loading={actionSlug === cat.slug} onClick={() => handleDeactivate(cat.slug, cat.name)}>Deactivate</Button>
-                            </>
-                          ) : (
-                            <Button variant="ghost" size="sm" loading={actionSlug === cat.slug} onClick={() => handleRestore(cat.slug)}>Restore</Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<Category>
+          rows={paginatedCategories}
+          rowKey={(cat) => cat.id}
+          rowClassName={(cat) => (selectedIds.has(cat.id) ? 'bg-primary/5' : undefined)}
+          empty={<p className="py-10 text-center text-sm text-gray-400 font-body">No categories yet.</p>}
+          columns={[
+            {
+              // The select column is a desktop scanning aid; on a phone the card
+              // carries no checkbox (bulk editing is a desk workflow).
+              header: 'Select',
+              priority: 'desktop',
+              className: 'w-8',
+              headerRender: () => (
+                <input
+                  type="checkbox"
+                  aria-label="Select all on page"
+                  checked={paginatedCategories.length > 0 && paginatedCategories.every((c) => selectedIds.has(c.id))}
+                  onChange={toggleSelectAll}
+                  className="accent-primary"
+                />
+              ),
+              render: (cat) => (
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${cat.name}`}
+                  checked={selectedIds.has(cat.id)}
+                  onChange={() => toggleSelect(cat.id)}
+                  className="accent-primary"
+                />
+              ),
+            },
+            {
+              header: 'Order',
+              priority: 'desktop',
+              className: 'w-8',
+              render: (cat) => {
+                const idx = filteredCategories.findIndex((c) => c.id === cat.id);
+                return (
+                  <div className="flex flex-col gap-0.5">
+                    <button
+                      onClick={() => handleReorder(cat.slug, -1)}
+                      disabled={idx === 0 || reorderingSlug === cat.slug}
+                      aria-label="Move up"
+                      className="inline-flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0 text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
+                    >
+                      <span className="material-icons text-[14px]">arrow_drop_up</span>
+                    </button>
+                    <button
+                      onClick={() => handleReorder(cat.slug, 1)}
+                      disabled={idx === filteredCategories.length - 1 || reorderingSlug === cat.slug}
+                      aria-label="Move down"
+                      className="inline-flex items-center justify-center min-h-9 min-w-9 md:min-h-0 md:min-w-0 text-gray-300 hover:text-primary disabled:opacity-30 transition-colors"
+                    >
+                      <span className="material-icons text-[14px]">arrow_drop_down</span>
+                    </button>
+                  </div>
+                );
+              },
+            },
+            { header: 'Name', priority: 'primary', render: (cat) => <span className="font-medium">{cat.name}</span> },
+            { header: 'Slug', priority: 'secondary', render: (cat) => cat.slug },
+            {
+              header: 'Products',
+              priority: 'desktop',
+              className: 'text-center',
+              render: (cat) => <span className="text-xs font-body text-gray-500">{cat.product_count}</span>,
+            },
+          ]}
+          actions={(cat) =>
+            activeTab === 'active' ? (
+              <>
+                <RowAction onClick={() => openEdit(cat)}>Edit</RowAction>
+                <RowAction danger disabled={actionSlug === cat.slug} onClick={() => handleDeactivate(cat.slug, cat.name)}>
+                  Deactivate
+                </RowAction>
+              </>
+            ) : (
+              <RowAction disabled={actionSlug === cat.slug} onClick={() => handleRestore(cat.slug)}>
+                Restore
+              </RowAction>
+            )
+          }
+        />
       )}
 
       <Pagination
