@@ -10,6 +10,7 @@ import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { inventoryApi, type RecipeOwnerRow } from '@/lib/pos-api';
+import { formatQuantity } from '@/lib/utils';
 
 type OwnerKind = 'product' | 'modifier_option' | 'inventory_item';
 type ActiveFilter = 'all' | 'active' | 'inactive';
@@ -30,6 +31,29 @@ const RECIPE_FILTER_OPTIONS = [
   { value: 'with', label: 'Has a recipe' },
   { value: 'without', label: 'No recipe' },
 ];
+
+/** Read-only glance at a recipe's lines: each inventory item with its quantity. */
+function IngredientSummary({ row }: { row: RecipeOwnerRow }) {
+  if (row.ingredients.length === 0) {
+    return <span className="text-gray-300">—</span>;
+  }
+  const MAX = 6;
+  const shown = row.ingredients.slice(0, MAX);
+  const extra = row.ingredients.length - shown.length;
+  return (
+    <div className="space-y-0.5 text-[11px] font-body text-gray-600">
+      {shown.map((ing, i) => (
+        <div key={i}>
+          <span className="tabular-nums text-gray-800">
+            {formatQuantity(ing.quantity)} {ing.unit}
+          </span>{' '}
+          {ing.name}
+        </div>
+      ))}
+      {extra > 0 && <div className="text-gray-400">+{extra} more</div>}
+    </div>
+  );
+}
 
 function RecipeStatusBadge({ row }: { row: RecipeOwnerRow }) {
   if (row.recipe_status === 'active') {
@@ -187,8 +211,7 @@ export function RecipeOwnersPage({ ownerKind, noun, showKind, searchPlaceholder 
     {
       header: 'Ingredients',
       priority: 'meta',
-      className: 'text-right',
-      render: (row) => <span className="text-gray-600">{row.line_count || '—'}</span>,
+      render: (row) => <IngredientSummary row={row} />,
     },
   ];
 

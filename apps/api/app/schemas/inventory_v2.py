@@ -92,6 +92,14 @@ class RecipeExpansionResponse(BaseModel):
 RecipeStatus = Literal["none", "draft", "active"]
 
 
+class RecipeOwnerIngredient(BaseModel):
+    """One line of a recipe, for the at-a-glance summary in the console list."""
+
+    name: str
+    quantity: Decimal
+    unit: str
+
+
 class RecipeOwnerRow(BaseModel):
     """One row in the Recipes console: a recipe owner and its recipe status.
 
@@ -118,6 +126,9 @@ class RecipeOwnerRow(BaseModel):
     active_version_number: int | None = None
     draft_version_number: int | None = None
     line_count: int = 0
+    # The lines of the current version (active if present, else draft) — a
+    # read-only summary so the list shows each recipe's ingredients at a glance.
+    ingredients: list[RecipeOwnerIngredient] = []
 
 
 class PaginatedRecipeOwners(BaseModel):

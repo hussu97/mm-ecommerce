@@ -208,33 +208,40 @@ async def list_recipe_owners(
     )
     rows = (await db.execute(paged)).all()
 
-    # Line counts for just this page's recipes, in one query (active version if
-    # present, otherwise the draft — matching what recipe_status reports).
+    # The ingredient lines of this page's recipes, in one query — each row's
+    # current version (active if present, else draft). Keyed by (recipe_id,
+    # status) so the loop below can pick the version that recipe_status reports,
+    # and ordered so the summary reads in the recipe's own display order.
     recipe_ids = [row.recipe_id for row in rows if row.recipe_id is not None]
-    line_counts: dict[tuple[uuid.UUID, str], int] = {}
+    lines_by_version: dict[tuple[uuid.UUID, str], list[dict]] = {}
     if recipe_ids:
-        lc_rows = (
+        line_rows = (
             await db.execute(
                 select(
                     RecipeVersion.recipe_id,
                     RecipeVersion.status,
-                    func.count(RecipeLine.id),
+                    InventoryItem.name,
+                    RecipeLine.quantity,
+                    RecipeLine.ingredient_unit,
                 )
                 .select_from(RecipeVersion)
-                .join(
-                    RecipeLine,
-                    RecipeLine.recipe_version_id == RecipeVersion.id,
-                    isouter=True,
-                )
+                .join(RecipeLine, RecipeLine.recipe_version_id == RecipeVersion.id)
+                .join(InventoryItem, InventoryItem.id == RecipeLine.item_id)
                 .where(
                     RecipeVersion.recipe_id.in_(recipe_ids),
                     RecipeVersion.status.in_(("active", "draft")),
                 )
-                .group_by(RecipeVersion.recipe_id, RecipeVersion.status)
+                .order_by(
+                    RecipeVersion.recipe_id,
+                    RecipeVersion.status,
+                    RecipeLine.display_order,
+                )
             )
         ).all()
-        for rid, status, count in lc_rows:
-            line_counts[(rid, status)] = count
+        for rid, status, name, quantity, unit in line_rows:
+            lines_by_version.setdefault((rid, status), []).append(
+                {"name": name, "quantity": quantity, "unit": unit}
+            )
 
     # For modifier options, the products that carry this option's modifier — so
     # the console can say where the option is used. One query for the page.
@@ -267,12 +274,11 @@ async def list_recipe_owners(
             recipe_status = "draft"
         else:
             recipe_status = "none"
-        if has_recipe and recipe_status == "active":
-            line_count = line_counts.get((row.recipe_id, "active"), 0)
-        elif has_recipe and recipe_status == "draft":
-            line_count = line_counts.get((row.recipe_id, "draft"), 0)
-        else:
-            line_count = 0
+        ingredients = (
+            lines_by_version.get((row.recipe_id, recipe_status), [])
+            if has_recipe and recipe_status != "none"
+            else []
+        )
         items.append(
             {
                 "id": row.id,
@@ -285,7 +291,8 @@ async def list_recipe_owners(
                 "recipe_status": recipe_status,
                 "active_version_number": row.active_version,
                 "draft_version_number": row.draft_version,
-                "line_count": line_count,
+                "line_count": len(ingredients),
+                "ingredients": ingredients,
             }
         )
 

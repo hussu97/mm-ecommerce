@@ -213,6 +213,10 @@ async def test_recipe_with_filter(engine, seeded):
     assert items[0]["recipe_status"] == "active"
     assert items[0]["active_version_number"] == 1
     assert items[0]["line_count"] == 1
+    # The read-only summary carries the active version's lines.
+    assert items[0]["ingredients"] == [
+        {"name": f"{MARKER} Flour", "quantity": Decimal("2"), "unit": "g"}
+    ]
 
 
 async def test_recipe_without_filter(engine, seeded):

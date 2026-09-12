@@ -16913,6 +16913,18 @@ export interface components {
             unit_cost?: string | null;
         };
         /**
+         * RecipeOwnerIngredient
+         * @description One line of a recipe, for the at-a-glance summary in the console list.
+         */
+        RecipeOwnerIngredient: {
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: string;
+            /** Unit */
+            unit: string;
+        };
+        /**
          * RecipeOwnerRow
          * @description One row in the Recipes console: a recipe owner and its recipe status.
          *
@@ -16933,6 +16945,11 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Ingredients
+             * @default []
+             */
+            ingredients: components["schemas"]["RecipeOwnerIngredient"][];
             /** Is Active */
             is_active: boolean;
             /** Kind */

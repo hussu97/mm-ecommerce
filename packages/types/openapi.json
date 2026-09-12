@@ -25336,6 +25336,31 @@
         "title": "RecipeLineResponse",
         "type": "object"
       },
+      "RecipeOwnerIngredient": {
+        "description": "One line of a recipe, for the at-a-glance summary in the console list.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "quantity",
+          "unit"
+        ],
+        "title": "RecipeOwnerIngredient",
+        "type": "object"
+      },
       "RecipeOwnerRow": {
         "description": "One row in the Recipes console: a recipe owner and its recipe status.\n\nAn owner is a product, a modifier option, or a *made* inventory item \u2014 the\nthree things a recipe can belong to. ``recipe_status``/version numbers are\nderived from the owner's recipe versions, so the list can show at a glance\nwhich sellable things have an active recipe, a pending draft, or none.",
         "properties": {
@@ -25369,6 +25394,14 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "ingredients": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RecipeOwnerIngredient"
+            },
+            "title": "Ingredients",
+            "type": "array"
           },
           "is_active": {
             "title": "Is Active",
