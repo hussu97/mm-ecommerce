@@ -121,7 +121,7 @@ export default function StockCountsPage() {
   const pageRows = visible.slice((page - 1) * perPage, page * perPage);
 
   return (
-    <div className="max-w-[1400px] space-y-4">
+    <div className="space-y-4">
       <p className="text-sm text-gray-500">Manual stock-take counts uploaded in admin (the CSV audits on the Counts tab) — a branch&apos;s first count is an opening balance, every count after it a stock count. Counts that came from a shift report show under Shift reports, not here. Click a row to see the counted lines and their value impact.</p>
       <div className="flex flex-wrap items-end gap-3">
         <Select label="Branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder="All branches" className="w-56" options={branches.map((b) => ({ value: b.id, label: b.name }))} />

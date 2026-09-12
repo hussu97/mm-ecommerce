@@ -74,15 +74,18 @@
    driven padding is a visual no-op and the mobile audit does not move. `compact`
    is the Windows-at-150%-scaling escape hatch: it buys back the density a Mac
    shows by default, letting more of a wide table sit on screen before its own
-   scroller appears. The attribute is set on `<html>` (`data-density`), so
-   `:where()` keeps these at zero specificity and any utility still wins. */
+   scroller appears. The attribute is set on `<html>` (`data-density`). These are
+   variable *values*, not utilities, so `[data-density='compact']` deliberately
+   carries the same specificity as `:root` and wins only by coming later — do NOT
+   wrap either in `:where()`, which zeroes the compact selector below `:root` and
+   silently pins every table to comfortable (it did, once). */
 :root {
   --row-px: 0.75rem;
   --row-py: 0.5rem;
   --card-px: 0.875rem;
   --card-py: 0.75rem;
 }
-:where([data-density='compact']) {
+[data-density='compact'] {
   --row-px: 0.5rem;
   --row-py: 0.25rem;
   --card-px: 0.75rem;

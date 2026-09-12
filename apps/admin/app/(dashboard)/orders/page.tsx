@@ -207,6 +207,7 @@ export default function OrdersPage() {
         <DataTable<Order>
           rows={orders}
           rowKey={o => o.id}
+          stickyHeader
           onRowClick={o => router.push(`/orders/${o.order_number}`)}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">No orders found.</p>

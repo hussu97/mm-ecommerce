@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react';
 import { languagesApi, ApiError } from '@/lib/api';
 import type { Language } from '@/lib/types';
 import { Button, Input, Badge, LoadError, Spinner, Pagination } from '@/components/ui';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 
@@ -182,54 +183,37 @@ export default function LanguagesPage() {
       {loading ? (
         <div className="flex justify-center py-12"><Spinner /></div>
       ) : (
-        <div className="bg-white border border-gray-200">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Code</th>
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500 hidden sm:table-cell">Native Name</th>
-                <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Direction</th>
-                <th className="px-4 py-3 text-center text-[11px] font-body uppercase tracking-widest text-gray-500">Status</th>
-                <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {paginated.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-gray-400 font-body">No languages yet.</td>
-                </tr>
-              ) : (
-                paginated.map(lang => (
-                  <tr key={lang.code} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-2.5">
-                      <span className="font-body font-medium text-gray-800">{lang.code}</span>
-                    </td>
-                    <td className="px-4 py-2.5 font-body text-gray-700">{lang.name}</td>
-                    <td className="px-4 py-2.5 font-body text-gray-700 hidden sm:table-cell">{lang.native_name}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      <Badge variant="neutral">{lang.direction.toUpperCase()}</Badge>
-                    </td>
-                    <td className="px-4 py-2.5 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        {lang.is_default && <Badge variant="info">Default</Badge>}
-                        <Badge variant={lang.is_active ? 'success' : 'warning'}>{lang.is_active ? 'Active' : 'Inactive'}</Badge>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(lang)}>Edit</Button>
-                        {!lang.is_default && (
-                          <Button variant="danger" size="sm" loading={actionCode === lang.code} onClick={() => handleDelete(lang.code, lang.name)}>Delete</Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
+        <DataTable<Language>
+          rows={paginated}
+          rowKey={(lang) => lang.code}
+          columns={[
+            { header: 'Code', priority: 'primary', render: (lang) => <span className="font-medium">{lang.code}</span> },
+            { header: 'Name', priority: 'secondary', render: (lang) => lang.name },
+            { header: 'Native Name', render: (lang) => lang.native_name },
+            { header: 'Direction', className: 'text-center', render: (lang) => <Badge variant="neutral">{lang.direction.toUpperCase()}</Badge> },
+            {
+              header: 'Status',
+              className: 'text-center',
+              render: (lang) => (
+                <div className="flex items-center gap-1.5 md:justify-center">
+                  {lang.is_default && <Badge variant="info">Default</Badge>}
+                  <Badge variant={lang.is_active ? 'success' : 'warning'}>{lang.is_active ? 'Active' : 'Inactive'}</Badge>
+                </div>
+              ),
+            },
+          ]}
+          actions={(lang) => (
+            <>
+              <RowAction onClick={() => openEdit(lang)}>Edit</RowAction>
+              {!lang.is_default && (
+                <RowAction danger disabled={actionCode === lang.code} onClick={() => handleDelete(lang.code, lang.name)}>
+                  Delete
+                </RowAction>
               )}
-            </tbody>
-          </table>
-        </div>
+            </>
+          )}
+          empty={<p className="py-10 text-center text-sm text-gray-400 font-body">No languages yet.</p>}
+        />
       )}
 
       <Pagination

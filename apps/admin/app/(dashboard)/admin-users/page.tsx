@@ -19,7 +19,7 @@ export default function AdminUsersPage() {
   }, []);
 
   return (
-    <div className="max-w-[1400px]">
+    <div>
       <div className="mb-6">
         <h1 className="font-display text-2xl text-gray-800">Admin Users</h1>
         <p className="text-xs text-gray-400 font-body mt-0.5">{users.length} admins</p>

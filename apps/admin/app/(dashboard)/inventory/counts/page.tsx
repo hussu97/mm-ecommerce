@@ -89,7 +89,7 @@ export default function CountsPage() {
   };
 
   return (
-    <div className="max-w-[1400px] space-y-5">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-end gap-3">
         <BranchFilter value={branchId} onChange={setBranchId} />
         <Button variant="outline" onClick={downloadTemplate} disabled={!branchId || levels.length === 0}>

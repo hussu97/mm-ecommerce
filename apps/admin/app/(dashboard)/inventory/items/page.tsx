@@ -147,6 +147,7 @@ export default function ItemsPage() {
       title="Inventory Items"
       description="Raw materials and tracked goods. Each item is bought in a storage unit and consumed in an ingredient unit; stock columns show the on-hand quantity at each branch."
       paginated
+      stickyHeader
       load={load}
       create={(d) => inventoryApi.createItem(d)}
       update={(id, d) => inventoryApi.updateItem(id, d)}

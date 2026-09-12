@@ -5,7 +5,8 @@ import { startRegistration } from '@simplewebauthn/browser';
 import { ApiError, authApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { AdminPasskey } from '@/lib/types';
-import { Button, Input } from '@/components/ui';
+import { Button, Input, Spinner } from '@/components/ui';
+import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { formatDate } from '@/lib/utils';
 
 const SUPERADMIN_EMAIL = 'admin@meltingmomentscakes.com';
@@ -113,54 +114,25 @@ export default function SecurityPage() {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50">
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Name</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Created</th>
-              <th className="px-4 py-3 text-left text-[11px] font-body uppercase tracking-widest text-gray-500">Last Used</th>
-              <th className="px-4 py-3 text-right text-[11px] font-body uppercase tracking-widest text-gray-500">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
-                  Loading…
-                </td>
-              </tr>
-            ) : passkeys.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-sm text-gray-400 font-body">
-                  No passkeys registered.
-                </td>
-              </tr>
-            ) : (
-              passkeys.map(passkey => (
-                <tr key={passkey.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <span className="text-xs font-body font-medium text-gray-800">{passkey.name ?? 'Admin passkey'}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs font-body text-gray-500">{formatDate(passkey.created_at)}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs font-body text-gray-500">
-                      {passkey.last_used_at ? formatDate(passkey.last_used_at) : 'Never'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Button variant="ghost" size="sm" onClick={() => deletePasskey(passkey.id)}>
-                      Remove
-                    </Button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {loading ? (
+        <div className="flex justify-center py-10">
+          <Spinner />
+        </div>
+      ) : (
+        <DataTable<AdminPasskey>
+          columns={[
+            { header: 'Name', priority: 'primary', render: (p) => p.name ?? 'Admin passkey' },
+            { header: 'Created', render: (p) => formatDate(p.created_at) },
+            { header: 'Last Used', render: (p) => (p.last_used_at ? formatDate(p.last_used_at) : 'Never') },
+          ]}
+          rows={passkeys}
+          rowKey={(p) => p.id}
+          actions={(p) => <RowAction onClick={() => deletePasskey(p.id)}>Remove</RowAction>}
+          empty={
+            <p className="py-10 text-center text-sm text-gray-400 font-body">No passkeys registered.</p>
+          }
+        />
+      )}
     </div>
   );
 }

@@ -31,7 +31,7 @@ export default function TransfersPage() {
   );
 
   return (
-    <div className="max-w-[1500px] space-y-8">
+    <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <BranchFilter value={branchId} onChange={setBranchId} />
         <Link href="/inventory/transfers/new" className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-xs font-body font-medium uppercase tracking-wider hover:opacity-90 transition-opacity">New transfer order</Link>

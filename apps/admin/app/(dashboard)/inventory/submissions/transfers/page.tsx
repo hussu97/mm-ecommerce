@@ -122,7 +122,7 @@ export default function TransfersPage() {
   const pageRows = visible.slice((page - 1) * perPage, page * perPage);
 
   return (
-    <div className="max-w-[1400px] space-y-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-500">Transfer orders across the branches — one source branch fanning out to many. Click a row to open the parent, its per-branch legs and the movement report. A sending-variance flag marks any leg shipped in a different quantity than requested; a receiving-variance flag marks any leg received short or over what was sent.</p>
         <Link href="/inventory/transfers/new" className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-xs font-body font-medium uppercase tracking-wider hover:opacity-90 transition-opacity">New transfer order</Link>

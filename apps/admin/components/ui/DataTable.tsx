@@ -121,6 +121,27 @@ interface DataTableProps<T> {
   onSortChange?: (sort: SortState) => void;
   /** Initial sort for an uncontrolled (client-side) table. */
   defaultSort?: SortState;
+  /**
+   * Freeze the leftmost column while the rest scroll sideways, so a wide table's
+   * row identity stays in view (desktop only — the card list has no columns to
+   * scroll). Default on: on a table that fits its container it is invisible
+   * (nothing scrolls under it), and on one that does not it is the difference
+   * between a usable grid and a blind sideways drag. The frozen column should be
+   * the row's identity, so place that column first. Turn off for a table whose
+   * first column is a spacer or a drag handle where freezing reads as odd.
+   */
+  stickyFirstColumn?: boolean;
+  /**
+   * Pin the header while the body scrolls. Opt-in, because it changes the table
+   * into its own bounded scroll region: `overflow-x-auto` already makes the
+   * wrapper a scroll container on both axes, so a `top-0` header can only stick
+   * against a wrapper that has a height — it cannot follow the page's own
+   * scroll. On for long lists (inventory, ledger, orders); off for the short
+   * config tables where the whole thing fits without scrolling.
+   */
+  stickyHeader?: boolean;
+  /** The bounded body height used when `stickyHeader` is on. */
+  maxBodyHeight?: string;
 }
 
 export const sortKeyOf = <T,>(c: DataColumn<T>) => c.sortKey ?? c.header;
@@ -178,6 +199,9 @@ export function DataTable<T>({
   sort,
   onSortChange,
   defaultSort,
+  stickyFirstColumn = true,
+  stickyHeader = false,
+  maxBodyHeight = 'calc(100dvh - 12rem)',
 }: DataTableProps<T>) {
   const controlled = onSortChange !== undefined;
   const [internalSort, setInternalSort] = useState<SortState | null>(defaultSort ?? null);
@@ -256,7 +280,7 @@ export function DataTable<T>({
             key={rowKey(row)}
             onClick={onRowClick ? () => onRowClick(row) : undefined}
             className={cn(
-              'rounded border border-gray-200 bg-white px-3.5 py-3',
+              'rounded border border-gray-200 bg-white px-[var(--card-px)] py-[var(--card-py)]',
               onRowClick && 'cursor-pointer active:bg-gray-50',
               rowClassName?.(row),
             )}
@@ -317,14 +341,21 @@ export function DataTable<T>({
           scroller on a phone as a defect. */}
       <div
         data-scroll-intent="table"
-        className="hidden md:block overflow-x-auto rounded border border-gray-200 bg-white"
+        className={cn(
+          'hidden md:block overflow-x-auto rounded border border-gray-200 bg-white',
+          // Bounding the height turns the wrapper into the vertical scroll region
+          // too, which is what lets the header (`sticky top-0`) actually pin.
+          stickyHeader && 'overflow-y-auto',
+        )}
+        style={stickyHeader ? { maxHeight: maxBodyHeight } : undefined}
       >
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
-              {columns.map(c => {
+              {columns.map((c, i) => {
                 const key = sortKeyOf(c);
                 const active = activeSort?.key === key;
+                const frozen = stickyFirstColumn && i === 0;
                 return (
                   <th
                     key={c.header}
@@ -338,7 +369,12 @@ export function DataTable<T>({
                         : undefined
                     }
                     className={cn(
-                      'px-3 py-2 text-left text-[11px] uppercase tracking-widest text-gray-500 font-body',
+                      'px-[var(--row-px)] py-[var(--row-py)] text-left text-2xs uppercase tracking-widest text-gray-500 font-body bg-gray-50',
+                      stickyHeader && 'sticky top-0',
+                      frozen && 'sticky left-0',
+                      // The frozen header corner outranks the sticky header row,
+                      // which outranks the frozen body column.
+                      stickyHeader && frozen ? 'z-30' : stickyHeader ? 'z-20' : frozen ? 'z-10' : '',
                       c.className,
                     )}
                   >
@@ -359,7 +395,14 @@ export function DataTable<T>({
                   </th>
                 );
               })}
-              {actions && <th className="px-3 py-2 w-40" />}
+              {actions && (
+                <th
+                  className={cn(
+                    'px-[var(--row-px)] py-[var(--row-py)] w-40 bg-gray-50',
+                    stickyHeader && 'sticky top-0 z-20',
+                  )}
+                />
+              )}
             </tr>
           </thead>
           <tbody>
@@ -370,19 +413,30 @@ export function DataTable<T>({
                   <tr
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     className={cn(
-                      'border-b border-gray-100 hover:bg-gray-50',
+                      'group border-b border-gray-100 hover:bg-gray-50',
                       !detail && 'last:border-0',
                       onRowClick && 'cursor-pointer',
                       rowClassName?.(row),
                     )}
                   >
-                    {columns.map(c => (
-                      <td key={c.header} className={cn('px-3 py-2 align-middle', c.className)}>
+                    {columns.map((c, i) => (
+                      <td
+                        key={c.header}
+                        className={cn(
+                          'px-[var(--row-px)] py-[var(--row-py)] align-middle',
+                          // The frozen column must be opaque or the columns
+                          // scrolling under it show through; `group-hover` keeps
+                          // it in step with the row's hover. A `rowClassName`
+                          // background tint does not currently extend under it.
+                          stickyFirstColumn && i === 0 && 'sticky left-0 z-10 bg-white group-hover:bg-gray-50',
+                          c.className,
+                        )}
+                      >
                         {c.render(row)}
                       </td>
                     ))}
                     {actions && (
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <td className="px-[var(--row-px)] py-[var(--row-py)] text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">{actions(row)}</div>
                       </td>
                     )}

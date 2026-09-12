@@ -20,7 +20,7 @@ export default function PosReportsLayout({ children }: { children: React.ReactNo
       <Suspense>
         <ReportWindow />
         <PosReportsTabs />
-        <div className="max-w-[1400px]">{children}</div>
+        <div>{children}</div>
       </Suspense>
     </div>
   );

@@ -144,7 +144,7 @@ export default function ReportTemplatesPage() {
     }
   };
 
-  return <div className="max-w-[1400px] space-y-5">
+  return <div className="space-y-5">
     <BranchFilter value={branchId} onChange={setBranchId} />
     <p className="text-sm text-gray-500">Choose a branch first: its templates own their own item list. POS receives only the latest active version of each report type for that branch. Outstanding reports remain visible after the till closes.</p>
     <div className="border border-gray-200 p-4 space-y-3">
