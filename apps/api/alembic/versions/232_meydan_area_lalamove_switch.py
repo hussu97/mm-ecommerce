@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "228_meydan_area_lala"
-down_revision = "227_lalamove_slider_fb"
+revision = "232_meydan_area_lala"
+down_revision = "231_transfer_auto_printed_at"
 branch_labels = None
 depends_on = None
 
