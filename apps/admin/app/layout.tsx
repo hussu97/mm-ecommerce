@@ -51,6 +51,15 @@ export default function RootLayout({
     <html lang="en" className={`${raleway.variable} ${jost.variable}`}>
       <head>
         <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+        {/* Set the saved density on <html> before first paint, so a compact
+            user never sees a comfortable flash. Kept in step with
+            `densityFromStorage()` in lib/density-context.tsx. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{document.documentElement.dataset.density=localStorage.getItem('mm-admin-density')==='compact'?'compact':'comfortable'}catch(e){}",
+          }}
+        />
       </head>
       <body className="min-h-screen antialiased bg-gray-50">
         <Providers>{children}</Providers>

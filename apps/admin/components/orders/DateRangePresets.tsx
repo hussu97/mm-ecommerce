@@ -33,6 +33,8 @@ export function DateRangePresets({
             aria-pressed={on}
             className={cn(
               'inline-flex items-center border px-2.5 py-1 text-xs font-body transition-colors',
+              // A real thumb target on a phone; compact again at a desk.
+              'min-h-[var(--tap-min)] md:min-h-0',
               on
                 ? 'border-primary bg-primary/5 text-primary'
                 : 'border-gray-200 text-gray-600 hover:border-gray-300',

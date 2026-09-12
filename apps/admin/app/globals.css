@@ -29,6 +29,24 @@
   --font-display: "Raleway", sans-serif;
   --font-body: "Jost", sans-serif;
 
+  /* Two named steps below Tailwind's `text-xs`, so the console's smallest type
+     has a knob instead of 228 arbitrary `text-[10px]`/`text-[11px]` values that
+     no longer scale together. Deliberately NOT overriding `--text-xs`/`--text-sm`:
+     those carry ~740 usages and the `@media (pointer: coarse)` rule below leans
+     on the browser default, so redefining them would reflow the whole console
+     and fight the iOS focus-zoom fix. These are rem-relative like the rest, so a
+     browser-zoom or root bump scales them with everything else. */
+  --text-3xs: 0.625rem;  /* was text-[10px] */
+  --text-3xs--line-height: 0.875rem;
+  --text-2xs: 0.6875rem; /* was text-[11px] */
+  --text-2xs--line-height: 1rem;
+
+  /* One reading cap for text/detail pages, replacing the four scattered
+     `max-w-[1100|1400|1500|1600px]` values. List/table pages take no cap and
+     go full-bleed; only pages that are prose or a form opt into this via
+     `components/ui/Page`. */
+  --content-max: 100rem; /* 1600px */
+
   /* Border radius */
   --radius: 0.5rem;
 
@@ -46,6 +64,29 @@
      — which cost 96px of a 390px screen before any content was drawn. */
   --tap-min: 44px;
   --page-gutter: 1rem;
+}
+
+/* ── Density ──────────────────────────────────────────────────────────────
+   Runtime, not `@theme`: the preset flips live from a toggle in the header, and
+   `@theme` is compile-time. The comfortable default reproduces today's spacing
+   to the pixel — `--row-*` = the `px-3 py-2` a `DataTable` cell had, `--card-*`
+   = the `px-3.5 py-3` a mobile card had — so switching the console to token-
+   driven padding is a visual no-op and the mobile audit does not move. `compact`
+   is the Windows-at-150%-scaling escape hatch: it buys back the density a Mac
+   shows by default, letting more of a wide table sit on screen before its own
+   scroller appears. The attribute is set on `<html>` (`data-density`), so
+   `:where()` keeps these at zero specificity and any utility still wins. */
+:root {
+  --row-px: 0.75rem;
+  --row-py: 0.5rem;
+  --card-px: 0.875rem;
+  --card-py: 0.75rem;
+}
+:where([data-density='compact']) {
+  --row-px: 0.5rem;
+  --row-py: 0.25rem;
+  --card-px: 0.75rem;
+  --card-py: 0.5rem;
 }
 
 /* iOS Safari zooms the whole page when a control smaller than 16px takes

@@ -129,7 +129,11 @@ TEMPLATES.sort((a, b) => a.specificity - b.specificity);
 const ME = {
   id: '00000000-0000-4000-8000-000000000001',
   email: 'hussain@meltingmomentscakes.com',
-  is_admin: true, is_active: true, is_guest: false,
+  // `is_admin` lets you into the console at all (auth-context); `is_superadmin`
+  // is what the nav and per-route guard actually check (lib/nav.ts). Without
+  // the latter every permissioned route renders the NoAccessScreen, which is
+  // what this audit was silently measuring after the field was split out.
+  is_admin: true, is_superadmin: true, is_active: true, is_guest: false,
   first_name: 'Hussain', last_name: 'Abbasi', phone: null,
   role_id: null, permissions: [], branch_ids: [],
   created_at: '2026-01-01T00:00:00+00:00', updated_at: '2026-01-01T00:00:00+00:00',
