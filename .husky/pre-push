@@ -1,4 +1,12 @@
 #!/usr/bin/env sh
+#
+# Mirrors the gates the "Deploy to Production" workflow runs before it will
+# deploy, so a lint / format / type / shared-types-drift failure is caught here
+# instead of after a full CI round trip (and after the commit is already on
+# main). `set -e` so the FIRST failing check aborts the push — without it the
+# script printed failures but still exited 0 on the trailing echo, so a broken
+# push sailed through and only the deploy caught it.
+set -e
 
 echo "▶ pre-push: type-checking, linting and running frontend tests..."
 
@@ -26,6 +34,11 @@ if [ -d "$VENV" ]; then
   # first, the same way the frontend lint/type-check above already do.
   ruff check .
   ruff format --check .
+  # Shared-types freshness — the deploy's own gate (deploy.yml "Shared types
+  # freshness": `export_openapi --check`). A Pydantic schema change that was not
+  # re-exported fails the deploy here otherwise; the check needs Python only, no
+  # Node and no database, so it is cheap to run before the slow pytest below.
+  python -m scripts.export_openapi --check
   python -m pytest tests/ --tb=short -q
   cd - > /dev/null
 else
