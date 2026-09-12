@@ -16,13 +16,22 @@ fast unit suite. Three concern areas:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.services.aggregators.modifiers import expand_modifiers
 from app.services.providers.keeta_provider import provider as keeta
+
+
+@asynccontextmanager
+async def _fake_finance_session():
+    """Stand in for `ingest.AsyncSessionFactory()` — the per-bill session the
+    finance ingest commits on — so the DB-mocked tests never open a real one."""
+    yield AsyncMock()
+
 
 # ── 1. expand_modifiers with Keeta shapes ────────────────────────────────────
 
@@ -656,14 +665,13 @@ async def test_ingest_keeta_finance_payloads_calls_upserts():
     for each parsed row, and returns correct (statements, payouts) counts."""
     from app.services.aggregators import ingest
 
-    mock_db = MagicMock()
-
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock) as mock_stmt,
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
+        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads(
-            mock_db, [_FINANCE_PAYLOAD_WITH_ROWS]
+            [_FINANCE_PAYLOAD_WITH_ROWS]
         )
 
     assert stmts == 1
@@ -677,15 +685,14 @@ async def test_ingest_keeta_finance_payloads_skips_bad_payload():
     """A payload that raises during parse does not abort the batch."""
     from app.services.aggregators import ingest
 
-    mock_db = MagicMock()
     bad_payload = "not a dict"  # type: ignore[assignment]
 
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock),
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock),
+        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads(
-            mock_db,
             [bad_payload, _FINANCE_PAYLOAD_WITH_ROWS],  # type: ignore[list-item]
         )
 
@@ -699,14 +706,13 @@ async def test_ingest_keeta_finance_payloads_truncation_only_returns_zeros():
     """Task-only payloads (no settled rows) return (0, 0) — not an error."""
     from app.services.aggregators import ingest
 
-    mock_db = MagicMock()
-
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock) as mock_stmt,
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
+        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads(
-            mock_db, [_FINANCE_PAYLOAD_TASK_ONLY]
+            [_FINANCE_PAYLOAD_TASK_ONLY]
         )
 
     assert stmts == 0
@@ -1061,14 +1067,12 @@ async def test_ingest_keeta_bill_xlsx_upserts_statement_and_payouts():
     """The bill payload upserts one statement and one payout per billing cycle."""
     from app.services.aggregators import ingest
 
-    mock_db = MagicMock()
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock),
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
+        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
     ):
-        stmts, pays = await ingest.ingest_keeta_finance_payloads(
-            mock_db, [_real_bill_payload()]
-        )
+        stmts, pays = await ingest.ingest_keeta_finance_payloads([_real_bill_payload()])
 
     assert stmts == 1
     assert pays == 2

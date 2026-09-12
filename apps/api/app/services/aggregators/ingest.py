@@ -493,9 +493,7 @@ async def ingest_keeta_payloads(db: AsyncSession, payloads: list[dict]) -> int:
     return ingested
 
 
-async def ingest_keeta_finance_payloads(
-    db: AsyncSession, payloads: list[dict]
-) -> tuple[int, int]:
+async def ingest_keeta_finance_payloads(payloads: list[dict]) -> tuple[int, int]:
     """Parse and upsert a batch of in-page-fetched Keeta finance payloads.
 
     The bootstrap worker fetches finance data in-page (where `mtgsig` is signed)
@@ -507,6 +505,18 @@ async def ingest_keeta_finance_payloads(
     than in the JSON), `parse_finance` sets a `truncation_note` and returns empty
     lists; this is logged but not an error — the API still responds 200 with zero
     counts, so the bootstrap worker can surface it to its caller.
+
+    Each payload is committed on its OWN short-lived session rather than the
+    request's single transaction spanning the whole batch. The nightly push carries
+    ~10 weekly bills, each hundreds of statement-line upserts; ingesting them all
+    under one connection held that connection for the length of the batch and — when
+    it outran the gateway timeout — rolled the WHOLE push back, so nothing landed
+    and Keeta finance stalled for days. Per-bill commits persist incrementally (a
+    later 504 keeps the bills already done; the idempotent next run finishes the
+    rest) and free the connection between bills so a concurrent sweep is never
+    locked out. The commit lives here, not in the request dependency — the
+    transaction convention's stated exception — because each bill is its own
+    durable unit.
     """
     from app.services.providers import keeta_provider
 
@@ -520,12 +530,20 @@ async def ingest_keeta_finance_payloads(
             continue
         if result.truncation_note:
             logger.info("keeta finance payload truncated: %s", result.truncation_note)
-        for statement in result.statements:
-            await _upsert_statement(db, CHANNEL_KEETA, statement)
-            statements_written += 1
-        for payout in result.payouts:
-            await _upsert_payout(db, CHANNEL_KEETA, payout)
-            payouts_written += 1
+        if not (result.statements or result.payouts):
+            continue
+        try:
+            async with AsyncSessionFactory() as session:
+                for statement in result.statements:
+                    await _upsert_statement(session, CHANNEL_KEETA, statement)
+                for payout in result.payouts:
+                    await _upsert_payout(session, CHANNEL_KEETA, payout)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — one bad bill must not fail the batch
+            logger.exception("keeta finance payload ingest failed — skipped")
+            continue
+        statements_written += len(result.statements)
+        payouts_written += len(result.payouts)
     return statements_written, payouts_written
 
 

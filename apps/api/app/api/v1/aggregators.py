@@ -456,7 +456,6 @@ async def push_keeta_orders(
 async def push_keeta_finance(
     body: KeetaFinancePush,
     _: None = Depends(_require_push_token),
-    db: AsyncSession = Depends(get_db),
 ) -> KeetaFinanceResult:
     """Ingest a batch of in-page-fetched Keeta finance payloads.
 
@@ -466,8 +465,13 @@ async def push_keeta_finance(
     When the payload is only download-task metadata (figures live in PDF invoices),
     the parse returns empty lists with a truncation note — the response still
     returns 200 with zero counts and includes the note so the worker can log it.
+
+    Takes no request session: the ingest commits each weekly bill on its own
+    short-lived session (see `ingest_keeta_finance_payloads`) so a long batch
+    never holds one pooled connection through the whole push nor loses everything
+    to a gateway timeout.
     """
-    statements, payouts = await ingest.ingest_keeta_finance_payloads(db, body.payloads)
+    statements, payouts = await ingest.ingest_keeta_finance_payloads(body.payloads)
     return KeetaFinanceResult(statements=statements, payouts=payouts)
 
 
