@@ -25,7 +25,9 @@ __all__ = [
     "update_language",
 ]
 
-_TRANSLATIONS_TTL = 300  # 5 minutes
+_TRANSLATIONS_TTL = 1800  # 30 min — bulk_upsert_translations calls
+# invalidate_translations (and seed_i18n re-invalidates on every boot), so this
+# TTL never gates a real change; it only bounds staleness when nothing moved.
 
 
 def _translations_key(locale: str) -> str:

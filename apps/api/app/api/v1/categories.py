@@ -19,7 +19,13 @@ router = APIRouter()
 # nothing to sell on the channel that asked. The channel is part of the key —
 # serving the storefront's list to the register is the bug this endpoint had.
 _CACHE_KEY = "categories:channel:{channel}"
-_CACHE_TTL = 300
+# 30 min, not 5: a category edit calls `_invalidate()` (below), so the cache is
+# never the reason a change is late — the TTL only bounds how long a value lives
+# when nothing changed. Five minutes meant re-running the query ~12×/hour on a
+# list that changes a handful of times a day, which was pure load on the
+# e2-small for no freshness gain. `_PUBLIC_CACHE_CONTROL` (client caching) is a
+# separate constant and stays at 60s.
+_CACHE_TTL = 1800
 #: CDN caching for the PUBLIC (web, active-only) list only — never the staff or
 #: include_inactive view (WP5, F-OPS-3).
 _PUBLIC_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"

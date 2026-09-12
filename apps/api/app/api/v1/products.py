@@ -39,7 +39,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_FEATURED_TTL = 300
+# 30 min, not 5: `_invalidate_catalogue_caches()` (below) fires on every product
+# edit and the categories module also busts `products:featured:*` on a category
+# edit, so this TTL never gates a real change — it only bounds staleness when
+# nothing moved. Featured/cart-addon lists change a few times a day, so 5 min
+# was ~12 needless recomputes/hour each. Client caching is `_PUBLIC_CACHE_CONTROL`
+# (60s), separate from this.
+_FEATURED_TTL = 1800
 
 
 async def _invalidate_catalogue_caches() -> None:

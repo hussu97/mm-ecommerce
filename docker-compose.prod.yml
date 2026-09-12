@@ -429,6 +429,16 @@ services:
     #
     # Note for anyone editing the block below: it is a folded scalar, so a `#`
     # line inside it is not a comment — it becomes an argument to postgres.
+    #
+    # `shared_preload_libraries=pg_stat_statements` loads the query-stats
+    # collector so DB CPU can be attributed to individual statements (which is
+    # what tells us where to add an index or a cache). It is a preload library,
+    # so it only takes effect on a full postgres start — a plain deploy cutover
+    # never recreates this container, so after committing this you must
+    # `docker compose up -d --force-recreate --no-deps postgres` once on the VM
+    # and then `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`. The
+    # collector's shared-memory footprint is a few MB (default 5000 tracked
+    # statements), which fits under the 320m cap.
     command: >
       postgres
       -c shared_buffers=64MB
@@ -439,6 +449,8 @@ services:
       -c checkpoint_completion_target=0.9
       -c wal_buffers=4MB
       -c synchronous_commit=off
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=top
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

@@ -26,7 +26,8 @@ __all__ = [
     "update_post_locale",
 ]
 
-_BLOG_TTL = 300  # 5 minutes
+_BLOG_TTL = 1800  # 30 min — cache_delete on every blog write (below) keeps it
+# fresh; the TTL only bounds staleness when nothing changed. Was 5 min.
 
 
 def _cache_key(slug: str, locale: str) -> str:
