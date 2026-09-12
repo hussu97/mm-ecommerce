@@ -41,6 +41,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import advisory_lock, alerting, heartbeat
 from app.core.config import settings
 from app.core.database import (
+    AsyncSessionFactory as RequestSessionFactory,  # the request-path pool (5+5)
+)
+from app.core.database import (
     SchedulerSessionFactory as AsyncSessionFactory,  # noqa: N813 — scheduler pool, kept under this name for existing patch points
 )
 from app.models.aggregator import (
@@ -532,8 +535,13 @@ async def ingest_keeta_finance_payloads(payloads: list[dict]) -> tuple[int, int]
             logger.info("keeta finance payload truncated: %s", result.truncation_note)
         if not (result.statements or result.payouts):
             continue
+        # The REQUEST pool (5+5), not the scheduler pool (5+1) the background sweeps
+        # run on and routinely exhaust — a request-triggered ingest that reached for
+        # the scheduler pool waited on every checkout and dragged a two-bill chunk to
+        # 221s. A short session per bill on the request pool commits the bill and
+        # frees the connection between bills.
         try:
-            async with AsyncSessionFactory() as session:
+            async with RequestSessionFactory() as session:
                 for statement in result.statements:
                     await _upsert_statement(session, CHANNEL_KEETA, statement)
                 for payout in result.payouts:

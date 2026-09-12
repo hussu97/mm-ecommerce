@@ -12,12 +12,15 @@ files from the encrypted row rather than asking for a login.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _headers() -> dict[str, str]:
@@ -153,20 +156,38 @@ async def push_keeta_finance(payloads: list[dict]) -> dict[str, Any]:
     Returns accumulated `{"statements": int, "payouts": int}` across all chunks.
     When the worker obtained only download-task metadata (no settled figures yet),
     the API still responds 200 with zero counts; the caller should log that case.
+
+    ONE bill per request: a weekly billing XLSX is hundreds of per-order statement
+    lines, and the API ingests each on its own committed session. Two bills to a
+    request pushed a single request past the ~60s edge timeout (a 504 the worker saw
+    while the API kept working); one bill keeps every request short and lets a failed
+    one retry on the next run without dragging its neighbour down.
     """
     url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/keeta/finance"
-    chunk_size = 2
+    chunk_size = 1
     statements = 0
     payouts = 0
+    failures = 0
     async with httpx.AsyncClient(timeout=180) as client:
         for i in range(0, len(payloads), chunk_size):
             chunk = payloads[i : i + chunk_size]
-            resp = await client.post(url, json={"payloads": chunk}, headers=_headers())
-            resp.raise_for_status()
+            try:
+                resp = await client.post(
+                    url, json={"payloads": chunk}, headers=_headers()
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                # One bill's request failing (a slow edge timeout, a transient 5xx)
+                # must not drop the bills after it — the API commits per bill and the
+                # ingest is idempotent, so a skipped bill simply lands on the next
+                # run. Logged and counted; the caller surfaces a non-zero failure.
+                failures += 1
+                logger.warning("keeta finance bill push failed (%s) — skipped", exc)
+                continue
             body = resp.json()
             statements += int(body.get("statements") or 0)
             payouts += int(body.get("payouts") or 0)
-    return {"statements": statements, "payouts": payouts}
+    return {"statements": statements, "payouts": payouts, "failures": failures}
 
 
 async def push_deliveroo_finance(payloads: list[dict]) -> dict[str, Any]:

@@ -668,7 +668,7 @@ async def test_ingest_keeta_finance_payloads_calls_upserts():
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock) as mock_stmt,
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
-        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
+        patch.object(ingest, "RequestSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads(
             [_FINANCE_PAYLOAD_WITH_ROWS]
@@ -690,7 +690,7 @@ async def test_ingest_keeta_finance_payloads_skips_bad_payload():
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock),
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock),
-        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
+        patch.object(ingest, "RequestSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads(
             [bad_payload, _FINANCE_PAYLOAD_WITH_ROWS],  # type: ignore[list-item]
@@ -709,7 +709,7 @@ async def test_ingest_keeta_finance_payloads_truncation_only_returns_zeros():
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock) as mock_stmt,
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
-        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
+        patch.object(ingest, "RequestSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads(
             [_FINANCE_PAYLOAD_TASK_ONLY]
@@ -1070,7 +1070,7 @@ async def test_ingest_keeta_bill_xlsx_upserts_statement_and_payouts():
     with (
         patch.object(ingest, "_upsert_statement", new_callable=AsyncMock),
         patch.object(ingest, "_upsert_payout", new_callable=AsyncMock) as mock_payout,
-        patch.object(ingest, "AsyncSessionFactory", _fake_finance_session),
+        patch.object(ingest, "RequestSessionFactory", _fake_finance_session),
     ):
         stmts, pays = await ingest.ingest_keeta_finance_payloads([_real_bill_payload()])
 
