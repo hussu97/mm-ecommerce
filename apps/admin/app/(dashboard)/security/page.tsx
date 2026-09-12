@@ -90,7 +90,7 @@ export default function SecurityPage() {
             <h2 className="font-display text-lg text-gray-800">Passkeys</h2>
             <p className="text-xs text-gray-400 font-body mt-1">
               {passkeysEnabled
-                ? 'Add a passkey after password login to enable password or passkey sign-in.'
+                ? 'Add a passkey after password login to enable password or passkey sign-in. Works with Windows Hello, Touch ID, Face ID, and security keys.'
                 : 'Passkeys are disabled for the superadmin account.'}
             </p>
           </div>
@@ -102,7 +102,7 @@ export default function SecurityPage() {
               label="Passkey Name"
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="MacBook Touch ID"
+              placeholder="Windows Hello laptop"
             />
             <div className="sm:pt-6">
               <Button type="button" loading={saving} onClick={addPasskey}>

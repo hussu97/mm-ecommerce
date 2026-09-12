@@ -28,6 +28,7 @@ from webauthn import (
     verify_registration_response,
 )
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+from webauthn.helpers.cose import COSEAlgorithmIdentifier
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
@@ -88,6 +89,22 @@ _REFRESH_COOKIE = "mm_refresh_token"
 SUPERADMIN_EMAIL = "admin@meltingmomentscakes.com"
 ADMIN_PASSKEY_EXCLUDED_EMAILS = {SUPERADMIN_EMAIL}
 WEBAUTHN_CHALLENGE_TTL_MINUTES = 10
+
+#: Public-key algorithms this RP will accept when a browser creates a passkey.
+#: Stated explicitly rather than left to py_webauthn's default, because the set
+#: is what decides *which authenticators can register at all* and it must not be
+#: allowed to drift silently underneath us. ES256 (-7) covers Apple platform
+#: authenticators (Touch ID / Face ID / iCloud Keychain) and most security keys;
+#: RS256 (-257) is the one Microsoft Windows Hello needs — its TPM-backed keys
+#: are frequently RSA, so an RP that advertises only ES256 fails Windows Hello
+#: registration while working fine on Apple. EdDSA (-8) covers the newer FIDO2
+#: keys that prefer it. Drop RS256 and Windows Hello quietly stops working; the
+#: guard in test_admin_passkey_algorithms.py exists so that can't happen unseen.
+WEBAUTHN_SUPPORTED_PUB_KEY_ALGS = [
+    COSEAlgorithmIdentifier.ECDSA_SHA_256,
+    COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
+    COSEAlgorithmIdentifier.EDDSA,
+]
 
 
 def _set_auth_cookies(
@@ -489,6 +506,7 @@ async def passkey_registration_options(
             resident_key=ResidentKeyRequirement.PREFERRED,
             user_verification=UserVerificationRequirement.PREFERRED,
         ),
+        supported_pub_key_algs=WEBAUTHN_SUPPORTED_PUB_KEY_ALGS,
         exclude_credentials=[
             PublicKeyCredentialDescriptor(id=base64url_to_bytes(passkey.credential_id))
             for passkey in existing
