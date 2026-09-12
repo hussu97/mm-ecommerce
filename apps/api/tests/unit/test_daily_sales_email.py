@@ -108,13 +108,28 @@ def _stub_db(rows):
 
 
 def _row(
-    branch, source, channel, cnt, rev, disc, agg, pay, courier, refund, mkt="0", vat="0"
+    branch,
+    source,
+    channel,
+    cnt,
+    rev,
+    disc,
+    agg,
+    pay,
+    courier,
+    refund,
+    mkt="0",
+    vat="0",
+    method="delivery",
 ):
     return (
         "2026-08-24",
         branch,
         source,
         channel,
+        # `_fetch` now groups by delivery_method too, so an online row can split
+        # into website (delivery) vs store pickup. Defaults to delivery.
+        method,
         cnt,
         D(rev),
         D(disc),
@@ -146,6 +161,7 @@ async def test_build_lays_out_fixed_columns_and_zero_fills():
         "careem",
         "deliveroo",
         "website",
+        "website_pickup",
         "counter",
     ]
     # Both active branches appear, ordered by name; Barsha's untouched columns
@@ -201,7 +217,7 @@ async def test_xlsx_has_the_five_sections_with_discount_and_charges_negative():
     values = list(ws.iter_rows(values_only=True))
     disc_idx = next(i for i, r in enumerate(values) if r[0] == "Sales Discount")
     header = values[disc_idx + 1]
-    website_col = header.index("website")
+    website_col = header.index("website delivery")
     shj = next(r for r in values[disc_idx:] if r[1] == "Sharjah Kitchen")
     assert shj[website_col] == -254.5  # discount shown negative
 

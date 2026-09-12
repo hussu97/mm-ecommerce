@@ -115,15 +115,17 @@ def test_a_zone_outside_sharjah_is_never_offered_noon_send():
     `courier_service._dispatch_once` already refuses to fall that way
     automatically; this is the same refusal on the manual path.
 
-    Slider is in the same position by default — five of its six zones are
-    outside Sharjah. `Sharjah Core` is the sixth and is the one place noon Send
-    is a real answer, which a per-provider matrix cannot express; that zone's
-    row is seeded explicitly by `128_slider_zones`, and it is also exactly what
-    the pilot gate falls back to there.
+    Both Slider tiers are in the same position by default — five of their six
+    zones are outside Sharjah. `Sharjah Core` is the sixth and is the one place
+    noon Send is a real answer, which a per-provider matrix cannot express; that
+    zone's row is seeded explicitly by `128_slider_zones`, and it is also exactly
+    what the pilot gate falls back to there. (The bare legacy `slider` was
+    retired in `241_drop_legacy_slider`; its rows are now `slider_car`.)
     """
     for preferred in (
         FulfilmentProviderEnum.LALAMOVE.value,
-        FulfilmentProviderEnum.SLIDER.value,
+        FulfilmentProviderEnum.SLIDER_BIKE.value,
+        FulfilmentProviderEnum.SLIDER_CAR.value,
     ):
         assert (
             FulfilmentProviderEnum.NOON_SEND.value not in DEFAULT_ALTERNATES[preferred]

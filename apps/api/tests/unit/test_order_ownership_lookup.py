@@ -34,6 +34,12 @@ def _order_create(**over):
         email="John@X.com",
         delivery_method=DeliveryMethodEnum.PICKUP,
         payment_method="cod",
+        # A pickup order now carries the collecting customer's contact.
+        pickup_contact={
+            "first_name": "John",
+            "last_name": "Doe",
+            "phone": "+971501234567",
+        },
     )
     return OrderCreate(**{**base, **over})
 

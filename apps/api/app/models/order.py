@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .legal_entity import LegalEntity
     from .order_delivery import OrderDelivery
     from .order_driver import OrderDriver
+    from .order_receiver import OrderReceiver
     from .order_status_event import OrderStatusEvent
     from .payment_transaction import PaymentTransaction
     from .pos_order import (
@@ -656,6 +657,17 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: Admin-facing only — never serialised into a storefront response.
     delivery: Mapped[OrderDelivery | None] = relationship(
         "OrderDelivery",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    #: The gift recipient, when this order was placed for someone else. One row
+    #: at most, cascade-deleted with the order. Their name and number are what
+    #: the courier drop-off is built from (`address_format.delivery_contact`);
+    #: the orderer's own contact — and the coupon identity — stays on
+    #: `customer_*`. Null on an ordinary order.
+    receiver: Mapped[OrderReceiver | None] = relationship(
+        "OrderReceiver",
         back_populates="order",
         cascade="all, delete-orphan",
         uselist=False,

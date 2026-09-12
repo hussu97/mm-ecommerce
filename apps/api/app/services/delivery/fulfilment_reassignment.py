@@ -83,17 +83,17 @@ __all__ = [
 
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
 NOON_SEND = FulfilmentProviderEnum.NOON_SEND.value
-SLIDER = FulfilmentProviderEnum.SLIDER.value
 SLIDER_BIKE = FulfilmentProviderEnum.SLIDER_BIKE.value
 SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
 THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 
-#: The bare legacy value and the two tier-pinned ones. All three book through
-#: Slider; the tier only decides the vehicle. A move *to* one of them is how a
-#: Slider bike is upgraded to a car by hand — and only that direction, because a
-#: car zone lists no Slider alternate, so `slider_car -> slider_bike` is never
-#: an option `allowed_targets` can offer.
-SLIDER_PROVIDERS = frozenset({SLIDER, SLIDER_BIKE, SLIDER_CAR})
+#: The two tier-pinned Slider providers. Both book through Slider; the tier only
+#: decides the vehicle. A move *to* one of them is how a Slider bike is upgraded
+#: to a car by hand — and only that direction, because a car zone lists no Slider
+#: alternate, so `slider_car -> slider_bike` is never an option
+#: `allowed_targets` can offer. (The legacy bare `slider` was retired in
+#: `241_drop_legacy_slider`; its rows are now `slider_car`.)
+SLIDER_PROVIDERS = frozenset({SLIDER_BIKE, SLIDER_CAR})
 
 #: Where an order may be standing and still be moved.
 #:

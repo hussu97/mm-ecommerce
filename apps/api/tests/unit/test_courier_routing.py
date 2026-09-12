@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
-from app.models.order import OrderStatusEnum
+from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.services.couriers import courier_service, lalamove_service
 from app.services.delivery.delivery_zone_service import Zone
@@ -64,7 +64,12 @@ def _order(**overrides):
         },
     }
     values.update(overrides)
-    return SimpleNamespace(**values)
+    # A real (transient) ORM order, not a SimpleNamespace: dispatch now inspects
+    # the order with `sqlalchemy.inspect` to load `receiver` only when a caller
+    # did not (`courier_service._ensure_receiver_loaded`), and a transient
+    # instance short-circuits that with no database — which is what a hand-built
+    # test order is.
+    return Order(**values)
 
 
 def _delivery(provider="noon_send") -> OrderDelivery:
@@ -294,7 +299,7 @@ def slider_spies(monkeypatch, spies, in_range):
     async def slider_dispatch(db, order):
         spies.append("slider")
         db.delivery.courier_order_id = "SLD-4820193"
-        db.delivery.provider = "slider"
+        db.delivery.provider = "slider_car"
         db.delivery.last_error = None
         return db.delivery
 
@@ -306,7 +311,7 @@ def slider_spies(monkeypatch, spies, in_range):
 
 
 def _slider_delivery(zone="Ajman City") -> OrderDelivery:
-    delivery = _delivery("slider")
+    delivery = _delivery("slider_car")
     delivery.zone_name = zone
     return delivery
 
@@ -660,8 +665,8 @@ async def test_a_dead_slider_booking_does_not_short_circuit_the_lalamove_fallbac
 
 
 def test_effective_provider_sends_a_slider_zone_to_slider_when_configured(slider_ready):
-    provider, reason = courier_service.effective_provider("slider", "Ajman City")
-    assert provider == "slider"
+    provider, reason = courier_service.effective_provider("slider_car", "Ajman City")
+    assert provider == "slider_car"
     assert reason is None
 
 
@@ -669,10 +674,10 @@ def test_effective_provider_falls_a_slider_zone_back_when_unconfigured(monkeypat
     """An absent credential is a fallback, chosen off the zone name: Ajman was
     Lalamove's, `Sharjah Core` was noon Send's."""
     monkeypatch.setattr(settings, "SLIDER_API_KEY", "")
-    ajman, reason = courier_service.effective_provider("slider", "Ajman City")
+    ajman, reason = courier_service.effective_provider("slider_car", "Ajman City")
     assert ajman == "lalamove"
     assert reason  # and it says why it is not the zone's own
-    sharjah, _ = courier_service.effective_provider("slider", "Sharjah Core")
+    sharjah, _ = courier_service.effective_provider("slider_car", "Sharjah Core")
     assert sharjah == "noon_send"
 
 
@@ -770,7 +775,7 @@ def estimate_spies(monkeypatch, slider_ready):
 async def test_a_slider_zone_quotes_against_slider(estimate_spies):
     await courier_service.estimate_for_point(
         AsyncMock(),
-        "slider",
+        "slider_car",
         25.40,
         55.44,
         zone_name="Ajman City",
@@ -785,7 +790,7 @@ async def test_an_unconfigured_slider_zone_quotes_against_its_fallback(
     monkeypatch.setattr(courier_service.slider_service, "is_enabled", lambda: False)
     await courier_service.estimate_for_point(
         AsyncMock(),
-        "slider",
+        "slider_car",
         25.40,
         55.44,
         zone_name="Ajman City",
@@ -800,7 +805,7 @@ async def test_an_unconfigured_slider_zone_quotes_against_its_fallback(
 # zone still travels whole so batching keeps hold of its schedule.
 
 
-def _zone(name="Ajman City", provider="slider"):
+def _zone(name="Ajman City", provider="slider_car"):
     return Zone(
         id=uuid.uuid4(),
         name=name,
@@ -866,9 +871,9 @@ async def test_a_slider_zone_opens_its_row_on_slider():
         SimpleNamespace(id=uuid.uuid4(), delivery_fee=Decimal("10.00")),
         zone=_zone(),
         cart=_quoted_cart(),
-        provider="slider",
+        provider="slider_car",
     )
-    assert delivery.provider == "slider"
+    assert delivery.provider == "slider_car"
 
 
 @pytest.mark.asyncio

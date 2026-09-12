@@ -54,14 +54,14 @@ export function CourierMark({
   logoUrl?: string | null;
   size?: number;
 }) {
-  if (code === 'counter') {
+  if (code === 'counter' || code === 'website_pickup') {
     return (
       <span
         className="material-icons text-gray-400"
         style={{ fontSize: size + 1 }}
         aria-hidden
       >
-        point_of_sale
+        {code === 'counter' ? 'point_of_sale' : 'storefront'}
       </span>
     );
   }

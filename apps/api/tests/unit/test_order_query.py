@@ -13,15 +13,19 @@ from app.services.orders import order_query
 def test_all_codes_lead_with_counter():
     codes = order_query.ALL_COURIER_CODES
     assert codes[0] == "counter"
-    # The dispatch couriers — including Slider's two vehicle tiers and the legacy
-    # bare `slider` — the five marketplaces, and counter.
+    # Store Pickup is the second synthetic, carrier-less column, right after the
+    # register.
+    assert codes[1] == "website_pickup"
+    # The dispatch couriers — including Slider's two vehicle tiers (the legacy
+    # bare `slider` was retired) — the five marketplaces, counter, and store
+    # pickup.
     assert set(codes) == {
         "counter",
+        "website_pickup",
         "lalamove",
         "noon_send",
         "slider_bike",
         "slider_car",
-        "slider",
         "third_party",
         "talabat",
         "keeta",
@@ -52,10 +56,21 @@ def test_courier_code_for_aggregator_reads_the_channel_with_version_noise():
 
 def test_courier_code_for_website_reads_the_dispatch_provider():
     assert order_query.courier_code_for("online", None, "lalamove") == "lalamove"
-    # An online pickup with no dispatch provider has no carrier — counted nowhere.
+    # An online delivery order with no dispatch provider has no carrier — counted
+    # nowhere.
     assert order_query.courier_code_for("online", None, None) is None
     # An unknown provider is not invented into a courier.
     assert order_query.courier_code_for("online", None, "bicycle") is None
+
+
+def test_courier_code_for_online_pickup_is_store_pickup():
+    """An online order collected in store is its own channel, resolved from the
+    `pickup` delivery method rather than any dispatch courier."""
+    assert (
+        order_query.courier_code_for("online", None, None, delivery_method="pickup")
+        == "website_pickup"
+    )
+    assert order_query.courier_label("website_pickup") == "Store Pickup"
 
 
 def test_courier_label_names_the_counter():

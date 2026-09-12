@@ -38,6 +38,7 @@ from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
+from app.models.order_receiver import OrderReceiver
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_transaction import PaymentTransactionStatusEnum
 from app.models.pos_order import OrderSourceEnum, OrderTax
@@ -119,6 +120,9 @@ def _order_load_options():
     return [
         selectinload(Order.items),
         selectinload(Order.payment_transactions),
+        # `to_response` serialises `receiver`, so it must be loaded up front for
+        # the same reason `items` is — a lazy load here is a `MissingGreenlet`.
+        selectinload(Order.receiver),
     ]
 
 
@@ -224,8 +228,12 @@ async def _ensure_items_loaded(db: AsyncSession, order: Order) -> None:
     # identity to refresh against, and its `items` collection is already real.
     if state.transient or state.pending:
         return
-    if "items" in state.unloaded:
-        await db.refresh(order, ["items"])
+    # `receiver` rides along for the same reason: `to_response` serialises it, so
+    # a bare-`select` caller (the courier webhooks) must have it loaded before
+    # validation reaches for it.
+    to_load = [attr for attr in ("items", "receiver") if attr in state.unloaded]
+    if to_load:
+        await db.refresh(order, to_load)
 
 
 async def get_for_notification(db: AsyncSession, order_id: uuid.UUID) -> Order | None:
@@ -817,12 +825,29 @@ async def _persist_order(
     contact_phone = None
     contact_phone_country = None
     contact_phone_type = None
+    customer_name = None
     if data.shipping_address is not None:
         given = (data.shipping_address.phone or "").strip()
         parts = describe_phone(given)
         contact_phone = parts.e164 or given or None
         contact_phone_country = parts.country
         contact_phone_type = parts.type
+    elif data.pickup_contact is not None:
+        # A pickup order has no address, so its name and number arrive on their
+        # own field (`OrderCreate.pickup_contact`, required for pickup). They
+        # land on `customer_name`/`customer_phone` exactly as a delivery's
+        # address-phone would — so the counter can reach the customer, and the
+        # per-customer coupon check below keys on the customer's own number
+        # rather than the nothing a pickup used to carry. Same normalisation
+        # policy: canonical E.164 where parseable, the given number otherwise.
+        given = (data.pickup_contact.phone or "").strip()
+        parts = describe_phone(given)
+        contact_phone = parts.e164 or given or None
+        contact_phone_country = parts.country
+        contact_phone_type = parts.type
+        customer_name = (
+            f"{data.pickup_contact.first_name} {data.pickup_contact.last_name}".strip()
+        )
 
     # The per-customer coupon rules, re-checked here under a row lock — the
     # authoritative test, where `validate` in the checkout was only advisory.
@@ -856,6 +881,9 @@ async def _persist_order(
         client_request_id=data.client_request_id,
         user_id=user_id,
         email=order_email,
+        # Set for a pickup order (derived from `pickup_contact`); left null for a
+        # delivery, whose name the admin reads off the address snapshot.
+        customer_name=customer_name,
         customer_phone=contact_phone,
         customer_phone_country=contact_phone_country,
         customer_phone_type=contact_phone_type,
@@ -928,6 +956,25 @@ async def _persist_order(
             if attempt == 2:
                 raise
             order.order_number = await _generate_order_number(db)
+
+    # The gift recipient, when this order was placed for someone else. Present
+    # only for a delivery — `OrderCreate._contact_matches_method` drops it on a
+    # pickup — and it deliberately does NOT touch `customer_phone` above: the
+    # coupon rules key on the orderer's number, so ordering for someone else
+    # never spends the recipient's allowance. It is what the courier drop-off is
+    # built from (`address_format.delivery_contact`). Same phone normalisation.
+    if data.receiver is not None:
+        given = (data.receiver.phone or "").strip()
+        parts = describe_phone(given)
+        db.add(
+            OrderReceiver(
+                order_id=order.id,
+                name=data.receiver.name.strip(),
+                phone=parts.e164 or given or "",
+                phone_country=parts.country,
+                phone_type=parts.type,
+            )
+        )
 
     for item in items_data:
         # `_tax_group_id` rode along so the breakdown could be built from the

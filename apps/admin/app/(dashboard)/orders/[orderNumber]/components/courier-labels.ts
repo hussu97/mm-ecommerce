@@ -35,13 +35,13 @@ export const PROVIDER_LABEL: Record<string, string> = {
   noon_send: 'noon Send',
   slider_bike: 'Slider (bike)',
   slider_car: 'Slider (car)',
-  slider: 'Slider',
   third_party: 'Third party',
 };
 
 /**
- * The whole Slider family — the two fleets and the legacy single value. Used
- * where "is this a Slider booking" matters (its badge colour, the push-status
- * button) so the answer stays in one place as fleets come and go.
+ * The whole Slider family — the two fleets. Used where "is this a Slider
+ * booking" matters (its badge colour, the push-status button) so the answer
+ * stays in one place as fleets come and go. (The legacy bare `slider` was
+ * retired; its rows are now `slider_car`.)
  */
-export const SLIDER_PROVIDERS = new Set(['slider_bike', 'slider_car', 'slider']);
+export const SLIDER_PROVIDERS = new Set(['slider_bike', 'slider_car']);

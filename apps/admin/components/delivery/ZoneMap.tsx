@@ -36,11 +36,10 @@ const PROVIDER_STYLE: Record<string, { fill: string; stroke: string; label: stri
   lalamove: { fill: '#2563eb', stroke: '#1d4ed8', label: 'Lalamove' },
   // The two Slider fleets share amber with the fees-table badge, but take
   // neighbouring shades so a bike zone and a car zone are told apart on the map:
-  // the bike lighter, the car a deeper burnt orange. Legacy bare `slider` keeps
-  // the original amber it always drew in.
+  // the bike lighter, the car a deeper burnt orange. (The legacy bare `slider`
+  // was retired; its zones are now `slider_car`.)
   slider_bike: { fill: '#f59e0b', stroke: '#d97706', label: 'Slider (bike)' },
   slider_car: { fill: '#b45309', stroke: '#92400e', label: 'Slider (car)' },
-  slider: { fill: '#f59e0b', stroke: '#d97706', label: 'Slider' },
   third_party: { fill: '#94a3b8', stroke: '#64748b', label: 'Third party' },
 };
 

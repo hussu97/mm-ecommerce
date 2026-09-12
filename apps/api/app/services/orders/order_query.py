@@ -12,15 +12,15 @@ A "courier" here spans all three carrier shapes the shop uses:
   carrier of its own;
 * an **aggregator marketplace** (`talabat`, `keeta`, `noon_food`, `deliveroo`,
   `careem`), identified by the order's `aggregator_channel` display name; and
-* a **dispatched website courier** (`lalamove`, `noon_send`, `slider`,
-  `third_party`), identified by the order's delivery record.
+* a **dispatched website courier** (`lalamove`, `noon_send`, `slider_bike`,
+  `slider_car`, `third_party`), identified by the order's delivery record.
 """
 
 from __future__ import annotations
 
 from sqlalchemy import and_, exists, or_
 
-from app.models.order import Order
+from app.models.order import DeliveryMethodEnum, Order
 from app.models.order_delivery import OrderDelivery
 from app.models.pos_order import OrderSourceEnum
 from app.services.couriers import courier_catalog
@@ -29,8 +29,19 @@ from app.services.couriers import courier_catalog
 #: courier view treats "rung at the register" as one of the columns.
 COUNTER_CODE = "counter"
 
-#: Every courier code the dashboard and the list offer, counter first.
-ALL_COURIER_CODES: list[str] = [COUNTER_CODE, *courier_catalog.COURIER_NAMES.keys()]
+#: The synthetic code for a store-pickup order (`source = online`,
+#: `delivery_method = pickup`). Like the counter it has no carrier of its own,
+#: but the shop tracks pickup as its own channel, so it is a column here rather
+#: than folded into the website's dispatch couriers or counted under none.
+WEBSITE_PICKUP_CODE = "website_pickup"
+
+#: Every courier code the dashboard and the list offer, counter and store-pickup
+#: first (the two synthetic, carrier-less columns).
+ALL_COURIER_CODES: list[str] = [
+    COUNTER_CODE,
+    WEBSITE_PICKUP_CODE,
+    *courier_catalog.COURIER_NAMES.keys(),
+]
 
 #: An aggregator code → the prefix its `aggregator_channel` display name starts
 #: with, so a `keeta` filter catches "Keeta 2.0" too.
@@ -74,6 +85,11 @@ def courier_predicate(code: str):
     """A SQL predicate selecting the orders carried by `code`."""
     if code == COUNTER_CODE:
         return Order.source == OrderSourceEnum.CASHIER.value
+    if code == WEBSITE_PICKUP_CODE:
+        return and_(
+            Order.source == OrderSourceEnum.ONLINE.value,
+            Order.delivery_method == DeliveryMethodEnum.PICKUP,
+        )
     if code in courier_catalog.AGGREGATOR_CODES:
         prefix = AGGREGATOR_CHANNEL_PREFIX.get(code, code)
         return and_(
@@ -97,18 +113,24 @@ def courier_code_for(
     source: str | None,
     aggregator_channel: str | None,
     delivery_provider: str | None,
+    delivery_method: str | None = None,
 ) -> str | None:
     """The courier code an order belongs to, or None when it has no carrier.
 
     The inverse of `courier_predicate`, for grouping a result set in Python (the
-    dashboard's per-courier breakdown). A website order collected at the counter,
-    or any order with no carrier and no register, returns None and is simply not
-    counted under any courier.
+    dashboard's per-courier breakdown). A store-pickup order (online + pickup)
+    resolves to `website_pickup`; any order with no carrier, no register and no
+    pickup returns None and is simply not counted under any courier.
     """
     if source == OrderSourceEnum.CASHIER.value:
         return COUNTER_CODE
     if source == OrderSourceEnum.AGGREGATOR.value:
         return courier_catalog.code_for_channel(aggregator_channel)
+    if (
+        source == OrderSourceEnum.ONLINE.value
+        and delivery_method == DeliveryMethodEnum.PICKUP.value
+    ):
+        return WEBSITE_PICKUP_CODE
     if delivery_provider and delivery_provider in courier_catalog.COURIER_NAMES:
         return delivery_provider
     return None
@@ -118,4 +140,6 @@ def courier_label(code: str) -> str:
     """The display name for a courier code — "Counter" for the register."""
     if code == COUNTER_CODE:
         return "Counter"
+    if code == WEBSITE_PICKUP_CODE:
+        return "Store Pickup"
     return courier_catalog.COURIER_NAMES.get(code, code.replace("_", " ").title())
