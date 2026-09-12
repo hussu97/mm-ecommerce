@@ -52,6 +52,7 @@ export function SalesTab({ window }: { window: Window }) {
               { value: 'category', label: 'Category' },
               { value: 'modifier_option', label: 'Modifier option' },
               { value: 'source', label: 'Order source' },
+              { value: 'legal_entity', label: 'Legal entity (trade license)' },
               { value: 'business_date', label: 'Day' },
               { value: 'hour', label: 'Hour of day' },
               { value: 'branch', label: 'Branch' },

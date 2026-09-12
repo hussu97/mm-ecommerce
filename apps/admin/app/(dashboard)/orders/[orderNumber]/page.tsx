@@ -1045,9 +1045,25 @@ export default function OrderDetailPage() {
           <div className="flex justify-between text-sm font-body font-medium text-gray-800 pt-1 border-t border-gray-100">
             <span>Total</span><span>{formatCurrency(order.total)}</span>
           </div>
-          <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
-            <span>VAT included ({Math.round(order.vat_rate * 100)}%)</span><span>{formatCurrency(order.vat_amount)}</span>
-          </div>
+          {/* VAT only where it was charged. A branch whose channel is not
+              VAT-registered (Barsha's counter) issues orders with zero VAT, and
+              a "VAT included" line against a zero would misstate it. */}
+          {order.vat_amount > 0 && (
+            <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
+              <span>VAT included ({Math.round(order.vat_rate * 100)}%)</span><span>{formatCurrency(order.vat_amount)}</span>
+            </div>
+          )}
+          {/* The trade licence this order was issued under, when it carries its
+              own (a branch trading under more than one license per channel). */}
+          {order.tax_registration_name && (
+            <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
+              <span>{order.invoice_title || 'Issued by'}</span>
+              <span className="text-right">
+                {order.tax_registration_name}
+                {order.tax_number ? ` · TRN ${order.tax_number}` : ''}
+              </span>
+            </div>
+          )}
         </div>
         {economics && <NetPayment economics={economics} order={order} />}
       </div>

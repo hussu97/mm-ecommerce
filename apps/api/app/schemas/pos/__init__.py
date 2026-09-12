@@ -12,6 +12,11 @@ know which one you want; the barrel is for the routers that pull from several.
 """
 
 from ._base import OrderTypeLiteral, ORMModel, Translations
+from .branch_channel_tax import (
+    BranchChannelTaxConfigResponse,
+    BranchChannelTaxConfigsUpdate,
+    BranchChannelTaxConfigUpsert,
+)
 from .branches import (
     BranchCreate,
     BranchHolidayBase,
@@ -92,6 +97,9 @@ __all__ = [
     "OrderTypeLiteral",
     "Translations",
     "BranchCreate",
+    "BranchChannelTaxConfigResponse",
+    "BranchChannelTaxConfigsUpdate",
+    "BranchChannelTaxConfigUpsert",
     "BranchHolidayBase",
     "BranchHolidayCreate",
     "BranchHolidayResponse",

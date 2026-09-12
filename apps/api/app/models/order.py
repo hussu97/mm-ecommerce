@@ -324,6 +324,24 @@ class Order(Base, UUIDMixin, TimestampMixin):
     total_excl_vat: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, default=Decimal("0.00")
     )
+    #: The seller's trade-license identity this order was issued under, frozen at
+    #: creation from the (branch, channel) tax config — because a branch can trade
+    #: under different licenses per channel (`branch_channel_tax_configs`), and a
+    #: receipt read live off the branch would mislabel a website order printed at
+    #: a branch whose counter is a different, non-VAT-registered entity. Null on
+    #: every historical order and wherever the config inherits the branch/business
+    #: identity; every reader falls back to `Branch`/`BusinessSettings` then.
+    #: Stored rather than derived for the same reason `order_taxes` is: a tax
+    #: document must reproduce what it was issued under even after the config
+    #: changes.
+    tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    tax_registration_name: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )
+    #: The document title to print ("Tax Invoice" for a registered channel, a
+    #: plain "Invoice"/"Receipt" for one that is not). Null inherits
+    #: `BusinessSettings.invoice_title`.
+    invoice_title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     #: Whether this order is currently holding stock it drew down from the shelf, so
     #: a cancellation returns exactly what was taken and no more. Set true by the
     #: draw paths (website checkout, and the aggregator promote / GrubOps ingest

@@ -21,7 +21,7 @@ Translations = dict[str, dict[str, str]]
 OrderTypeLiteral = Literal["pickup", "delivery"]
 #: `OrderSourceEnum` values — the channel that rang an order up. `cashier` is the
 #: counter, the one source the POS itself creates.
-SourceLiteral = Literal["cashier", "online", "aggregator", "api", "call_center"]
+SourceLiteral = Literal["cashier", "online", "aggregator"]
 
 #: The rewards `auto_apply` may carry: both reduce to a single order-level
 #: discount the pricing engine can add unattended. Mirrors

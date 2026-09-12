@@ -252,6 +252,7 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
                 "TLB-REF-9",  # external_reference (o[14])
                 "9",  # aggregator_display_code (o[15])
                 D("0"),  # marketing_fee (o[16])
+                "Fatema Cake Sweets",  # tax_registration_name / legal entity (o[17])
             ),
         ],
         statements=[
@@ -304,8 +305,10 @@ async def test_xlsx_has_the_four_detail_tabs_scoped_to_the_date():
     assert wb["Orders"].cell(row=2, column=3).value == "TLB-REF-9"  # aggregator ref
     assert wb["Orders"].cell(row=2, column=4).value == "9"  # aggregator code
     assert wb["Orders"].cell(row=2, column=6).value == "Talabat"  # channel label
-    assert wb["Orders"].cell(row=2, column=13).value == 0.0  # marketing fee
-    assert wb["Orders"].cell(row=2, column=16).value == 44.0  # net = 50-5-1-0
+    # legal entity (trade licence) inserted after channel, shifting the rest right
+    assert wb["Orders"].cell(row=2, column=7).value == "Fatema Cake Sweets"
+    assert wb["Orders"].cell(row=2, column=14).value == 0.0  # marketing fee
+    assert wb["Orders"].cell(row=2, column=17).value == 44.0  # net = 50-5-1-0
     assert wb["Statements"].cell(row=2, column=2).value == "S1"
     assert wb["Statement Lines"].cell(row=2, column=8).value == 10.0
     assert wb["Payouts"].cell(row=2, column=4).value == 85.0

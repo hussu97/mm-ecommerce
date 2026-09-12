@@ -29,7 +29,7 @@ class TestOpenSourceIsCashierOnly:
     def test_default_is_cashier(self):
         assert OpenOrderRequest(branch_id=uuid.uuid4()).source == "cashier"
 
-    @pytest.mark.parametrize("channel", ["online", "aggregator", "api", "call_center"])
+    @pytest.mark.parametrize("channel", ["online", "aggregator"])
     def test_a_non_cashier_source_is_rejected(self, channel):
         with pytest.raises(ValidationError):
             OpenOrderRequest(branch_id=uuid.uuid4(), source=channel)

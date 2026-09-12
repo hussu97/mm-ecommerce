@@ -240,9 +240,14 @@ export function OrderSummary({
             The wording is still English-only, as it is on the confirmation and
             the account order page — one sentence, three places, and a
             translation key is its own change. */}
-        <p className="text-[11px] text-gray-400 text-end">
-          VAT included ({(vatRate * 100).toFixed(0)}%) · {vatAmount.toFixed(2)} AED
-        </p>
+        {/* Hidden when nothing was charged — an order fulfilled by a branch
+            whose channel is not VAT-registered carries zero VAT, and "VAT
+            included" against a zero would misstate it. */}
+        {vatAmount > 0 && (
+          <p className="text-[11px] text-gray-400 text-end">
+            VAT included ({(vatRate * 100).toFixed(0)}%) · {vatAmount.toFixed(2)} AED
+          </p>
+        )}
       </div>
     </div>
   );

@@ -18,6 +18,30 @@ import pytest
 from app.models.order import OrderStatusEnum
 from app.services.grubops import grubops_orders as loop
 from app.services.grubops import grubops_orders_service as g
+from app.services.orders.tax_identity_service import TaxIdentity
+
+
+@pytest.fixture(autouse=True)
+def _default_tax_identity():
+    """Stub the (branch, channel) tax resolver on the scripted AsyncMock session.
+
+    These tests drive order creation against a mock DB; resolving the tax config
+    for real would run a query the mock does not script. Every branch is
+    VAT-registered under the inherited identity today, which is what the default
+    below represents — the resolver's own behaviour is covered in
+    `test_tax_identity_service`.
+    """
+    default = TaxIdentity(
+        vat_registered=True,
+        tax_group_id=None,
+        tax_number=None,
+        tax_registration_name=None,
+        invoice_title=None,
+    )
+    with patch.object(
+        g.tax_identity_service, "resolve", AsyncMock(return_value=default)
+    ):
+        yield
 
 
 def test_every_live_status_maps_to_a_lifecycle_state_except_on_hold():

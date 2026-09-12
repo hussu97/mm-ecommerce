@@ -148,6 +148,13 @@ _CHANNEL_COLUMN = case(
 _ORDER_DIMENSIONS = {
     "source": Order.source,
     "channel": _CHANNEL_COLUMN,
+    # The trade-license / legal entity the order was issued under, frozen onto it
+    # at creation from the (branch, channel) tax config. A branch can trade under
+    # more than one — Barsha's counter is a different, non-VAT-registered license
+    # from its website/aggregator sales — so a manager (or the accountant filing
+    # each license's VAT return) needs the split by entity, not just by branch.
+    # Null on an order issued under the inherited default; labelled "Unknown".
+    "legal_entity": Order.tax_registration_name,
     "business_date": Order.business_date,
     # Foodics separates "cashier" (who closed it) from "creator" (who rang it
     # up); on a single-terminal shift they are the same person, on a busy one

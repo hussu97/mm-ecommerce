@@ -29,6 +29,10 @@ from .branch import (  # noqa: F401
     BranchTypeEnum,
     BranchWeeklyHours,
 )
+from .branch_channel_tax_config import (  # noqa: F401
+    BranchChannelTaxConfig,
+    ChannelClassEnum,
+)
 from .business_settings import (  # noqa: F401
     BusinessSettings,
     KitchenSortingEnum,
@@ -292,8 +296,10 @@ __all__ = [
     "TaxTypeEnum",
     "Branch",
     "BranchBusinessDay",
+    "BranchChannelTaxConfig",
     "BranchHoliday",
     "BranchTypeEnum",
+    "ChannelClassEnum",
     "Role",
     "UserBranch",
     "ALL_PERMISSIONS",

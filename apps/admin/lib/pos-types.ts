@@ -112,6 +112,45 @@ export interface WeeklyHours {
 
 export type WeeklyHoursWrite = { shifts: WeeklyShift[] };
 
+export type ChannelClass = 'counter' | 'website' | 'aggregator';
+
+/**
+ * VAT treatment and trade-license identity for one (branch, sales channel).
+ *
+ * A branch can trade under different licenses per channel — Barsha's counter is
+ * not VAT-registered, while its website and aggregator sales are, under the
+ * Melting Moments license. A channel with no row here inherits the branch's own
+ * tax identity and is VAT-registered (the default). Identity fields left null
+ * inherit the branch / business identity per-field.
+ */
+export interface BranchChannelTaxConfig {
+  id: string;
+  branch_id: string;
+  channel_class: ChannelClass;
+  vat_registered: boolean;
+  tax_group_id: string | null;
+  tax_number: string | null;
+  tax_registration_name: string | null;
+  invoice_title: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BranchChannelTaxConfigWrite {
+  channel_class: ChannelClass;
+  vat_registered: boolean;
+  tax_group_id: string | null;
+  tax_number: string | null;
+  tax_registration_name: string | null;
+  invoice_title: string | null;
+  is_active: boolean;
+}
+
+export type BranchChannelTaxConfigsWrite = {
+  configs: BranchChannelTaxConfigWrite[];
+};
+
 export interface Tax {
   id: string;
   name: string;

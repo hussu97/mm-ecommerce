@@ -49,7 +49,7 @@ class TestCounterCheckGuard:
         # Does not raise.
         pos_order_service._assert_counter_check(order)
 
-    @pytest.mark.parametrize("channel", ["online", "aggregator", "api", "call_center"])
+    @pytest.mark.parametrize("channel", ["online", "aggregator"])
     def test_non_cashier_order_is_refused(self, channel):
         order = SimpleNamespace(source=channel)
         with pytest.raises(ConflictError, match="website or marketplace"):

@@ -17,9 +17,32 @@ from types import SimpleNamespace
 
 import pytest
 
+from unittest.mock import AsyncMock, patch
+
 from app.models.order import OrderStatusEnum
 from app.services.aggregators import promote
 from app.services.aggregators.normalized import StandardModifier
+from app.services.orders.tax_identity_service import TaxIdentity
+
+
+@pytest.fixture(autouse=True)
+def _default_tax_identity():
+    """Stub the (branch, aggregator) tax resolver on the scripted mock session.
+
+    Resolving the config for real would run a query these mocks don't script;
+    every branch is VAT-registered under the inherited identity today, which the
+    default below represents. The resolver has its own tests."""
+    default = TaxIdentity(
+        vat_registered=True,
+        tax_group_id=None,
+        tax_number=None,
+        tax_registration_name=None,
+        invoice_title=None,
+    )
+    with patch.object(
+        promote.tax_identity_service, "resolve", AsyncMock(return_value=default)
+    ):
+        yield
 
 
 def _agg(**over):

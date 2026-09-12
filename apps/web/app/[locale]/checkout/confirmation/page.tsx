@@ -223,10 +223,17 @@ function ConfirmationContent() {
           </span>
           <span className="text-primary">{formatPrice(order.total, locale)}</span>
         </div>
-        <div className="flex justify-between text-xs text-gray-400 pt-1">
-          <span>VAT included (5%)</span>
-          <span>{formatPrice(order.vat_amount, locale)}</span>
-        </div>
+        {/* VAT only where it was actually charged. An order fulfilled by a
+            branch whose channel is not VAT-registered carries zero VAT, and a
+            "VAT included" line against a zero would be wrong — so the row is
+            hidden. The rate is read from the order, never hardcoded, so it
+            follows whatever was charged. */}
+        {order.vat_amount > 0 && (
+          <div className="flex justify-between text-xs text-gray-400 pt-1">
+            <span>VAT included ({Math.round(order.vat_rate * 100)}%)</span>
+            <span>{formatPrice(order.vat_amount, locale)}</span>
+          </div>
+        )}
       </div>
 
       {/* Delivery info. The line itself is masked out of Clarity recordings:

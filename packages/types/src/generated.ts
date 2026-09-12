@@ -1753,6 +1753,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/branches/{branch_id}/channel-tax-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Channel Tax Configs
+         * @description The per-channel VAT / trade-license configs for this branch.
+         *
+         *     A channel with no row here trades under the branch's own tax identity and is
+         *     VAT-registered — the default, and how every branch behaved before per-channel
+         *     configs existed.
+         */
+        get: operations["list_channel_tax_configs_api_v1_branches__branch_id__channel_tax_configs_get"];
+        /**
+         * Set Channel Tax Configs
+         * @description Replace this branch's per-channel VAT / trade-license configs.
+         *
+         *     A list-upsert keyed by `channel_class`; a channel omitted from the list is
+         *     removed and reverts to the inherited, VAT-registered default. Applies to
+         *     orders created from the next request — historical orders keep the identity
+         *     already frozen onto them.
+         */
+        put: operations["set_channel_tax_configs_api_v1_branches__branch_id__channel_tax_configs_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/branches/{branch_id}/device-count": {
         parameters: {
             query?: never;
@@ -9489,6 +9522,84 @@ export interface components {
             /** File */
             file: string;
         };
+        /** BranchChannelTaxConfigResponse */
+        BranchChannelTaxConfigResponse: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Channel Class */
+            channel_class: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Invoice Title */
+            invoice_title: string | null;
+            /** Is Active */
+            is_active: boolean;
+            /** Tax Group Id */
+            tax_group_id: string | null;
+            /** Tax Number */
+            tax_number: string | null;
+            /** Tax Registration Name */
+            tax_registration_name: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Vat Registered */
+            vat_registered: boolean;
+        };
+        /**
+         * BranchChannelTaxConfigUpsert
+         * @description One row in the list-upsert PUT — keyed by `channel_class`.
+         */
+        BranchChannelTaxConfigUpsert: {
+            /**
+             * Channel Class
+             * @enum {string}
+             */
+            channel_class: "counter" | "website" | "aggregator";
+            /** Invoice Title */
+            invoice_title?: string | null;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /** Tax Group Id */
+            tax_group_id?: string | null;
+            /** Tax Number */
+            tax_number?: string | null;
+            /** Tax Registration Name */
+            tax_registration_name?: string | null;
+            /**
+             * Vat Registered
+             * @default true
+             */
+            vat_registered: boolean;
+        };
+        /**
+         * BranchChannelTaxConfigsUpdate
+         * @description Replace a branch's whole set of channel tax configs.
+         *
+         *     A list-upsert: the rows present are created/updated by `channel_class`, and a
+         *     channel omitted from the list is removed (falls back to inherited behaviour).
+         *     At most one row per channel class.
+         */
+        BranchChannelTaxConfigsUpdate: {
+            /** Configs */
+            configs: components["schemas"]["BranchChannelTaxConfigUpsert"][];
+        };
         /** BranchCreate */
         BranchCreate: {
             /**
@@ -14277,6 +14388,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Invoice Title */
+            invoice_title?: string | null;
             /**
              * Items
              * @default []
@@ -14327,6 +14440,10 @@ export interface components {
             status_history: components["schemas"]["OrderStatusStamp"][];
             /** Subtotal */
             subtotal: number;
+            /** Tax Number */
+            tax_number?: string | null;
+            /** Tax Registration Name */
+            tax_registration_name?: string | null;
             /** Total */
             total: number;
             /** Total Excl Vat */
@@ -15088,6 +15205,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Invoice Title */
+            invoice_title?: string | null;
             /**
              * Items
              * @default []
@@ -15142,6 +15261,10 @@ export interface components {
             subtotal: string;
             /** Table Id */
             table_id: string | null;
+            /** Tax Number */
+            tax_number?: string | null;
+            /** Tax Registration Name */
+            tax_registration_name?: string | null;
             /** Till Id */
             till_id: string | null;
             /** Tips Amount */
@@ -15157,6 +15280,11 @@ export interface components {
             updated_at: string;
             /** Vat Amount */
             vat_amount: string;
+            /**
+             * Vat Rate
+             * @default 0
+             */
+            vat_rate: string;
         };
         /**
          * PreviousDriver
@@ -15987,7 +16115,7 @@ export interface components {
              */
             reward_value: number | string;
             /** Sources */
-            sources?: ("cashier" | "online" | "aggregator" | "api" | "call_center")[];
+            sources?: ("cashier" | "online" | "aggregator")[];
             /** To Date */
             to_date?: string | null;
             /**
@@ -16138,7 +16266,7 @@ export interface components {
             /** Reward Value */
             reward_value?: number | string | null;
             /** Sources */
-            sources?: ("cashier" | "online" | "aggregator" | "api" | "call_center")[] | null;
+            sources?: ("cashier" | "online" | "aggregator")[] | null;
             /** To Date */
             to_date?: string | null;
             /** To Time */
@@ -22740,6 +22868,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BusinessDayResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_channel_tax_configs_api_v1_branches__branch_id__channel_tax_configs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchChannelTaxConfigResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_channel_tax_configs_api_v1_branches__branch_id__channel_tax_configs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                branch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BranchChannelTaxConfigsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchChannelTaxConfigResponse"][];
                 };
             };
             /** @description Validation Error */

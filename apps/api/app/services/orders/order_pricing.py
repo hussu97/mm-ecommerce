@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +48,7 @@ __all__ = [
     "VAT_RATE",
     "OrderTotals",
     "TaxBreakdown",
+    "apply_non_registered",
     "compute_order_totals",
     "low_order_fee_for",
     "tax_breakdown",
@@ -410,4 +411,25 @@ async def compute_order_totals(
         delivery=priced,
         delivery_fee_known=delivery_fee_known,
         serviceable=serviceable,
+    )
+
+
+def apply_non_registered(totals: OrderTotals) -> OrderTotals:
+    """Strip VAT from an already-priced order for a non-VAT-registered channel.
+
+    The website branch is only known *after* pricing (the delivery zone resolves
+    the kitchen), so a branch/channel that is not VAT-registered cannot zero its
+    tax by a flag into `compute_order_totals`. It is done here instead, on the
+    priced result: the customer's `total` is unchanged (prices are inclusive, so
+    the VAT was money the shop simply no longer owes), the tax rows are dropped,
+    and the net rises to fill the gap. The invariant `total_excl_vat + vat_amount
+    == discounted subtotal` still holds — with `vat_amount == 0`, `total_excl_vat`
+    is the discounted subtotal.
+    """
+    return replace(
+        totals,
+        vat_rate=Decimal("0"),
+        vat_amount=ZERO,
+        total_excl_vat=pos_pricing.money(totals.subtotal - totals.discount_amount),
+        taxes=[],
     )

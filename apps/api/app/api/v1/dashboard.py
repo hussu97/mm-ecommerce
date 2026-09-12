@@ -72,8 +72,6 @@ _CHANNEL_LABELS = {
     OrderSourceEnum.ONLINE.value: "Storefront",
     OrderSourceEnum.CASHIER.value: "Counter",
     OrderSourceEnum.AGGREGATOR.value: "Aggregator",
-    OrderSourceEnum.CALL_CENTER.value: "Call centre",
-    OrderSourceEnum.API.value: "API",
 }
 
 

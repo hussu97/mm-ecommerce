@@ -30,8 +30,8 @@ class SelectedOption(BaseModel):
 class OpenOrderRequest(BaseModel):
     branch_id: UUID
     #: The register no longer offers an order-type choice — a counter order is
-    #: always `pickup`. Left on the request (defaulted) so programmatic callers
-    #: (`api`/`call_center`) can still open a `delivery` check.
+    #: always `pickup`. Left on the request (defaulted) so a future programmatic
+    #: caller could still open a `delivery` check.
     order_type: OrderTypeLiteral = "pickup"
     till_id: UUID | None = None
     device_id: UUID | None = None
@@ -41,11 +41,11 @@ class OpenOrderRequest(BaseModel):
     customer_name: str | None = Field(None, max_length=150)
     customer_phone: str | None = Field(None, max_length=30)
     notes: str | None = None
-    #: The register opens counter checks only. It used to accept `online`/`api`/
-    #: `call_center` here, which let a terminal mint a `source="online"` check —
-    #: an order the close guard then treated as prepaid and settled for free, and
-    #: that the counter-check guards let it re-price. A website or marketplace
-    #: order becomes a POS check through an `attach_*` path, never this route.
+    #: The register opens counter checks only. It used to accept `online` here,
+    #: which let a terminal mint a `source="online"` check — an order the close
+    #: guard then treated as prepaid and settled for free, and that the
+    #: counter-check guards let it re-price. A website or marketplace order
+    #: becomes a POS check through an `attach_*` path, never this route.
     source: Literal["cashier"] = "cashier"
     #: Ahead orders — a cake wanted at 4pm tomorrow.
     due_at: datetime | None = None
@@ -336,8 +336,17 @@ class PosOrderResponse(ORMModel):
     subtotal: Decimal
     discount_amount: Decimal
     charges_amount: Decimal
+    #: A fraction (0.0500 == 5%). Zero on an order from a channel that is not
+    #: VAT-registered — the receipt then prints no VAT line.
+    vat_rate: Decimal = Decimal("0")
     vat_amount: Decimal
     total_excl_vat: Decimal
+    #: The trade-license identity this order was issued under, frozen at creation
+    #: from the (branch, channel) tax config. Null inherits the branch/business
+    #: identity, which every reader (receipt, admin) falls back to.
+    tax_number: str | None = None
+    tax_registration_name: str | None = None
+    invoice_title: str | None = None
     rounding_amount: Decimal
     tips_amount: Decimal
     total: Decimal

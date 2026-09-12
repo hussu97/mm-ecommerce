@@ -6,6 +6,7 @@ import type { Branch } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { BranchWeeklyHours } from '@/components/pos/BranchWeeklyHours';
 import { BranchHolidays } from '@/components/pos/BranchHolidays';
+import { BranchChannelTaxConfigs } from '@/components/pos/BranchChannelTaxConfigs';
 
 export default function BranchesPage() {
   const load = useCallback(() => branchesApi.list(), []);
@@ -172,6 +173,14 @@ export default function BranchesPage() {
         reads it is the delivery estimate. */}
     <div className="mt-8">
       <BranchHolidays />
+    </div>
+
+    {/* Per-channel VAT + trade-license identity. Its own section because a
+        branch can trade under more than one license depending on the sales
+        channel — Barsha's counter is not VAT-registered while its website and
+        aggregator sales are. */}
+    <div className="mt-8">
+      <BranchChannelTaxConfigs />
     </div>
     </>
   );

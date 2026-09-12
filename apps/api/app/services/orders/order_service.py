@@ -70,6 +70,7 @@ from app.services.orders import (
     order_lifecycle,
     order_pricing,
     order_query,
+    tax_identity_service,
 )
 
 # Re-exported for the callers and tests that have always found it here. The
@@ -836,6 +837,18 @@ async def _persist_order(
             phone=contact_phone,
         )
 
+    # The trade-license identity this website order is issued under, resolved for
+    # (kitchen branch, website channel). The branch is only known now — the
+    # delivery zone decided it — so a non-VAT-registered website channel strips
+    # its VAT here on the already-priced totals rather than through the pricing
+    # call. `total` is unchanged; the tax rows and VAT amount go to zero. The
+    # inherited default leaves `totals` untouched and stamps nulls.
+    identity = await tax_identity_service.resolve(
+        db, branch_id=branch.id if branch is not None else None, source="online"
+    )
+    if not identity.vat_registered:
+        totals = order_pricing.apply_non_registered(totals)
+
     order = Order(
         order_number=await _generate_order_number(db),
         # The checkout attempt's idempotency key, so a replay of a timed-out
@@ -864,6 +877,11 @@ async def _persist_order(
         vat_rate=totals.vat_rate,
         vat_amount=totals.vat_amount,
         total_excl_vat=totals.total_excl_vat,
+        # The seller identity this order was issued under, frozen from the
+        # (branch, website) tax config. Null inherits branch/business identity.
+        tax_number=identity.tax_number,
+        tax_registration_name=identity.tax_registration_name,
+        invoice_title=identity.invoice_title,
         status=OrderStatusEnum.CREATED,
         # Checkout claims stock for every stock-tracked line as this order is
         # written (`_decrement_stock`), so it is holding drawn stock from creation:
@@ -1419,6 +1437,16 @@ async def preview_order(
             else None
         ),
     )
+
+    # Match what `create_order` will charge: if the resolved kitchen's website
+    # channel is not VAT-registered, the quote must show zero VAT too, or the
+    # preview↔create invariant breaks. Same adjustment, same resolved branch.
+    identity = await tax_identity_service.resolve(
+        db, branch_id=branch.id if branch else None, source="online"
+    )
+    if not identity.vat_registered:
+        totals = order_pricing.apply_non_registered(totals)
+
     unavailable = await availability_service.unavailable_cart_lines(
         db, cart=cart, branch_id=branch.id if branch else None
     )

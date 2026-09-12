@@ -215,6 +215,13 @@ class OrderResponse(BaseModel):
     vat_rate: float
     vat_amount: float
     total_excl_vat: float
+    #: The trade-license identity this order was issued under, frozen at creation
+    #: from the (branch, channel) tax config. Null inherits the branch/business
+    #: identity. Zero `vat_amount` with null identity is an ordinary order; a
+    #: non-VAT-registered channel produces zero VAT and its own identity.
+    tax_number: str | None = None
+    tax_registration_name: str | None = None
+    invoice_title: str | None = None
     notes: str | None
     # The internal `admin_notes` is NOT here — it would be served to the customer
     # on every order read (F-ORD-10). Its one legitimate customer-facing use, the

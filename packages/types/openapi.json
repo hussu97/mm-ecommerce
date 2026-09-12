@@ -3089,6 +3089,196 @@
         "title": "Body_upload_image_api_v1_uploads_image_post",
         "type": "object"
       },
+      "BranchChannelTaxConfigResponse": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "channel_class": {
+            "title": "Channel Class",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Title"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "tax_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Group Id"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "tax_registration_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Registration Name"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vat_registered": {
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "channel_class",
+          "vat_registered",
+          "tax_group_id",
+          "tax_number",
+          "tax_registration_name",
+          "invoice_title",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "BranchChannelTaxConfigResponse",
+        "type": "object"
+      },
+      "BranchChannelTaxConfigUpsert": {
+        "description": "One row in the list-upsert PUT \u2014 keyed by `channel_class`.",
+        "properties": {
+          "channel_class": {
+            "enum": [
+              "counter",
+              "website",
+              "aggregator"
+            ],
+            "title": "Channel Class",
+            "type": "string"
+          },
+          "invoice_title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Title"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "tax_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Group Id"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "tax_registration_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Registration Name"
+          },
+          "vat_registered": {
+            "default": true,
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "channel_class"
+        ],
+        "title": "BranchChannelTaxConfigUpsert",
+        "type": "object"
+      },
+      "BranchChannelTaxConfigsUpdate": {
+        "description": "Replace a branch's whole set of channel tax configs.\n\nA list-upsert: the rows present are created/updated by `channel_class`, and a\nchannel omitted from the list is removed (falls back to inherited behaviour).\nAt most one row per channel class.",
+        "properties": {
+          "configs": {
+            "items": {
+              "$ref": "#/components/schemas/BranchChannelTaxConfigUpsert"
+            },
+            "title": "Configs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "configs"
+        ],
+        "title": "BranchChannelTaxConfigsUpdate",
+        "type": "object"
+      },
       "BranchCreate": {
         "properties": {
           "accepts_reservations": {
@@ -17684,6 +17874,17 @@
             "title": "Id",
             "type": "string"
           },
+          "invoice_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Title"
+          },
           "items": {
             "default": [],
             "items": {
@@ -17825,6 +18026,28 @@
           "subtotal": {
             "title": "Subtotal",
             "type": "number"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "tax_registration_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Registration Name"
           },
           "total": {
             "title": "Total",
@@ -20121,6 +20344,17 @@
             "title": "Id",
             "type": "string"
           },
+          "invoice_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Title"
+          },
           "items": {
             "default": [],
             "items": {
@@ -20282,6 +20516,28 @@
             ],
             "title": "Table Id"
           },
+          "tax_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "tax_registration_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Registration Name"
+          },
           "till_id": {
             "anyOf": [
               {
@@ -20317,6 +20573,12 @@
           "vat_amount": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Vat Amount",
+            "type": "string"
+          },
+          "vat_rate": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vat Rate",
             "type": "string"
           }
         },
@@ -22883,9 +23145,7 @@
               "enum": [
                 "cashier",
                 "online",
-                "aggregator",
-                "api",
-                "call_center"
+                "aggregator"
               ],
               "type": "string"
             },
@@ -23445,9 +23705,7 @@
                   "enum": [
                     "cashier",
                     "online",
-                    "aggregator",
-                    "api",
-                    "call_center"
+                    "aggregator"
                   ],
                   "type": "string"
                 },
@@ -39118,6 +39376,120 @@
           }
         ],
         "summary": "Get Current Business Day",
+        "tags": [
+          "Branches"
+        ]
+      }
+    },
+    "/api/v1/branches/{branch_id}/channel-tax-configs": {
+      "get": {
+        "description": "The per-channel VAT / trade-license configs for this branch.\n\nA channel with no row here trades under the branch's own tax identity and is\nVAT-registered \u2014 the default, and how every branch behaved before per-channel\nconfigs existed.",
+        "operationId": "list_channel_tax_configs_api_v1_branches__branch_id__channel_tax_configs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchChannelTaxConfigResponse"
+                  },
+                  "title": "Response List Channel Tax Configs Api V1 Branches  Branch Id  Channel Tax Configs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Channel Tax Configs",
+        "tags": [
+          "Branches"
+        ]
+      },
+      "put": {
+        "description": "Replace this branch's per-channel VAT / trade-license configs.\n\nA list-upsert keyed by `channel_class`; a channel omitted from the list is\nremoved and reverts to the inherited, VAT-registered default. Applies to\norders created from the next request \u2014 historical orders keep the identity\nalready frozen onto them.",
+        "operationId": "set_channel_tax_configs_api_v1_branches__branch_id__channel_tax_configs_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchChannelTaxConfigsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchChannelTaxConfigResponse"
+                  },
+                  "title": "Response Set Channel Tax Configs Api V1 Branches  Branch Id  Channel Tax Configs Put",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Channel Tax Configs",
         "tags": [
           "Branches"
         ]

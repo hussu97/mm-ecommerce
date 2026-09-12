@@ -59,8 +59,6 @@ class OrderSourceEnum(str, enum.Enum):
     #: is deliberately *not* treated like an `online` order by the delivery,
     #: refund and email machinery. See `services/grubops_orders_service.py`.
     AGGREGATOR = "aggregator"
-    API = "api"
-    CALL_CENTER = "call_center"
 
 
 class PosOrderStatusEnum(str, enum.Enum):

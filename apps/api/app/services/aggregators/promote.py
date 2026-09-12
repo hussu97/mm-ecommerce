@@ -74,7 +74,7 @@ from app.services.aggregators import (
 )
 from app.services.aggregators.modifiers import modifiers_from_json
 from app.services.catalog import external_item_map_service
-from app.services.orders import order_fees, order_lifecycle
+from app.services.orders import order_fees, order_lifecycle, tax_identity_service
 from app.services.orders.order_pricing import VAT_RATE
 from app.services.pos import pos_order_service, pos_pricing
 
@@ -323,11 +323,16 @@ async def _find_convergence_order(
     )
 
 
-def _money_fields(agg: AggregatorOrder) -> dict:
+def _money_fields(agg: AggregatorOrder, *, vat_registered: bool = True) -> dict:
     """The order's money, taken verbatim from the marketplace ledger. MM books no
     delivery fee and no discount for a promoted order — the aggregator charged and
     kept them — so only the customer-facing delivery charge is carried, on its own
-    column, for the record."""
+    column, for the record.
+
+    `vat_registered` is the (branch, aggregator) tax config's answer: false means
+    this branch trades its marketplace sales under a non-VAT-registered license,
+    so no VAT is booked (gross is all net). True — every branch today — keeps the
+    derived-VAT behaviour below."""
     total = money(agg.gross_sales or Decimal("0"))
     # Output VAT is the shop's to owe on the gross it charged, not the aggregator's
     # to report: a UAE storefront price is VAT-inclusive and every catalogue item is
@@ -335,7 +340,10 @@ def _money_fields(agg: AggregatorOrder) -> dict:
     # canon does (order_pricing.VAT_RATE) rather than trusted from the provider's
     # `vat_amount` — which is absent or zero on ~1 in 4 orders and would otherwise
     # book a real sale VAT-free, leaving the shop owing 5% it never recorded.
-    excl, vat = pos_pricing.split_inclusive_tax(total, VAT_RATE)
+    if vat_registered:
+        excl, vat = pos_pricing.split_inclusive_tax(total, VAT_RATE)
+    else:
+        excl, vat = total, Decimal("0")
     # A post-delivery item reversal (Talabat "Operational Charges"/"Vendor Refunds",
     # captured onto `agg.refund_amount` at ingest): the gross the customer was
     # charged stays on `total`, and the money that went back is booked on
@@ -574,7 +582,7 @@ async def _all_line_amounts_known(db: AsyncSession, agg: AggregatorOrder) -> boo
 
 
 async def _reconcile_total_to_lines(
-    db: AsyncSession, order: Order, agg: AggregatorOrder
+    db: AsyncSession, order: Order, agg: AggregatorOrder, *, vat_registered: bool = True
 ) -> None:
     """Reconcile a promoted order's money against the sum of its priced line items,
     per the channel's gross basis — the rule migration 198 encodes, made durable so
@@ -622,7 +630,10 @@ async def _reconcile_total_to_lines(
         return
 
     # Careem &c: the line sum is the menu price the customer paid — raise to it.
-    excl, vat = pos_pricing.split_inclusive_tax(line_sum, VAT_RATE)
+    if vat_registered:
+        excl, vat = pos_pricing.split_inclusive_tax(line_sum, VAT_RATE)
+    else:
+        excl, vat = line_sum, Decimal("0")
     order.subtotal = line_sum
     order.total = line_sum
     order.total_excl_vat = excl
@@ -774,6 +785,14 @@ def _display_code(external_reference: str | None) -> str | None:
 async def _build_order(
     db: AsyncSession, agg: AggregatorOrder, label: str, *, draw_stock: bool
 ) -> Order:
+    # The trade-license identity this branch's marketplace sales trade under.
+    # Registered for every branch today (aggregator sales run under the Melting
+    # Moments license), so this is a no-op unless a branch's aggregator channel
+    # is configured non-registered — then no VAT is booked and the identity is
+    # still frozen onto the order.
+    identity = await tax_identity_service.resolve(
+        db, branch_id=agg.branch_id, source=OrderSourceEnum.AGGREGATOR.value
+    )
     order = Order(
         order_number=await _order_number(db),
         user_id=None,
@@ -814,7 +833,10 @@ async def _build_order(
         # timeline. `placed_at` is that moment; fall back to now only if the scrape
         # carried no timestamp.
         created_at=agg.placed_at or utcnow(),
-        **_money_fields(agg),
+        tax_number=identity.tax_number,
+        tax_registration_name=identity.tax_registration_name,
+        invoice_title=identity.invoice_title,
+        **_money_fields(agg, vat_registered=identity.vat_registered),
     )
     db.add(order)
     await db.flush()
@@ -826,7 +848,9 @@ async def _build_order(
             agg.external_order_id,
             unmapped,
         )
-    await _reconcile_total_to_lines(db, order, agg)
+    await _reconcile_total_to_lines(
+        db, order, agg, vat_registered=identity.vat_registered
+    )
     # Load the collection now: driving status to cancelled walks order.items in
     # `_move_stock`, and an async lazy-load there would be a MissingGreenlet.
     await db.refresh(order, ["items"])
@@ -904,12 +928,22 @@ def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
 async def _refresh_order(db: AsyncSession, order: Order, agg: AggregatorOrder) -> None:
     """Bring an already-promoted order back in line with the ledger — its money
     and status, in case the marketplace mutated the order after we first filed it."""
-    for field, value in _money_fields(agg).items():
+    identity = await tax_identity_service.resolve(
+        db,
+        branch_id=getattr(order, "branch_id", None),
+        source=OrderSourceEnum.AGGREGATOR.value,
+    )
+    for field, value in _money_fields(
+        agg, vat_registered=identity.vat_registered
+    ).items():
         setattr(order, field, value)
+    tax_identity_service.stamp_identity(order, identity)
     # The lines are the truth for the total (see helper); reapply after the scrape's
     # header money so a re-promote cannot revert a Careem order to its low gross or
     # re-inflate a discounted Noon order.
-    await _reconcile_total_to_lines(db, order, agg)
+    await _reconcile_total_to_lines(
+        db, order, agg, vat_registered=identity.vat_registered
+    )
     # Backfill the customer + rider the scraper captured onto an order first filed
     # without it — one promoted before its channel exposed the customer, or one this
     # pass converged onto by `(source, external_reference)`. Fill-only (see helper);

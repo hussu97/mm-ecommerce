@@ -9,6 +9,7 @@ import { api, buildQs } from './api';
 import type { Schemas } from '@mm/types';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, Device, DrawerOperation,
+  BranchChannelTaxConfig, BranchChannelTaxConfigsWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
   PermissionCatalogue, Printer, PurchaseOrder,
@@ -63,6 +64,18 @@ export const branchesApi = {
   // marketplaces) instead of waiting for the hourly loop.
   syncHours: (id: string) =>
     api.post<Record<string, unknown>>(`/branches/${id}/sync-hours`),
+
+  // ── Per-channel VAT / trade-license configs ───────────────────────────────
+  //
+  // A branch's VAT treatment and printed identity per sales channel (counter /
+  // website / aggregator). A channel with no row trades under the branch's own
+  // identity and is VAT-registered — the default. Editing here applies to
+  // orders created from the next request; historical orders keep the identity
+  // already frozen onto them.
+  channelTaxConfigs: (id: string) =>
+    api.get<BranchChannelTaxConfig[]>(`/branches/${id}/channel-tax-configs`),
+  setChannelTaxConfigs: (id: string, data: BranchChannelTaxConfigsWrite) =>
+    api.put<BranchChannelTaxConfig[]>(`/branches/${id}/channel-tax-configs`, data),
 
   // ── Holidays ────────────────────────────────────────────────────────────
   //

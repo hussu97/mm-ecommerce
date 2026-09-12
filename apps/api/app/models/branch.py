@@ -24,6 +24,7 @@ from .base import Base, TimestampMixin, UUIDMixin, business_date_format
 
 if TYPE_CHECKING:
     from .aggregator import AggregatorBranchMap, FoodicsBranchMap
+    from .branch_channel_tax_config import BranchChannelTaxConfig
     from .device import Device
     from .grubops import GrubOpsLocationMap
     from .pos_table import Section
@@ -196,6 +197,15 @@ class Branch(Base, UUIDMixin, TimestampMixin):
 
     # Relationships
     tax_group: Mapped[TaxGroup | None] = relationship("TaxGroup")
+    #: Per-channel VAT + trade-license identity. Empty for a branch that trades
+    #: under one identity across every channel (the ordinary case) — the resolver
+    #: then inherits the fields above. `selectin` so the admin can render the grid
+    #: without an N+1.
+    channel_tax_configs: Mapped[list[BranchChannelTaxConfig]] = relationship(
+        "BranchChannelTaxConfig",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
     #: Integration capability, expressed as mapping rows rather than boolean
     #: columns (the idiom `grubops_location_map` established): a branch is *on* a
     #: system iff it has an active row. Read-only here — the rows are written by

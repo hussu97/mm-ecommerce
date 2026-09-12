@@ -164,9 +164,11 @@ async def test_breakdown_labels_and_rounds():
 
 
 async def test_breakdown_titlecases_unlabelled_values():
-    rows = [(SimpleNamespace(value="call_center"), 3, "0")]
+    # An arbitrary snake_case grouping value with no entry in the label map is
+    # title-cased rather than shown raw.
+    rows = [(SimpleNamespace(value="phone_order"), 3, "0")]
     out = await mod._breakdown(_DB([_Result(rows)]), mod.Order.source, start=_A, end=_B)
-    assert out[0].label == "Call Center"
+    assert out[0].label == "Phone Order"
 
 
 # ── delivered-by-courier groups the three carrier shapes into one menu ─────────

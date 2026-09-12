@@ -146,7 +146,7 @@ class TestCounterScope:
         assert d.order_item_id is None, "an order-level discount, not a line one"
         assert d.applied_by_id is None, "nobody applied it — the engine did"
 
-    @pytest.mark.parametrize("channel", ["online", "aggregator", "api", "call_center"])
+    @pytest.mark.parametrize("channel", ["online", "aggregator"])
     async def test_non_counter_channels_get_nothing(self, channel):
         order = _order(source=channel)
         await auto_promotion_service.sync_auto_discounts(_db([_promo()]), order)

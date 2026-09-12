@@ -18,6 +18,17 @@ from app.services.couriers import lalamove_service
 from app.services.delivery import delivery_promise
 from app.services.delivery.delivery_zone_service import Zone
 from app.services.delivery.fulfilment_service import Fulfilment
+from app.services.orders.tax_identity_service import TaxIdentity
+
+#: The inherited default — VAT-registered, nothing stamped — used to stub the
+#: tax-identity resolver in the arithmetic tests below.
+_DEFAULT_TAX_IDENTITY = TaxIdentity(
+    vat_registered=True,
+    tax_group_id=None,
+    tax_number=None,
+    tax_registration_name=None,
+    invoice_title=None,
+)
 from app.services.orders import order_service
 from app.services.orders.order_service import (
     VALID_TRANSITIONS,
@@ -153,6 +164,16 @@ def mock_fulfilment():
             "app.services.orders.order_service.resolve_branch",
             new_callable=AsyncMock,
             return_value=branch,
+        ),
+        # Resolving the (branch, channel) tax identity is a real query on the
+        # scripted session — and these tests are about arithmetic under the
+        # ordinary VAT-registered identity, so stub it to the inherited default
+        # (registered, nothing stamped). Its own behaviour is covered in
+        # `test_tax_identity_service`.
+        patch(
+            "app.services.orders.order_service.tax_identity_service.resolve",
+            new_callable=AsyncMock,
+            return_value=_DEFAULT_TAX_IDENTITY,
         ),
         patch(
             "app.services.orders.order_service.pos_order_service.attach_online_order",
@@ -296,6 +317,11 @@ def _order_mock(
     o.vat_rate = Decimal("0.0500")
     o.vat_amount = vat_amount
     o.total_excl_vat = total_excl_vat
+    # The frozen tax identity — None (inherited) here, or a bare MagicMock would
+    # fail `str | None` on OrderResponse, the same trap as the fields above.
+    o.tax_number = None
+    o.tax_registration_name = None
+    o.invoice_title = None
     o.notes = None
     o.admin_notes = None
     # `cancellation_reason` is a derived OrderResponse field `to_response` fills

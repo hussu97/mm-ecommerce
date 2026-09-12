@@ -328,6 +328,13 @@ async def build_detail(
             # "Promotion funded by merchant", scraped onto aggregator_order and
             # propagated to the order). Appended (o[16]) so earlier positions hold.
             func.coalesce(Order.marketing_fee, 0),
+            # The trade-license / legal entity the order was issued under, frozen
+            # onto it at creation. A branch can bill under more than one (Barsha's
+            # counter is a different, non-VAT-registered license from its
+            # website/aggregator sales), and each entity files its own VAT return,
+            # so the accountant needs the split. Appended (o[17]); null on an order
+            # issued under the inherited default.
+            Order.tax_registration_name,
         )
         .select_from(Order)
         .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
@@ -488,6 +495,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                 "aggregator code",
                 "branch",
                 "channel",
+                "legal entity",
                 "status",
                 "customer",
                 "total",
@@ -503,7 +511,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                 # positional: 0 date,1 order#,2 branch,3 source,4 channel,5 status,
                 # 6 pos_status,7 customer,8 total,9 vat,10 commission,11 payfee,
                 # 12 courier,13 refund,14 external_reference,15 display_code,
-                # 16 marketing_fee
+                # 16 marketing_fee,17 legal_entity
                 [
                     o[0],
                     o[1],
@@ -513,6 +521,7 @@ def to_xlsx(report: DailySalesReport, detail: ReportDetail | None = None) -> byt
                     (o[15] or "") if o[3] == "aggregator" else "",
                     o[2] or "",
                     _order_channel_label(o[3], o[4]),
+                    o[17] or "",
                     (o[5] or o[6] or ""),
                     o[7] or "",
                     _dec(o[8]),

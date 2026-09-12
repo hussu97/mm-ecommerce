@@ -55,7 +55,7 @@ from app.models.user import User
 from app.services import option_snapshot
 from app.services.catalog import modifier_rules
 from app.services.inventory import inventory_service
-from app.services.orders import order_lifecycle
+from app.services.orders import order_lifecycle, tax_identity_service
 from app.services.pos import (
     auto_promotion_service,
     business_day_service,
@@ -247,8 +247,8 @@ def _assert_counter_check(order: Order) -> None:
     a re-price pairs that with this, so the till can look at such an order but
     never re-price it.
 
-    Only `cashier` orders are the register's to price. `online`, `aggregator`,
-    `api` and `call_center` orders are all priced by whoever rang them up.
+    Only `cashier` orders are the register's to price. `online` and `aggregator`
+    orders are priced by whoever rang them up.
     """
     if order.source != OrderSourceEnum.CASHIER.value:
         raise ConflictError(
@@ -1033,6 +1033,17 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     order = await get_order(db, order.id)
     settings = await _settings(db)
 
+    # The trade-license identity this counter check trades under, resolved from
+    # the (branch, channel) tax config. A branch whose counter is not
+    # VAT-registered (Barsha) zeroes the tax below; every branch stamps its
+    # resolved identity so the receipt reproduces what it was issued under. The
+    # inherited default (registered, null identity) is a no-op.
+    identity = await tax_identity_service.resolve(
+        db,
+        branch_id=getattr(order, "branch_id", None),
+        source=getattr(order, "source", None),
+    )
+
     # Standing promotions (e.g. "every counter order is 15% off") add or remove
     # their order-level discount here, before the basket is priced, so the saving
     # tracks the lines as they change. Idempotent, and a no-op unless a promotion
@@ -1062,6 +1073,12 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
         if tax_group_id not in tax_cache:
             tax_cache[tax_group_id] = await _resolve_tax(db, tax_group_id)
         rate, tax_name, tax_id, inclusive = tax_cache[tax_group_id]
+        # A branch trading this channel under a non-VAT-registered license
+        # charges no VAT: the rate goes to zero, and because the price is
+        # inclusive the customer's total is unchanged (`split_inclusive_tax(x,0)
+        # -> (x,0)`). `calculate_order` then emits no tax row for the line.
+        if not identity.vat_registered:
+            rate = Decimal("0")
 
         lines.append(
             LineInput(
@@ -1103,6 +1120,8 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
         if charge_tax_group_id not in tax_cache:
             tax_cache[charge_tax_group_id] = await _resolve_tax(db, charge_tax_group_id)
         rate, tax_name, tax_id, inclusive = tax_cache[charge_tax_group_id]
+        if not identity.vat_registered:
+            rate = Decimal("0")
         charge_inputs.append(
             ChargeInput(
                 name=charge.name,
@@ -1176,8 +1195,30 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     order.charges_amount = totals.charges
     order.vat_amount = totals.tax_total
     order.total_excl_vat = totals.total_excl_tax
+    # `recalculate` historically never wrote `vat_rate` — the column kept its
+    # 0.0500 default, correct only while every product sat in one 5% group. Now
+    # a non-VAT-registered channel produces no tax rows and must read 0, not a
+    # phantom 5%, so the rate is derived here like the storefront does: the one
+    # bucket's exact configured rate when there is a single rate (no rounding
+    # drift), the blended effective rate for a mixed basket, and zero when there
+    # is no tax at all.
+    if not totals.taxes:
+        order.vat_rate = Decimal("0")
+    elif len(totals.taxes) == 1:
+        order.vat_rate = totals.taxes[0].rate
+    else:
+        base = totals.total_excl_tax
+        order.vat_rate = (
+            (totals.tax_total / base).quantize(Decimal("0.0001"))
+            if base > 0
+            else Decimal("0")
+        )
     order.rounding_amount = totals.rounding
     order.total = totals.total
+
+    # Freeze the trade-license identity this check was issued under (inherited
+    # default writes nulls; every reader then falls back to branch/business).
+    tax_identity_service.stamp_identity(order, identity)
 
     await db.flush()
     return await get_order(db, order.id)

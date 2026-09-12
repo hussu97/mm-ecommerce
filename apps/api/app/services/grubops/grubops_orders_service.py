@@ -54,7 +54,7 @@ from app.models.order_status_event import (
 from app.models.pos_order import OrderSourceEnum, OrderTax, PosOrderStatusEnum
 from app.models.product import Product
 from app.services.aggregators import reconcile
-from app.services.orders import order_fees, order_lifecycle
+from app.services.orders import order_fees, order_lifecycle, tax_identity_service
 from app.services.providers.grubops_provider import provider
 
 logger = logging.getLogger(__name__)
@@ -644,7 +644,9 @@ async def ingest(db, info: dict, order_map: GrubOpsOrderMap) -> None:
     await db.flush()
 
 
-def money_fields_from_info(info: dict) -> dict[str, Decimal]:
+def money_fields_from_info(
+    info: dict, *, vat_registered: bool = True
+) -> dict[str, Decimal]:
     """The MM order money columns, verbatim from a GrubTech `getOrderInfo` payload.
 
     Extracted so both `_create_order` and the cross-channel-merge cleanup
@@ -653,7 +655,12 @@ def money_fields_from_info(info: dict) -> dict[str, Decimal]:
     falls back to the taxable unit price; everything else is present. MM neither
     sets nor collects the aggregator's delivery charge (it is not part of `total`),
     so `delivery_fee`/`low_order_fee` stay zero and what the customer paid rides the
-    aggregator-only column, for the receipt alone."""
+    aggregator-only column, for the receipt alone.
+
+    `vat_registered` is the (branch, aggregator) tax config's answer: false — a
+    branch whose marketplace sales trade under a non-VAT-registered license —
+    books no VAT (gross is all net), overriding both the payload's tax and the
+    derived fallback. True (every branch today) keeps the behaviour below."""
     from app.services.orders.order_pricing import VAT_RATE
     from app.services.pos import pos_pricing
 
@@ -662,6 +669,20 @@ def money_fields_from_info(info: dict) -> dict[str, Decimal]:
     subtotal = header.get("subtotal")
     subtotal = _num(subtotal) if subtotal is not None else _num(header.get("unitPrice"))
     taxes = info.get("orderTaxes") or []
+    if not vat_registered:
+        # Non-registered channel: no VAT, whatever the payload says.
+        total_excl_vat, vat_amount, vat_rate = money(total), Decimal("0"), Decimal("0")
+        return {
+            "delivery_fee": Decimal("0"),
+            "aggregator_delivery_fee": money(_num(header.get("deliveryTotalPrice"))),
+            "low_order_fee": Decimal("0"),
+            "subtotal": money(subtotal),
+            "discount_amount": money(_num(header.get("discountAmount"))),
+            "total": money(total),
+            "vat_rate": vat_rate,
+            "vat_amount": vat_amount,
+            "total_excl_vat": total_excl_vat,
+        }
     vat_amount = _num(header.get("taxAmount"))
     if vat_amount <= 0:
         # The payload did not itemise tax. A UAE storefront price is VAT-inclusive
@@ -790,7 +811,13 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
     }
     products, options = await _reverse_maps(db, recipe_ids, modifier_ids)
 
-    money_fields = money_fields_from_info(info)
+    # The trade-license identity this branch's marketplace sales trade under.
+    # VAT-registered for every branch today; a non-registered aggregator config
+    # books no VAT and still freezes the identity onto the order.
+    identity = await tax_identity_service.resolve(
+        db, branch_id=branch_id, source=OrderSourceEnum.AGGREGATOR.value
+    )
+    money_fields = money_fields_from_info(info, vat_registered=identity.vat_registered)
 
     # Name, normalised phone (E.164) with its country and line type, any Deliveroo
     # access code, and email — sorted out per channel; see `_customer_fields`.
@@ -878,13 +905,16 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             # any discount are the POS's, not the scrape's — otherwise the sale reads
             # low forever (adopt used to `return` here without touching the money).
             # A no-op for an order already carrying the push figures.
-            push_money = money_fields_from_info(info)
+            push_money = money_fields_from_info(
+                info, vat_registered=identity.vat_registered
+            )
             # subtotal is the gross (pre-discount) the lines add up to; the payload
             # often omits it, so derive it as net + discount rather than let it fall
             # to 0 and hide the gross a discounted order is meant to show.
             push_money["subtotal"] = push_money["total"] + push_money["discount_amount"]
             for field, value in push_money.items():
                 setattr(adopted, field, value)
+            tax_identity_service.stamp_identity(adopted, identity)
             # Rebuild the lines from the push too. The gap-fill's lines are the
             # marketplace scrape's — for Talabat that means no per-line price and a
             # box split into mangled fragments ("…Box of 3 [Tiramisu", "Brookie]").
@@ -934,6 +964,11 @@ async def _create_order(db, info: dict, order_map: GrubOpsOrderMap) -> Order | N
             header, order_map.external_id, info, channel=channel
         ),
         external_reference=order_map.external_id,
+        # The seller identity this marketplace order is issued under, frozen from
+        # the (branch, aggregator) tax config. Null inherits branch/business.
+        tax_number=identity.tax_number,
+        tax_registration_name=identity.tax_registration_name,
+        invoice_title=identity.invoice_title,
         branch_id=branch_id,
         # What the customer actually paid with, so the console and reports read
         # true. `paymentStatus` is the reliable discriminator — `POSTPAID` is cash,

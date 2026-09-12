@@ -27,6 +27,8 @@ from app.models import (
 from app.models.user import User
 from app.schemas.fulfilment import PickupBranchResponse
 from app.schemas.pos import (
+    BranchChannelTaxConfigResponse,
+    BranchChannelTaxConfigsUpdate,
     BranchCreate,
     BranchHolidayCreate,
     BranchHolidayResponse,
@@ -52,7 +54,7 @@ from app.services import (
     crud_service,
 )
 from app.services.delivery import fulfilment_service
-from app.services.pos import business_day_service
+from app.services.pos import branch_channel_tax_service, business_day_service
 
 router = APIRouter()
 
@@ -324,6 +326,60 @@ async def set_weekly_hours(
             WeeklyShift(weekday=r.weekday, opens=r.opens, closes=r.closes) for r in rows
         ],
     )
+
+
+@router.get(
+    "/{branch_id}/channel-tax-configs",
+    response_model=list[BranchChannelTaxConfigResponse],
+)
+async def list_channel_tax_configs(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("admin.branches.manage")),
+):
+    """The per-channel VAT / trade-license configs for this branch.
+
+    A channel with no row here trades under the branch's own tax identity and is
+    VAT-registered — the default, and how every branch behaved before per-channel
+    configs existed.
+    """
+    await crud_service.get_or_404(db, Branch, branch_id)
+    return await branch_channel_tax_service.list_configs(db, branch_id)
+
+
+@router.put(
+    "/{branch_id}/channel-tax-configs",
+    response_model=list[BranchChannelTaxConfigResponse],
+)
+async def set_channel_tax_configs(
+    request: Request,
+    branch_id: uuid.UUID,
+    payload: BranchChannelTaxConfigsUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("admin.branches.manage")),
+):
+    """Replace this branch's per-channel VAT / trade-license configs.
+
+    A list-upsert keyed by `channel_class`; a channel omitted from the list is
+    removed and reverts to the inherited, VAT-registered default. Applies to
+    orders created from the next request — historical orders keep the identity
+    already frozen onto them.
+    """
+    branch = await crud_service.get_or_404(db, Branch, branch_id)
+    rows = await branch_channel_tax_service.replace_configs(
+        db, branch_id, payload.configs
+    )
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="branch",
+        entity_id=str(branch_id),
+        entity_label=f"{branch.name} channel tax configs",
+        admin=admin,
+        changes={"configs": payload.model_dump(mode="json")["configs"]},
+        request=request,
+    )
+    return rows
 
 
 @router.post("/{branch_id}/sync-hours")
