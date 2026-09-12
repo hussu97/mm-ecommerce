@@ -274,6 +274,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Before setup-uv, like the other Python jobs: `uv pip install --system`
+      # needs a uv/actions-managed interpreter to install into. Without this it
+      # falls back to the runner's `/usr` Python, which is externally managed
+      # (PEP 668) and refuses a `--system` install.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
