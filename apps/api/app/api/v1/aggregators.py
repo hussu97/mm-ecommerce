@@ -465,12 +465,12 @@ async def push_keeta_finance(
     When the payload is only download-task metadata (figures live in PDF invoices),
     the parse returns empty lists with a truncation note — the response still
     returns 200 with zero counts and includes the note so the worker can log it.
-
-    Takes no request session: the ingest commits each weekly bill on its own
-    short-lived session (see `ingest_keeta_finance_payloads`) so a long batch
-    never holds one pooled connection through the whole push nor loses everything
-    to a gateway timeout.
     """
+    # Deliberately no request session: the ingest commits each weekly bill on its
+    # own short-lived session (see `ingest_keeta_finance_payloads`), so a long
+    # batch never holds one pooled connection through the whole push nor loses
+    # everything to a gateway timeout. (Kept out of the docstring so it does not
+    # ride into the OpenAPI description and drift the generated shared types.)
     statements, payouts = await ingest.ingest_keeta_finance_payloads(body.payloads)
     return KeetaFinanceResult(statements=statements, payouts=payouts)
 
