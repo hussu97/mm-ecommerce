@@ -112,6 +112,12 @@ export interface ResourcePageProps<T extends { id: string }> {
    * a dozen configuration rows — switch it on for the unbounded ones.
    */
   paginated?: boolean;
+  /**
+   * Pin the table header while the body scrolls (passthrough to `DataTable`).
+   * Worth it on the long lists (inventory items); leave off for the short
+   * config tables that fit without scrolling.
+   */
+  stickyHeader?: boolean;
 }
 
 export function ResourcePage<T extends { id: string }>({
@@ -133,6 +139,7 @@ export function ResourcePage<T extends { id: string }>({
   filterRows,
   sortRows,
   paginated = false,
+  stickyHeader = false,
 }: ResourcePageProps<T>) {
   const [rows, setRows] = useState<T[]>([]);
   const [loading, setLoading] = useState(true);
@@ -313,6 +320,7 @@ export function ResourcePage<T extends { id: string }>({
           rowKey={(row) => row.id}
           sort={sort}
           onSortChange={setSort}
+          stickyHeader={stickyHeader}
           expanded={expandedRow ? (row) => expandedRow(row, reload) : undefined}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">{emptyMessage}</p>
