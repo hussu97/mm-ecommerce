@@ -844,6 +844,27 @@ export default function OrderDetailPage() {
           {!customerName && !customerPhone && !customerEmail && (
             <p className="text-sm font-body text-gray-400">No customer details given.</p>
           )}
+          {/* The gift recipient, when the order was placed for someone else. The
+              name and number here are what the courier was given for the
+              drop-off; the customer above is who paid and who the coupon and the
+              confirmation are about. */}
+          {order.receiver && (
+            <div className="mt-3 border-t border-gray-100 pt-2">
+              <p className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-1">
+                Receiving on their behalf
+              </p>
+              <p className="text-sm font-body text-gray-800">{order.receiver.name}</p>
+              <p className="text-sm font-body text-gray-700">
+                {order.receiver.phone}
+                {order.receiver.phone_type && (
+                  <span className="ml-2 text-xs text-gray-400">{order.receiver.phone_type}</span>
+                )}
+              </p>
+              <p className="text-[11px] font-body text-gray-400 mt-0.5">
+                Used for the courier drop-off.
+              </p>
+            </div>
+          )}
           {snapshot && (
             <div className="mt-2 text-xs font-body text-gray-500">
               {/* Broken out rather than stacked into a paragraph. Every one of

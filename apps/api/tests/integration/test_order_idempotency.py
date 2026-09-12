@@ -109,6 +109,12 @@ async def test_a_replayed_client_request_id_returns_the_same_order(engine, branc
             delivery_method=DeliveryMethodEnum.PICKUP,
             payment_method="cod",
             client_request_id=cid,
+            # A pickup order now carries the collecting customer's contact.
+            pickup_contact={
+                "first_name": "Idem",
+                "last_name": "Customer",
+                "phone": "+971501234567",
+            },
         )
         response = await order_service.create_order(db, data, user_id=None)
         # The order the first create wrote, handed straight back.

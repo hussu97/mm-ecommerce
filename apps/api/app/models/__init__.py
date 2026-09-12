@@ -179,6 +179,7 @@ from .order_delivery import (  # noqa: F401
     is_terminal,
 )
 from .order_driver import OrderDriver  # noqa: F401
+from .order_receiver import OrderReceiver  # noqa: F401
 from .order_status_event import (  # noqa: F401
     OrderStatusEvent,
     StatusActor,
@@ -275,6 +276,7 @@ __all__ = [
     "PaymentTransaction",
     "PaymentTransactionStatusEnum",
     "OrderDelivery",
+    "OrderReceiver",
     "OrderStatusEvent",
     "StatusActor",
     "StatusSourceEnum",

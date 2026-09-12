@@ -247,17 +247,20 @@ export default function OrdersPage() {
               header: 'Channel',
               className: 'text-center',
               // An aggregator order shows the marketplace's logo — the thing that
-              // identifies it at a glance — in place of a bare badge; counter and
-              // website keep their word.
+              // identifies it at a glance — in place of a bare badge; counter,
+              // website delivery and store pickup keep their word. A website
+              // pickup is its own channel (`online` + `delivery_method` pickup).
               render: (o: Order) =>
                 o.courier ? (
                   <span className="inline-flex justify-center">
                     <CourierLogo courier={o.courier} size={22} showName />
                   </span>
+                ) : o.source === 'cashier' ? (
+                  <Badge variant="neutral">Counter</Badge>
+                ) : o.delivery_method === 'pickup' ? (
+                  <Badge variant="neutral">Store Pickup</Badge>
                 ) : (
-                  <Badge variant={o.source === 'cashier' ? 'neutral' : 'info'}>
-                    {o.source === 'cashier' ? 'Counter' : 'Website'}
-                  </Badge>
+                  <Badge variant="info">Website Delivery</Badge>
                 ),
             },
             {

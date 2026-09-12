@@ -95,6 +95,18 @@ export interface CheckoutForm {
    */
   promoNeedsVerify: boolean;
   notes: string;
+  /**
+   * "Someone else is receiving the order" — a gift. Delivery only.
+   *
+   * When on, the receiver's name and number are what the courier is given for
+   * the drop-off; the orderer's own number (above) still identifies them for the
+   * confirmation and, importantly, for the per-customer coupon limits — a gift
+   * never spends the recipient's allowance. The receiver number is not
+   * phone-verified. Off by default; the whole block is ignored for pickup.
+   */
+  receiverEnabled: boolean;
+  receiverName: string;
+  receiverPhone: string;
 }
 
 export const INITIAL_FORM: CheckoutForm = {
@@ -107,6 +119,7 @@ export const INITIAL_FORM: CheckoutForm = {
   paymentMethod: 'card',
   promoCode: '', promoDiscount: 0, promoMessage: '', promoNeedsVerify: false,
   notes: '',
+  receiverEnabled: false, receiverName: '', receiverPhone: '',
 };
 
 /**

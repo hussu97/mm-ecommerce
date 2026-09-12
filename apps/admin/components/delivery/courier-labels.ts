@@ -5,6 +5,5 @@ export const COURIER_LABEL: Record<string, string> = {
   noon_send: 'noon Send',
   slider_bike: 'Slider (bike)',
   slider_car: 'Slider (car)',
-  slider: 'Slider',
   third_party: 'Third party',
 };

@@ -446,7 +446,11 @@ def build_task(
     except (KeyError, TypeError, ValueError):
         return None, "Order has no delivery coordinates"
 
-    phone = normalise_phone(str(address.get("phone") or ""))
+    # The gift recipient's name and number when the order was placed for someone
+    # else, else the address's own — this is who the driver hands the box to.
+    # See `address_format.delivery_contact`.
+    contact_name, contact_phone = address_format.delivery_contact(order)
+    phone = normalise_phone(str(contact_phone or ""))
     if not phone:
         return None, "Order has no reachable phone number"
 
@@ -458,7 +462,7 @@ def build_task(
     if len(text) < 5:
         return None, "Order has no usable street address"
 
-    name = address_format.recipient_name(address) or ""
+    name = contact_name or ""
 
     total = Decimal(str(order.total or 0))
     is_cod = (order.payment_method or "").lower() == "cod" and outstanding > 0

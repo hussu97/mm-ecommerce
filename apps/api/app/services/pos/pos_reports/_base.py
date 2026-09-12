@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.branch import Branch
 from app.models.device import Device
 from app.models.legal_entity import LegalEntity
-from app.models.order import Order, OrderStatusEnum
+from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.pos_order import (
     PosOrderStatusEnum,
 )
@@ -117,7 +117,7 @@ def _covering_till():
 
 def _channel_logo(key: Any) -> str | None:
     """The badge for a channel row, or None for the shop's own two channels."""
-    if key is None or str(key) in {"online", "cashier"}:
+    if key is None or str(key) in {"online", "website_pickup", "cashier"}:
         return None
     code = courier_catalog.code_for_channel(str(key))
     return courier_catalog.logo_url_for(code) if code else None
@@ -137,8 +137,18 @@ def _channel_logo(key: Any) -> str | None:
 #: and its badge on the way out, through the same `courier_catalog` the receipt
 #: and the order list use, so all three agree about which marketplace an order
 #: came from.
+#: The website (`online`) is split by fulfilment: a store-pickup order is its
+#: own channel ("Store Pickup"), the way the shop tracks it, rather than folded
+#: into the website's delivery sales. `_channel_labels` maps the keys out.
 _CHANNEL_COLUMN = case(
     (Order.source == "aggregator", Order.aggregator_channel),
+    (
+        and_(
+            Order.source == "online",
+            Order.delivery_method == DeliveryMethodEnum.PICKUP,
+        ),
+        "website_pickup",
+    ),
     else_=Order.source,
 )
 
@@ -229,7 +239,9 @@ def _channel_labels(rows: Sequence[Any]) -> dict[str, str]:
             continue
         key = str(key)
         if key == "online":
-            out[key] = "Website"
+            out[key] = "Website Delivery"
+        elif key == "website_pickup":
+            out[key] = "Store Pickup"
         elif key == "cashier":
             out[key] = "Counter"
         else:

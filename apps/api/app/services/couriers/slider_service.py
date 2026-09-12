@@ -73,7 +73,6 @@ from app.services.providers.slider_provider import SliderError, aed, provider
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "PROVIDER",
     "PROVIDERS",
     "SLIDER_BIKE",
     "SLIDER_CAR",
@@ -92,13 +91,14 @@ __all__ = [
     "vehicle_for_provider",
 ]
 
-PROVIDER = FulfilmentProviderEnum.SLIDER.value
 SLIDER_BIKE = FulfilmentProviderEnum.SLIDER_BIKE.value
 SLIDER_CAR = FulfilmentProviderEnum.SLIDER_CAR.value
 
-#: Every provider value this module carries: the legacy bare `slider` and the
-#: two tier-pinned ones. `courier_service` asks whether a zone is one of these.
-PROVIDERS = frozenset({PROVIDER, SLIDER_BIKE, SLIDER_CAR})
+#: Every provider value this module carries: the two tier-pinned Slider codes.
+#: `courier_service` asks whether a zone is one of these. (The legacy bare
+#: `slider` was retired in `241_drop_legacy_slider`; its rows are now
+#: `slider_car`.)
+PROVIDERS = frozenset({SLIDER_BIKE, SLIDER_CAR})
 
 BIKE = "bike"
 CAR = "car"
@@ -557,7 +557,11 @@ def build_stops(
     except (KeyError, TypeError, ValueError):
         return None, None, "Order has no delivery coordinates"
 
-    phone = normalise_phone(str(address.get("phone") or ""))
+    # The gift recipient's number when the order was placed for someone else,
+    # else the address's own — Slider carries no contact name, so only the phone
+    # differs. See `address_format.delivery_contact`.
+    _name, contact_phone = address_format.delivery_contact(order)
+    phone = normalise_phone(str(contact_phone or ""))
     if not phone:
         return None, None, "Order has no reachable phone number"
 
@@ -654,10 +658,11 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
             float(drop["longitude"]),
         )
     )
-    # The tier the zone pinned, if it named one; otherwise the legacy distance
-    # computation for a bare `slider` row. The zone was drawn for a vehicle and
-    # the checkout quoted that vehicle, so the booking asks for it rather than
-    # recomputing and risking a different answer.
+    # The tier the zone pinned (`slider_bike`/`slider_car`); the distance-based
+    # computation is only a safety fallback now that every Slider delivery names
+    # a tier. The zone was drawn for a vehicle and the checkout quoted that
+    # vehicle, so the booking asks for it rather than recomputing and risking a
+    # different answer.
     vehicle = vehicle_for_provider(delivery.provider) or vehicle_for(
         in_same_emirate=same_emirate(pickup.emirate, _drop_emirate(order, delivery)),
         road_km=distance_km,

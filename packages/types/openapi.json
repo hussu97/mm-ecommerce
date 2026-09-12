@@ -16449,6 +16449,16 @@
             ],
             "title": "Pickup Branch Id"
           },
+          "pickup_contact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PickupContactCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "promo_code": {
             "anyOf": [
               {
@@ -16459,6 +16469,16 @@
               }
             ],
             "title": "Promo Code"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReceiverCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "session_id": {
             "anyOf": [
@@ -18254,6 +18274,16 @@
             ],
             "title": "Promo Code Used"
           },
+          "receiver": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReceiverResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "refunded_amount": {
             "default": 0,
             "title": "Refunded Amount",
@@ -19934,6 +19964,36 @@
           "name"
         ],
         "title": "PickupBranchResponse",
+        "type": "object"
+      },
+      "PickupContactCreate": {
+        "description": "Who is collecting a store-pickup order, and how to reach them.\n\nA pickup order has no address, so it used to carry no name and no number \u2014\nthe shop was left with only an email. These are collected at checkout the\nsame way a delivery address collects them and land on `customer_name` /\n`customer_phone`, so the counter can call the customer and the\nnew-customer coupon has a phone identity to key on. Validation of the\nnumber itself is delegated to `describe_phone` in `_persist_order`, exactly\nas the shipping address's phone is \u2014 the length bounds here only match\n`AddressCreate.phone`.",
+        "properties": {
+          "first_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "First Name",
+            "type": "string"
+          },
+          "last_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Last Name",
+            "type": "string"
+          },
+          "phone": {
+            "maxLength": 20,
+            "minLength": 7,
+            "title": "Phone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name",
+          "phone"
+        ],
+        "title": "PickupContactCreate",
         "type": "object"
       },
       "PinLoginRequest": {
@@ -24952,6 +25012,70 @@
           "lines"
         ],
         "title": "ReceivePurchaseOrderRequest",
+        "type": "object"
+      },
+      "ReceiverCreate": {
+        "description": "Someone other than the orderer receiving a delivery \u2014 a gift.\n\nOptional, and delivery only. The name and number here are what the courier\nis given for the drop-off (see `address_format.delivery_contact`); the\norderer's own number stays on `Order.customer_phone` and remains what the\nper-customer coupon rules key on, so ordering for someone else never spends\nthe recipient's coupon allowance. Not phone-verified. Same length bounds as\nthe shipping address's phone; normalised through `describe_phone` on write.",
+        "properties": {
+          "name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "maxLength": 20,
+            "minLength": 7,
+            "title": "Phone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "phone"
+        ],
+        "title": "ReceiverCreate",
+        "type": "object"
+      },
+      "ReceiverResponse": {
+        "description": "The gift recipient on an order placed for someone else.\n\nPresent only when a `receiver` was given at checkout (delivery orders). The\nname and number here are what the courier was handed for the drop-off; the\norderer's own contact stays on the order's `customer_*` fields.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "title": "Phone",
+            "type": "string"
+          },
+          "phone_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone Country"
+          },
+          "phone_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone Type"
+          }
+        },
+        "required": [
+          "name",
+          "phone"
+        ],
+        "title": "ReceiverResponse",
         "type": "object"
       },
       "RecipeDraftRequest": {

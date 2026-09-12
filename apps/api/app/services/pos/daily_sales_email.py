@@ -86,18 +86,20 @@ DEFAULT_RECIPIENTS = ["h_abbasi97@hotmail.com", "fahimakhtarabbasi@gmail.com"]
 _TEMPLATE = "daily_sales_report"
 
 #: The channel columns, in report order. The five aggregators are the courier
-#: catalogue's own codes; website folds every courier into one column and
-#: counter is the till. A marketplace nobody has mapped yet still gets a column
-#: (appended) rather than having its money silently dropped.
+#: catalogue's own codes; website delivery folds every courier into one column,
+#: store pickup is its own column, and counter is the till. A marketplace nobody
+#: has mapped yet still gets a column (appended) rather than having its money
+#: silently dropped.
 _AGGREGATOR_COLUMNS = ["keeta", "noon_food", "talabat", "careem", "deliveroo"]
-_FIXED_COLUMNS = _AGGREGATOR_COLUMNS + ["website", "counter"]
+_FIXED_COLUMNS = _AGGREGATOR_COLUMNS + ["website", "website_pickup", "counter"]
 _COLUMN_LABELS = {
     "keeta": "keeta",
     "noon_food": "noon food",
     "talabat": "talabat",
     "careem": "careem",
     "deliveroo": "deliveroo",
-    "website": "website",
+    "website": "website delivery",
+    "website_pickup": "store pickup",
     "counter": "counter",
 }
 
@@ -162,11 +164,15 @@ _SECTIONS: list[tuple[str, "callable[[Cell], Decimal | int]"]] = [
 ]
 
 
-def _column_for(source: str | None, aggregator_channel: str | None) -> str | None:
+def _column_for(
+    source: str | None,
+    aggregator_channel: str | None,
+    delivery_method: str | None = None,
+) -> str | None:
     if source == "cashier":
         return "counter"
     if source == "online":
-        return "website"
+        return "website_pickup" if delivery_method == "pickup" else "website"
     if source == "aggregator":
         code = courier_catalog.code_for_channel(aggregator_channel or "")
         return code or (aggregator_channel or "unknown")
@@ -186,6 +192,7 @@ async def _fetch(
             Order.branch_id,
             Order.source,
             Order.aggregator_channel,
+            Order.delivery_method,
             func.count(Order.id),
             func.coalesce(func.sum(Order.total), 0),
             func.coalesce(func.sum(Order.discount_amount), 0),
@@ -202,7 +209,11 @@ async def _fetch(
         .where(Order.business_date >= date_from, Order.business_date <= date_to)
         .where(_DELIVERED)
         .group_by(
-            Order.business_date, Order.branch_id, Order.source, Order.aggregator_channel
+            Order.business_date,
+            Order.branch_id,
+            Order.source,
+            Order.aggregator_channel,
+            Order.delivery_method,
         )
     )
     if branch_id is not None:
@@ -234,6 +245,7 @@ async def build(
         bid,
         source,
         channel,
+        method,
         cnt,
         revenue,
         discount,
@@ -244,7 +256,7 @@ async def build(
         refunds,
         vat,
     ) in raw:
-        col = _column_for(source, channel)
+        col = _column_for(source, channel, getattr(method, "value", method))
         if col is None:
             continue
         if col not in _FIXED_COLUMNS and col not in extra_columns:

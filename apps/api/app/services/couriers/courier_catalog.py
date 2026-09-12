@@ -50,14 +50,13 @@ __all__ = [
 COURIER_NAMES: dict[str, str] = {
     "lalamove": "Lalamove",
     "noon_send": "noon Send",
-    # Slider's two vehicle tiers are two dispatch providers but one company; they
-    # each carry orders now (the bare `slider` is legacy, kept for old rows), so
+    # Slider's two vehicle tiers are two dispatch providers but one company, so
     # each is its own badge, filter chip and scorecard line. Without them a
     # `slider_bike`/`slider_car` delivery is read as carrier-less and dropped from
-    # the per-courier breakdown.
+    # the per-courier breakdown. (The bare `slider` code was retired — its rows
+    # were migrated to `slider_car` in `241_drop_legacy_slider`.)
     "slider_bike": "Slider (bike)",
     "slider_car": "Slider (car)",
-    "slider": "Slider",
     "third_party": "Third party",
     "talabat": "Talabat",
     "keeta": "Keeta",
