@@ -9,6 +9,9 @@ out/
 build/
 *.tsbuildinfo
 
+# Admin mobile/desktop audit output (screenshots + report)
+.mobile-audit/
+
 # Python
 __pycache__/
 *.py[cod]

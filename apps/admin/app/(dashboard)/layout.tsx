@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { loginPathFor } from '@/lib/auth-redirect';
 import { activeNavHref, canAccessNav, NAV, requiredPermissionFor } from '@/lib/nav';
+import { DensityToggle } from '@/components/ui/DensityToggle';
 import { cn } from '@/lib/utils';
 
 interface SidebarContentProps {
@@ -223,6 +224,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </button>
 
           <div className="flex-1" />
+
+          <DensityToggle />
 
           {/* `min-w-0` + `truncate`: an admin's address can be sixty
               characters, and without both of these it pushed the hamburger

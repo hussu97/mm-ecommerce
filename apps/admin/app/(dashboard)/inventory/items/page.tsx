@@ -15,6 +15,7 @@ import {
 import type { Branch, InventoryCategory, InventoryItem, InventoryLevel } from '@/lib/pos-types';
 import { Badge } from '@/components/ui';
 import { ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
+import { RowAction } from '@/components/ui/DataTable';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 
@@ -153,7 +154,7 @@ export default function ItemsPage() {
       searchKeys={['name', 'sku']}
       toolbar={toolbar}
       filterRows={filterRows}
-      rowActions={(item) => <button className="text-xs text-primary hover:underline" onClick={() => setRecipeItem((current) => (current?.id === item.id ? null : item))}>{recipeItem?.id === item.id ? 'Close recipe' : 'Recipe'}</button>}
+      rowActions={(item) => <RowAction onClick={() => setRecipeItem((current) => (current?.id === item.id ? null : item))}>{recipeItem?.id === item.id ? 'Close recipe' : 'Recipe'}</RowAction>}
       expandedRow={(item) => (item.id === recipeItem?.id ? <div className="py-2"><RecipeEditor ownerKind="inventory_item" ownerId={item.id} ownerLabel={item.name} /></div> : null)}
       defaults={{
         storage_unit: 'kg',
