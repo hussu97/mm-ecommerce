@@ -106,6 +106,10 @@ class RecipeOwnerRow(BaseModel):
     # sku for an inventory item, the parent modifier's name for an option, the
     # slug for a product — a second identifier line for the row.
     secondary: str | None = None
+    # For a modifier option: the products whose modifiers include this option's
+    # modifier, so the console shows where the option is actually used. Empty for
+    # other owner kinds.
+    product_names: list[str] = []
     # Inventory-item kind (``produced_good``/``semi_finished``); null otherwise.
     kind: str | None = None
     is_active: bool

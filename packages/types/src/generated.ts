@@ -16945,6 +16945,11 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Product Names
+             * @default []
+             */
+            product_names: string[];
+            /**
              * Recipe Status
              * @enum {string}
              */

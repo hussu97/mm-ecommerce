@@ -25394,6 +25394,14 @@
             "title": "Name",
             "type": "string"
           },
+          "product_names": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Product Names",
+            "type": "array"
+          },
           "recipe_status": {
             "enum": [
               "none",

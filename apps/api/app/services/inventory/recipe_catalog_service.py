@@ -21,7 +21,7 @@ from app.core import search as search_text
 from app.core.exceptions import BadRequestError
 from app.models.inventory import InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
-from app.models.modifier import Modifier, ModifierOption
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 
 # Only *made* inventory items can own a recipe — purchased kinds
@@ -236,6 +236,28 @@ async def list_recipe_owners(
         for rid, status, count in lc_rows:
             line_counts[(rid, status)] = count
 
+    # For modifier options, the products that carry this option's modifier — so
+    # the console can say where the option is used. One query for the page.
+    product_names: dict[uuid.UUID, list[str]] = {}
+    if owner_kind == "modifier_option":
+        option_ids = [row.id for row in rows]
+        if option_ids:
+            pn_rows = (
+                await db.execute(
+                    select(ModifierOption.id, Product.name)
+                    .select_from(ModifierOption)
+                    .join(
+                        ProductModifier,
+                        ProductModifier.modifier_id == ModifierOption.modifier_id,
+                    )
+                    .join(Product, Product.id == ProductModifier.product_id)
+                    .where(ModifierOption.id.in_(option_ids))
+                    .order_by(Product.name)
+                )
+            ).all()
+            for option_id, product_name in pn_rows:
+                product_names.setdefault(option_id, []).append(product_name)
+
     items: list[dict] = []
     for row in rows:
         has_recipe = row.recipe_id is not None
@@ -256,6 +278,7 @@ async def list_recipe_owners(
                 "id": row.id,
                 "name": row.name,
                 "secondary": row.secondary,
+                "product_names": product_names.get(row.id, []),
                 "kind": row.kind,
                 "is_active": bool(row.is_active),
                 "has_recipe": has_recipe,

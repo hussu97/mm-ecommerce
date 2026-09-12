@@ -154,6 +154,11 @@ export function RecipeOwnersPage({ ownerKind, noun, showKind, searchPlaceholder 
         <div>
           <div className="font-medium text-gray-800">{row.name}</div>
           {row.secondary && <div className="text-[11px] text-gray-400 font-body">{row.secondary}</div>}
+          {row.product_names.length > 0 && (
+            <div className="mt-0.5 text-[11px] text-gray-500 font-body">
+              <span className="text-gray-400">Used in:</span> {row.product_names.join(', ')}
+            </div>
+          )}
         </div>
       ),
     },

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.inventory import InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 from app.services.inventory import recipe_catalog_service
 
@@ -97,7 +98,27 @@ async def seeded(engine):
         apple = _product(f"{MARKER} Apple", is_active=True)  # active, has recipe
         mango = _product(f"{MARKER} Mango", is_active=True)  # active, no recipe
         zebra = _product(f"{MARKER} Zebra", is_active=False)  # inactive, no recipe
-        db.add_all([ingredient, made, apple, mango, zebra])
+        modifier = Modifier(
+            name=f"{MARKER} Toppings",
+            reference=f"{MARKER}-mod-{uuid.uuid4().hex[:8]}",
+        )
+        db.add_all([ingredient, made, apple, mango, zebra, modifier])
+        await db.flush()
+
+        option = ModifierOption(
+            modifier_id=modifier.id,
+            name=f"{MARKER} Sprinkles",
+            sku=f"{MARKER[:6].upper()}-OPT-{uuid.uuid4().hex[:8]}",
+        )
+        # The modifier is carried by two products, so the option's row should
+        # list both — in Product.name order.
+        db.add_all(
+            [
+                option,
+                ProductModifier(product_id=apple.id, modifier_id=modifier.id),
+                ProductModifier(product_id=mango.id, modifier_id=modifier.id),
+            ]
+        )
         await db.flush()
 
         await _recipe(
@@ -121,6 +142,8 @@ async def seeded(engine):
             "apple": apple.id,
             "mango": mango.id,
             "zebra": zebra.id,
+            "modifier": modifier.id,
+            "option": option.id,
         }
     yield ids
 
@@ -149,6 +172,10 @@ async def seeded(engine):
             InventoryItem.__table__.delete().where(
                 InventoryItem.id.in_([ids["ingredient"], ids["made"]])
             )
+        )
+        # Cascades the option and both product_modifier links.
+        await db.execute(
+            Modifier.__table__.delete().where(Modifier.id == ids["modifier"])
         )
         for trigger, table in (
             ("recipe_owner_immutable", "recipes"),
@@ -231,3 +258,14 @@ async def test_inventory_lists_only_made_items(engine, seeded):
     assert row["recipe_status"] == "draft"
     assert row["draft_version_number"] == 1
     assert row["line_count"] == 1
+
+
+async def test_modifier_option_lists_modifier_and_product_names(engine, seeded):
+    items, total = await _list(engine, "modifier_option")
+    assert total == 1
+    row = items[0]
+    assert row["name"] == f"{MARKER} Sprinkles"
+    # secondary is the parent modifier's name.
+    assert row["secondary"] == f"{MARKER} Toppings"
+    # product_names lists every product carrying the modifier, in name order.
+    assert row["product_names"] == [f"{MARKER} Apple", f"{MARKER} Mango"]
