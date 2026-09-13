@@ -292,12 +292,18 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
     """Merge an OMS order (items/timing) with a matching RMS order (settled fees).
 
     OMS is the primary source for: items, timestamps, external_outlet_id, and
-    the outlet-subtotal money (gross_sales / net_sales as a fallback when RMS
-    carries no value).  RMS is authoritative for the settlement layer:
-    commission_amount, payment/delivery/vat/cancellation fees, net_payable, and
-    statement_id.  The `coalesce(rms, oms)` rule mirrors what the ingest's
-    `_PRESERVE_IF_NULL` would do across two separate passes, but collapses them
-    into a single upsert so the row is complete on arrival.
+    the customer-facing money (gross_sales / net_sales).  RMS is authoritative
+    for the settlement layer: commission_amount, payment/delivery/vat/
+    cancellation fees, net_payable, and statement_id.  The `coalesce(rms, oms)`
+    rule mirrors what the ingest's `_PRESERVE_IF_NULL` would do across two
+    separate passes, but collapses them into a single upsert so the row is
+    complete on arrival.
+
+    gross_sales / net_sales are OMS-primary (falling back to RMS only when OMS
+    is absent): OMS `orderOutletSubtotal` is the true gross menu value, whereas
+    RMS `order_value` is the settled, net-of-commission figure.  Taking gross
+    from RMS collapsed gross onto net for settled orders and made the amount
+    reconciliation false-flag every settled noon order against its item sum.
     """
     return StandardOrder(
         external_order_id=rms.external_order_id,
@@ -319,8 +325,8 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
         driver_phone=oms.driver_phone,
         driver_status=oms.driver_status,
         status_events=oms.status_events,
-        gross_sales=rms.gross_sales if rms.gross_sales is not None else oms.gross_sales,
-        net_sales=rms.net_sales if rms.net_sales is not None else oms.net_sales,
+        gross_sales=oms.gross_sales if oms.gross_sales is not None else rms.gross_sales,
+        net_sales=oms.net_sales if oms.net_sales is not None else rms.net_sales,
         commission_amount=rms.commission_amount,
         payment_fee=rms.payment_fee if rms.payment_fee is not None else oms.payment_fee,
         delivery_fee=rms.delivery_fee
