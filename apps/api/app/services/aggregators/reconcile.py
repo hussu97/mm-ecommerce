@@ -338,24 +338,44 @@ async def _agg_items(db: AsyncSession, agg_order_id) -> list[AggregatorOrderItem
 
 def _item_discrepancy(agg_items, mm_items: list[OrderItem]) -> tuple[dict | None, bool]:
     """Compare quantities per side. Line-grain only — an aggregate window carries
-    no per-order breakdown to check, so it is reported as unknown, not a mismatch."""
+    no per-order breakdown to check, so it is reported as unknown, not a mismatch.
+
+    Bundle-aware, and one-directional. A marketplace often itemises a combo into
+    BOTH the combo line and its component lines — a "Box of 3" plus the three
+    brownies it contains — while the MM order keeps the combo as one product line.
+    That inflates the aggregator's line count and total quantity with no real
+    discrepancy (the money still ties out, checked separately by amount_variance).
+    So we flag only the revenue-affecting direction: the aggregator billing FEWER
+    items than the MM order recorded. Extra aggregator-only lines (a combo's
+    components, a finer itemisation) are surplus, not a mismatch — flagging them
+    turned every bundle order into a false positive.
+    """
     line_items = [
         i for i in agg_items if i.grain == GRAIN_LINE and i.quantity is not None
     ]
     if not line_items:
         return ({"note": "no line-grain aggregator items to compare"}, False)
     agg_qty = sum((i.quantity or Decimal(0)) for i in line_items)
-    mm_qty = Decimal(sum(i.effective_quantity for i in mm_items))
+    # A voided MM line was never delivered or billed, so it must not count against
+    # the marketplace's item list (aggregator MM orders carry no voids today — the
+    # counter is where voids happen — but guard so a stray one cannot false-flag).
+    mm_qty = Decimal(
+        sum(i.effective_quantity for i in mm_items if (i.status or "") != "void")
+    )
     detail = {
         "agg_total_qty": str(agg_qty),
         "mm_total_qty": str(mm_qty),
         "agg_lines": len(line_items),
         "mm_lines": len(mm_items),
     }
-    # Compare quantities, not line counts. `mm_items` carries every OrderItem
-    # (modifiers, voided lines) so its length rarely equals the aggregator's line
-    # grain even when the quantities agree — counting lines flagged good orders.
-    flagged = abs(agg_qty - mm_qty) > _TOL
+    # Only an aggregator SHORTFALL is a discrepancy: it billed fewer items than the
+    # MM order records. `agg_qty >= mm_qty` is the benign combo-decomposition /
+    # finer-itemisation case (and is noted, not flagged), so `mm_items` carrying a
+    # bundle as one line while the marketplace lists its parts no longer flags a
+    # good order.
+    flagged = (mm_qty - agg_qty) > _TOL
+    if not flagged and agg_qty - mm_qty > _TOL:
+        detail["note"] = "aggregator itemises more finely (e.g. a combo's parts)"
     return (detail, flagged)
 
 
