@@ -292,18 +292,19 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
     """Merge an OMS order (items/timing) with a matching RMS order (settled fees).
 
     OMS is the primary source for: items, timestamps, external_outlet_id, and
-    the customer-facing money (gross_sales / net_sales).  RMS is authoritative
-    for the settlement layer: commission_amount, payment/delivery/vat/
-    cancellation fees, net_payable, and statement_id.  The `coalesce(rms, oms)`
-    rule mirrors what the ingest's `_PRESERVE_IF_NULL` would do across two
-    separate passes, but collapses them into a single upsert so the row is
-    complete on arrival.
+    the outlet-subtotal money (gross_sales / net_sales as a fallback when RMS
+    carries no value).  RMS is authoritative for the settlement layer:
+    commission_amount, payment/delivery/vat/cancellation fees, net_payable, and
+    statement_id.  The `coalesce(rms, oms)` rule mirrors what the ingest's
+    `_PRESERVE_IF_NULL` would do across two separate passes, but collapses them
+    into a single upsert so the row is complete on arrival.
 
-    gross_sales / net_sales are OMS-primary (falling back to RMS only when OMS
-    is absent): OMS `orderOutletSubtotal` is the true gross menu value, whereas
-    RMS `order_value` is the settled, net-of-commission figure.  Taking gross
-    from RMS collapsed gross onto net for settled orders and made the amount
-    reconciliation false-flag every settled noon order against its item sum.
+    Both sources now define gross_sales the same way — the realised outlet
+    subtotal net of *merchant-funded* promotions, and 0 for a cancelled order
+    (see `_order_from` / `_order_from_oms`) — so which one wins only decides
+    whose (equal) figure is stored.  A post-delivery outlet adjustment (a
+    goodwill/quality credit) is carried as `refund_amount`, not netted out of
+    gross, mirroring the Talabat partial-refund treatment.
     """
     return StandardOrder(
         external_order_id=rms.external_order_id,
@@ -325,8 +326,8 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
         driver_phone=oms.driver_phone,
         driver_status=oms.driver_status,
         status_events=oms.status_events,
-        gross_sales=oms.gross_sales if oms.gross_sales is not None else rms.gross_sales,
-        net_sales=oms.net_sales if oms.net_sales is not None else rms.net_sales,
+        gross_sales=rms.gross_sales if rms.gross_sales is not None else oms.gross_sales,
+        net_sales=rms.net_sales if rms.net_sales is not None else oms.net_sales,
         commission_amount=rms.commission_amount,
         payment_fee=rms.payment_fee if rms.payment_fee is not None else oms.payment_fee,
         delivery_fee=rms.delivery_fee
@@ -334,7 +335,9 @@ def _merge_oms_into_rms(oms: StandardOrder, rms: StandardOrder) -> StandardOrder
         else oms.delivery_fee,
         vat_amount=rms.vat_amount,
         cancellation_fee=rms.cancellation_fee,
-        refund_amount=rms.refund_amount,
+        refund_amount=rms.refund_amount
+        if rms.refund_amount is not None
+        else oms.refund_amount,
         net_payable=rms.net_payable if rms.net_payable is not None else oms.net_payable,
         statement_id=rms.statement_id,
         items=oms.items,
@@ -779,6 +782,23 @@ class NoonClient(BaseAggregatorClient):
         customer_info = order.get("customerInfo") or order.get("receiverInfo") or {}
         if not isinstance(customer_info, dict):
             customer_info = {}
+        # OMS `orderOutletSubtotal` is already net of merchant-funded promotions
+        # (orderSubtotal + orderDiscountOutletSubtotal), so it needs no discount
+        # term; a cancelled order is zeroed and a post-delivery outlet adjustment
+        # becomes a partial refund — the same gross definition RMS uses.
+        is_cancelled = (
+            _str_or_none(order.get("orderStatusCode")) or ""
+        ).strip().lower() in self._CANCELLED_WORDS
+        gross, refund = self._gross_and_refund(
+            gross_menu=_num(
+                order.get("orderOutletSubtotal")
+                if order.get("orderOutletSubtotal") is not None
+                else order.get("orderSubtotal")
+            ),
+            merchant_discount=None,
+            outlet_adjustment=_num(order.get("orderOutletAdjustment")),
+            is_cancelled=is_cancelled,
+        )
         return StandardOrder(
             external_order_id=order_id,
             # The short customer code the merchant/rider quote (and the value
@@ -808,18 +828,14 @@ class NoonClient(BaseAggregatorClient):
             driver_status=_agent_str(order.get("logisticsStatusCode"))
             or _agent_str(order.get("outletStatusCode")),
             status_events=self._status_events_from(order),
-            gross_sales=_num(
-                order.get("orderOutletSubtotal")
-                if order.get("orderOutletSubtotal") is not None
-                else order.get("orderSubtotal")
-            ),
-            net_sales=_num(order.get("orderRestaurantToInvoice")),
+            gross_sales=gross,
+            net_sales=gross,
             commission_amount=None,
             payment_fee=_abs(_num(order.get("orderPostpaidFee"))),
             delivery_fee=_abs(_num(order.get("orderDeliveryFeeOutlet"))),
             vat_amount=None,
             cancellation_fee=None,
-            refund_amount=None,
+            refund_amount=refund,
             net_payable=_num(order.get("orderRestaurantToInvoice")),
             statement_id=None,
             items=self._items_from_oms(order),
@@ -1075,6 +1091,44 @@ class NoonClient(BaseAggregatorClient):
             truncation_note=" | ".join(notes) if notes else None,
         )
 
+    @staticmethod
+    def _gross_and_refund(
+        *,
+        gross_menu: Decimal | None,
+        merchant_discount: Decimal | None,
+        outlet_adjustment: Decimal | None,
+        is_cancelled: bool,
+        gross_fallback: Decimal | None = None,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """`(gross_sales, refund_amount)` under noon's one gross definition.
+
+        gross_sales is the realised outlet subtotal: the gross menu value less
+        any *merchant-funded* promotion (`outlet_discount` / `orderDiscountOutlet`,
+        already negative), and 0 for a cancelled order (the whole value is
+        reversed — the cancellation path, not a partial refund, owns it).
+
+        A negative `outlet_adjustment` on a *delivered* order is a post-delivery
+        goodwill/quality credit: it is returned as `refund_amount` (capped at
+        gross so net never goes below zero), NOT subtracted from gross — exactly
+        how the Talabat vendor CSV's "Operational Charges"/"Vendor Refunds" are
+        handled, so the gross the customer was charged stays on the header while
+        the promote step books the refund onto `orders.refunded_amount`.
+        """
+        if is_cancelled:
+            return Decimal("0"), None
+        if gross_menu is not None:
+            gross = gross_menu + (merchant_discount or Decimal("0"))
+        else:
+            gross = gross_fallback
+        refund: Decimal | None = None
+        if (
+            outlet_adjustment is not None
+            and outlet_adjustment < 0
+            and gross is not None
+        ):
+            refund = min(-outlet_adjustment, gross)
+        return gross, refund
+
     def _order_from(self, row: dict[str, Any]) -> StandardOrder | None:
         order_id = _first(row, "order_nr", "orderNr", "order_id")
         if not order_id:
@@ -1083,6 +1137,19 @@ class NoonClient(BaseAggregatorClient):
             _first(row, "order_date", "orderDate", "business_date")
         )
         status = _first(row, "order_status", "orderStatus")
+        status_norm = (
+            (str(status).strip().lower().replace(" ", "_") or None)
+            if status is not None
+            else None
+        )
+        is_cancelled = status_norm in self._CANCELLED_WORDS
+        gross, refund = self._gross_and_refund(
+            gross_menu=_num(_first(row, "item_value", "itemValue")),
+            merchant_discount=_num(_first(row, "outlet_discount", "outletDiscount")),
+            outlet_adjustment=_num(_first(row, "outlet_adj", "outletAdj")),
+            is_cancelled=is_cancelled,
+            gross_fallback=_num(_first(row, "order_value", "orderValue")),
+        )
         return StandardOrder(
             external_order_id=str(order_id),
             external_outlet_id=_str_or_none(_first(row, "outlet_code", "outletCode")),
@@ -1092,14 +1159,15 @@ class NoonClient(BaseAggregatorClient):
                 if order_date
                 else None
             ),
-            status=(
-                str(status).strip().lower().replace(" ", "_") or None
-                if status is not None
-                else None
-            ),
+            status=status_norm,
             currency=_first(row, "currency", "currencyCode") or "AED",
-            gross_sales=_num(_first(row, "order_value", "item_value", "orderValue")),
-            net_sales=_num(_first(row, "rest_invoice", "order_value", "restInvoice")),
+            # gross is the realised outlet subtotal net of *merchant-funded*
+            # promotions (0 for a cancelled order). `order_value` is NOT used
+            # for gross: it also nets the outlet adjustment, which is a
+            # post-delivery goodwill/quality credit — carried as `refund_amount`
+            # (like Talabat), so net follows the ledger without shrinking gross.
+            gross_sales=gross,
+            net_sales=gross,
             commission_amount=self._commission_from(row),
             payment_fee=_abs(_num(_first(row, "payment_fee", "paymentFee"))),
             delivery_fee=_abs(_num(_first(row, "delivery_fee", "deliveryFee"))),
@@ -1107,6 +1175,7 @@ class NoonClient(BaseAggregatorClient):
             cancellation_fee=_abs(
                 _num(_first(row, "cancellation_fee", "cancellationFee"))
             ),
+            refund_amount=refund,
             net_payable=_num(_first(row, "net_payable", "netPayable")),
             statement_id=_str_or_none(_first(row, "statement_nr", "statementNr")),
             # RMS has no per-item lines; OMS items are merged in by fetch_sales.
