@@ -269,6 +269,8 @@ export interface MenuGroupNode {
   display_order: number;
   is_active: boolean;
   product_ids: string[];
+  /** Members kept on the register but left off the printable menu PDF. */
+  pdf_excluded_product_ids?: string[];
   product_count: number;
   children: MenuGroupNode[];
 }
@@ -285,6 +287,8 @@ export interface MenuGroupInput {
   display_order?: number;
   is_active?: boolean;
   product_ids?: string[];
+  /** Subset of product_ids to keep off the printable menu PDF. */
+  pdf_excluded_product_ids?: string[];
 }
 
 export const menuGroupsApi = {

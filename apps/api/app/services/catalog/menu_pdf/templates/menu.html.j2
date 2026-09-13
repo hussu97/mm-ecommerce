@@ -193,7 +193,7 @@ body {
     <div class="body">
       <div class="name">{{ item.name }}</div>
       {% if item.description %}<div class="desc">{{ item.description }}</div>{% endif %}
-      {% if item.variants and not item.column_prices and not section.columns %}
+      {% if item.variants and not item.column_prices %}
       <div class="chips">
         {% for v in item.variants %}
         <span class="chip"><span class="sz">{{ v.label }}</span><b>{{ v.price }}</b></span>
@@ -207,6 +207,12 @@ body {
         {% for p in item.column_prices %}
         <span class="cell {{ 'empty' if not p else '' }}">{{ p or '·' }}</span>
         {% endfor %}
+      </div>
+      {% elif section.columns and item.single_price %}
+      {# One price in a sized section: centre it across the whole grid so it
+         stays inside the columns instead of floating past them. #}
+      <div class="cells">
+        <span class="cell" style="width: {{ section.columns|length * 16 }}mm">{{ item.single_price }}</span>
       </div>
       {% elif item.single_price %}
       {% if item.price_prefix %}<span class="pfx">{{ item.price_prefix }}</span>{% endif %}

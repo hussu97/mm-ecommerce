@@ -13563,6 +13563,8 @@ export interface components {
             name_localized?: string | null;
             /** Parent Id */
             parent_id?: string | null;
+            /** Pdf Excluded Product Ids */
+            pdf_excluded_product_ids?: string[];
             /** Product Ids */
             product_ids?: string[];
             /** Reference */
@@ -13610,6 +13612,11 @@ export interface components {
             /** Parent Id */
             parent_id?: string | null;
             /**
+             * Pdf Excluded Product Ids
+             * @default []
+             */
+            pdf_excluded_product_ids: string[];
+            /**
              * Product Count
              * @default 0
              */
@@ -13651,6 +13658,11 @@ export interface components {
             /** Parent Id */
             parent_id?: string | null;
             /**
+             * Pdf Excluded Product Ids
+             * @default []
+             */
+            pdf_excluded_product_ids: string[];
+            /**
              * Product Ids
              * @default []
              */
@@ -13688,6 +13700,8 @@ export interface components {
             name_localized?: string | null;
             /** Parent Id */
             parent_id?: string | null;
+            /** Pdf Excluded Product Ids */
+            pdf_excluded_product_ids?: string[] | null;
             /** Product Ids */
             product_ids?: string[] | null;
             /** Reference */

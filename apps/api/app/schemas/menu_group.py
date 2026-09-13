@@ -27,6 +27,9 @@ class MenuGroupCreate(MenuGroupBase):
     #: Replaces the group's contents wholesale, in the order given — that
     #: order is what the terminal lays the buttons out in.
     product_ids: list[UUID] = Field(default_factory=list)
+    #: Subset of ``product_ids`` kept on the register but left off the printable
+    #: menu PDF. Ignored for ids not in ``product_ids``.
+    pdf_excluded_product_ids: list[UUID] = Field(default_factory=list)
 
 
 class MenuGroupUpdate(BaseModel):
@@ -39,6 +42,9 @@ class MenuGroupUpdate(BaseModel):
     display_order: int | None = None
     is_active: bool | None = None
     product_ids: list[UUID] | None = None
+    #: Subset of ``product_ids`` kept on the register but left off the menu PDF.
+    #: Only applied when ``product_ids`` is also sent (contents are set together).
+    pdf_excluded_product_ids: list[UUID] | None = None
 
 
 class MenuGroupClone(BaseModel):
@@ -67,6 +73,7 @@ class MenuGroupNode(BaseModel):
     display_order: int
     is_active: bool
     product_ids: list[UUID] = []
+    pdf_excluded_product_ids: list[UUID] = []
     product_count: int = 0
     children: list[MenuGroupNode] = []
 
@@ -87,6 +94,7 @@ class MenuGroupResponse(BaseModel):
     display_order: int
     is_active: bool
     product_ids: list[UUID] = []
+    pdf_excluded_product_ids: list[UUID] = []
 
 
 MenuGroupNode.model_rebuild()

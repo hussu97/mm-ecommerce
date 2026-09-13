@@ -206,6 +206,41 @@ def test_column_layout_applies_when_sizes_line_up():
     assert section.items[1].column_prices == ["16", "18", "20"]
 
 
+def test_column_layout_aligns_a_subset_of_sizes():
+    # An item priced only M/L in an S/M/L section fills those cells, S blank —
+    # instead of overflowing onto the single-price path past the grid.
+    section = MenuSection(
+        title="Hot",
+        icon_key="coffee",
+        columns=None,
+        items=[
+            _variant_item([("S", "14"), ("M", "16"), ("L", "18")]),
+            _variant_item([("S", "16"), ("M", "18"), ("L", "20")]),
+            _variant_item([("M", "15"), ("L", "18")]),
+        ],
+    )
+    B._apply_column_layout(section)
+    assert section.columns == ["S", "M", "L"]
+    assert section.items[2].column_prices == [None, "15", "18"]
+
+
+def test_collect_sections_skips_pdf_excluded_products():
+    p1 = _product(name="Latte", base=15)
+    p2 = _product(name="Staff Drink", base=0)
+    products = {"p1": p1, "p2": p2}
+    node = {
+        "name": "Coffee",
+        "name_localized": None,
+        "product_ids": ["p1", "p2"],
+        "pdf_excluded_product_ids": ["p2"],
+        "children": [],
+    }
+    sections = B._collect_sections(node, products, "en")
+    assert len(sections) == 1
+    _, section = sections[0]
+    assert [it.name for it in section.items] == ["Latte"]
+
+
 def test_column_layout_skipped_when_sizes_disagree():
     section = MenuSection(
         title="Mixed",

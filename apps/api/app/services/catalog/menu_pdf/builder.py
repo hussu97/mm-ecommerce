@@ -195,11 +195,17 @@ def _apply_column_layout(section: MenuSection) -> None:
     best, count = tuples.most_common(1)[0]
     if len(best) < 2 or count / len(variant_items) < _COLUMN_SHARE_THRESHOLD:
         return
-    section.columns = list(best)
+    columns = list(best)
+    section.columns = columns
+    col_set = set(columns)
+    # Align any item whose sizes are a *subset* of the columns — an item priced
+    # only M/L in an S/M/L section fills those two cells and leaves S blank —
+    # rather than only an exact match, which used to drop such an item onto the
+    # single-price path and float its number past the grid.
     for it in section.items:
-        if it.variants and tuple(v.label for v in it.variants) == best:
+        if it.variants and {v.label for v in it.variants} <= col_set:
             by_label = {v.label: v.price for v in it.variants}
-            it.column_prices = [by_label.get(lbl) for lbl in best]
+            it.column_prices = [by_label.get(lbl) for lbl in columns]
 
 
 async def _load_products(db: AsyncSession, ids: list[uuid.UUID]) -> dict:
@@ -247,7 +253,10 @@ def _collect_sections(
     """
     result: list[tuple[str, MenuSection]] = []
     items: list[MenuItem] = []
+    excluded = set(node.get("pdf_excluded_product_ids", []))
     for pid in node.get("product_ids", []):
+        if pid in excluded:
+            continue
         product = products.get(pid)
         if product is not None:
             items.append(_build_item(product, lang))

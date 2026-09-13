@@ -214,6 +214,13 @@ class MenuGroupProduct(Base, UUIDMixin):
     display_order: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )
+    #: The product stays on the register in this group but is left out of the
+    #: printable menu PDF — for items you sell at the counter yet don't want on
+    #: the printed menu (staff drinks, a one-off, a placeholder). Scoped to this
+    #: membership, so the same product can appear on the PDF via another group.
+    exclude_from_pdf: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     group: Mapped[MenuGroup] = relationship("MenuGroup", back_populates="members")
 

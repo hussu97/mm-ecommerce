@@ -231,6 +231,9 @@ async def list_tree(
                 "display_order": g.display_order,
                 "is_active": g.is_active,
                 "product_ids": [m.product_id for m in g.members],
+                "pdf_excluded_product_ids": [
+                    m.product_id for m in g.members if m.exclude_from_pdf
+                ],
                 "product_count": len(g.members),
                 "children": build(g.id, depth + 1),
             }
@@ -358,7 +361,12 @@ async def create(db: AsyncSession, data: dict) -> MenuGroup:
     await db.flush()
     # A root points at itself; a child shares its parent's root.
     group.root_id = parent.root_id if parent is not None else group.id
-    await _set_products(db, group, data.get("product_ids"))
+    await _set_products(
+        db,
+        group,
+        data.get("product_ids"),
+        data.get("pdf_excluded_product_ids"),
+    )
     # Flush, not commit. The request-scoped `get_db` dependency owns the
     # commit; a service that commits mid-request turns everything the router
     # did before it into a fait accompli that a later failure in the same
@@ -404,7 +412,12 @@ async def update(db: AsyncSession, group_id: uuid.UUID, data: dict) -> MenuGroup
             setattr(group, field, data[field])
 
     if "product_ids" in data:
-        await _set_products(db, group, data["product_ids"])
+        await _set_products(
+            db,
+            group,
+            data["product_ids"],
+            data.get("pdf_excluded_product_ids"),
+        )
 
     # Flush, not commit — see `create`. The request commits once, at the end.
     await db.flush()
@@ -505,10 +518,14 @@ async def clone_tree(
 
 
 async def _set_products(
-    db: AsyncSession, group: MenuGroup, product_ids: list[uuid.UUID] | None
+    db: AsyncSession,
+    group: MenuGroup,
+    product_ids: list[uuid.UUID] | None,
+    pdf_excluded_ids: list[uuid.UUID] | None = None,
 ) -> None:
     if product_ids is None:
         return
+    excluded = set(pdf_excluded_ids or [])
 
     found = set(
         (await db.execute(select(Product.id).where(Product.id.in_(product_ids))))
@@ -538,10 +555,14 @@ async def _set_products(
     for order, product_id in enumerate(product_ids):
         if product_id in existing:
             existing[product_id].display_order = order
+            existing[product_id].exclude_from_pdf = product_id in excluded
         else:
             db.add(
                 MenuGroupProduct(
-                    group_id=group.id, product_id=product_id, display_order=order
+                    group_id=group.id,
+                    product_id=product_id,
+                    display_order=order,
+                    exclude_from_pdf=product_id in excluded,
                 )
             )
     await db.flush()

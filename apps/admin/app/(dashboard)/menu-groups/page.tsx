@@ -60,7 +60,9 @@ export default function MenuGroupsPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(BLANK);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [pdfExcluded, setPdfExcluded] = useState<Set<string>>(new Set());
   const [productSearch, setProductSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [apiError, setApiError] = useState('');
@@ -164,8 +166,10 @@ export default function MenuGroupsPage() {
     // A new group at the top of a tree sits directly under its root.
     setForm({ ...BLANK, parent_id: parent?.id ?? selectedRoot.id });
     setPicked(new Set());
+    setPdfExcluded(new Set());
     setApiError('');
     setProductSearch('');
+    setCategoryFilter('');
     setShowForm(true);
   }
 
@@ -180,8 +184,10 @@ export default function MenuGroupsPage() {
       is_active: node.is_active,
     });
     setPicked(new Set(node.product_ids));
+    setPdfExcluded(new Set(node.pdf_excluded_product_ids ?? []));
     setApiError('');
     setProductSearch('');
+    setCategoryFilter('');
     setShowForm(true);
   }
 
@@ -210,6 +216,7 @@ export default function MenuGroupsPage() {
         parent_id: form.parent_id,
         is_active: form.is_active,
         product_ids: [...picked],
+        pdf_excluded_product_ids: [...pdfExcluded].filter(id => picked.has(id)),
       };
       if (editing) await menuGroupsApi.update(editing.id, payload);
       else await menuGroupsApi.create(payload);
@@ -373,8 +380,18 @@ export default function MenuGroupsPage() {
 
   const q = productSearch.trim().toLowerCase();
   const visibleProducts = products.filter(
-    p => !q || p.name.toLowerCase().includes(q) || (p.sku ?? '').toLowerCase().includes(q),
+    p =>
+      (!q || p.name.toLowerCase().includes(q) || (p.sku ?? '').toLowerCase().includes(q)) &&
+      (!categoryFilter || p.category_id === categoryFilter),
   );
+  // Categories present in the catalogue, for the picker's filter dropdown.
+  const categoryOptions = Array.from(
+    products.reduce((m, p) => {
+      if (p.category_id && p.category) m.set(p.category_id, p.category.name);
+      return m;
+    }, new Map<string, string>()),
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+  const categoryNameById = new Map(categoryOptions);
 
   // A group cannot be moved inside itself or its own descendants.
   const forbidden = editing ? new Set(subtreeIds(editing)) : new Set<string>();
@@ -608,38 +625,79 @@ export default function MenuGroupsPage() {
               </label>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-2 gap-2">
                   <span className="text-xs uppercase tracking-wider text-gray-600 font-body">
                     Products ({picked.size} selected)
                   </span>
-                  <input
-                    placeholder="Search…"
-                    value={productSearch}
-                    onChange={e => setProductSearch(e.target.value)}
-                    className="border rounded px-2 py-1 text-sm font-body"
-                  />
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={categoryFilter}
+                      onChange={e => setCategoryFilter(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm font-body max-w-[10rem]"
+                    >
+                      <option value="">All categories</option>
+                      {categoryOptions.map(([id, name]) => (
+                        <option key={id} value={id}>{name}</option>
+                      ))}
+                    </select>
+                    <input
+                      placeholder="Search…"
+                      value={productSearch}
+                      onChange={e => setProductSearch(e.target.value)}
+                      className="border rounded px-2 py-1 text-sm font-body"
+                    />
+                  </div>
                 </div>
                 <div className="border rounded max-h-64 overflow-y-auto divide-y divide-gray-100">
-                  {visibleProducts.map(p => (
-                    <label key={p.id} className="flex items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-gray-50">
-                      <input
-                        type="checkbox"
-                        checked={picked.has(p.id)}
-                        onChange={e => setPicked(prev => {
-                          const next = new Set(prev);
-                          if (e.target.checked) next.add(p.id); else next.delete(p.id);
-                          return next;
-                        })}
-                        className="accent-primary"
-                      />
-                      <span className="font-body text-sm">{p.name}</span>
-                      <span className="text-xs text-gray-400 ml-auto">{p.sku}</span>
-                    </label>
-                  ))}
+                  {visibleProducts.map(p => {
+                    const isPicked = picked.has(p.id);
+                    return (
+                    <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50">
+                      <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isPicked}
+                          onChange={e => setPicked(prev => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(p.id); else next.delete(p.id);
+                            return next;
+                          })}
+                          className="accent-primary"
+                        />
+                        <span className="font-body text-sm truncate">{p.name}</span>
+                        {p.category_id && (
+                          <span className="text-[10px] uppercase tracking-wide text-gray-400 shrink-0">
+                            {categoryNameById.get(p.category_id) ?? ''}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-400 ml-auto shrink-0">{p.sku}</span>
+                      </label>
+                      {isPicked && (
+                        <label
+                          className="flex items-center gap-1 text-[11px] font-body text-gray-500 shrink-0 cursor-pointer"
+                          title="Keep on the register but leave off the printed menu PDF"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={pdfExcluded.has(p.id)}
+                            onChange={e => setPdfExcluded(prev => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(p.id); else next.delete(p.id);
+                              return next;
+                            })}
+                            className="accent-primary"
+                          />
+                          Hide on PDF
+                        </label>
+                      )}
+                    </div>
+                    );
+                  })}
                 </div>
                 {picked.size > 0 && (
                   <p className="text-xs text-gray-400 mt-1 font-body">
-                    A product can belong to several groups.
+                    A product can belong to several groups. “Hide on PDF” keeps an item
+                    on the register but leaves it off the printed menu.
                   </p>
                 )}
               </div>

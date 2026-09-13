@@ -162,6 +162,29 @@ async def test_the_response_describes_the_state_just_saved(
     assert len(group.members) == in_database == 3
 
 
+async def test_pdf_exclusion_is_stored_and_reported(session, branch_root, product_ids):
+    """A member can be flagged off the PDF; create/get round-trips the flag."""
+    group = await svc.create(
+        session,
+        {
+            "name": "pytest-pdf-exclude",
+            "parent_id": branch_root.id,
+            "product_ids": product_ids,
+            "pdf_excluded_product_ids": [product_ids[1]],
+        },
+    )
+    excluded = [m.product_id for m in group.members if m.exclude_from_pdf]
+    assert excluded == [product_ids[1]]
+
+    # And it clears when the update drops it from the excluded list.
+    group = await svc.update(
+        session,
+        group.id,
+        {"product_ids": product_ids, "pdf_excluded_product_ids": []},
+    )
+    assert not any(m.exclude_from_pdf for m in group.members)
+
+
 async def test_removing_a_product_takes_effect(session, branch_root, product_ids):
     group = await svc.create(
         session,

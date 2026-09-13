@@ -14851,6 +14851,14 @@
             ],
             "title": "Parent Id"
           },
+          "pdf_excluded_product_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Pdf Excluded Product Ids",
+            "type": "array"
+          },
           "product_ids": {
             "items": {
               "format": "uuid",
@@ -14971,6 +14979,15 @@
             ],
             "title": "Parent Id"
           },
+          "pdf_excluded_product_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Pdf Excluded Product Ids",
+            "type": "array"
+          },
           "product_count": {
             "default": 0,
             "title": "Product Count",
@@ -15087,6 +15104,15 @@
               }
             ],
             "title": "Parent Id"
+          },
+          "pdf_excluded_product_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Pdf Excluded Product Ids",
+            "type": "array"
           },
           "product_ids": {
             "default": [],
@@ -15218,6 +15244,21 @@
               }
             ],
             "title": "Parent Id"
+          },
+          "pdf_excluded_product_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Excluded Product Ids"
           },
           "product_ids": {
             "anyOf": [

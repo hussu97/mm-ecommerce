@@ -56,6 +56,9 @@ def _to_response(group) -> MenuGroupResponse:
         display_order=group.display_order,
         is_active=group.is_active,
         product_ids=[m.product_id for m in group.members],
+        pdf_excluded_product_ids=[
+            m.product_id for m in group.members if m.exclude_from_pdf
+        ],
     )
 
 
