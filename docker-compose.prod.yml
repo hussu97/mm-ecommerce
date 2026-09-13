@@ -215,6 +215,7 @@ x-api-environment: &api-environment
   TAMARA_API_KEY: ${TAMARA_API_KEY:-}
   TAMARA_API_URL: ${TAMARA_API_URL:-https://api.tamara.co}
   STOREFRONT_SCHEDULER_ENABLED: ${STOREFRONT_SCHEDULER_ENABLED:-true}
+  DAILY_SALES_EMAIL_ENABLED: ${DAILY_SALES_EMAIL_ENABLED:-false}
   UVICORN_WORKERS: "1"
 
 x-pos-environment: &pos-environment

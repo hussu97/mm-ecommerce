@@ -234,12 +234,17 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
             # The daily sales email. Rides here for the same reasons its
             # neighbours do — no cron in this stack, an advisory lock so a second
             # copy is harmless — and belongs to whichever app owns the shared
-            # work. Sends once, after the last branch closes for the day.
-            from app.services.pos import daily_sales_email
+            # work. Sends once, after the last branch closes for the day. Its own
+            # flag (default off in production) gates it independently of dispatch;
+            # when off, the loop simply never starts and its heartbeat reads null.
+            if settings.DAILY_SALES_EMAIL_ENABLED:
+                from app.services.pos import daily_sales_email
 
-            background.append(
-                spawn_tracked(daily_sales_email.run_forever(), name="daily_sales_email")
-            )
+                background.append(
+                    spawn_tracked(
+                        daily_sales_email.run_forever(), name="daily_sales_email"
+                    )
+                )
 
             # The business-day sweeper. Same lifespan reasons as its neighbours —
             # no cron here, an advisory lock so a second copy is harmless. Hourly

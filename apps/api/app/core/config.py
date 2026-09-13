@@ -215,6 +215,15 @@ class Settings(BaseSettings):
     #: which is why it is on. The register app never runs it.
     STOREFRONT_SCHEDULER_ENABLED: bool = True
 
+    #: The once-a-day sales report email (`daily_sales_email`), sent after the
+    #: last branch closes. It rides inside the storefront scheduler above but has
+    #: its own switch so the report can be turned off without stopping dispatch.
+    #: On by default in code; production sets it off (see docker-compose.prod.yml
+    #: and the deploy workflow), so a normal deploy sends nothing until the
+    #: `DAILY_SALES_EMAIL_ENABLED` secret is set to `true`. The manual
+    #: "send report" endpoint is unaffected.
+    DAILY_SALES_EMAIL_ENABLED: bool = True
+
     # ── noon Send / Rider-on-Demand (courier) ────────────────────────────────
     #: Same contract as Lalamove above: an empty key means a `noon_send` zone
     #: prices and sells exactly as it does today and simply dispatches through

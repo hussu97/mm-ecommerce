@@ -809,6 +809,7 @@ gives the intended value rather than an empty one:
 | `LALAMOVE_TIMEOUT_SECONDS` | `8` | |
 | `LALAMOVE_QUOTE_CACHE_SECONDS` | `120` | |
 | `STOREFRONT_SCHEDULER_ENABLED` | `true` | The in-process loop that dispatches orders, lands arrivals, tracks drivers and sends the daily email. Storefront only |
+| `DAILY_SALES_EMAIL_ENABLED` | `false` | Auto-send of the once-a-day sales report email. Off in production; set to `true` to resume. Manual send is unaffected. Storefront only |
 
 **The fallbacks are load-bearing, not tidiness.** An unset secret expands to an
 empty string, and an empty value in `.env` overrides the Python default rather
