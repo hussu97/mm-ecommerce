@@ -1,44 +1,48 @@
-# Checkout contacts, countries, gift receiver, pickup channel & slider cleanup
+# Printable Menu PDF for Menu Groups
 
-Branch: `feat/checkout-contacts-receiver-pickup-channel`
+Generate & download a print-ready PDF menu per menu-group root, realtime from the
+DB, in English or Arabic. Counter (branch) roots brand by the counter legal
+entity (Barsha → Attibassi / Najm AlShamal); the integrator root = Grubtech
+aggregator menu (prices = MM base_price parity). QR = branch WhatsApp.
 
-## 1. Pickup contact (name + phone mandatory)
-- [x] API schema: `PickupContactCreate` + `OrderCreate.pickup_contact` + validator (pickup requires it)
-- [x] API service `_persist_order`: persist customer_name/phone from pickup_contact
-- [x] Web types: `PickupContactCreate` + `OrderCreate.pickup_contact`
-- [x] Web checkout: send pickup_contact in buildOrderCreate; require lastName
+## Decisions (confirmed with user)
+- Missing product photos → graceful no-photo layout (guaranteed floor). Real
+  photos used where present. No copyrighted-image scraping, no photoreal AI
+  (unavailable here). Tasteful SVG category icons added. Admin upload path stays
+  so photos flow in automatically later.
+- Grubtech price → MM `base_price` (parity), no live Foodics call.
+- Ship flow → build, render EN/AR samples, **show user, wait for approval before
+  pushing to main.**
 
-## 2. More countries
-- [x] PhoneInput PRIORITY: add `AU`
-- [x] Firebase SMS region policy (IN/PK/AU/GB/US) — applied via Identity Platform REST; allowlist now AE,IN,PK,AU,GB,US
+## Stack
+- Server-side: Jinja2 (present) → HTML → WeasyPrint (new) → PDF. QR via segno
+  (new, pure-Python, inline SVG). Product images fetched with httpx (present),
+  inlined as data URIs. Bundled OFL fonts (Poppins, Marcellus, Almarai-Arabic).
+- Endpoint: `GET /menu-groups/{group_id}/pdf?lang=en|ar`, `require("catalogue.manage")`,
+  returns `application/pdf` attachment. Blocking render via `asyncio.to_thread`.
+- Admin: `menuGroupsApi.downloadPdf` via `downloadBlob`; EN/AR buttons in header.
 
-## 3. Gift receiver (delivery only)
-- [x] Model `OrderReceiver` + `Order.receiver` relationship
-- [x] Migration `240_order_receivers` (verified up/down/up on throwaway PG)
-- [x] API schema: `ReceiverCreate` + `OrderCreate.receiver` (delivery-only validator); `ReceiverResponse` on OrderResponse
-- [x] API service: create OrderReceiver row; keep coupon/customer_phone on orderer
-- [x] `address_format.delivery_contact(order)` + use in slider/lalamove/noon_send builders; dispatch loads receiver
-- [x] Web: receiver toggle + fields in delivery branch; buildOrderCreate.receiver; web types
-- [x] Admin: receiver row on order detail; `Order.receiver` in admin types.ts
+## Build steps
+- [ ] Bundle OFL fonts + license under `app/services/catalog/menu_pdf/fonts/`
+- [ ] `menu_pdf/builder.py` — MenuDocument dataclass assembled from a root group
+      (tree walk, options/prices in Python, brand via tax_identity_service,
+      branch phone, EN/AR strings)
+- [ ] `menu_pdf/theme.py` — brand theme by legal-entity reference
+- [ ] `menu_pdf/icons.py` — inline SVG category icons + WhatsApp QR helper
+- [ ] `menu_pdf/templates/menu.html.j2` — the layout (theme-aware, RTL-aware)
+- [ ] `menu_pdf/render.py` — Jinja2 → WeasyPrint bytes; concurrent image inline
+- [ ] Sample fixture + render script; render EN/AR for Attibassi + MM + Grubtech
+- [ ] **CHECKPOINT: send samples to user, get approval**
+- [ ] Endpoint in `menu_groups.py`
+- [ ] Deps: add weasyprint + segno to pyproject; `uv lock`
+- [ ] Dockerfile runner stage: Pango/fontconfig/gdk-pixbuf apt libs
+- [ ] Admin binding + buttons
+- [ ] Tests (builder unit; endpoint smoke)
+- [ ] ruff format + check; run affected tests; regenerate types if schema touched
+- [ ] Push to main; verify deploy green; verify on prod
 
-## 4. Store-pickup sales channel (split online → Website Delivery + Store Pickup)
-- [x] order_query: `website_pickup` synthetic code + predicate/clause/label
-- [x] dashboard.py by_channel CASE + labels
-- [x] pos_reports/_base.py channel column + labels
-- [x] daily_sales_email.py columns/labels/_column_for
-- [x] admin couriers.ts option + CourierMark icon + orders/page.tsx channel label + SalesTab channel dimension
-
-## 5. Kill legacy `slider` courier (code only; keep status-family + webhook source)
-- [x] API: remove SLIDER from FulfilmentProviderEnum + catalog + courier_service + slider_service + fulfilment + orders refresh map
-- [x] Admin: remove slider from couriers.ts/types.ts/courier-labels(x2)/provider-labels/ZoneMap
-- [x] Migration `241_drop_legacy_slider` (data migrate → slider_car; delete couriers row; keep webhook provider) — verified
-- [~] Tests: swap `slider`→`slider_car` in routing/zone tests; keep status-family + webhook tests — SUBAGENT running
-
-## Cross-cutting
-- [x] i18n keys in seed_i18n.py (EN+AR)
-- [x] Regen OpenAPI + @mm/types (clean diff, only additions)
-- [x] ruff check + ruff format
-- [x] Verify migrations on throwaway Postgres
-- [x] Web + admin tsc --noEmit clean
-- [~] Full API unit suite green — after subagent; reconcile channel-split test files (daily_sales_email, pos_reports)
-- [ ] Commit
+## Notes / guardrails
+- uv.lock must be regenerated with pyproject (Docker build `--locked` fails on drift)
+- No new env vars (fonts bundled, no external service) → no 5-place secret churn
+- No DB schema change → no migration
+- Commit author: Hussain Abbasi <h_abbasi97@hotmail.com>, no Co-Authored-By

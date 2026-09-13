@@ -47,10 +47,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
-# Runtime system deps only (curl needed for Docker healthcheck)
+# Runtime system deps only (curl needed for Docker healthcheck).
+# The libpango/gdk-pixbuf/fontconfig set is WeasyPrint's runtime requirement for
+# the menu-group PDFs (app/services/catalog/menu_pdf): Pango does the text layout
+# and Arabic/bidi shaping, gdk-pixbuf decodes the inlined product images, and
+# fontconfig lets Pango find our bundled fonts. Menu fonts travel in the source
+# tree, so no font packages are needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libharfbuzz0b \
+    libfontconfig1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder

@@ -9,9 +9,11 @@ terminal fetches the tree to lay its buttons out; writing needs an admin.
 
 from __future__ import annotations
 
+import asyncio
+import re
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -25,8 +27,18 @@ from app.schemas.menu_group import (
     MenuGroupUpdate,
 )
 from app.services.catalog import menu_group_service
+from app.services.catalog.menu_pdf import (
+    build_menu_document,
+    prepare_menu_assets,
+    render_menu_pdf,
+)
 
 router = APIRouter()
+
+
+def _pdf_filename(brand: str, lang: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (brand or "menu").lower()).strip("-") or "menu"
+    return f"{slug}-menu-{lang}.pdf"
 
 
 def _to_response(group) -> MenuGroupResponse:
@@ -78,6 +90,32 @@ async def get_group(
     _: User = Depends(require_any("pos.register.access", "catalogue.manage")),
 ):
     return _to_response(await menu_group_service.get(db, group_id))
+
+
+@router.get("/{group_id}/pdf")
+async def get_group_pdf(
+    group_id: uuid.UUID,
+    lang: str = Query("en", pattern="^(en|ar)$", description="Menu language"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+):
+    """A print-ready A4 PDF of this menu group (and its subtree), built live.
+
+    Branding, language and prices are resolved from the group's branch and the
+    current catalogue — a branch root prints the counter menu under that branch's
+    counter legal entity; the integrator root prints the Grubtech menu. The heavy
+    layout pass runs off the event loop.
+    """
+    group = await menu_group_service.get(db, group_id)
+    document = await build_menu_document(db, group, lang=lang)
+    await prepare_menu_assets(document)
+    pdf = await asyncio.to_thread(render_menu_pdf, document)
+    filename = _pdf_filename(document.brand_name, lang)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("", response_model=MenuGroupResponse, status_code=status.HTTP_201_CREATED)

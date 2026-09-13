@@ -39,6 +39,13 @@ dependencies = [
     "phonenumbers>=9.0.0",
     "openpyxl>=3.1.5",
     "curl-cffi>=0.16.2",
+    # Renders the printable menu-group PDFs (app/services/catalog/menu_pdf).
+    # WeasyPrint lays out the Jinja HTML with real RTL/bidi shaping via Pango and
+    # our bundled fonts; segno draws the WhatsApp QR as an inline SVG (pure
+    # Python, no deps). WeasyPrint needs the Pango/Cairo/gdk-pixbuf system libs —
+    # installed in the api Dockerfile's runner stage.
+    "weasyprint>=63.0",
+    "segno>=1.6.0",
 ]
 
 [project.optional-dependencies]

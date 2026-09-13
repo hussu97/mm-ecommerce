@@ -4939,6 +4939,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/menu-groups/{group_id}/pdf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Group Pdf
+         * @description A print-ready A4 PDF of this menu group (and its subtree), built live.
+         *
+         *     Branding, language and prices are resolved from the group's branch and the
+         *     current catalogue — a branch root prints the counter menu under that branch's
+         *     counter legal entity; the integrator root prints the Grubtech menu. The heavy
+         *     layout pass runs off the event loop.
+         */
+        get: operations["get_group_pdf_api_v1_menu_groups__group_id__pdf_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/modifiers": {
         parameters: {
             query?: never;
@@ -29922,6 +29947,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MenuGroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_group_pdf_api_v1_menu_groups__group_id__pdf_get: {
+        parameters: {
+            query?: {
+                /** @description Menu language */
+                lang?: string;
+            };
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

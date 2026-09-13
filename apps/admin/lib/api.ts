@@ -303,6 +303,9 @@ export const menuGroupsApi = {
     api.post<MenuGroupNode>(`/menu-groups/${id}/clone`, data),
   // Takes every group nested underneath it with it.
   delete: (id: string) => api.delete<void>(`/menu-groups/${id}`),
+  // Download a print-ready PDF of the group's menu (built live, en|ar).
+  downloadPdf: (id: string, lang: 'en' | 'ar', filename: string) =>
+    downloadBlob(`/menu-groups/${id}/pdf?lang=${lang}`, filename),
 };
 
 // ─── Products ─────────────────────────────────────────────────────────────────

@@ -51482,6 +51482,66 @@
         ]
       }
     },
+    "/api/v1/menu-groups/{group_id}/pdf": {
+      "get": {
+        "description": "A print-ready A4 PDF of this menu group (and its subtree), built live.\n\nBranding, language and prices are resolved from the group's branch and the\ncurrent catalogue \u2014 a branch root prints the counter menu under that branch's\ncounter legal entity; the integrator root prints the Grubtech menu. The heavy\nlayout pass runs off the event loop.",
+        "operationId": "get_group_pdf_api_v1_menu_groups__group_id__pdf_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Menu language",
+            "in": "query",
+            "name": "lang",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "description": "Menu language",
+              "pattern": "^(en|ar)$",
+              "title": "Lang",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Group Pdf",
+        "tags": [
+          "Menu"
+        ]
+      }
+    },
     "/api/v1/modifiers": {
       "get": {
         "description": "List all modifiers with their options.\n\nAn admin/catalogue surface, not a storefront one \u2014 the storefront reads a\nproduct's modifiers embedded in the product response and never calls this.\nIt carried no auth at all, so any caller could enumerate the catalogue's\nmodifier structure; it now requires the register or a catalogue manager.",

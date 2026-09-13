@@ -65,6 +65,7 @@ export default function MenuGroupsPage() {
   const [uploading, setUploading] = useState(false);
   const [apiError, setApiError] = useState('');
   const [loadError, setLoadError] = useState('');
+  const [pdfBusy, setPdfBusy] = useState<null | 'en' | 'ar'>(null);
 
   const loadEveryProduct = useCallback(async () => {
     const all: Product[] = [];
@@ -121,6 +122,27 @@ export default function MenuGroupsPage() {
     [tree, selectedRootId, branchRoots, integratorRoot],
   );
   const isIntegrator = selectedRoot?.root_kind === 'integrator';
+
+  // A print-ready PDF of the selected menu, built live by the API in the chosen
+  // language. The counter menus brand themselves from the branch's legal entity;
+  // the integrator menu is the Grubtech marketplace menu.
+  const downloadMenuPdf = useCallback(
+    async (lang: 'en' | 'ar') => {
+      if (!selectedRoot) return;
+      const label = isIntegrator ? 'grubtech' : branchName(selectedRoot.branch_id);
+      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      setPdfBusy(lang);
+      setLoadError('');
+      try {
+        await menuGroupsApi.downloadPdf(selectedRoot.id, lang, `${slug || 'menu'}-menu-${lang}.pdf`);
+      } catch (e) {
+        setLoadError(e instanceof ApiError ? e.message : 'Could not generate the PDF');
+      } finally {
+        setPdfBusy(null);
+      }
+    },
+    [selectedRoot, isIntegrator, branchName],
+  );
 
   const branchesWithoutMenu = useMemo(
     () =>
@@ -365,7 +387,25 @@ export default function MenuGroupsPage() {
     <div className="p-8">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-display">Menu Groups</h1>
-        {selectedRoot && <Button onClick={() => openAdd(null)}>{addLabel}</Button>}
+        {selectedRoot && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              disabled={pdfBusy !== null}
+              onClick={() => downloadMenuPdf('en')}
+            >
+              {pdfBusy === 'en' ? 'Generating…' : 'PDF (EN)'}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={pdfBusy !== null}
+              onClick={() => downloadMenuPdf('ar')}
+            >
+              {pdfBusy === 'ar' ? 'Generating…' : 'PDF (AR)'}
+            </Button>
+            <Button onClick={() => openAdd(null)}>{addLabel}</Button>
+          </div>
+        )}
       </div>
       <p className="text-sm text-gray-500 font-body mb-4 max-w-2xl">
         Each shop&apos;s terminals render its own menu, and the integrator menu is
