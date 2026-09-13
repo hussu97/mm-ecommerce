@@ -435,7 +435,12 @@ class TestRefundsAccumulate:
         )
 
         db = MagicMock()
-        db.execute = AsyncMock(return_value=SimpleNamespace(rowcount=1))
+        # `first=lambda: None` answers `_refund_already_recorded`: these are
+        # dashboard refunds with no row booked here, so the webhook records them
+        # rather than treating them as already-applied.
+        db.execute = AsyncMock(
+            return_value=SimpleNamespace(rowcount=1, first=lambda: None)
+        )
         db.flush = AsyncMock()
 
         first, headers1 = _signed(self._refund_payload("rf_1", 5000))
