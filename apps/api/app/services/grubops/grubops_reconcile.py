@@ -13,13 +13,19 @@ selling all along.
 So the authority here is a loop that **recomputes** rather than listens. Every
 tick it asks `availability_service` what each mapped branch can actually make
 right now — the same question, through the same code, that the storefront and
-the cart ask — and sends GrubOps the differences from what it was last told.
-An hour lapsing is not an event to be caught; it is just a different answer to
-the same question, and the next tick sees it.
+the cart ask. An hour lapsing is not an event to be caught; it is just a
+different answer to the same question, and the next tick sees it.
 
-That also makes the whole thing self-healing. A dropped immediate push, a deploy
-in the middle of a window, somebody editing availability in the GrubOps console
-by hand: all of them are drift, and drift is what a diff is for.
+It then diffs that desired state against **GrubOps' own actual availability**,
+read fresh each tick, rather than against what we last pushed. GrubOps quietly
+forgets an out-of-stock — a menu republish or a reset on their side flips a
+still-out item back on with no event — and a diff against our own last push
+could never see it (our record still says we said out). Reading their state
+back makes the whole thing genuinely self-healing: a dropped push, a deploy in
+the middle of a window, a reset on their side, somebody editing availability in
+the GrubOps console by hand — all of them are drift, and drift is what a diff is
+for. If that read fails, the tick falls back to the last-pushed diff so a
+transient outage does not go blind.
 
 The shape — `run_forever` + `sweep_once`, an advisory lock so a second worker
 achieves nothing, a loop in the app's own lifespan — is `delivery_scheduler`'s,
@@ -36,7 +42,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -171,48 +177,77 @@ async def desired_state(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]
     return desired
 
 
-async def _deltas_for(db: AsyncSession, branch_id: uuid.UUID) -> list[Desired]:
-    """What has drifted for one branch: desired vs. last-pushed, on one session.
+async def _deltas_against_actual(
+    ref: _LocationRef, desired: list[Desired]
+) -> list[Desired]:
+    """What has drifted for one branch, measured against GrubOps' ACTUAL state.
 
-    All of the reconcile's reads live here so the caller can close the session
-    before the GrubOps push. `Desired` is plain data (ids, a bool, a return
-    time), so the returned list survives that close; the `GrubOpsSyncState` rows
-    are consulted only to compute the diff and never leave this function.
+    The authority is GrubOps' own availability, read fresh each tick with no DB
+    session held — so a reset on their side that quietly flipped a still-out item
+    back on is caught, which a diff against what we last *pushed* never could
+    (our record still says we said out). Split out so it can be stubbed in the
+    session-discipline tests. Raises `GrubOpsError` on a read failure; the caller
+    falls back to the last-pushed diff so a transient outage does not go blind.
     """
-    desired = await desired_state(db, branch_id)
-    if not desired:
-        return []
-
-    states = {
-        row.external_item_map_id: row
-        for row in (
-            await db.execute(
-                select(GrubOpsSyncState).where(GrubOpsSyncState.branch_id == branch_id)
-            )
-        )
-        .scalars()
-        .all()
-    }
-    return [
-        d for d in desired if grubops_service.needs_push(states.get(d.item_map_id), d)
-    ]
+    brand_ids = {d.brand_id for d in desired if d.brand_id}
+    actual = await grubops_service.actual_unavailable_ids(
+        partner_id=ref.grubops_partner_id,
+        location_id=ref.grubops_location_id,
+        brand_ids=brand_ids,
+    )
+    return [d for d in desired if grubops_service.differs_from_actual(d, actual)]
 
 
 async def _reconcile_branch(ref: _LocationRef) -> int:
-    """One branch: compute, diff, push. Returns how many changes went.
+    """One branch: read desired, diff against GrubOps' actual state, push.
 
-    Per-tick session discipline (WP5, F-OPS-5): the diff is computed on a short
-    session that is closed BEFORE the GrubOps round-trip; the push holds no
-    session; and the outcome — pushed or failed — is recorded on a fresh session
-    of its own. Nothing is held across the third-party call.
+    Per-tick session discipline (WP5, F-OPS-5): desired + last-pushed state are
+    read on a short session closed BEFORE any GrubOps round-trip; the actual-state
+    read and the push both hold no session; and the outcome is recorded on a
+    fresh session of its own. Nothing is held across a third-party call.
     """
-    # Phase 1 — compute the diff, then release the connection.
+    # Phase 1 — desired + the last-pushed state (the fallback), then release the
+    # connection before any GrubOps round-trip.
+    states: dict = {}
     async with SchedulerSessionFactory() as db:
-        deltas = await _deltas_for(db, ref.branch_id)
+        desired = await desired_state(db, ref.branch_id)
+        if desired:
+            states = {
+                row.external_item_map_id: row
+                for row in (
+                    await db.execute(
+                        select(GrubOpsSyncState).where(
+                            GrubOpsSyncState.branch_id == ref.branch_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
+    if not desired:
+        return 0
+
+    # Phase 2 — the diff, against GrubOps' actual availability with NO session
+    # held. If that read fails, fall back to the last-pushed diff.
+    try:
+        deltas = await _deltas_against_actual(ref, desired)
+    except GrubOpsError as exc:
+        logger.warning(
+            "GrubOps: availability read failed for branch %s; using last-pushed "
+            "diff this tick (%s)",
+            ref.branch_name,
+            exc,
+        )
+        now = datetime.now(timezone.utc)
+        deltas = [
+            d
+            for d in desired
+            if grubops_service.needs_push(states.get(d.item_map_id), d, now=now)
+        ]
     if not deltas:
         return 0
 
-    # Phase 2 — push to GrubOps with NO session held.
+    # Phase 3 — push to GrubOps with NO session held.
     try:
         await grubops_service.send_deltas(location=ref, deltas=deltas)
     except GrubOpsError as exc:
@@ -233,7 +268,7 @@ async def _reconcile_branch(ref: _LocationRef) -> int:
             await db.commit()
         return 0
 
-    # Phase 3 — record what we told GrubOps, durable on its own session.
+    # Phase 4 — record what we told GrubOps, durable on its own session.
     async with SchedulerSessionFactory() as db:
         await grubops_service.record_pushed(db, branch_id=ref.branch_id, deltas=deltas)
         # This worker owns the session and has no request dependency to commit

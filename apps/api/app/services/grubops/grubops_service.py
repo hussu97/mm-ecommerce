@@ -47,6 +47,9 @@ from app.models.grubops import (
 )
 from app.services.providers.grubops_provider import (
     STATUS_UNTIL_FURTHER_NOTICE,
+    TYPE_MODIFIER,
+    TYPE_NESTED_MODIFIER,
+    TYPE_RECIPE,
     GrubOpsError,
     provider,
 )
@@ -236,6 +239,61 @@ def needs_push(
             if now - last >= _REASSERT_UNAVAILABLE_AFTER:
                 return True
     return False
+
+
+def grubops_item_id(desired: Desired) -> str | None:
+    """The id GrubOps lists this item under, so a read can be matched to it.
+
+    Verified live 2026-09-13 against both locations: a RECIPE's read id is its
+    `recipeId` (our `external_ref`) and a MODIFIER's is its `modifierId` (our
+    `external_sub_ref`, unique per recipe because GrubOps duplicates a group per
+    product) — 45/45 and 147/147 exact. A NESTED_MODIFIER would key on the child.
+    """
+    if desired.grubops_type == TYPE_NESTED_MODIFIER:
+        return desired.child_modifier_id
+    if desired.grubops_type == TYPE_MODIFIER:
+        return desired.modifier_id
+    return desired.recipe_id
+
+
+def differs_from_actual(desired: Desired, actual_unavailable_ids: set[str]) -> bool:
+    """Whether GrubOps' *actual* availability disagrees with what it should be.
+
+    The authority is GrubOps' own state, read fresh, not what we last pushed —
+    so a reset on their side that flipped a still-out item back on (which the
+    last-pushed diff could never see) is caught the very next tick. An item with
+    no resolvable id is skipped rather than pushed blind.
+    """
+    item_id = grubops_item_id(desired)
+    if item_id is None:
+        return False
+    actual_available = item_id not in actual_unavailable_ids
+    return actual_available != desired.available
+
+
+async def actual_unavailable_ids(
+    *, partner_id: str, location_id: str, brand_ids: set[str]
+) -> set[str]:
+    """Every item id GrubOps currently holds unavailable at one location.
+
+    Recipes and modifiers are two separate reads (their `itemType` split, not
+    ours), unioned across the brands trading here. No DB session is touched, so
+    the reconcile can call this with none held — the same discipline as the push.
+    """
+    ids: set[str] = set()
+    for brand_id in brand_ids:
+        for item_type in (TYPE_RECIPE, TYPE_MODIFIER):
+            items = await provider.read_availability(
+                location_id=location_id,
+                brand_id=brand_id,
+                item_type=item_type,
+                partner_id=partner_id,
+            )
+            for item in items:
+                iid = item.get("id")
+                if iid:
+                    ids.add(iid)
+    return ids
 
 
 async def send_deltas(

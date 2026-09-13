@@ -232,6 +232,14 @@ async def test_reconcile_branch_pushes_with_no_session_held(monkeypatch):
     # never-pushed mapping is a delta. This exercises phase 1 opening/closing.
     monkeypatch.setattr(grubops_reconcile, "desired_state", _desired_state)
 
+    # GrubOps' actual-state read. Empty = nothing out on their side, so an out
+    # item is a delta. Asserts no DB session is held when it runs.
+    async def _actual(*, partner_id, location_id, brand_ids):
+        assert tracker.open == 0
+        return set()
+
+    monkeypatch.setattr(grubops_service, "actual_unavailable_ids", _actual)
+
     async def _send_deltas(*, location, deltas):
         tracker.seen_open_at_http.append(tracker.open)
         assert location.grubops_partner_id == "partner-1"
@@ -277,6 +285,11 @@ async def test_reconcile_branch_records_failure_on_its_own_session(monkeypatch):
         return [desired]
 
     monkeypatch.setattr(grubops_reconcile, "desired_state", _desired_state)
+
+    async def _actual(*, partner_id, location_id, brand_ids):
+        return set()
+
+    monkeypatch.setattr(grubops_service, "actual_unavailable_ids", _actual)
 
     async def _send_deltas(*, location, deltas):
         tracker.seen_open_at_http.append(tracker.open)

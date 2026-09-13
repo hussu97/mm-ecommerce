@@ -193,6 +193,47 @@ def test_a_stale_available_item_is_not_re_asserted():
     assert svc.needs_push(stale_available, _desired(available=True), now=now) is False
 
 
+# ── the diff against GrubOps' actual state ──────────────────────────────────────
+
+
+def _modifier_desired(*, available: bool):
+    return svc.Desired(
+        item_map_id=uuid.uuid4(),
+        brand_id=BRAND,
+        recipe_id="recipe-1",
+        modifier_id="mod-1",
+        child_modifier_id=None,
+        grubops_type="MODIFIER",
+        available=available,
+        until=None,
+    )
+
+
+def test_grubops_item_id_is_the_recipe_or_the_modifier():
+    assert svc.grubops_item_id(_desired(available=True)) == "recipe-1"
+    assert svc.grubops_item_id(_modifier_desired(available=True)) == "mod-1"
+
+
+def test_actual_diff_catches_a_reset_the_last_push_would_miss():
+    """We think it is out; GrubOps shows it available (it forgot). Push again."""
+    out = _desired(available=False)
+    assert svc.differs_from_actual(out, actual_unavailable_ids=set()) is True
+    assert svc.differs_from_actual(out, actual_unavailable_ids={"recipe-1"}) is False
+
+
+def test_actual_diff_returns_an_item_that_grubops_still_blocks():
+    """We can make it; GrubOps still has it out. Push it back available."""
+    back = _desired(available=True)
+    assert svc.differs_from_actual(back, actual_unavailable_ids={"recipe-1"}) is True
+    assert svc.differs_from_actual(back, actual_unavailable_ids=set()) is False
+
+
+def test_actual_diff_matches_a_modifier_by_its_own_id():
+    out = _modifier_desired(available=False)
+    assert svc.differs_from_actual(out, actual_unavailable_ids={"mod-1"}) is False
+    assert svc.differs_from_actual(out, actual_unavailable_ids={"recipe-1"}) is True
+
+
 def _client() -> GrubOpsClient:
     return GrubOpsClient(
         GrubOpsConfig(
