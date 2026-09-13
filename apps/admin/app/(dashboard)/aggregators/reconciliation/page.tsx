@@ -92,8 +92,8 @@ function formatRate(value: number | string | null | undefined): string {
 /**
  * A row is worth a second look when the server raised a flag on it. This mirrors
  * the API's `_flagged_clause` exactly (item/refund flag, or a non-empty `flags`
- * — which now carries commission_variance, amount_variance, refund and no_mm_order
- * codes), so the red highlight, the "Flagged only" filter and the summary counts
+ * — which carries amount_variance, refund and no_mm_order codes), so the red
+ * highlight, the "Flagged only" filter and the summary counts
  * all agree. Keying off `match_status !== 'matched'` used to redden every
  * `no_maker_side` row (the expected state for aggregator-only branches) and off a
  * bare `amount_variance !== 0` reddened sub-tolerance rounding noise that then
@@ -236,25 +236,11 @@ export default function ReconciliationPage() {
       },
     },
     {
-      header: 'Commission (exp / act / var)',
+      // The marketplace's own statement is the source of truth for commission,
+      // so there is nothing to reconcile it against — we show the scraped figure.
+      header: 'Commission',
       className: 'text-right whitespace-nowrap',
-      render: r => {
-        // Money is a string on the wire; coerce once for the sign/zero tests.
-        const variance = r.commission_variance;
-        const varianceNum = variance == null ? null : Number(variance);
-        const off = varianceNum != null && varianceNum !== 0;
-        return (
-          <div className="text-right tabular-nums">
-            <div className="text-gray-700">
-              {money(r.commission_expected)} <span className="text-gray-300">/</span>{' '}
-              {money(r.commission_actual)}
-            </div>
-            <div className={off ? 'text-xs font-medium text-red-600' : 'text-xs text-gray-400'}>
-              {varianceNum == null ? '—' : `${varianceNum > 0 ? '+' : ''}${formatCurrency(variance)}`}
-            </div>
-          </div>
-        );
-      },
+      render: r => <span className="tabular-nums text-gray-700">{money(r.commission_actual)}</span>,
     },
     {
       header: 'Eff. rate',
@@ -408,7 +394,7 @@ function summaryCards(
 ): Array<{ label: string; value: string; sub?: string; tone?: 'default' | 'warning' | 'danger' }> {
   if (!summary) return [];
   const t: ReconSummaryRow = summary.totals;
-  const flagged = t.item_flags + t.refund_flags + t.commission_variance_count;
+  const flagged = t.item_flags + t.refund_flags;
   return [
     { label: 'Orders', value: String(t.total), sub: `${t.matched} matched` },
     {
@@ -425,13 +411,7 @@ function summaryCards(
       tone: 'default',
       sub: 'no POS side to check',
     },
-    {
-      label: 'Commission var.',
-      value: String(t.commission_variance_count),
-      tone: t.commission_variance_count > 0 ? 'danger' : 'default',
-      sub: 'orders off rate',
-    },
-    { label: 'Flagged', value: String(flagged), tone: flagged > 0 ? 'warning' : 'default', sub: 'item · refund · commission' },
+    { label: 'Flagged', value: String(flagged), tone: flagged > 0 ? 'warning' : 'default', sub: 'item · refund' },
     {
       label: 'Commission paid',
       value: formatCurrency(t.commission_actual_sum),

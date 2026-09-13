@@ -310,14 +310,18 @@ def test_parse_orders_maps_merchant_funded_promotion_to_marketing_fee():
         },
     }
     order = keeta.parse_orders(payload)[0]
-    # The promotion is booked AS commission: commission_amount = base 9 + promo 4.
-    assert order.commission_amount == Decimal("13.00")
-    assert order.marketing_fee == Decimal("4.00")  # kept visible as the promo portion
+    # commission_amount is the BASE commission only (9). The promotion (4) is a
+    # distinct merchant cost on marketing_fee. `OrderEconomics.net` subtracts
+    # commission and marketing independently, so folding the promotion into
+    # commission would double-count it (net short by the promotion).
+    assert order.commission_amount == Decimal("9.00")
+    assert order.marketing_fee == Decimal("4.00")  # the promotion, kept apart
     assert order.payment_fee == Decimal("0.80")
     assert order.net_payable == Decimal("26.20")
-    # commission (incl. promotion) + payment fee reconcile to gross − net (13.80);
-    # before the fix the 4.00 promotion was silent and the fees under-reported by it.
-    assert (order.commission_amount + order.payment_fee) == Decimal("13.80")
+    # All three deductions sum to gross − net (40 − 26.20 = 13.80), each counted once.
+    assert (
+        order.commission_amount + order.marketing_fee + order.payment_fee
+    ) == Decimal("13.80")
 
 
 def test_status_code_40_decodes_to_completed():

@@ -347,9 +347,7 @@ class AggregatorReconciliationOut(BaseModel):
     refund_flag: bool
     refund_agg: Decimal | None = None
     refund_mm: Decimal | None = None
-    commission_expected: Decimal | None = None
     commission_actual: Decimal | None = None
-    commission_variance: Decimal | None = None
     commission_rate_effective: Decimal | None = None
     total_agg: Decimal | None = None
     total_mm: Decimal | None = None
@@ -536,7 +534,6 @@ class ReconSummaryRow(BaseModel):
     no_maker_side: int
     item_flags: int
     refund_flags: int
-    commission_variance_count: int
     commission_actual_sum: Decimal | None = None
     avg_rate_effective: Decimal | None = None
 

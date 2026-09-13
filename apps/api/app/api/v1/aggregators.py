@@ -106,11 +106,6 @@ from app.services.aggregators import (
 
 router = APIRouter()
 
-#: A commission variance counts as raised at the same 1-fil tolerance the
-#: reconciler flags it, so the summary count matches the `commission_variance`
-#: flag on the rows exactly.
-_COMMISSION_TOL = Decimal("0.01")
-
 
 def _require_push_token(authorization: str | None = Header(None)) -> None:
     """Verify the worker's shared bearer in constant time.
@@ -599,9 +594,7 @@ async def list_reconciliation(
             refund_flag=recon.refund_flag,
             refund_agg=recon.refund_agg,
             refund_mm=recon.refund_mm,
-            commission_expected=recon.commission_expected,
             commission_actual=recon.commission_actual,
-            commission_variance=recon.commission_variance,
             commission_rate_effective=recon.commission_rate_effective,
             total_agg=recon.total_agg,
             total_mm=recon.total_mm,
@@ -626,7 +619,6 @@ async def reconciliation_summary(
 ) -> ReconSummaryOut:
     """Per-channel reconciliation tallies plus one combined total, from SQL."""
     r = AggregatorReconciliation
-    commission_variance_raised = func.abs(r.commission_variance) > _COMMISSION_TOL
     aggregates = (
         func.count().label("total"),
         func.count().filter(r.match_status == MATCH_MATCHED).label("matched"),
@@ -638,9 +630,6 @@ async def reconciliation_summary(
         .label("no_maker_side"),
         func.count().filter(r.item_flag.is_(True)).label("item_flags"),
         func.count().filter(r.refund_flag.is_(True)).label("refund_flags"),
-        func.count()
-        .filter(commission_variance_raised)
-        .label("commission_variance_count"),
         func.sum(r.commission_actual).label("commission_actual_sum"),
         func.avg(r.commission_rate_effective).label("avg_rate_effective"),
     )
@@ -664,7 +653,6 @@ async def reconciliation_summary(
             no_maker_side=row.no_maker_side,
             item_flags=row.item_flags,
             refund_flags=row.refund_flags,
-            commission_variance_count=row.commission_variance_count,
             commission_actual_sum=row.commission_actual_sum,
             avg_rate_effective=row.avg_rate_effective,
         )
@@ -680,7 +668,6 @@ async def reconciliation_summary(
         no_maker_side=totals_row.no_maker_side,
         item_flags=totals_row.item_flags,
         refund_flags=totals_row.refund_flags,
-        commission_variance_count=totals_row.commission_variance_count,
         commission_actual_sum=totals_row.commission_actual_sum,
         avg_rate_effective=totals_row.avg_rate_effective,
     )

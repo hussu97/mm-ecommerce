@@ -1048,27 +1048,12 @@ export interface Courier {
   /** Zones on the live map currently carried by this courier. */
   zone_count: number;
   /**
-   * True for a marketplace channel (Talabat, Noon Food, Keeta…). The Estimates
-   * screen splits on it: a marketplace has rates and no delivery promise, a
-   * courier we dispatch has a promise and no rates.
+   * True for a marketplace channel (Talabat, Noon Food, Keeta…) — a carrier
+   * badge with no delivery promise MM quotes. Its fees are scraped from the
+   * channel's own statement, never configured here, so the Estimates screen
+   * lists only couriers MM dispatches.
    */
   is_aggregator: boolean;
-  /**
-   * What a marketplace takes, as percentages before VAT (`25` is 25%).
-   *
-   * **Null is an answer.** It means nobody has supplied the rate, which leaves
-   * those orders' fees — and their net — unknown rather than pretending the
-   * channel is free. Rendering a null as `0` here would put a 25% commission
-   * back on the screen as a profit.
-   */
-  commission_percent: number | string | null;
-  payment_fee_percent: number | string | null;
-  /**
-   * The flat half of each pair — several contracts read "25% plus two dirhams
-   * an order". A fee is unknown only when both of its halves are null.
-   */
-  commission_fixed: number | string | null;
-  payment_fee_fixed: number | string | null;
 }
 
 export type CourierWrite = Partial<
@@ -1078,10 +1063,6 @@ export type CourierWrite = Partial<
     | 'unbatched_promise_minutes'
     | 'unbatched_promise_days'
     | 'is_active'
-    | 'commission_percent'
-    | 'commission_fixed'
-    | 'payment_fee_percent'
-    | 'payment_fee_fixed'
   >
 >;
 

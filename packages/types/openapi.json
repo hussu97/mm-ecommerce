@@ -1382,18 +1382,6 @@
             ],
             "title": "Commission Actual"
           },
-          "commission_expected": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission Expected"
-          },
           "commission_rate_effective": {
             "anyOf": [
               {
@@ -1405,18 +1393,6 @@
               }
             ],
             "title": "Commission Rate Effective"
-          },
-          "commission_variance": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission Variance"
           },
           "external_order_id": {
             "title": "External Order Id",
@@ -7219,30 +7195,6 @@
             "title": "Code",
             "type": "string"
           },
-          "commission_fixed": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission Fixed"
-          },
-          "commission_percent": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission Percent"
-          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
@@ -7255,30 +7207,6 @@
           "name": {
             "title": "Name",
             "type": "string"
-          },
-          "payment_fee_fixed": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Fee Fixed"
-          },
-          "payment_fee_percent": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Fee Percent"
           },
           "unbatched_promise_days": {
             "title": "Unbatched Promise Days",
@@ -7319,39 +7247,6 @@
       "CourierUpdate": {
         "description": "What a courier promises.\n\n`code` is not here: it is the join key every polygon already holds, so it is\nthe address of the row, not one of its editable fields.",
         "properties": {
-          "commission_fixed": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission Fixed"
-          },
-          "commission_percent": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission Percent"
-          },
           "is_active": {
             "anyOf": [
               {
@@ -7362,39 +7257,6 @@
               }
             ],
             "title": "Is Active"
-          },
-          "payment_fee_fixed": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Fee Fixed"
-          },
-          "payment_fee_percent": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Payment Fee Percent"
           },
           "unbatched_promise_days": {
             "anyOf": [
@@ -25708,10 +25570,6 @@
             ],
             "title": "Commission Actual Sum"
           },
-          "commission_variance_count": {
-            "title": "Commission Variance Count",
-            "type": "integer"
-          },
           "item_flags": {
             "title": "Item Flags",
             "type": "integer"
@@ -25744,8 +25602,7 @@
           "unmatched_agg",
           "no_maker_side",
           "item_flags",
-          "refund_flags",
-          "commission_variance_count"
+          "refund_flags"
         ],
         "title": "ReconSummaryRow",
         "type": "object"

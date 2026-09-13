@@ -399,15 +399,12 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
 
     flags: list[str] = []
 
+    # The marketplace's own scraped statement is the source of truth for fees, so
+    # there is no modelled expected commission to compare against and no
+    # overcharge-vs-contract variance. `commission_actual` (the real cut the
+    # marketplace took) and `commission_rate_effective` (that cut over the basket)
+    # are both scraped and are all we keep.
     commission_actual = _d(agg.commission_amount)
-    # No MODELLED expected commission any more: the shop keeps no static
-    # configured commission rate to compare against (fees now come only from the
-    # marketplace's own scraped statement). The overcharge-vs-contract variance
-    # check went with it. `commission_actual` (the real cut the marketplace took)
-    # and `commission_rate_effective` (that cut over the basket) are both scraped
-    # and stay; `commission_expected`/`commission_variance` are left null.
-    commission_expected = None
-    commission_variance = None
 
     total_agg = _d(agg.gross_sales)
     total_mm = _d(mm_order.total) if mm_order else None
@@ -483,9 +480,7 @@ async def reconcile_order(db: AsyncSession, agg, *, run_id=None) -> None:
         "refund_agg": refund_agg,
         "refund_mm": refund_mm,
         "refund_flag": refund_flag,
-        "commission_expected": commission_expected,
         "commission_actual": commission_actual,
-        "commission_variance": commission_variance,
         "commission_rate_effective": rate_effective,
         "total_agg": total_agg,
         "total_mm": total_mm,
