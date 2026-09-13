@@ -220,4 +220,11 @@ class FinanceResult:
 
     statements: list[StandardStatement] = field(default_factory=list)
     payouts: list[StandardPayout] = field(default_factory=list)
+    #: Per-order fee figures the settlement carried that the SALES feed could not.
+    #: Careem is the one channel whose commission/payment/marketing/net are absent
+    #: from the order feed and arrive only on the billing settlement, so the
+    #: finance pass patches them onto the already-stored order (fee columns only,
+    #: never touching status/date/customer). Each carries `external_order_id`,
+    #: `external_outlet_id` and the fee fields; other fields are ignored.
+    order_fee_updates: list[StandardOrder] = field(default_factory=list)
     truncation_note: str | None = None

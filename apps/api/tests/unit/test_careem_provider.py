@@ -363,3 +363,170 @@ async def test_fetch_statements_reports_a_list_failure(monkeypatch):
     )
     assert result.statements == []
     assert "careem invoice list failed" in result.truncation_note
+
+
+# ── billing entries: per-order fees + VAT (billingEntries/list) ───────────────
+#
+# A faithful slice of a real billingEntries/list entry (captured live 2026-09-13,
+# order 170599972): basket 100 → payout 68.70, fees VAT-exclusive with a matching
+# _TAX line each.
+_ENTRY = {
+    "id": 84541462,
+    "entryType": "FOOD_ORDER",
+    "referenceId": "170599972",
+    "billableId": 1069463,
+    "billableType": "MERCHANT",
+    "transactionDate": "2026-09-12T15:57:52.000+00:00",
+    "status": "PROCESSED",
+    "totalAmount": 100,
+    "totalPayoutAmount": 68.7,
+    "paymentMode": "CASHLESS",
+    "transactions": [
+        {"transactionType": "FOOD_GROSS_BASKET_AMOUNT", "transactionValue": 100},
+        {"transactionType": "BILLING_PLATFORM_FEE", "transactionValue": -23.80952381},
+        {
+            "transactionType": "BILLING_PLATFORM_FEE_TAX",
+            "transactionValue": -1.19047619,
+        },
+        {"transactionType": "BILLING_PROCESSING_FEE", "transactionValue": -2},
+        {"transactionType": "BILLING_PROCESSING_FEE_TAX", "transactionValue": -0.1},
+        {"transactionType": "CPLUS_FEE", "transactionValue": -4},
+        {"transactionType": "CPLUS_FEE_TAX", "transactionValue": -0.2},
+    ],
+}
+
+
+def test_billing_entry_fees_are_vat_inclusive_and_the_net_invariant_holds():
+    """The order fee patch books each fee VAT-INCLUSIVE, so
+    gross - commission - payment - marketing == payout, exactly."""
+    client = CareemClient()
+    statements, patches, note = client._finance_from_entries([_ENTRY])
+
+    assert note is None
+    assert len(patches) == 1
+    p = patches[0]
+    assert p.external_order_id == "170599972"
+    assert p.external_outlet_id == "1069463"  # billableId -> outlet -> branch
+    assert p.gross_sales == Decimal("100")
+    assert p.commission_amount == Decimal("25.00")  # 23.80952381 + 1.19047619
+    assert p.payment_fee == Decimal("2.10")  # 2 + 0.10
+    assert p.marketing_fee == Decimal("4.20")  # 4 + 0.20 (Careem Plus)
+    assert p.net_payable == Decimal("68.7")
+    # The invariant every channel's economics rests on.
+    assert (
+        p.gross_sales - p.commission_amount - p.payment_fee - p.marketing_fee
+        == p.net_payable
+    )
+
+
+def test_billing_entry_statement_lines_itemise_vat_distinctly():
+    """Each fee and its VAT are separate lines (line_type 'vat' for the tax), so a
+    VAT roll-up counts the tax as VAT, not as commission/fee."""
+    client = CareemClient()
+    statements, _patches, _note = client._finance_from_entries([_ENTRY])
+
+    assert len(statements) == 1
+    stmt = statements[0]
+    assert stmt.statement_id == "CAREEM-ENTRIES-1069463-202609"
+    assert stmt.external_outlet_id == "1069463"
+    by_cat = {ln.fee_category: ln for ln in stmt.lines}
+    # commission split into fee + its VAT
+    assert by_cat["commission"].line_type == "fee"
+    assert by_cat["commission"].amount == Decimal("-23.80952381")
+    assert by_cat["commission_vat"].line_type == "vat"
+    assert by_cat["commission_vat"].amount == Decimal("-1.19047619")
+    # processing + cplus each split the same way
+    assert by_cat["payment_handling"].amount == Decimal("-2")
+    assert by_cat["payment_handling_vat"].line_type == "vat"
+    assert by_cat["cplus_fee"].amount == Decimal("-4")
+    assert by_cat["cplus_vat"].line_type == "vat"
+    # gross and net bracket the entry
+    assert by_cat["gross_sales"].amount == Decimal("100")
+    assert by_cat["net_payable"].amount == Decimal("68.7")
+    # Every line carries the order id and the Dubai transaction date.
+    assert all(ln.external_order_id == "170599972" for ln in stmt.lines)
+    assert all(ln.line_date == "2026-09-12" for ln in stmt.lines)
+
+
+def test_billing_entries_skip_non_merchant_rows():
+    """A company/brand-level roll-up row (no per-order fees) is not a fee patch."""
+    client = CareemClient()
+    company_row = {**_ENTRY, "billableType": "COMPANY", "referenceId": None}
+    statements, patches, note = client._finance_from_entries([company_row])
+    assert patches == []
+    assert statements == []
+    assert "skipped" in note
+
+
+async def test_fetch_finance_combines_invoices_payouts_and_billing_entries(monkeypatch):
+    """`fetch_finance` returns the monthly Tax-Invoice statement AND per-outlet
+    billing-entry statements, plus the per-order fee patches, in one result."""
+    client = CareemClient()
+
+    async def fake_discover(session):
+        return [
+            {
+                "external_company_id": "1026653",
+                "external_brand_id": "1029671",
+                "external_outlet_id": "1069463",
+            }
+        ]
+
+    async def fake_request_json(session, method, url, *, json_body=None, params=None):
+        if url.endswith("/billingReports/list"):
+            return _REPORTS
+        if url.endswith("/download"):
+            return {"fileUrl": _FILE_URL}
+        if url.endswith("/payoutRequests/list"):
+            return {"payoutRequests": [], "paginationInfo": {"totalRecords": 0}}
+        if url.endswith("/billingEntries/list"):
+            assert json_body["entryType"] == "FOOD_ORDER"
+            assert json_body["tenant"] == "FOOD"
+            return {"billingEntries": [_ENTRY], "paginationInfo": {"totalRecords": 1}}
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(client, "discover_outlets", fake_discover)
+    monkeypatch.setattr(client, "request_json", fake_request_json)
+
+    class _Resp:
+        status_code = 200
+        content = b"%PDF-1.4 fake"
+        headers = {"content-type": "application/pdf"}
+
+    class _AsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _Resp()
+
+    monkeypatch.setattr(careem_provider.httpx, "AsyncClient", _AsyncClient)
+    monkeypatch.setattr(
+        careem_provider,
+        "store_statement_invoice",
+        lambda **k: StoredStatementInvoice(
+            object_key="k",
+            content_type="application/pdf",
+            original_filename="f.pdf",
+            fetched_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            size_bytes=1,
+        ),
+    )
+
+    result = await client.fetch_finance(
+        session=object(),
+        since=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 9, 13, 23, 59, tzinfo=timezone.utc),
+    )
+    ids = {s.statement_id for s in result.statements}
+    assert "185456184" in ids  # the monthly Tax-Invoice PDF
+    assert "CAREEM-ENTRIES-1069463-202609" in ids  # the billing-entry statement
+    # The per-order fee patch is carried for the finance persist to apply.
+    assert [p.external_order_id for p in result.order_fee_updates] == ["170599972"]
+    assert result.order_fee_updates[0].commission_amount == Decimal("25.00")

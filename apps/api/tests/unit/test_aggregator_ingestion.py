@@ -2090,3 +2090,80 @@ def test_channel_match_values_cover_the_code_and_the_old_labels():
     by_name = rec.aggregator_channel_match_values_for_name("Careem Now")
     assert "careem" in by_name  # canonical code
     assert "Careem" in by_name  # display label
+
+
+async def test_persist_finance_patches_per_order_fees(monkeypatch):
+    """The finance persist applies each `order_fee_updates` patch (Careem's
+    settlement-only fees), isolated per patch, and counts them in the detail."""
+    from unittest.mock import MagicMock
+
+    from app.services.aggregators.normalized import FinanceResult
+
+    db = MagicMock()
+    db.begin_nested = lambda: _FakeSavepoint()
+
+    patched: list[str] = []
+
+    async def fake_update(_db, channel, patch):
+        patched.append(patch.external_order_id)
+        return patch.external_order_id != "MISS"  # MISS = order not stored yet
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(ingest, "update_order_fees", fake_update)
+    monkeypatch.setattr(ingest, "_upsert_statement", noop)
+    monkeypatch.setattr(ingest, "_upsert_payout", noop)
+
+    fin = FinanceResult(
+        statements=[SimpleNamespace()],
+        payouts=[],
+        order_fee_updates=[
+            SimpleNamespace(external_order_id="A"),
+            SimpleNamespace(
+                external_order_id="MISS"
+            ),  # no matching order → not counted
+            SimpleNamespace(external_order_id="B"),
+        ],
+    )
+    written, _note, detail = await ingest._persist_channel_mode(
+        db, "careem", ingest.RUN_MODE_FINANCE, fin
+    )
+    assert patched == ["A", "MISS", "B"]  # every patch attempted
+    assert detail["order_fees"] == 2  # MISS matched no order, so not counted
+    assert written == 3  # 1 statement + 0 payouts + 2 applied patches
+
+
+async def test_persist_finance_isolates_one_bad_fee_patch(monkeypatch):
+    """A patch that raises must not abort the others (asyncpg savepoint isolation)."""
+    from unittest.mock import MagicMock
+
+    from app.services.aggregators.normalized import FinanceResult
+
+    db = MagicMock()
+    db.begin_nested = lambda: _FakeSavepoint()
+
+    async def fake_update(_db, _channel, patch):
+        if patch.external_order_id == "BAD":
+            raise ValueError("bad patch")
+        return True
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(ingest, "update_order_fees", fake_update)
+    monkeypatch.setattr(ingest, "_upsert_statement", noop)
+    monkeypatch.setattr(ingest, "_upsert_payout", noop)
+
+    fin = FinanceResult(
+        order_fee_updates=[
+            SimpleNamespace(external_order_id="A"),
+            SimpleNamespace(external_order_id="BAD"),
+            SimpleNamespace(external_order_id="B"),
+        ],
+    )
+    written, _note, detail = await ingest._persist_channel_mode(
+        db, "careem", ingest.RUN_MODE_FINANCE, fin
+    )
+    assert detail["order_fees"] == 2  # A and B applied; BAD isolated
+    assert written == 2
