@@ -19,6 +19,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.models.aggregator import (
     MATCH_UNMATCHED_MM,
@@ -46,7 +47,11 @@ MARKER = "pytest-reverse-reconcile"
 
 @pytest.fixture
 async def engine():
-    engine = create_async_engine(DATABASE_URL)
+    # NullPool so no connection lingers in a pool to be garbage-collected after
+    # the test. A pooled connection's `Connection._cancel` firing at GC during a
+    # LATER test corrupted an unrelated test under the full serial suite (it tipped
+    # the pre-existing async-cleanup flake, failing the Deliveroo login test in CI).
+    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
     yield engine
     await engine.dispose()
 
