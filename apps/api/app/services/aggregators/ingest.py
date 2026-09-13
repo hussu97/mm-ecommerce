@@ -1898,6 +1898,9 @@ async def _run_range_channel(
                     await session_store.mark_needs_bootstrap(
                         db, channel, error=str(exc)
                     )
+                    # Persist the needs_bootstrap flag now: the reauth daemon runs
+                    # in another process and only sees committed state, and the
+                    # main-session finalise later runs on a fresh session.
                     await db.commit()
                     break
                 except AggregatorUnavailableError as exc:
@@ -1944,6 +1947,8 @@ async def _run_range_channel(
                 await link_statements_to_payouts(db, channel)
                 await reconcile_mod.reconcile_channel(db, channel)
                 await reconcile_mod.reconcile_reverse_channel(db, channel)
+            # Make the reconcile phase durable before the run-record finalise, so a
+            # later failure can't roll back the reconciliation just written.
             await db.commit()
         except Exception as exc:  # noqa: BLE001
             await _safe_rollback(db)
