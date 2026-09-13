@@ -495,6 +495,75 @@ def test_status_events_built_from_traces_in_optime_order():
     assert events[0].raw["merchantOrderStatus"] == 10
 
 
+def test_lifecycle_timestamps_derived_from_traces_not_placed_at():
+    """accepted/delivered/cancelled come from the trace opTimes, so the promoted
+    order's timeline is NOT all stamped at placed_at (the hour/terminal report bug).
+    This order reached `confirmed` (30) but not `completed`/`cancelled`."""
+    order = keeta.parse_orders(_ORDER_WITH_TRACES)[0]
+    confirmed_at = next(e.at for e in order.status_events if e.status == "confirmed")
+    assert order.accepted_at == confirmed_at
+    assert order.accepted_at != order.placed_at  # the whole point of the fix
+    assert order.delivered_at is None  # no completed (40) step
+    assert order.cancelled_at is None  # no cancelled (50) step
+
+
+def test_completed_order_takes_delivered_at_from_the_40_trace():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "5047843723786411", "status": 40},
+                    "merchantOrder": {
+                        "shopId": 1644336388,
+                        "merchantOrderTraces": [
+                            {"merchantOrderStatus": 10, "opTime": 1787821408348},
+                            {"merchantOrderStatus": 30, "opTime": 1787821524298},
+                            {"merchantOrderStatus": 40, "opTime": 1787821999999},
+                        ],
+                    },
+                    "products": [{"name": "Brownie", "count": 1, "price": 3000}],
+                }
+            ]
+        },
+    }
+    order = keeta.parse_orders(payload)[0]
+    delivered = next(e.at for e in order.status_events if e.status == "completed")
+    accepted = next(e.at for e in order.status_events if e.status == "confirmed")
+    assert order.delivered_at == delivered
+    assert order.accepted_at == accepted
+    assert order.delivered_at > order.accepted_at
+    assert order.cancelled_at is None
+
+
+def test_cancelled_order_takes_cancelled_at_from_the_50_trace():
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "5047843723786412", "status": 50},
+                    "merchantOrder": {
+                        "shopId": 1644336388,
+                        "merchantOrderTraces": [
+                            {"merchantOrderStatus": 10, "opTime": 1787821408348},
+                            {"merchantOrderStatus": 20, "opTime": 1787821419761},
+                            {"merchantOrderStatus": 50, "opTime": 1787821888888},
+                        ],
+                    },
+                    "products": [{"name": "Brownie", "count": 1, "price": 3000}],
+                }
+            ]
+        },
+    }
+    order = keeta.parse_orders(payload)[0]
+    cancelled = next(e.at for e in order.status_events if e.status == "cancelled")
+    assert order.cancelled_at == cancelled
+    assert order.delivered_at is None  # a cancelled order was never completed
+    # accepted falls back to `pending` (20) when there is no `confirmed` (30).
+    assert order.accepted_at is not None
+
+
 def test_customer_address_from_recipient_info():
     order = keeta.parse_orders(_ORDER_WITH_TRACES)[0]
     addr = order.customer_address
