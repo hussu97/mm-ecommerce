@@ -865,11 +865,12 @@ class AggregatorReconciliation(Base, UUIDMixin, TimestampMixin):
 
     One row per matched aggregator order. `match_status` says whether an MM
     order was found at all; `no_maker_side` is an aggregator-only branch (DSO,
-    Karama) with nothing to check, deliberately not a discrepancy. The three
-    substantive checks each carry their delta plus a boolean flag so the
-    dashboard can filter without re-deriving: items, refunds, and commission
-    (the marketplace's real `commission_actual` against MM's modelled
-    `commission_expected` from `order_fees`). Recomputed idempotently, keyed on
+    Karama) with nothing to check, deliberately not a discrepancy. The checks
+    each carry their delta plus a boolean flag so the dashboard can filter
+    without re-deriving: items, refunds, and the order total (`amount_variance`).
+    Commission is scraped from the marketplace's own statement and reported as
+    `commission_actual` / `commission_rate_effective` — the source of truth, so
+    there is nothing to reconcile it against. Recomputed idempotently, keyed on
     `(channel, external_order_id)`.
     """
 
@@ -909,17 +910,12 @@ class AggregatorReconciliation(Base, UUIDMixin, TimestampMixin):
         Boolean, nullable=False, server_default="false"
     )
 
-    commission_expected: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 2), nullable=True
-    )
+    #: The real cut the marketplace took, scraped from its statement.
     commission_actual: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2), nullable=True
     )
-    commission_variance: Mapped[Decimal | None] = mapped_column(
-        Numeric(12, 2), nullable=True
-    )
     #: The effective rate actually charged — `commission_actual / total`,
-    #: VAT-inclusive — which is the number that validates `couriers`.
+    #: VAT-inclusive.
     commission_rate_effective: Mapped[Decimal | None] = mapped_column(
         Numeric(6, 4), nullable=True
     )

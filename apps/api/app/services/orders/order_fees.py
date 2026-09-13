@@ -15,22 +15,26 @@ sale. Recomputing on read was the old behaviour and it is what made a
 profit-and-loss impossible: there was nothing to sum and no record of the rate
 that applied on the day.
 
-**Rates are configuration, not code.** A marketplace's commission is a
-commercial figure that changes when somebody renegotiates, so it lives on the
-`couriers` row for that channel and is edited in the console. Only Noon Food's
-is agreed today (25% + 2%, both before VAT); every other aggregator is null
-until the shop supplies one.
+**A marketplace's fees are scraped, not modelled.** Commission and payment fee
+come only from the channel's own settlement statement, read by the provider and
+stamped straight onto the order — there is no configured rate to fall back on.
+Until the statement is scraped (some channels settle later — Careem monthly) the
+figures are null, which truthfully says "not known yet" rather than inventing a
+number. `compute` therefore returns nulls for an aggregator order; it models
+only the own-channel card fee.
 
-**A fee is a pair, not a number.** Each of the two is a percentage of the basket
-*plus* a flat amount, because that is how the contracts are written — "25% plus
-two dirhams an order" — and it is the same shape a card processor's fee has
-always had here (`payment_gateways.fee_percent` + `fee_fixed`). Either half may
-be null; only both being null means the fee is unknown.
+**The card fee is a pair, not a number.** It is a percentage of the basket *plus*
+a flat amount — the shape a card processor's fee has always had here
+(`payment_gateways.fee_percent` + `fee_fixed`). Either half may be null; only
+both being null means the fee is unknown. This is genuinely ours to model: a
+website/counter order has no external statement, and Stripe's real figure does
+not exist until the charge settles.
 
-**Null propagates and that is the feature.** An aggregator with no rate yields a
-null fee, a null net and a screen that says "not itemised". The alternative —
-treating an unknown rate as zero — makes a Talabat order look like it kept every
-dirham, which is the exact mistake this module exists to stop.
+**Null propagates and that is the feature.** An aggregator order whose statement
+has not been scraped yet yields a null fee, a null net and a screen that says
+"not itemised". The alternative — treating an unknown fee as zero — makes a
+Talabat order look like it kept every dirham, which is the exact mistake this
+module exists to stop.
 """
 
 from __future__ import annotations

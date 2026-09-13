@@ -39,37 +39,6 @@ async def _live_zone_counts(db: AsyncSession) -> dict[str, int]:
     return {provider: int(count) for provider, count in rows.all()}
 
 
-def _assert_rates_belong_here(courier: Courier, data: "CourierUpdate") -> None:
-    """
-    Refuse a commission on a courier MM dispatches itself.
-
-    Those are billed per booking, and the amount lands on
-    `order_deliveries.cost_total`, which `order_economics` already subtracts. A
-    percentage here as well would take the same cost off the same order twice —
-    and the resulting margin would be wrong in the direction nobody checks,
-    because a figure that looks worse than expected gets believed.
-    """
-    if courier.is_aggregator:
-        return
-    sent = data.model_dump(exclude_unset=True)
-    offending = [
-        field
-        for field in (
-            "commission_percent",
-            "commission_fixed",
-            "payment_fee_percent",
-            "payment_fee_fixed",
-        )
-        if sent.get(field) is not None
-    ]
-    if offending:
-        raise BadRequestError(
-            f"{courier.name} is a courier MM dispatches, not a marketplace. "
-            "What it charges is recorded per booking on the order's delivery "
-            "record; a percentage here would subtract that cost a second time."
-        )
-
-
 @router.get("/couriers", response_model=list[CourierResponse])
 async def list_couriers(
     db: AsyncSession = Depends(get_db),
@@ -122,15 +91,8 @@ async def update_courier(
             "number of minutes. Set one, or switch it to next-day."
         )
 
-    _assert_rates_belong_here(courier, data)
-
     before = CourierResponse.of(courier, 0).model_dump(exclude={"zone_count"})
-    # `exclude_unset`, not `exclude_none`. A rate has three states — a number,
-    # zero, and "nobody has told us" — and under `exclude_none` the third was
-    # unreachable: having once typed 25 into Talabat by mistake, there was no
-    # way back to unknown, only to a zero that claims the channel is free. What
-    # the client did not send is still left alone, which is all `exclude_none`
-    # was ever there for.
+    # `exclude_unset`, so a field the client did not send is left alone.
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(courier, field, value)
     await db.flush()

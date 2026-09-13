@@ -210,13 +210,16 @@ class Order(Base, UUIDMixin, TimestampMixin):
     # arithmetic and only falls back to computing when they are null.
     #
     # **Null means "we do not know" and zero means "nothing was charged"**, and
-    # the two are not interchangeable: null is an aggregator whose rate nobody
-    # has given us yet, and it makes the order's net null rather than flattering
-    # it. Zero is a cash order at the counter, where no processor was involved.
+    # the two are not interchangeable: null is an aggregator order whose statement
+    # has not been scraped yet, and it makes the order's net null rather than
+    # flattering it. Zero is a cash order at the counter, where no processor was
+    # involved.
 
-    #: The marketplace's cut, VAT included, on an aggregator order. Null on
-    #: everything the website takes directly — there is no marketplace — and on
-    #: an aggregator whose `couriers.commission_percent` is still unset.
+    #: The marketplace's cut, VAT included, on an aggregator order — scraped from
+    #: the channel's own settlement statement, the source of truth. Null on
+    #: everything the website takes directly (there is no marketplace) and on an
+    #: aggregator order whose statement has not been scraped yet (some channels,
+    #: e.g. Careem, settle monthly).
     aggregator_fee: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
 
     #: What taking the money cost, VAT included — the card processor's fee on a
@@ -383,24 +386,19 @@ class Order(Base, UUIDMixin, TimestampMixin):
     #: actual tender — `card` for a prepaid marketplace order (the default) and
     #: `cod` for a `postpaid` one — for the console and reports to read true; MM
     #: still never touched the card, so that label is reporting, not a refund route.
-    #: This column answers a narrower question the fee logic needs: did a card
-    #: processor take a cut? Careem's 2% payment fee applies only when this is
-    #: `prepaid`, the same "no card, no card fee" rule a counter cash sale gets.
+    #: Records whether a card was involved (`prepaid`) or the customer paid cash
+    #: (`postpaid`). Once fed the modelled cash-exempt payment-fee rule; now that
+    #: payment fees are scraped from the marketplace statement it is unused by the
+    #: fee logic and kept as descriptive order metadata.
     aggregator_payment_type: Mapped[str | None] = mapped_column(
         String(12), nullable=True
     )
 
     #: Whether this aggregator order's customer is a loyalty/subscription member
-    #: — Careem Plus, Talabat Pro/VIP — which is what turns on the flat 4 AED
-    #: those contracts charge on a member's order (`couriers`.
-    #: `commission_fixed_requires_member`).
-    #:
-    #: **Null today on every order, and that is not an oversight.** GrubOps sends
-    #: nothing that distinguishes a Pro order from an ordinary one, so we cannot
-    #: know — and a null (treated as "not a member") is the only honest answer
-    #: that does not over-charge. The column exists so the fee can be switched on
-    #: per order the moment a signal does arrive, without a migration. Only a
-    #: value of `true` ever adds the fee.
+    #: — Careem Plus, Talabat Pro/VIP. Once an input to the modelled member-fee
+    #: rule; now that fees are scraped from the marketplace's own statement it is
+    #: unused by the fee logic and null on every order (GrubOps sends no signal
+    #: that distinguishes a Pro order). Retained as descriptive order metadata.
     aggregator_customer_is_member: Mapped[bool | None] = mapped_column(
         Boolean, nullable=True
     )

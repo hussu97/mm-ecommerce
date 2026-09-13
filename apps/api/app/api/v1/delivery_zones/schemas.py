@@ -167,27 +167,11 @@ class CourierResponse(BaseModel):
     #: none is one whose promise nobody is being quoted.
     zone_count: int
 
-    #: True for a marketplace channel (Talabat, Noon Food, …). The screen splits
-    #: on it: a marketplace has no promise to configure and nothing but rates,
-    #: and a courier we dispatch has a promise and no rates at all.
+    #: True for a marketplace channel (Talabat, Noon Food, …) — couriers only in
+    #: the sense of who carries the bag. A label, not a gate: a marketplace has no
+    #: delivery promise MM quotes, and its fees are scraped from its own
+    #: statement, never configured here.
     is_aggregator: bool = False
-
-    #: What a marketplace takes off an order, as **percentages** (`25.00` is
-    #: 25%), quoted before VAT the way the contracts are written and the
-    #: invoices arrive.
-    #:
-    #: Null is a real answer and not a missing one: it means nobody has supplied
-    #: the rate yet, and it leaves those orders' fees — and therefore their net
-    #: — unknown rather than pretending they were free. Only Noon Food's are
-    #: agreed today. Always null on a courier MM dispatches, which is billed per
-    #: booking on the order's delivery record instead.
-    #: Each fee is a **pair** — a share of the basket plus a flat amount, both
-    #: before VAT — because that is how the contracts are written ("25% plus two
-    #: dirhams an order"). A fee is unknown only when both halves are null.
-    commission_percent: Decimal | None = None
-    commission_fixed: Decimal | None = None
-    payment_fee_percent: Decimal | None = None
-    payment_fee_fixed: Decimal | None = None
 
     @classmethod
     def of(cls, c: Courier, zone_count: int) -> "CourierResponse":
@@ -205,10 +189,6 @@ class CourierResponse(BaseModel):
             # by hand, and every row this endpoint sees the instant after one is
             # created. Absent means "not a marketplace".
             is_aggregator=bool(c.is_aggregator),
-            commission_percent=c.commission_percent,
-            commission_fixed=c.commission_fixed,
-            payment_fee_percent=c.payment_fee_percent,
-            payment_fee_fixed=c.payment_fee_fixed,
         )
 
 
@@ -228,21 +208,6 @@ class CourierUpdate(BaseModel):
     #: Handover-to-door, for a courier that collects on its own schedule.
     unbatched_promise_days: int | None = Field(None, ge=1, le=30)
     is_active: bool | None = None
-
-    #: A marketplace's rates, as percentages before VAT. Refused on a courier MM
-    #: dispatches — see `_assert_rates_belong_here`.
-    #:
-    #: 100 is the ceiling because a commission above it is somebody entering a
-    #: rate they meant as something else, and it would post a negative net on
-    #: every order that channel took until a human noticed.
-    commission_percent: Decimal | None = Field(None, ge=0, le=100)
-    payment_fee_percent: Decimal | None = Field(None, ge=0, le=100)
-    #: The flat half of each pair, in the order currency and before VAT. No
-    #: upper bound that would mean anything — a large flat fee is a strange
-    #: contract, not an impossible one — but it cannot be negative, which would
-    #: be a rebate wearing a fee's name.
-    commission_fixed: Decimal | None = Field(None, ge=0)
-    payment_fee_fixed: Decimal | None = Field(None, ge=0)
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
