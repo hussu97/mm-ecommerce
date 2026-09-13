@@ -708,8 +708,8 @@ def _agg_item(qty):
     return SimpleNamespace(grain=GRAIN_LINE, quantity=Decimal(str(qty)))
 
 
-def _mm_item(qty, returned=0):
-    return SimpleNamespace(effective_quantity=max(qty - returned, 0))
+def _mm_item(qty, returned=0, status=None):
+    return SimpleNamespace(effective_quantity=max(qty - returned, 0), status=status)
 
 
 def test_item_discrepancy_matches_when_quantities_agree():
@@ -721,12 +721,31 @@ def test_item_discrepancy_matches_when_quantities_agree():
     assert detail["mm_total_qty"] == "3"
 
 
-def test_item_discrepancy_flags_a_missing_item():
-    # aggregator billed 3 units, the kitchen only made 2 (one returned).
-    detail, flagged = _item_discrepancy(
-        [_agg_item(2), _agg_item(1)], [_mm_item(2), _mm_item(1, returned=1)]
-    )
+def test_item_discrepancy_flags_when_the_marketplace_under_bills():
+    # The MM order records 3 units but the marketplace billed only 2 — the
+    # revenue-affecting direction (a line the aggregator did not charge for).
+    _detail, flagged = _item_discrepancy([_agg_item(2)], [_mm_item(2), _mm_item(1)])
     assert flagged is True
+
+
+def test_item_discrepancy_ignores_a_bundle_decomposition():
+    # A "Box of 3" the MM order keeps as one line, itemised by the marketplace as
+    # the box plus its two component brownies: agg qty 3 > mm qty 1. Not a
+    # mismatch — the money ties out and the extra lines are just finer itemisation.
+    detail, flagged = _item_discrepancy(
+        [_agg_item(1), _agg_item(1), _agg_item(1)], [_mm_item(1)]
+    )
+    assert flagged is False
+    assert "combo" in detail["note"]
+
+
+def test_item_discrepancy_ignores_a_voided_mm_line():
+    # A voided MM line was never delivered, so it must not count as an item the
+    # marketplace failed to bill.
+    _detail, flagged = _item_discrepancy(
+        [_agg_item(1)], [_mm_item(1), _mm_item(1, status="void")]
+    )
+    assert flagged is False
 
 
 def test_item_discrepancy_is_unknown_for_aggregate_grain():
