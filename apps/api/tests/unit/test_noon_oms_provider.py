@@ -188,6 +188,9 @@ _RMS_ROW = {
     "order_status": "delivered",
     "outlet_code": "MLTNGM1GBF",
     "currency": "AED",
+    "item_value": "45.0",
+    "outlet_discount": "0.0",
+    "outlet_adj": "0.0",
     "order_value": "45.0",
     "rest_invoice": "36.0",
     "fees_exc_vat": "9.0",
@@ -592,43 +595,61 @@ class TestMergeOmsIntoRms:
         merged = _merge_oms_into_rms(self._oms(), self._rms())
         assert merged.vat_amount == Decimal("0.63")
 
-    def _oms_menu_gross_70(self):
-        """OMS order whose menu gross (70) exceeds the RMS settled value (45).
+    def test_gross_sales_is_rms_menu_net_of_merchant_promo(self):
+        """gross = item_value + outlet_discount (a merchant-funded promo).
 
-        Mirrors the live case (order FG94NN0AQ1BKT8A): a single 70.00 item that
-        nets to 45.00 after noon commission.  OMS `orderOutletSubtotal` is the
-        gross menu price; RMS `order_value` is the net-of-commission figure.
+        Live case FG94NNC56M1IZ5A: a 70.00 menu with our own 20.00 promo nets to
+        a 50.00 realised sale.  `order_value` (also 50) would coincide here, but
+        gross must come off item_value+outlet_discount so a *compensation* order
+        (below) is not wrongly reduced.
         """
-        return _CLIENT._order_from_oms(
+        rms = _CLIENT._order_from(
+            {**_RMS_ROW, "item_value": "70.0", "outlet_discount": "-20.0"}
+        )
+        merged = _merge_oms_into_rms(self._oms(), rms)
+        assert merged.gross_sales == Decimal("50.0")
+        assert merged.net_sales == Decimal("50.0")
+        assert merged.refund_amount is None
+
+    def test_compensation_keeps_gross_and_becomes_refund(self):
+        """A delivered order's outlet adjustment is a partial refund, not lower gross.
+
+        Live case FG94NN0AQ1BKT8A: 70.00 sale with a −25.00 food-quality credit.
+        gross stays 70 (so it matches the MM order) and the 25 is carried as
+        refund_amount — the Talabat treatment.
+        """
+        rms = _CLIENT._order_from(
+            {**_RMS_ROW, "item_value": "70.0", "outlet_adj": "-25.0"}
+        )
+        merged = _merge_oms_into_rms(self._oms(), rms)
+        assert merged.gross_sales == Decimal("70.0")
+        assert merged.refund_amount == Decimal("25.0")
+
+    def test_cancelled_order_has_zero_gross_and_no_refund(self):
+        """A cancelled order realises no sale: gross 0, adjustment is not a refund."""
+        rms = _CLIENT._order_from(
             {
-                **_OMS_ORDER_SINGLE_MOD,
-                "orderSubtotal": 70.0,
-                "orderOutletSubtotal": 70.0,
-                "orderRestaurantToInvoice": 45.0,
+                **_RMS_ROW,
+                "order_status": "canceled",
+                "item_value": "40.0",
+                "outlet_adj": "-40.0",
             }
         )
+        merged = _merge_oms_into_rms(self._oms(), rms)
+        assert merged.gross_sales == Decimal("0")
+        assert merged.refund_amount is None
 
-    def test_gross_sales_comes_from_oms_menu(self):
-        """gross_sales is the OMS menu value, not the RMS net-of-commission one.
+    def test_gross_sales_comes_from_rms_when_present(self):
+        merged = _merge_oms_into_rms(self._oms(), self._rms())
+        assert merged.gross_sales == Decimal("45.0")  # RMS item_value 45, no promo
 
-        Regression: taking gross from RMS collapsed gross onto net for every
-        settled noon order, so the amount reconciliation false-flagged them all
-        against their item sum.
-        """
-        merged = _merge_oms_into_rms(self._oms_menu_gross_70(), self._rms())
-        assert merged.gross_sales == Decimal("70.0")  # OMS menu, not RMS 45
-
-    def test_net_sales_comes_from_oms(self):
-        merged = _merge_oms_into_rms(self._oms_menu_gross_70(), self._rms())
-        assert merged.net_sales == Decimal("45.0")  # OMS orderRestaurantToInvoice
-
-    def test_rms_gross_sales_used_when_oms_has_none(self):
-        oms = self._oms()
-        oms_no_gross = type(oms)(
-            **{**oms.__dict__, "gross_sales": None}  # type: ignore[arg-type]
+    def test_oms_gross_sales_used_when_rms_has_none(self):
+        rms = self._rms()
+        rms_no_gross = type(rms)(
+            **{**rms.__dict__, "gross_sales": None}  # type: ignore[arg-type]
         )
-        merged = _merge_oms_into_rms(oms_no_gross, self._rms())
-        assert merged.gross_sales == Decimal("45.0")  # falls back to RMS
+        merged = _merge_oms_into_rms(self._oms(), rms_no_gross)
+        assert merged.gross_sales == Decimal("45.0")  # falls back to OMS subtotal
 
 
 # ── fetch_sales fallback on OMS failure ───────────────────────────────────────
