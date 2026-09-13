@@ -30,6 +30,7 @@ from app.core.exceptions import (
     NotFoundError,
 )
 from app.core.limiter import limiter
+from app.core.money import to_decimal
 from app.core.permissions import require
 from app.models.aggregator import AggregatorOrder, AggregatorOrderStatusEvent
 from app.models.branch import Branch
@@ -38,6 +39,7 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
 from app.models.order_status_event import OrderStatusEvent, StatusSourceEnum, acting_as
+from app.models.pos_order import OrderSourceEnum
 from app.models.user import User
 from app.schemas.courier import CourierBadge
 from app.schemas.fulfilment import FulfilmentResponse
@@ -47,6 +49,8 @@ from app.schemas.order import (
     OrderCreate,
     OrderEconomicsResponse,
     OrderListResponse,
+    OrderRefundRequest,
+    OrderRefundResponse,
     OrderResponse,
     OrderStatusUpdate,
     OrderTimelineEntry,
@@ -65,6 +69,7 @@ from app.services.delivery import (
     fulfilment_service,
 )
 from app.services.orders import order_economics, order_service
+from app.services.payments import payment_service
 
 router = APIRouter()
 
@@ -701,6 +706,107 @@ async def update_order_status(
     return order
 
 
+@router.post("/{order_number}/refund", response_model=OrderRefundResponse)
+async def refund_order_admin(
+    request: Request,
+    order_number: str,
+    data: OrderRefundRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require("orders.refund")),
+):
+    """
+    Hand money back on a delivered website order, in part or in full.
+
+    Only for an order MM took the money on itself — a website order paid by card
+    through Stripe or Ziina. A counter sale is refunded on the till and an
+    aggregator order was paid at the marketplace, so neither is refundable here.
+    The order must be `delivered`: a live order is cancelled instead (which
+    refunds it), and a settled one has already been dealt with.
+
+    The amount is capped at what is still refundable (the goods not yet returned)
+    inside `issue_admin_refund`. When a refund brings that to zero the order is
+    fully refunded and moves to `cancelled` — money-only, since the goods were
+    delivered — and the customer is emailed; a partial stays quiet, matching how
+    a partial refund has always been handled.
+    """
+    order = (
+        await db.execute(
+            select(Order)
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.payment_transactions),
+            )
+            .where(Order.order_number == order_number)
+            # Serialise concurrent refunds on the same order. Two admins refunding
+            # at once would each read `refunded_amount`, add a slice and overwrite
+            # the other's — one refund banked at the gateway, two recorded. The
+            # lock makes the second wait and re-read. Canon rule 2: this is a
+            # deliberate row lock held across the gateway call inside the request
+            # transaction, because the money math must be serialised.
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        raise NotFoundError(f"Order '{order_number}' not found")
+
+    if order.source != OrderSourceEnum.ONLINE.value:
+        raise BadRequestError("Only website orders can be refunded here")
+    if order.payment_provider not in ("stripe", "ziina"):
+        raise BadRequestError(
+            "Only card orders paid via Stripe or Ziina can be refunded here"
+        )
+    if order.status != OrderStatusEnum.DELIVERED:
+        raise ConflictError("Only a delivered order can be refunded here")
+
+    with acting_as(
+        StatusSourceEnum.ADMIN.value,
+        actor_id=admin.id,
+        actor_label=admin.email,
+        note=data.admin_notes,
+    ):
+        result = await payment_service.issue_admin_refund(db, order, amount=data.amount)
+
+    if data.admin_notes is not None:
+        order.admin_notes = data.admin_notes
+    await db.flush()
+
+    remaining = payment_service.refundable_amount(order)
+    fully_refunded = remaining == 0
+    order_response = await order_service.to_response(db, order)
+
+    # The customer hears about a full refund — the order is unwound and moved to
+    # cancelled — and not about a partial, which stays deliberately quiet (see the
+    # partial branch in `payment_service._handle_refund`). The funnel never
+    # raises, so awaiting it before the response is safe.
+    if fully_refunded:
+        await email_service.send_refund_notification(order_response)
+
+    await audit_service.log_action(
+        db,
+        action="REFUND",
+        entity_type="order",
+        entity_id=order_number,
+        entity_label=order_number,
+        admin=admin,
+        changes={
+            "amount": str(result.amount),
+            "refund_id": result.refund_id,
+            "refunded_amount": str(order.refunded_amount),
+            "fully_refunded": fully_refunded,
+            **({"admin_notes": data.admin_notes} if data.admin_notes else {}),
+        },
+        request=request,
+    )
+
+    return OrderRefundResponse(
+        order=order_response,
+        refunded_now=float(result.amount),
+        refunded_amount=float(to_decimal(order.refunded_amount)),
+        refundable_remaining=float(remaining),
+        fully_refunded=fully_refunded,
+    )
+
+
 # ── Fulfilment (admin only) ───────────────────────────────────────────────────
 
 
@@ -744,6 +850,7 @@ async def get_order_economics(
         processing_fee=float(result.processing_fee),
         processing_fee_is_estimated=result.processing_fee_is_estimated,
         refunded=float(result.refunded),
+        refundable_remaining=float(payment_service.refundable_amount(order)),
         cancellation_fee=(
             float(result.cancellation_fee)
             if result.cancellation_fee is not None

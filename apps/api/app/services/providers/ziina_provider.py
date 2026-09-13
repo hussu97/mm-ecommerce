@@ -295,6 +295,9 @@ class ZiinaProvider(PaymentGatewayProvider):
             session_id=data.get("id") if raw_event != "refund.status.updated" else None,
             payment_id=payment_id,
             amount_refunded=amount_refunded,
+            # The refund's own id (Ziina's `reference`), so a refund we issued is
+            # recognised as already booked when its webhook arrives.
+            refund_id=reference if raw_event == "refund.status.updated" else None,
             # Ziina reports each refund's own amount, never a running total, so
             # the order accumulates these rather than overwriting (F-ORD-13).
             cumulative=raw_event != "refund.status.updated",

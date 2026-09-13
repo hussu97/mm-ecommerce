@@ -1300,6 +1300,13 @@ export interface OrderEconomics {
   /** Whether the fee is the gateway's rate or its invoice. */
   processing_fee_is_estimated: boolean;
   refunded: number;
+  /**
+   * What can still be handed back on a card order — the goods not yet refunded.
+   * The cap the Refund dialog holds the admin's amount against, so the client
+   * never mirrors the server's refund arithmetic. Zero once everything
+   * refundable has gone back, and on orders this path cannot refund.
+   */
+  refundable_remaining: number;
   net: number;
   /** Null when the base is zero — a full-discount order has no percentage. */
   margin_on_charged: number | null;
@@ -1314,6 +1321,22 @@ export interface OrderEconomics {
    */
   covers_direct_cost: boolean | null;
   direct_cost_threshold: number;
+}
+
+/** The outcome of one admin refund on a delivered website order. */
+export interface OrderRefundResponse {
+  order: Order;
+  /** What this refund handed back, as the gateway acknowledged it. */
+  refunded_now: number;
+  /** The order's cumulative refunded total after this refund. */
+  refunded_amount: number;
+  /** What is still refundable afterwards — zero on a now-fully-refunded order. */
+  refundable_remaining: number;
+  /**
+   * Whether this refund unwound everything refundable — in which case the order
+   * has moved from delivered to cancelled.
+   */
+  fully_refunded: boolean;
 }
 
 // ─── Per-branch availability ──────────────────────────────────────────────────

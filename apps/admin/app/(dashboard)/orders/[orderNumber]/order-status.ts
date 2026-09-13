@@ -91,6 +91,24 @@ export function canCancel(order: Pick<Order, 'status' | 'source'>): boolean {
   return false;
 }
 
+/**
+ * Whether to offer "Refund" — mirrors the server route's own gate
+ * (`POST /orders/{n}/refund`): a delivered website order paid by card through a
+ * gateway MM can call back. A counter sale is refunded on the till and an
+ * aggregator order was paid at the marketplace, so neither is refundable here,
+ * and only `delivered` is (a live order is cancelled instead, which refunds it).
+ * `conventions.test.ts` holds this in step with the Python checks.
+ */
+export function canRefund(
+  order: Pick<Order, 'status' | 'source' | 'payment_provider'>,
+): boolean {
+  return (
+    order.status === 'delivered' &&
+    order.source === 'online' &&
+    (order.payment_provider === 'stripe' || order.payment_provider === 'ziina')
+  );
+}
+
 export const STATUS_STEPS: OrderStatus[] = [
   'created',
   'confirmed',

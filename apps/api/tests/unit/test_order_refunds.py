@@ -18,6 +18,10 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
+
+from app.core.exceptions import BadRequestError
+from app.models.order import OrderStatusEnum
 from app.models.payment_transaction import PaymentTransactionStatusEnum
 from app.services.payments import payment_service
 from app.services.providers.base import GatewayEvent, GatewayRefund, PaymentEventType
@@ -132,18 +136,23 @@ def test_a_discount_is_already_in_the_total_and_is_not_added_back():
 
 
 def test_a_partial_refund_already_made_is_taken_off():
-    # Somebody refunded 30 in the Stripe dashboard first.
+    # Somebody refunded 30 first. It comes off the *goods*, not the total: of the
+    # 85 refundable, 55 is left. (It once left 75 — `total - already` — which let
+    # a later refund walk back up to the total and hand back the fees; the goods
+    # are the ceiling on every call now.)
     order = _order(refunded="30.00")
-    assert payment_service.refundable_amount(order) == Decimal("75.00")
+    assert payment_service.refundable_amount(order) == Decimal("55.00")
 
 
 def test_it_never_overdraws_the_charge():
     """
-    A dashboard refund larger than the goods value must not leave this
-    computing a second refund on top of it.
+    A refund already larger than the goods value leaves nothing refundable — the
+    goods are the ceiling, so refunding past them cannot compute a second refund
+    on top. (It once returned the untouched fees here; the fees are never
+    refundable through this path.)
     """
     order = _order(refunded="100.00")
-    assert payment_service.refundable_amount(order) == Decimal("5.00")
+    assert payment_service.refundable_amount(order) == Decimal("0.00")
 
     order = _order(refunded="105.00")
     assert payment_service.refundable_amount(order) == Decimal("0.00")
@@ -359,3 +368,173 @@ def test_a_refund_never_reads_the_relationship_off_the_order():
     assert py_inspect.iscoroutinefunction(payment_service._settled_attempt), (
         "_settled_attempt has to query, which makes it async"
     )
+
+
+# ── admin-initiated refunds (partial and full) ────────────────────────────────
+#
+# `issue_admin_refund` is the interactive sibling of `refund_order`: a person
+# pressed a button on a delivered order, so it raises on failure rather than
+# swallowing it, and supports many refunds over the order's life rather than
+# one. These exercise the money math, the multi-partial idempotency key, the row
+# per refund, and the full-refund → cancelled move.
+
+
+class _EchoGateway:
+    """A gateway whose refund hands back exactly the amount it was asked for."""
+
+    def __init__(self):
+        self._n = 0
+
+        async def _refund(*, payment_id, amount, idempotency_key):
+            self._n += 1
+            return GatewayRefund(
+                refund_id=f"re_{self._n}", amount=amount, status="completed"
+            )
+
+        self.refund = AsyncMock(side_effect=_refund)
+
+
+def _delivered(**kw):
+    order = _order(**kw)
+    order.source = "online"
+    order.payment_provider = "stripe"
+    order.status = OrderStatusEnum.DELIVERED
+    order.items = []
+    order.payment_transactions = [_Attempt()]
+    return order
+
+
+async def test_an_admin_partial_refund_records_a_row_and_keeps_delivered(monkeypatch):
+    order = _delivered()  # goods = 85
+    gateway = _EchoGateway()
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": gateway}
+    )
+
+    result = await payment_service.issue_admin_refund(
+        _AttemptsDb(order), order, amount=Decimal("30.00")
+    )
+
+    assert result.amount == Decimal("30.00")
+    assert order.refunded_amount == Decimal("30.00")
+    # Still delivered: only part of the goods came back.
+    assert order.status == OrderStatusEnum.DELIVERED
+    # A refund row was appended, and it did not overwrite the settled attempt.
+    rows = order.payment_transactions
+    assert rows[0].status == PaymentTransactionStatusEnum.SUCCEEDED.value
+    assert rows[0].refund_id is None
+    refund_rows = [r for r in rows if getattr(r, "raw_status", None) == "admin.refund"]
+    assert len(refund_rows) == 1
+    assert refund_rows[0].refund_id == "re_1"
+    # The key names the cumulative target (0 + 30), not the slice.
+    assert gateway.refund.await_args.kwargs["idempotency_key"].endswith("-30.00")
+
+
+async def test_admin_refunds_accumulate_and_key_the_running_total(monkeypatch):
+    order = _delivered()  # goods = 85
+    gateway = _EchoGateway()
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": gateway}
+    )
+
+    await payment_service.issue_admin_refund(
+        _AttemptsDb(order), order, amount=Decimal("40.00")
+    )
+    await payment_service.issue_admin_refund(
+        _AttemptsDb(order), order, amount=Decimal("40.00")
+    )
+
+    assert order.refunded_amount == Decimal("80.00")
+    assert payment_service.refundable_amount(order) == Decimal("5.00")
+    # Two equal slices, two distinct keys — because the key is the cumulative
+    # total (40, then 80), not the amount. This is the collision the slice-keyed
+    # `refund-{order}-{amount}` would have had.
+    keys = [c.kwargs["idempotency_key"] for c in gateway.refund.await_args_list]
+    assert keys[0].endswith("-40.00")
+    assert keys[1].endswith("-80.00")
+    assert keys[0] != keys[1]
+
+
+async def test_an_admin_refund_over_the_cap_is_refused(monkeypatch):
+    order = _delivered()  # goods = 85
+    gateway = _EchoGateway()
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": gateway}
+    )
+    with pytest.raises(BadRequestError):
+        await payment_service.issue_admin_refund(
+            _AttemptsDb(order), order, amount=Decimal("85.01")
+        )
+    gateway.refund.assert_not_awaited()
+
+
+async def test_an_admin_refund_of_zero_is_refused():
+    order = _delivered()
+    with pytest.raises(BadRequestError):
+        await payment_service.issue_admin_refund(
+            _AttemptsDb(order), order, amount=Decimal("0")
+        )
+
+
+async def test_an_admin_refund_with_no_settled_attempt_is_refused():
+    order = _delivered()
+    order.payment_transactions = [
+        SimpleNamespace(
+            is_settled=False, payment_id=None, gateway="stripe", refund_id=None
+        )
+    ]
+    with pytest.raises(BadRequestError):
+        await payment_service.issue_admin_refund(
+            _AttemptsDb(order), order, amount=Decimal("10.00")
+        )
+
+
+async def test_a_full_admin_refund_cancels_the_delivered_order(monkeypatch):
+    order = _delivered()  # goods = 85, everything refundable
+    gateway = _EchoGateway()
+    monkeypatch.setattr(
+        payment_service.payment_gateway_router, "PROVIDERS", {"stripe": gateway}
+    )
+
+    result = await payment_service.issue_admin_refund(
+        _AttemptsDb(order), order, amount=Decimal("85.00")
+    )
+
+    assert result.amount == Decimal("85.00")
+    assert payment_service.refundable_amount(order) == Decimal("0")
+    # Fully refunded → the order is moved delivered → cancelled, money-only.
+    assert order.status == OrderStatusEnum.CANCELLED
+
+
+async def test_a_ziina_refund_webhook_after_an_admin_refund_does_not_double_count():
+    """
+    The reconciliation. Ziina reports each refund's own slice and `_handle_refund`
+    *adds* it, so a webhook for a refund this app already booked would count it
+    twice. It is recognised by its `refund_id` and acknowledged instead.
+    """
+    order = _order()
+    order.refunded_amount = Decimal("30.00")  # already booked by the admin path
+    order.payment_provider = "ziina"
+
+    class _RecordedDb:
+        async def execute(self, _stmt):
+            class _Result:
+                def first(self_inner):
+                    return ("some-id",)  # the refund row exists
+
+            return _Result()
+
+    event = GatewayEvent(
+        event_id="evt_ack",
+        event_type=PaymentEventType.REFUNDED,
+        raw_type="refund.status.updated:completed",
+        payment_id="pi_z1",
+        amount_refunded=3000,
+        refund_id="re_1",
+        cumulative=False,
+    )
+
+    await payment_service._handle_refund(_RecordedDb(), order, event)
+
+    # Unchanged: the webhook was acknowledged, not applied a second time.
+    assert order.refunded_amount == Decimal("30.00")

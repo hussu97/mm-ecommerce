@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -211,6 +212,17 @@ class OrderCreate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: OrderStatusEnum
+    admin_notes: str | None = None
+
+
+class OrderRefundRequest(BaseModel):
+    """An admin-initiated refund of one slice of a delivered website order."""
+
+    #: The amount to hand back now, in the order's currency. Capped server-side at
+    #: what is still refundable (the goods not yet returned); an amount over that
+    #: is refused rather than clamped, so the admin is never told a larger refund
+    #: went through than actually did.
+    amount: Decimal = Field(..., gt=0)
     admin_notes: str | None = None
 
 
@@ -536,6 +548,12 @@ class OrderEconomicsResponse(BaseModel):
     #: until the charge settles.
     processing_fee_is_estimated: bool
     refunded: float
+    #: What could still be handed back on a card order — the goods not yet
+    #: refunded (`payment_service.refundable_amount`). It is what the admin refund
+    #: dialog caps its amount against, so the client never has to mirror the
+    #: server's refund arithmetic. Zero once everything refundable has gone back,
+    #: and on cash/aggregator orders that this path cannot refund.
+    refundable_remaining: float
     #: The marketplace's cancellation / customer-compensation charge on an
     #: aggregator order. Null on website/counter orders and where none was charged.
     cancellation_fee: float | None
@@ -560,6 +578,27 @@ class OrderEconomicsResponse(BaseModel):
     #: labels its own column rather than hard-coding a number that would then
     #: exist in two places.
     direct_cost_threshold: float
+
+
+class OrderRefundResponse(BaseModel):
+    """The outcome of one admin refund: the order, and where the money stands.
+
+    Defined below `OrderResponse` because it embeds it — the module reads
+    top-to-bottom and the name has to exist by the time this class is built.
+    """
+
+    order: OrderResponse
+    #: What this refund handed back, as the gateway acknowledged it. `float` like
+    #: `OrderEconomicsResponse`'s money — the figures are computed and quantised
+    #: server-side (canon rule 10) and only transported here.
+    refunded_now: float
+    #: The order's cumulative refunded total after this refund.
+    refunded_amount: float
+    #: What is still refundable afterwards — zero on a now-fully-refunded order.
+    refundable_remaining: float
+    #: Whether this refund unwound everything refundable, in which case the order
+    #: has been moved from delivered to cancelled.
+    fully_refunded: bool
 
 
 # ── Admin order-details enrichment (admin-only, off the shared OrderResponse) ──

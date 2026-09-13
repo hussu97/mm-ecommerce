@@ -369,6 +369,35 @@ async def test_cancelling_leaves_a_settled_check_alone(quiet_consequences):
     assert order.pos_status == PosOrderStatusEnum.CLOSED.value
 
 
+@pytest.mark.asyncio
+async def test_cancelling_a_delivered_order_is_money_only(quiet_consequences):
+    """
+    The admin refund path fully refunds a delivered order and then moves it to
+    cancelled to say the sale was unwound. None of the fulfilment reversals apply
+    — the goods were handed over — and the refund already happened, so the
+    transition must run *none* of them: no restock, no courier cancel, no second
+    refund, no register void. Only the status label changes.
+    """
+    db = _Db()
+    order = _order(
+        OrderStatusEnum.DELIVERED,
+        pos_status=PosOrderStatusEnum.CLOSED.value,
+        items=[OrderItem(product_id=uuid.uuid4(), quantity=2)],
+        stock_drawn=True,
+    )
+    moved = await order_lifecycle.transition(
+        db, order, OrderStatusEnum.CANCELLED, extra_from={OrderStatusEnum.DELIVERED}
+    )
+    assert moved is True
+    assert order.status == OrderStatusEnum.CANCELLED
+    # No restock write, no courier cancel, no automatic refund on top.
+    assert db.executed == []
+    assert quiet_consequences["refund"] == []
+    assert quiet_consequences["courier_cancel"] == []
+    # The closed check is left exactly as delivery left it.
+    assert order.pos_status == PosOrderStatusEnum.CLOSED.value
+
+
 # ── correcting an ending, from the console only ──────────────────────────────
 #
 # `undelivered` and `cancelled` are endings and the map keeps them that way.

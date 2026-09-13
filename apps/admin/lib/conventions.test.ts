@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SETTLED_STATUSES,
   canCancel,
+  canRefund,
 } from '../app/(dashboard)/orders/[orderNumber]/order-status';
 import type { Order } from './types';
 
@@ -148,5 +149,52 @@ describe('F-ADM-16 — the Cancel button never offers what the server refuses', 
     // … and there is no cashier hatch, which is why a packed counter order stays
     // uncancellable. If one is ever added, canCancel must learn about it.
     expect(py.includes('CASHIER_CANCELLABLE_FROM')).toBe(false);
+  });
+});
+
+describe('the Refund button never offers what the server refuses', () => {
+  const ORDERS_ROUTE = join(
+    ADMIN,
+    '..',
+    'api',
+    'app',
+    'api',
+    'v1',
+    'orders.py',
+  );
+
+  const order = (
+    status: string,
+    source: string,
+    payment_provider: string | null,
+  ) =>
+    ({ status, source, payment_provider }) as unknown as Pick<
+      Order,
+      'status' | 'source' | 'payment_provider'
+    >;
+
+  it('offers a refund only on a delivered website order paid via stripe/ziina', () => {
+    expect(canRefund(order('delivered', 'online', 'stripe'))).toBe(true);
+    expect(canRefund(order('delivered', 'online', 'ziina'))).toBe(true);
+    // Wrong provider, source, or a cash order — none refundable here.
+    expect(canRefund(order('delivered', 'online', 'cod'))).toBe(false);
+    expect(canRefund(order('delivered', 'aggregator', 'stripe'))).toBe(false);
+    expect(canRefund(order('delivered', 'cashier', 'stripe'))).toBe(false);
+    // Only a delivered order — a live one is cancelled instead, a settled one
+    // is done.
+    for (const status of ['confirmed', 'packed', 'out_for_delivery', 'cancelled', 'refunded']) {
+      expect(canRefund(order(status, 'online', 'stripe')), status).toBe(false);
+    }
+  });
+
+  it("matches the Python route's own gate", () => {
+    // The refund route enforces the same three facts. If it changes — a new
+    // provider, a different source, a status other than delivered — canRefund
+    // must move with it.
+    const py = readFileSync(ORDERS_ROUTE, 'utf8');
+    expect(py).toContain('async def refund_order_admin');
+    expect(py).toContain('order.source != OrderSourceEnum.ONLINE.value');
+    expect(py).toContain('order.payment_provider not in ("stripe", "ziina")');
+    expect(py).toContain('order.status != OrderStatusEnum.DELIVERED');
   });
 });

@@ -5,7 +5,7 @@ import type {
   PaginatedCustomers, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
   PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
-  DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics,
+  DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics, OrderRefundResponse,
   Courier, CourierWrite, DeliveryZoneMap, PolygonPage,
   PaginatedWebhookLogs, WebhookLogDetail, WebhookLogFacets,
   PaymentGateway, PaymentGatewayUpdate,
@@ -416,6 +416,18 @@ export const ordersApi = {
   get: (orderNumber: string) => api.get<Order>(`/orders/${orderNumber}`),
   updateStatus: (orderNumber: string, status: string, admin_notes?: string) =>
     api.put<Order>(`/orders/${orderNumber}/status`, { status, admin_notes }),
+  /**
+   * Refund a delivered website order, in part or in full. `amount` is in the
+   * order currency and is capped server-side at the remaining refundable amount
+   * (an over-cap amount is refused, not clamped). When the refund makes the
+   * order fully refunded the server moves it delivered → cancelled, and the
+   * response's `order`/`fully_refunded` reflect that.
+   */
+  refund: (orderNumber: string, amount: number, admin_notes?: string) =>
+    api.post<OrderRefundResponse>(`/orders/${orderNumber}/refund`, {
+      amount,
+      admin_notes,
+    }),
   /** Fulfilment detail. 404s for pickup orders and anything placed before this existed. */
   getDelivery: (orderNumber: string) =>
     api.get<OrderDelivery>(`/orders/${orderNumber}/delivery`),

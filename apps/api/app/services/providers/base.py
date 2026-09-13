@@ -135,6 +135,12 @@ class GatewayEvent:
     amount_captured: int | None = None
     fully_refunded: bool | None = None
 
+    #: The gateway's own handle for the refund, on a refund event. Lets
+    #: `_handle_refund` tell a refund this application issued itself (already
+    #: booked, so the webhook is only an acknowledgement) from a dashboard refund
+    #: it must still record. Null on non-refund events.
+    refund_id: str | None = None
+
     #: Whether `amount_refunded` is the *running total* refunded on the charge
     #: (Stripe: `charge.amount_refunded` accumulates on their side) or this one
     #: refund's own slice (Ziina: their refund object carries only its amount).

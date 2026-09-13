@@ -30,6 +30,7 @@ import {
   normalizeAddressSnapshot,
   MOVABLE_STATUSES,
   canCancel,
+  canRefund,
   isSettled,
   STATUS_LABEL,
   STATUS_STEPS,
@@ -40,6 +41,7 @@ import {
   stampFor,
 } from './order-status';
 import { ChangeFulfilmentDialog } from './components/ChangeFulfilmentDialog';
+import { RefundDialog } from './components/RefundDialog';
 import { DeliveryPanel } from './components/DeliveryPanel';
 import { NetPayment } from './components/NetPayment';
 import { PROVIDER_LABEL } from './components/courier-labels';
@@ -78,6 +80,11 @@ export default function OrderDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  // The refund dialog: open flag, its in-flight state, and the last server
+  // refusal to show inside it (an over-cap amount, a gateway that declined).
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
   // Where this order may go. Non-null means the dialog is open — it is fetched
   // on opening rather than with the order, because every answer in it depends
   // on where the order is right now and a value cached from page load would be
@@ -287,6 +294,31 @@ export default function OrderDetailPage() {
       toast.error((err as Error).message);
     } finally {
       setActionLoading(false);
+    }
+  }
+
+  async function doRefund(amount: number) {
+    if (!order) return;
+    setRefundBusy(true);
+    setRefundError(null);
+    try {
+      const res = await ordersApi.refund(orderNumber, amount, notes || undefined);
+      // The response carries the order after the refund — a partial keeps it
+      // delivered with a higher `refunded_amount`, a full one comes back
+      // cancelled. Setting it re-runs the economics request, keyed on status and
+      // refunded_amount, so the remaining figure the dialog would reopen with is
+      // fresh.
+      setOrder(res.order);
+      setRefundOpen(false);
+      toast.success(
+        res.fully_refunded
+          ? `Refunded ${formatCurrency(res.refunded_now)} — order cancelled.`
+          : `Refunded ${formatCurrency(res.refunded_now)}.`,
+      );
+    } catch (err) {
+      setRefundError(err instanceof ApiError ? err.message : (err as Error).message);
+    } finally {
+      setRefundBusy(false);
     }
   }
 
@@ -506,6 +538,20 @@ export default function OrderDetailPage() {
             setQuoteError(null);
             setQuoteExpired(false);
           }}
+        />
+      )}
+
+      {refundOpen && (
+        <RefundDialog
+          // The cap is the server's figure, not ours — the economics endpoint's
+          // `refundable_remaining`. It defaults to 0 until economics loads, which
+          // disables the confirm rather than guessing at an amount.
+          remaining={economics?.refundable_remaining ?? 0}
+          currency="AED"
+          busy={refundBusy}
+          error={refundError}
+          onConfirm={doRefund}
+          onCancel={() => setRefundOpen(false)}
         />
       )}
 
@@ -815,6 +861,16 @@ export default function OrderDetailPage() {
           <Button variant="danger" size="sm" onClick={() => updateStatus('cancelled')} loading={actionLoading}>
             <span className="material-icons text-[14px]">cancel</span>
             Cancel Order
+          </Button>
+        )}
+        {/* Refund a delivered website order paid by card. The only action a
+            delivered order offers — a partial hands back part of the goods and
+            keeps it delivered; a full refund cancels it. `canRefund` mirrors the
+            server's own gate (source, provider, delivered). */}
+        {canRefund(order) && (
+          <Button variant="outline" size="sm" onClick={() => { setRefundError(null); setRefundOpen(true); }}>
+            <span className="material-icons text-[14px]">currency_exchange</span>
+            Refund
           </Button>
         )}
       </div>

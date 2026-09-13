@@ -538,7 +538,10 @@ async def _consequences(
             # an unbooked order packed) still books.
             await courier_service.dispatch(db, order, lock=False)
 
-    elif new_status == OrderStatusEnum.CANCELLED:
+    elif (
+        new_status == OrderStatusEnum.CANCELLED
+        and previous != OrderStatusEnum.DELIVERED
+    ):
         if _mm_owns_fulfilment(order):
             from app.services.couriers import courier_service
 
@@ -572,6 +575,23 @@ async def _consequences(
         from app.services.inventory import source_event_service
 
         await source_event_service.record_order_cancellation(db, order)
+
+    # Cancelling an order that was *delivered* is a different act, and the guard
+    # above steps around all of it. The one route here is the admin refund path,
+    # which fully refunds a delivered order and then moves it to `cancelled` to
+    # say the sale was unwound. None of the reversals above apply: the goods were
+    # handed over, so there is no stock to put back and no box to un-pack; the
+    # van drove, so there is nothing to call off; the register already closed the
+    # check on delivery, so there is nothing to void; and the money has already
+    # gone back through `issue_admin_refund`, so the automatic refund below must
+    # not fire a second time (it is guarded on the same condition). The status
+    # label is the only thing that changes — and it changes here, inside
+    # `transition`, because canon rule 1 allows nowhere else to write it.
+    elif (
+        new_status == OrderStatusEnum.CANCELLED
+        and previous == OrderStatusEnum.DELIVERED
+    ):
+        pass
 
     # A cancellation taken back by a person. The only route here is the admin
     # console's `extra_from` (see `ADMIN_RECOVERABLE`) — nothing automatic can
@@ -647,7 +667,17 @@ async def _consequences(
     # the second would leave a shop unable to stop making a cake because Stripe
     # was slow. `refund_order` swallows its own failures and returns zero, and
     # the order then shows as unrefunded for a person to deal with.
-    if new_status in _REFUNDABLE_ENDINGS and _mm_owns_fulfilment(order):
+    #
+    # Not from `delivered`: that route is the admin refund path, which has
+    # already refunded the order itself (in full, up to the goods) before moving
+    # it here. A second `refund_order` would find nothing left refundable and
+    # return zero, but the condition says the intent outright rather than leaning
+    # on that.
+    if (
+        new_status in _REFUNDABLE_ENDINGS
+        and _mm_owns_fulfilment(order)
+        and previous != OrderStatusEnum.DELIVERED
+    ):
         from app.services.payments import payment_service
 
         await payment_service.refund_order(db, order)

@@ -43,6 +43,7 @@ from app.services.payments import payment_gateway_router
 from app.services.payments.payment_methods import CARD, COD, normalise_method
 from app.services.providers.base import (
     GatewayEvent,
+    GatewayRefund,
     GatewayUnavailableError,
     PaymentEventType,
 )
@@ -1157,6 +1158,20 @@ async def _handle_refund(db: AsyncSession, order: Order, event: GatewayEvent) ->
     customer by email that their money was on its way back. A partial is now
     recorded and reported, and the order keeps the status it had.
     """
+    # A refund this application issued itself (the admin refund path) is already
+    # booked — its slice is on `refunded_amount`, its row exists, and any
+    # full-refund status move is done. The webhook that follows it is an
+    # acknowledgement, and acting on it again would double-count on Ziina (it
+    # reports per-slice and the branch below adds) and re-fire the email. A
+    # dashboard refund has no row here and falls through to be recorded.
+    if event.refund_id and await _refund_already_recorded(db, order, event.refund_id):
+        logger.info(
+            "Refund webhook for %s acknowledged — %s already recorded",
+            order.order_number,
+            event.refund_id,
+        )
+        return
+
     # Whatever else this webhook means, it means money went back — and the
     # gateway's figure is the authority on how much, whoever issued it.
     #
@@ -1298,6 +1313,19 @@ def refundable_amount(order: Order) -> Decimal:
 
     Never more than is left to refund, so a second call after a partial refund
     made in a dashboard cannot overdraw the charge.
+
+    Subtracts what has already gone back from the *goods*, not from the total:
+    `max(goods - already, 0)`. It once subtracted from the total
+    (`min(goods, total - already)`), which is the same figure on the first call —
+    when `already` is zero, the only way the automatic cancel path ever reaches
+    here — but diverges the moment a partial has been made: refunding the whole
+    goods amount over several partials would still report the fees as refundable
+    and let a later partial hand them back. Taking `already` off the goods keeps
+    the fees out of reach on every call, so `refundable_amount(order) == 0` means
+    exactly "all refundable goods have been returned". That is the figure the
+    admin refund path caps each partial against and the one it reads to decide a
+    refund is now full — deliberately less than `order.total` for any order that
+    charged delivery or a low-order fee.
     """
     total = Decimal(str(order.total or 0))
     fees = Decimal(str(order.delivery_fee or 0)) + Decimal(
@@ -1305,7 +1333,7 @@ def refundable_amount(order: Order) -> Decimal:
     )
     goods = max(total - fees, Decimal("0"))
     already = Decimal(str(order.refunded_amount or 0))
-    return max(min(goods, total - already), Decimal("0"))
+    return max(goods - already, Decimal("0"))
 
 
 def _refund_key(order: Order, amount: Decimal) -> str:
@@ -1428,6 +1456,153 @@ async def refund_order(
         result.status,
     )
     return result.amount
+
+
+async def issue_admin_refund(
+    db: AsyncSession,
+    order: Order,
+    *,
+    amount: Decimal,
+) -> GatewayRefund:
+    """
+    A refund a person asked for, on an order that has already been delivered.
+
+    Unlike `refund_order` — fire-and-forget on a cancellation, which swallows a
+    gateway failure so the cancellation still stands and refunds only once — this
+    is interactive and repeatable:
+
+    * A gateway failure is **raised**, not swallowed. The admin pressed a button
+      and is owed the truth; there is no cancellation whose integrity depends on
+      this returning quietly.
+    * It supports **many** refunds over the life of an order. `refund_order`
+      short-circuits on `attempt.refund_id`; this does not, because a refund here
+      is recorded as its own row (see `_record_refund_slice`) rather than by
+      stamping the settled attempt, so the attempt keeps its `succeeded` status
+      and its handle and every partial can find it again.
+
+    The amount is capped at `refundable_amount(order)` — the goods not yet
+    returned. When this refund brings that to zero the order is fully refunded,
+    and a delivered order is moved to `cancelled` to say so; the move is
+    money-only (see the `previous == DELIVERED` guard in
+    `order_lifecycle._consequences`), because the goods were handed over and
+    there is nothing to restock or call off.
+    """
+    requested = money(amount)
+    if requested <= 0:
+        raise BadRequestError("Refund amount must be greater than zero")
+
+    remaining = refundable_amount(order)
+    if requested > remaining:
+        raise BadRequestError(
+            f"Refund of {requested} exceeds the {remaining} still refundable on "
+            f"order {order.order_number}"
+        )
+
+    attempt = await _settled_attempt(db, order)
+    if attempt is None or not attempt.payment_id:
+        raise BadRequestError(
+            f"Order {order.order_number} has no settled card payment to refund"
+        )
+
+    gateway = payment_gateway_router.PROVIDERS.get(attempt.gateway)
+    if gateway is None:
+        raise BadRequestError(
+            f"Order {order.order_number} was paid on {attempt.gateway}, which "
+            "this build cannot refund"
+        )
+
+    # The idempotency key names the cumulative total this refund brings the order
+    # to, not this slice — and that difference is what makes multiple partials
+    # safe. `_refund_key` is otherwise the same helper `refund_order` uses.
+    #
+    # Retry-safety (the invariant `refund_order` documents at length): the key is
+    # derived only from the order number and `refunded_amount + requested`. A
+    # rollback restores `refunded_amount` and `requested` is the request body, so
+    # a retry reconstructs the identical key and the gateway dedupes it. Two
+    # partials of the *same* slice amount land on *different* cumulative totals,
+    # so they are correctly two refunds rather than one — the collision the
+    # slice-keyed `refund-{order}-{amount}` would have had.
+    cumulative_target = money(to_decimal(order.refunded_amount) + requested)
+    result = await gateway.refund(
+        payment_id=attempt.payment_id,
+        amount=requested,
+        idempotency_key=_refund_key(order, cumulative_target),
+    )
+    _record_refund_slice(order, attempt, result)
+    logger.info(
+        "Admin refunded %s %s for %s (%s, %s) — %s still refundable",
+        result.amount,
+        order.currency or "AED",
+        order.order_number,
+        result.refund_id,
+        result.status,
+        refundable_amount(order),
+    )
+
+    if refundable_amount(order) == 0 and order.status == OrderStatusEnum.DELIVERED:
+        await order_lifecycle.transition(
+            db,
+            order,
+            OrderStatusEnum.CANCELLED,
+            extra_from={OrderStatusEnum.DELIVERED},
+        )
+    return result
+
+
+def _record_refund_slice(
+    order: Order, attempt: PaymentTransaction, result: GatewayRefund
+) -> None:
+    """
+    Book one gateway refund: onto the order's running total, and as its own row.
+
+    A row per refund rather than stamping `attempt.refund_id`, for three reasons.
+    The attempt holds one handle and overwriting it loses every earlier refund's;
+    a `refunded` row is not in `SETTLED_STATUSES` (`{succeeded}`) so it stays
+    invisible to `_settled_attempt`, leaving the settled attempt — and therefore
+    `refund_order`'s short-circuit and Ziina's paid check — untouched; and the
+    row's `refund_id` is what the refund webhook matches on to know it is
+    acknowledging a refund this path already booked, rather than a dashboard one
+    it must still record (see `_refund_already_recorded`). Mirrors the shape of
+    `_record_and_refund_duplicate`.
+    """
+    order.refunded_amount = money(to_decimal(order.refunded_amount) + result.amount)
+    order.refunded_at = order.refunded_at or utcnow()
+    order.payment_transactions.append(
+        PaymentTransaction(
+            order_id=order.id,
+            gateway=attempt.gateway,
+            status=PaymentTransactionStatusEnum.REFUNDED.value,
+            payment_id=attempt.payment_id,
+            refund_id=result.refund_id,
+            amount=result.amount,
+            currency=order.currency or "AED",
+            raw_status="admin.refund",
+        )
+    )
+
+
+async def _refund_already_recorded(
+    db: AsyncSession, order: Order, refund_id: str
+) -> bool:
+    """
+    Whether a refund with this gateway handle is already booked on the order.
+
+    True for a refund `issue_admin_refund` made: its slice is on
+    `refunded_amount`, its row exists, and any full-refund status move is done —
+    so the gateway's refund webhook is confirmation, not new work, and adding it
+    again would double-count (Ziina reports per-slice and `_handle_refund` adds).
+    False for a refund made in a gateway dashboard, which has no row here yet and
+    is the webhook's to record.
+    """
+    row = (
+        await db.execute(
+            select(PaymentTransaction.id).where(
+                PaymentTransaction.order_id == order.id,
+                PaymentTransaction.refund_id == refund_id,
+            )
+        )
+    ).first()
+    return row is not None
 
 
 async def _settled_attempt(db: AsyncSession, order: Order) -> PaymentTransaction | None:

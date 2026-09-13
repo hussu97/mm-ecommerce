@@ -16942,6 +16942,10 @@
             "title": "Processing Fee Is Estimated",
             "type": "boolean"
           },
+          "refundable_remaining": {
+            "title": "Refundable Remaining",
+            "type": "number"
+          },
           "refunded": {
             "title": "Refunded",
             "type": "number"
@@ -16955,6 +16959,7 @@
           "processing_fee",
           "processing_fee_is_estimated",
           "refunded",
+          "refundable_remaining",
           "cancellation_fee",
           "net",
           "margin_on_charged",
@@ -17860,6 +17865,73 @@
           "delivery"
         ],
         "title": "OrderPreviewResponse",
+        "type": "object"
+      },
+      "OrderRefundRequest": {
+        "description": "An admin-initiated refund of one slice of a delivered website order.",
+        "properties": {
+          "admin_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Notes"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "title": "OrderRefundRequest",
+        "type": "object"
+      },
+      "OrderRefundResponse": {
+        "description": "The outcome of one admin refund: the order, and where the money stands.\n\nDefined below `OrderResponse` because it embeds it \u2014 the module reads\ntop-to-bottom and the name has to exist by the time this class is built.",
+        "properties": {
+          "fully_refunded": {
+            "title": "Fully Refunded",
+            "type": "boolean"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderResponse"
+          },
+          "refundable_remaining": {
+            "title": "Refundable Remaining",
+            "type": "number"
+          },
+          "refunded_amount": {
+            "title": "Refunded Amount",
+            "type": "number"
+          },
+          "refunded_now": {
+            "title": "Refunded Now",
+            "type": "number"
+          }
+        },
+        "required": [
+          "order",
+          "refunded_now",
+          "refunded_amount",
+          "refundable_remaining",
+          "fully_refunded"
+        ],
+        "title": "OrderRefundResponse",
         "type": "object"
       },
       "OrderResponse": {
@@ -53563,6 +53635,64 @@
           }
         ],
         "summary": "Get Order Economics",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{order_number}/refund": {
+      "post": {
+        "description": "Hand money back on a delivered website order, in part or in full.\n\nOnly for an order MM took the money on itself \u2014 a website order paid by card\nthrough Stripe or Ziina. A counter sale is refunded on the till and an\naggregator order was paid at the marketplace, so neither is refundable here.\nThe order must be `delivered`: a live order is cancelled instead (which\nrefunds it), and a settled one has already been dealt with.\n\nThe amount is capped at what is still refundable (the goods not yet returned)\ninside `issue_admin_refund`. When a refund brings that to zero the order is\nfully refunded and moves to `cancelled` \u2014 money-only, since the goods were\ndelivered \u2014 and the customer is emailed; a partial stays quiet, matching how\na partial refund has always been handled.",
+        "operationId": "refund_order_admin_api_v1_orders__order_number__refund_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_number",
+            "required": true,
+            "schema": {
+              "title": "Order Number",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderRefundRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderRefundResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Refund Order Admin",
         "tags": [
           "Orders"
         ]

@@ -5582,6 +5582,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orders/{order_number}/refund": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refund Order Admin
+         * @description Hand money back on a delivered website order, in part or in full.
+         *
+         *     Only for an order MM took the money on itself — a website order paid by card
+         *     through Stripe or Ziina. A counter sale is refunded on the till and an
+         *     aggregator order was paid at the marketplace, so neither is refundable here.
+         *     The order must be `delivered`: a live order is cancelled instead (which
+         *     refunds it), and a settled one has already been dealt with.
+         *
+         *     The amount is capped at what is still refundable (the goods not yet returned)
+         *     inside `issue_admin_refund`. When a refund brings that to zero the order is
+         *     fully refunded and moves to `cancelled` — money-only, since the goods were
+         *     delivered — and the customer is emailed; a partial stays quiet, matching how
+         *     a partial refund has always been handled.
+         */
+        post: operations["refund_order_admin_api_v1_orders__order_number__refund_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orders/{order_number}/status": {
         parameters: {
             query?: never;
@@ -14219,6 +14251,8 @@ export interface components {
             processing_fee: number;
             /** Processing Fee Is Estimated */
             processing_fee_is_estimated: boolean;
+            /** Refundable Remaining */
+            refundable_remaining: number;
             /** Refunded */
             refunded: number;
         };
@@ -14535,6 +14569,34 @@ export interface components {
             vat_amount: number;
             /** Vat Rate */
             vat_rate: number;
+        };
+        /**
+         * OrderRefundRequest
+         * @description An admin-initiated refund of one slice of a delivered website order.
+         */
+        OrderRefundRequest: {
+            /** Admin Notes */
+            admin_notes?: string | null;
+            /** Amount */
+            amount: number | string;
+        };
+        /**
+         * OrderRefundResponse
+         * @description The outcome of one admin refund: the order, and where the money stands.
+         *
+         *     Defined below `OrderResponse` because it embeds it — the module reads
+         *     top-to-bottom and the name has to exist by the time this class is built.
+         */
+        OrderRefundResponse: {
+            /** Fully Refunded */
+            fully_refunded: boolean;
+            order: components["schemas"]["OrderResponse"];
+            /** Refundable Remaining */
+            refundable_remaining: number;
+            /** Refunded Amount */
+            refunded_amount: number;
+            /** Refunded Now */
+            refunded_now: number;
         };
         /** OrderResponse */
         OrderResponse: {
@@ -31094,6 +31156,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderEconomicsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refund_order_admin_api_v1_orders__order_number__refund_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_number: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderRefundRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderRefundResponse"];
                 };
             };
             /** @description Validation Error */

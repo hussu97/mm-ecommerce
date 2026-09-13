@@ -450,6 +450,7 @@ class StripeProvider(PaymentGatewayProvider):
         amount_refunded: int | None = None
         amount_captured: int | None = None
         fully_refunded: bool | None = None
+        refund_id: str | None = None
         error_code: str | None = None
         error_message: str | None = None
         failure_reason: PaymentFailureReason | None = None
@@ -487,6 +488,12 @@ class StripeProvider(PaymentGatewayProvider):
             amount_refunded = obj.get("amount_refunded")
             amount_captured = obj.get("amount")
             fully_refunded = obj.get("refunded")
+            # The most recent refund on the charge, so a refund we issued is
+            # recognised as already booked when this webhook arrives. Stripe
+            # lists refunds newest-first.
+            refunds = (obj.get("refunds") or {}).get("data") or []
+            if refunds:
+                refund_id = refunds[0].get("id")
         elif raw_type.startswith("checkout.session."):
             session_id = obj.get("id")
             payment_id = obj.get("payment_intent")
@@ -509,6 +516,7 @@ class StripeProvider(PaymentGatewayProvider):
             amount_refunded=amount_refunded,
             amount_captured=amount_captured,
             fully_refunded=fully_refunded,
+            refund_id=refund_id,
             error_code=error_code,
             error_message=error_message,
             failure_reason=failure_reason,

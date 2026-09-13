@@ -32,6 +32,11 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
     "Orders": [
         ("orders.read", "View orders in the console and on the register"),
         ("orders.manage", "Accept, decline, void, pay and tag orders"),
+        # Handing money back on a delivered website order is a separate authority
+        # from managing the order, the same split `pos.payment.refund` makes at
+        # the till: whoever can advance an order should not, by that alone, be
+        # able to refund a card.
+        ("orders.refund", "Issue a partial or full refund on a website order"),
         ("orders.custom.manage", "Manage custom cake orders"),
     ],
     "Catalogue": [
