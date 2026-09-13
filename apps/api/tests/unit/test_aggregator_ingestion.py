@@ -1832,6 +1832,97 @@ async def test_fetch_and_persist_reraises_systemic_db_error(monkeypatch):
         )
 
 
+# ── ranged backfill resilience: per-day incremental commit + rollback failsafe ──
+def _sales_provider_dated(pairs):
+    """A sales provider whose orders carry a business_date, for the per-day commit
+    path. `pairs` is [(external_order_id, business_date), ...]."""
+    from unittest.mock import AsyncMock
+
+    orders = [
+        SimpleNamespace(external_order_id=oid, business_date=bd) for oid, bd in pairs
+    ]
+    result = SimpleNamespace(orders=orders, truncation_note=None)
+    return SimpleNamespace(fetch_sales=AsyncMock(return_value=result))
+
+
+async def test_commit_each_day_commits_once_per_business_date(monkeypatch):
+    """With commit_each_day, each completed business date is committed as it lands
+    (a boundary flush per finished day + a final flush), so a later failure can't
+    roll back the days already written."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    db = MagicMock()
+    db.begin_nested = lambda: _FakeSavepoint()
+    db.commit = AsyncMock()
+
+    async def fake_upsert(_db, _channel, _order):
+        return None
+
+    monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
+
+    written, _trunc, detail = await ingest._fetch_and_persist(
+        db,
+        "noon",
+        # two rows on 09-01, one on 09-02 (unsorted input to prove it groups)
+        _sales_provider_dated(
+            [("A", "2026-09-01"), ("C", "2026-09-02"), ("B", "2026-09-01")]
+        ),
+        ingest.RUN_MODE_SALES,
+        object(),
+        since=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 9, 2, 23, tzinfo=timezone.utc),
+        commit_each_day=True,
+    )
+    assert written == 3
+    # 09-01 flushed at the 09-02 boundary, then 09-02 flushed at the end → 2 commits.
+    assert db.commit.await_count == 2
+
+
+async def test_commit_each_day_persists_earlier_days_before_a_systemic_failure(
+    monkeypatch,
+):
+    """The point of the per-day commit: a systemic DB error on a later day still
+    leaves every earlier day committed, instead of losing the whole range."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from sqlalchemy.exc import ProgrammingError
+
+    db = MagicMock()
+    db.begin_nested = lambda: _FakeSavepoint()
+    db.commit = AsyncMock()
+
+    async def fake_upsert(_db, _channel, order):
+        if order.business_date == "2026-09-02":
+            raise ProgrammingError("INSERT ...", {}, Exception("connection reset"))
+
+    monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
+
+    with pytest.raises(ProgrammingError):
+        await ingest._fetch_and_persist(
+            db,
+            "noon",
+            _sales_provider_dated([("A", "2026-09-01"), ("BAD", "2026-09-02")]),
+            ingest.RUN_MODE_SALES,
+            object(),
+            since=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            until=datetime(2026, 9, 2, 23, tzinfo=timezone.utc),
+            commit_each_day=True,
+        )
+    # 09-01 was committed at the day boundary before 09-02's upsert blew up.
+    assert db.commit.await_count == 1
+
+
+async def test_safe_rollback_swallows_a_failing_rollback():
+    """A dead connection can't be rolled back; `_safe_rollback` must not raise, so
+    the fresh-session run finalise still gets to record the run."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    db = MagicMock()
+    db.rollback = AsyncMock(side_effect=RuntimeError("connection is closed"))
+    await ingest._safe_rollback(db)  # must not propagate
+    db.rollback.assert_awaited_once()
+
+
 # ── standing coverage backfill (multi-day gap recovery) ───────────────────────
 
 

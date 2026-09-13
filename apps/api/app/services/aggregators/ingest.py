@@ -1128,6 +1128,8 @@ async def _persist_channel_mode(
     channel: str,
     mode: str,
     result: SalesResult | FinanceResult,
+    *,
+    commit_each_day: bool = False,
 ) -> tuple[int, str | None, dict]:
     """Persist an already-fetched result. No network, no run bookkeeping.
 
@@ -1135,11 +1137,30 @@ async def _persist_channel_mode(
     write down by kind ({"orders": n} for sales, {"statements": n, "payouts": m}
     for finance). Every write is an idempotent on-conflict upsert on a
     channel-scoped natural key, so re-running any window never double-counts.
+
+    With `commit_each_day` (the ranged backfill), the sales orders are persisted
+    grouped by business date and COMMITTED as each date completes, so a failure
+    part-way through a multi-day range (a dropped connection, a deploy cutover)
+    keeps every date already written instead of losing the whole run at the final
+    commit. The scheduled sweep leaves it False and commits once, as before.
     """
     if mode == RUN_MODE_SALES:
         sales: SalesResult = result  # type: ignore[assignment]
         written = 0
-        for order in sales.orders:
+        # Group by business date so a per-day commit flushes whole days. Undated
+        # orders (business_date None) sort together into one final group.
+        orders = (
+            sorted(sales.orders, key=lambda o: o.business_date or "")
+            if commit_each_day
+            else sales.orders
+        )
+        prev_day: str | None = None
+        for order in orders:
+            if commit_each_day and order.business_date != prev_day:
+                if prev_day is not None:
+                    # The finished day's rows are durable before the next begins.
+                    await db.commit()
+                prev_day = order.business_date
             # One malformed order must not abort the whole channel's sweep and roll
             # back every good order with it — isolate it, like the reconcile/promote
             # passes and the Keeta push path already do. A bare try/except CANNOT do
@@ -1165,6 +1186,9 @@ async def _persist_channel_mode(
                     channel,
                     order.external_order_id,
                 )
+        if commit_each_day and orders:
+            # Flush the last (or only) day.
+            await db.commit()
         return written, sales.truncation_note, {"orders": written}
     finance: FinanceResult = result  # type: ignore[assignment]
     for statement in finance.statements:
@@ -1210,17 +1234,23 @@ async def _fetch_and_persist(
     *,
     since: datetime,
     until: datetime,
+    commit_each_day: bool = False,
 ) -> tuple[int, str | None, dict]:
     """Fetch then persist on ONE session — kept for the ranged backfill
     (`run_range`), which holds a single session across both modes and is a manual,
     bounded operation. The scheduled sweep (`_sweep_channel`) instead splits these
     two phases across separate sessions so it holds no pooled connection across the
     minutes-long fetch (F-AGG-7).
+
+    `commit_each_day` is passed through to the sales persist so the ranged backfill
+    commits each business date as it lands (see `_persist_channel_mode`).
     """
     result = await _fetch_channel_mode(
         provider, mode, session, since=since, until=until
     )
-    return await _persist_channel_mode(db, channel, mode, result)
+    return await _persist_channel_mode(
+        db, channel, mode, result, commit_each_day=commit_each_day
+    )
 
 
 def _retrieved_from_detail(mode: str, detail: dict) -> dict:
@@ -1670,7 +1700,11 @@ async def run_range(
                     promote_mod=promote_mod,
                     reconcile_mod=reconcile_mod,
                 )
-                await db.commit()
+                # `_run_range_channel` already commits each phase incrementally and
+                # finalises the run row on its own fresh session, so nothing here is
+                # pending — this is a no-op safety net. Keep it from raising on a
+                # dropped connection so one channel can't abort the others.
+                await _safe_rollback(db)
                 results.append(result)
     return results
 
@@ -1733,6 +1767,18 @@ async def _renormalize_stored(
     return count
 
 
+async def _safe_rollback(db: AsyncSession) -> None:
+    """Best-effort rollback: clear a poisoned transaction so the NEXT phase (and
+    the run-record finalise) runs on a usable session instead of cascading into
+    `PendingRollbackError`. Rollback can itself fail on a genuinely dead
+    connection (a deploy cutover), so swallow that — the fresh-session finalise
+    still records the run."""
+    try:
+        await db.rollback()
+    except Exception:  # noqa: BLE001 — a dead connection can't be rolled back; move on
+        logger.exception("aggregator: rollback after a phase failure itself failed")
+
+
 async def _run_range_channel(
     db: AsyncSession,
     channel: str,
@@ -1748,6 +1794,12 @@ async def _run_range_channel(
     run = await _new_run(
         db, channel, RUN_MODE_BACKFILL, from_date=from_date, to_date=to_date
     )
+    run_id = run.id
+    # The run row is committed up front on this session, then finalised at the end
+    # on a FRESH session (`_finalize_run_status`). So a phase that poisons or drops
+    # this connection can neither erase that the run started nor block the terminal
+    # status write — the failure mode that lost a whole 13-day backfill mid-run.
+    await db.commit()
     stats: dict = {
         "from": from_date.isoformat(),
         "to": to_date.isoformat(),
@@ -1766,11 +1818,13 @@ async def _run_range_channel(
         # orders exactly as it does for the scraped channels.
         try:
             written = await _renormalize_stored(db, channel, from_date, to_date)
+            await db.commit()
             stats["modes"][RUN_MODE_SALES] = {
                 "written": written,
                 "source": "stored_raw",
             }
         except Exception as exc:  # noqa: BLE001 — one channel must not kill the run row
+            await _safe_rollback(db)
             errors.append(f"renormalize: {exc}")
             logger.exception("aggregator %s range renormalize failed", channel)
     else:
@@ -1783,18 +1837,18 @@ async def _run_range_channel(
             await db.commit()
             session = await _await_reauth(channel, provider)
         if session is None:
-            run.status = RUN_FAILED
-            run.error = "session not live — needs a headed re-login"
-            run.finished_at = utcnow()
+            error = "session not live — needs a headed re-login"
             stats["skipped"] = "session_not_live"
-            run.stats = stats
+            await _finalize_run_status(
+                run_id, status=RUN_FAILED, error=error, stats=stats
+            )
             # "Ran but did not complete fully": the run row records this, but it
             # is not logged at ERROR, so nothing became a Sentry event. Raise one,
             # fingerprinted per channel so a channel stuck dead is one grouped
             # issue an alert rule can watch (it pairs with the worker's
             # needs_human event once the daemon confirms it needs a person).
             alerting.capture_issue(
-                f"aggregator {channel}: sync run failed — {run.error}",
+                f"aggregator {channel}: sync run failed — {error}",
                 level="warning",
                 fingerprint=["aggregator", "run_failed", channel],
                 tags={
@@ -1803,7 +1857,7 @@ async def _run_range_channel(
                     "reason": "session_not_live",
                 },
             )
-            return {"channel": channel, "status": run.status, "stats": stats}
+            return {"channel": channel, "status": RUN_FAILED, "stats": stats}
 
         since, until = _dubai_range_window(from_date, to_date)
         reauth_tried = False
@@ -1811,8 +1865,20 @@ async def _run_range_channel(
             while True:
                 try:
                     written, trunc, detail = await _fetch_and_persist(
-                        db, channel, provider, mode, session, since=since, until=until
+                        db,
+                        channel,
+                        provider,
+                        mode,
+                        session,
+                        since=since,
+                        until=until,
+                        commit_each_day=True,
                     )
+                    # Make this mode's writes durable before moving on, so a later
+                    # mode/promote/reconcile failure (or a dropped connection)
+                    # cannot roll them back. Sales already committed per-day; this
+                    # flushes finance and any tail.
+                    await db.commit()
                     stats["modes"][mode] = {"written": written, **detail}
                     if trunc:
                         stats["modes"][mode]["truncation"] = trunc
@@ -1822,20 +1888,27 @@ async def _run_range_channel(
                     if not reauth_tried:
                         reauth_tried = True
                         # Release the connection for the wait (see above).
-                        await db.commit()
+                        await _safe_rollback(db)
                         fresh = await _await_reauth(channel, provider)
                         if fresh is not None:
                             session = fresh
                             continue
                     errors.append(f"{mode}: session dead: {exc}")
+                    await _safe_rollback(db)
                     await session_store.mark_needs_bootstrap(
                         db, channel, error=str(exc)
                     )
+                    await db.commit()
                     break
                 except AggregatorUnavailableError as exc:
+                    await _safe_rollback(db)
                     errors.append(f"{mode}: unavailable: {exc}")
                     break
                 except Exception as exc:  # noqa: BLE001 — one mode must not kill the run
+                    # Recover the session so the remaining modes, promote/reconcile,
+                    # and the run-record finalise don't inherit a poisoned
+                    # transaction (the PendingRollbackError cascade).
+                    await _safe_rollback(db)
                     errors.append(f"{mode}: {exc}")
                     logger.exception("aggregator %s range %s failed", channel, mode)
                     break
@@ -1857,7 +1930,9 @@ async def _run_range_channel(
                 # its own start as the floor so nothing in the range is left
                 # unpromotable.
                 await promote_mod.promote_channel(db, channel, since=from_date)
+            await db.commit()
         except Exception as exc:  # noqa: BLE001
+            await _safe_rollback(db)
             errors.append(f"promote: {exc}")
             logger.exception("aggregator %s range promote failed", channel)
     if reconcile:
@@ -1869,23 +1944,36 @@ async def _run_range_channel(
                 await link_statements_to_payouts(db, channel)
                 await reconcile_mod.reconcile_channel(db, channel)
                 await reconcile_mod.reconcile_reverse_channel(db, channel)
+            await db.commit()
         except Exception as exc:  # noqa: BLE001
+            await _safe_rollback(db)
             errors.append(f"reconcile: {exc}")
             logger.exception("aggregator %s range reconcile failed", channel)
 
-    stats.update(await _run_coverage_stats(db, channel, from_date, to_date))
-    run.finished_at = utcnow()
-    if errors:
-        run.status = RUN_PARTIAL
-        run.error = "; ".join(errors)[:2000]
-    else:
-        run.status = RUN_COMPLETED
-        # A push-only channel has no scrape session to credit — the success it
-        # would stamp belongs to the bootstrap worker's login, not this re-parse.
-        if not push_only:
-            await session_store.record_success(db, channel)
-    run.stats = stats
-    return {"channel": channel, "status": run.status, "stats": stats}
+    # Coverage counts are read-only; a failure here (e.g. a dropped connection)
+    # must not swallow the run record, so isolate it and still finalise below.
+    try:
+        stats.update(await _run_coverage_stats(db, channel, from_date, to_date))
+    except Exception as exc:  # noqa: BLE001
+        await _safe_rollback(db)
+        errors.append(f"coverage: {exc}")
+        logger.exception("aggregator %s range coverage stats failed", channel)
+
+    status = RUN_PARTIAL if errors else RUN_COMPLETED
+    # A push-only channel has no scrape session to credit — the success it would
+    # stamp belongs to the bootstrap worker's login, not this re-parse.
+    record_success = status == RUN_COMPLETED and not push_only
+    # Finalise on a FRESH session so the terminal status is recorded even if this
+    # one is poisoned or its connection was dropped mid-run.
+    await _finalize_run_status(
+        run_id,
+        status=status,
+        error="; ".join(errors)[:2000] if errors else None,
+        stats=stats,
+        channel=channel,
+        record_success=record_success,
+    )
+    return {"channel": channel, "status": status, "stats": stats}
 
 
 async def _sweep_all(
