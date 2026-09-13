@@ -394,13 +394,22 @@ function summaryCards(
 ): Array<{ label: string; value: string; sub?: string; tone?: 'default' | 'warning' | 'danger' }> {
   if (!summary) return [];
   const t: ReconSummaryRow = summary.totals;
-  const flagged = t.item_flags + t.refund_flags;
+  const flagged = t.item_flags + t.refund_flags + t.unmatched_mm;
   return [
     { label: 'Orders', value: String(t.total), sub: `${t.matched} matched` },
     {
       label: 'Unmatched (agg)',
       value: String(t.unmatched_agg),
       tone: t.unmatched_agg > 0 ? 'warning' : 'default',
+    },
+    {
+      // A real fault: an MM order (via GrubOps) the portal scrape never captured,
+      // so its fees and settlement are missing. This is the one signal that the
+      // scraper dropped a sale — reconciliation could not see it before.
+      label: 'Missed by scrape',
+      value: String(t.unmatched_mm),
+      tone: t.unmatched_mm > 0 ? 'danger' : 'default',
+      sub: 'MM order, no aggregator row',
     },
     {
       // Expected, not a fault: orders on aggregator-only branches, where there is
@@ -411,7 +420,7 @@ function summaryCards(
       tone: 'default',
       sub: 'no POS side to check',
     },
-    { label: 'Flagged', value: String(flagged), tone: flagged > 0 ? 'warning' : 'default', sub: 'item · refund' },
+    { label: 'Flagged', value: String(flagged), tone: flagged > 0 ? 'warning' : 'default', sub: 'item · refund · missed' },
     {
       label: 'Commission paid',
       value: formatCurrency(t.commission_actual_sum),

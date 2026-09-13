@@ -532,6 +532,7 @@ class ReconSummaryRow(BaseModel):
     matched: int
     unmatched_agg: int
     no_maker_side: int
+    unmatched_mm: int
     item_flags: int
     refund_flags: int
     commission_actual_sum: Decimal | None = None

@@ -1868,6 +1868,7 @@ async def _run_range_channel(
                 await link_orders_to_statements(db, channel)
                 await link_statements_to_payouts(db, channel)
                 await reconcile_mod.reconcile_channel(db, channel)
+                await reconcile_mod.reconcile_reverse_channel(db, channel)
         except Exception as exc:  # noqa: BLE001
             errors.append(f"reconcile: {exc}")
             logger.exception("aggregator %s range reconcile failed", channel)
@@ -2000,6 +2001,10 @@ async def sweep_reconcile_once() -> int:
                 await link_orders_to_statements(db, channel)
                 await link_statements_to_payouts(db, channel)
                 touched += await reconcile.reconcile_channel(db, channel)
+                # Reverse pass: MM orders the scrape never captured (GrubOps-only)
+                # have no aggregator_order to walk, so the forward pass cannot see
+                # them — this surfaces them as `unmatched_mm`.
+                touched += await reconcile.reconcile_reverse_channel(db, channel)
                 await db.commit()
             except Exception:  # noqa: BLE001 — one channel must not stop the rest
                 await db.rollback()

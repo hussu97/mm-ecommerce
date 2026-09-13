@@ -25593,6 +25593,10 @@
           "unmatched_agg": {
             "title": "Unmatched Agg",
             "type": "integer"
+          },
+          "unmatched_mm": {
+            "title": "Unmatched Mm",
+            "type": "integer"
           }
         },
         "required": [
@@ -25601,6 +25605,7 @@
           "matched",
           "unmatched_agg",
           "no_maker_side",
+          "unmatched_mm",
           "item_flags",
           "refund_flags"
         ],
