@@ -853,6 +853,16 @@ def _status_events(row: dict[str, Any]) -> list[StandardStatusEvent]:
     return events
 
 
+def _event_time(events: list[StandardStatusEvent], *statuses: str) -> datetime | None:
+    """The timestamp of the first of `statuses` present in the lifecycle, in the
+    order given (so a fallback is only used when the preferred step is absent)."""
+    by_status = {e.status: e.at for e in events if e.at is not None}
+    for status in statuses:
+        if status in by_status:
+            return by_status[status]
+    return None
+
+
 # ── Row extraction (the getOrders / finance envelope, flattened) ─────────────
 def _iter_row_candidates(payload: Any) -> list[dict[str, Any]]:
     """Every dict anywhere in the payload tree — the portal buries the order
@@ -1146,11 +1156,21 @@ class KeetaClient(BaseAggregatorClient):
             ),
         )
 
+        # The lifecycle timestamps come from `merchantOrderTraces`. WITHOUT them
+        # every rung of the promoted order's timeline fell back to `placed_at`
+        # (the only time set), so the POS hour/terminal reports bucketed every
+        # Keeta sale into the hour it was PLACED rather than accepted/handed over.
+        # confirmed (30) is the merchant accepting; completed (40) is the terminal
+        # handoff Keeta records; cancelled (50) its cancellation.
+        events = _status_events(row)
         return StandardOrder(
             external_order_id=order_id,
             external_outlet_id=_first_text(row, _OUTLET_ID_KEYS),
             business_date=_date_str(business_date),
             placed_at=placed_at,
+            accepted_at=_event_time(events, "confirmed", "pending"),
+            delivered_at=_event_time(events, "completed"),
+            cancelled_at=_event_time(events, "cancelled"),
             status=_decode_status(
                 _first_text(row, ("status", "orderStatus", "order_status"))
             ),
@@ -1158,7 +1178,7 @@ class KeetaClient(BaseAggregatorClient):
             customer_name=_customer_name(row),
             customer_phone=_customer_phone(row),
             customer_address=_customer_address(row),
-            status_events=_status_events(row),
+            status_events=events,
             gross_sales=gross_sales,
             net_sales=net_sales,
             # Base commission only. Keeta's "Promotion funded by merchant"
