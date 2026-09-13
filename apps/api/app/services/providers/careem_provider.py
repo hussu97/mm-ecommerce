@@ -25,10 +25,14 @@ were taken from the live console:
 - Invoices: `POST /v1/billing/billingReports/list` (reportType=INVOICE) lists the
   monthly Tax Invoices, and `GET /v1/billing/billingReports/{id}/download?
   billableId&billableType&tenant=FOOD` hands back a `{"fileUrl": <pre-signed S3>}`
-  for the PDF. Careem has no PER-ORDER settlement — the order detail carries the
-  goods and the captain but not the merchant's commission — so the fees live only
-  on that monthly Tax Invoice, which `fetch_statements` archives as the VAT
-  document.
+  for the PDF, which `fetch_statements` archives as the VAT document.
+- Per-order fees: `POST /v1/billing/billingEntries/list` (entryType=FOOD_ORDER)
+  returns one entry per order with a `transactions` breakdown — gross basket,
+  platform (commission) fee, processing fee and Careem Plus fee, each with its own
+  VAT line. The order feed carries none of this, so `fetch_finance` reads it and
+  (a) patches the fees onto the stored order and (b) emits itemised statement
+  lines keeping the VAT-on-fees distinct. Available near-real-time, not only on
+  the monthly invoice.
 
 The billing calls need the account's `billableId`/`billableType` triple, which
 comes from the scope tree, so `fetch_finance` resolves scope first.
@@ -52,6 +56,7 @@ import httpx
 
 from app.models.aggregator import CHANNEL_CAREEM
 from app.services.aggregators.normalized import (
+    FinanceResult,
     PayoutsResult,
     SalesResult,
     StandardModifier,
@@ -59,6 +64,7 @@ from app.services.aggregators.normalized import (
     StandardOrderItem,
     StandardPayout,
     StandardStatement,
+    StandardStatementLine,
     StandardStatusEvent,
     StatementsResult,
 )
@@ -97,6 +103,17 @@ _DEFAULT_CITY_ID = "1"
 #: has quietly expired into a redirect) cannot spin the loop forever against the
 #: live console — mirrors talabat's `_MAX_FINANCE_PAGES` guard.
 _MAX_PAYOUT_PAGES = 200
+#: `billingEntries/list` entry type for a food order, and the transaction-type
+#: words each entry itemises (captured live 2026-09-13). Fee values arrive
+#: negative and VAT-exclusive; each has a matching `_TAX` line for its VAT.
+_ENTRY_TYPE = "FOOD_ORDER"
+_TX_GROSS = "FOOD_GROSS_BASKET_AMOUNT"
+_TX_PLATFORM = "BILLING_PLATFORM_FEE"
+_TX_PLATFORM_TAX = "BILLING_PLATFORM_FEE_TAX"
+_TX_PROCESSING = "BILLING_PROCESSING_FEE"
+_TX_PROCESSING_TAX = "BILLING_PROCESSING_FEE_TAX"
+_TX_CPLUS = "CPLUS_FEE"
+_TX_CPLUS_TAX = "CPLUS_FEE_TAX"
 #: Careem publishes a month's Tax Invoice ~a week after the month ends, so the
 #: invoice discovery reaches back at least this far — a 1-day finance sweep would
 #: otherwise never see the just-published prior-month invoice.
@@ -1131,6 +1148,195 @@ class CareemClient(BaseAggregatorClient):
                     )
             statements.append(stmt)
         return StatementsResult(statements=statements)
+
+    async def fetch_finance(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> FinanceResult:
+        """Careem finance: the monthly Tax-Invoice PDFs, the payout feed, AND the
+        per-order billing entries.
+
+        Careem is the one channel whose per-order economics (commission, payment
+        fee, CPlus fee, and their VAT) are absent from the order feed — they live
+        on the billing settlement, reachable near-real-time via `billingEntries`.
+        This overrides the base statements-then-payouts wrapper to also read those
+        entries, so each is turned into (a) a fee patch applied to the stored order
+        and (b) itemised statement lines carrying the VAT-on-fees distinctly.
+        """
+        statements_res = await self.fetch_statements(session, since=since, until=until)
+        payouts_res = await self.fetch_payouts(session, since=since, until=until)
+        try:
+            entries = await self._billing_entries(session, since=since, until=until)
+            entry_statements, order_fee_updates, entries_note = (
+                self._finance_from_entries(entries)
+            )
+        except AggregatorAuthError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — surface, don't crash the sweep
+            entry_statements, order_fee_updates = [], []
+            entries_note = f"careem billing entries failed: {exc}"
+        notes = [
+            n
+            for n in (
+                statements_res.truncation_note,
+                payouts_res.truncation_note,
+                entries_note,
+            )
+            if n
+        ]
+        return FinanceResult(
+            statements=statements_res.statements + entry_statements,
+            payouts=payouts_res.payouts,
+            order_fee_updates=order_fee_updates,
+            truncation_note=" | ".join(notes) if notes else None,
+        )
+
+    async def _billing_entries(
+        self, session: LoadedSession, *, since: datetime, until: datetime
+    ) -> list[dict[str, Any]]:
+        """Every per-order billing entry in the window, paginated. Same auth and
+        billing-account scope as the payout feed."""
+        outlets = await self.discover_outlets(session)
+        accounts = self._billing_accounts(outlets)
+        entries: list[dict[str, Any]] = []
+        page = 0
+        for _ in range(_MAX_PAYOUT_PAGES):
+            data = await self.request_json(
+                session,
+                "POST",
+                f"{_API}/v1/billing/billingEntries/list",
+                json_body={
+                    "tenant": _TENANT,
+                    "billingAccounts": accounts,
+                    "startDate": since.strftime("%Y-%m-%dT00:00:00"),
+                    "endDate": until.strftime("%Y-%m-%dT23:59:59"),
+                    "entryType": _ENTRY_TYPE,
+                    "pageNumber": page,
+                    "pageSize": _PAGE_SIZE,
+                },
+            )
+            rows = data.get("billingEntries", []) or []
+            entries.extend(rows)
+            info = data.get("paginationInfo") or {}
+            total = info.get("totalRecords", 0)
+            page += 1
+            if not rows or page * _PAGE_SIZE >= total:
+                break
+        else:
+            logger.warning(
+                "careem billing entries hit the %d-page cap (%d rows so far)",
+                _MAX_PAYOUT_PAGES,
+                len(entries),
+            )
+        return entries
+
+    def _finance_from_entries(
+        self, entries: list[dict[str, Any]]
+    ) -> tuple[list[StandardStatement], list[StandardOrder], str | None]:
+        """Turn per-order billing entries into fee patches + itemised statements.
+
+        Fees are booked VAT-INCLUSIVE on the order (so `gross - commission -
+        payment - marketing == payout`, the invariant every channel's economics
+        rests on), while the statement lines keep each fee and its VAT as separate
+        rows so the VAT-on-fees is tracked distinctly. Statements are grouped one
+        per outlet per calendar month, so a re-run over any window converges on the
+        same rows (line `source_key` is stable per order+category).
+        """
+        order_fee_updates: list[StandardOrder] = []
+        # (outlet, YYYYMM) -> {"lines": [...], "period_start", "period_end"}
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        skipped = 0
+        for entry in entries:
+            ref = entry.get("referenceId")
+            outlet = entry.get("billableId")
+            if not ref or outlet is None or entry.get("billableType") != "MERCHANT":
+                skipped += 1
+                continue
+            ref, outlet = str(ref), str(outlet)
+            biz_date = _dubai_date(_parse_dt(entry.get("transactionDate")))
+            line_date = biz_date.isoformat() if biz_date else None
+
+            tx: dict[str, Decimal] = {}
+            for t in entry.get("transactions", []) or []:
+                val = _num(t.get("transactionValue"))
+                if val is not None:
+                    tx[t.get("transactionType")] = val
+
+            def _mag(key: str) -> Decimal:
+                return abs(tx.get(key, Decimal("0")))
+
+            gross = _mag(_TX_GROSS) or _num(entry.get("totalAmount")) or Decimal("0")
+            platform, platform_vat = _mag(_TX_PLATFORM), _mag(_TX_PLATFORM_TAX)
+            processing, processing_vat = _mag(_TX_PROCESSING), _mag(_TX_PROCESSING_TAX)
+            cplus, cplus_vat = _mag(_TX_CPLUS), _mag(_TX_CPLUS_TAX)
+            net = _num(entry.get("totalPayoutAmount"))
+
+            order_fee_updates.append(
+                StandardOrder(
+                    external_order_id=ref,
+                    external_outlet_id=outlet,
+                    gross_sales=gross or None,
+                    # VAT-inclusive fee totals, so the net invariant holds.
+                    commission_amount=platform + platform_vat,
+                    payment_fee=processing + processing_vat,
+                    marketing_fee=cplus + cplus_vat,
+                    net_payable=net,
+                )
+            )
+
+            month = line_date[:7].replace("-", "") if line_date else "unknown"
+            statement_id = f"CAREEM-ENTRIES-{outlet}-{month}"
+            group = groups.setdefault(
+                (outlet, month),
+                {"statement_id": statement_id, "lines": [], "dates": set()},
+            )
+            if line_date:
+                group["dates"].add(line_date)
+            specs = [
+                ("gross_sales", "gross_sales", gross),
+                ("fee", "commission", -platform),
+                ("vat", "commission_vat", -platform_vat),
+                ("fee", "payment_handling", -processing),
+                ("vat", "payment_handling_vat", -processing_vat),
+                ("fee", "cplus_fee", -cplus),
+                ("vat", "cplus_vat", -cplus_vat),
+                ("net_payable", "net_payable", net or Decimal("0")),
+            ]
+            for line_type, fee_category, amount in specs:
+                if amount == Decimal("0"):
+                    continue
+                group["lines"].append(
+                    StandardStatementLine(
+                        source_key=f"{statement_id}:{ref}:{fee_category}",
+                        statement_id=statement_id,
+                        external_order_id=ref,
+                        line_date=line_date,
+                        line_type=line_type,
+                        fee_category=fee_category,
+                        description=f"Careem billing entry {fee_category.replace('_', ' ')}",
+                        amount=amount,
+                        currency="AED",
+                    )
+                )
+
+        statements: list[StandardStatement] = []
+        for (outlet, _month), group in groups.items():
+            dates = sorted(group["dates"])
+            statements.append(
+                StandardStatement(
+                    statement_id=group["statement_id"],
+                    period_start=dates[0] if dates else None,
+                    period_end=dates[-1] if dates else None,
+                    currency="AED",
+                    external_outlet_id=outlet,
+                    lines=group["lines"],
+                )
+            )
+        note = (
+            f"{skipped} billing entr(y/ies) skipped (not a merchant order)"
+            if skipped
+            else None
+        )
+        return statements, order_fee_updates, note
 
     async def fetch_payouts(
         self, session: LoadedSession, *, since: datetime, until: datetime

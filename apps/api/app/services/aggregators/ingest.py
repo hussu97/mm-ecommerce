@@ -232,6 +232,7 @@ _PRESERVE_IF_NULL = (
     "net_sales",
     "commission_amount",
     "payment_fee",
+    "marketing_fee",
     "delivery_fee",
     "vat_amount",
     "cancellation_fee",
@@ -470,6 +471,44 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
                 constraint="uq_aggregator_order_status_event", set_=ev_update
             )
         )
+
+
+async def update_order_fees(
+    db: AsyncSession, channel: str, patch: StandardOrder
+) -> bool:
+    """Patch ONLY the settlement fee columns of an already-stored order.
+
+    Careem's commission / payment / marketing / net figures live on its billing
+    settlement, not on the order feed, so the finance pass fills them in after the
+    order was created by the sales pass. `upsert_order` is the wrong tool here — it
+    rewrites every column, so a partial patch would blank the status, business date
+    and customer the sales pass captured. This touches the fee columns alone (and
+    only fills `gross_sales` if the order had none), keyed on the natural id, and
+    is a no-op when the order does not exist yet (a later sweep will catch it).
+
+    Returns True when a row was updated. Idempotent: re-running writes the same
+    authoritative figures.
+    """
+    values = {
+        "commission_amount": patch.commission_amount,
+        "payment_fee": patch.payment_fee,
+        "marketing_fee": patch.marketing_fee,
+        "net_payable": patch.net_payable,
+        # gross_sales is COALESCEd, never lowered: the sales feed's basket is the
+        # source of truth for gross; the settlement only supplies it when the sale
+        # never carried one.
+        "gross_sales": func.coalesce(AggregatorOrder.gross_sales, patch.gross_sales),
+        "updated_at": utcnow(),
+    }
+    result = await db.execute(
+        sql_update(AggregatorOrder)
+        .where(
+            AggregatorOrder.channel == channel,
+            AggregatorOrder.external_order_id == patch.external_order_id,
+        )
+        .values(**values)
+    )
+    return (result.rowcount or 0) > 0
 
 
 async def ingest_keeta_payloads(db: AsyncSession, payloads: list[dict]) -> int:
@@ -1132,11 +1171,33 @@ async def _persist_channel_mode(
         await _upsert_statement(db, channel, statement)
     for payout in finance.payouts:
         await _upsert_payout(db, channel, payout)
+    # Careem's per-order fees arrive only on the settlement; patch them onto the
+    # already-stored order (fee columns only). Isolated per order with a SAVEPOINT
+    # for the same reason the sales loop is: asyncpg aborts the whole transaction
+    # on the first failure, so one bad patch must not roll back the batch.
+    fees_patched = 0
+    for patch in finance.order_fee_updates:
+        try:
+            async with db.begin_nested():
+                if await update_order_fees(db, channel, patch):
+                    fees_patched += 1
+        except _SYSTEMIC_DB_ERRORS:
+            raise
+        except Exception:  # noqa: BLE001 — one bad patch must not stop the rest
+            logger.exception(
+                "aggregator %s finance: order %s fee patch failed",
+                channel,
+                patch.external_order_id,
+            )
     # The statement→payout rollup and reconciliation run channel-agnostically in
     # `sweep_reconcile_once`, so they cover the push channels (Keeta, Deliveroo
     # finance) that never reach this httpx sweep too.
-    written = len(finance.statements) + len(finance.payouts)
-    detail = {"statements": len(finance.statements), "payouts": len(finance.payouts)}
+    written = len(finance.statements) + len(finance.payouts) + fees_patched
+    detail = {
+        "statements": len(finance.statements),
+        "payouts": len(finance.payouts),
+        "order_fees": fees_patched,
+    }
     return written, finance.truncation_note, detail
 
 
