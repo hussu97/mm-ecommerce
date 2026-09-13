@@ -29,7 +29,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.aggregator import (
@@ -309,11 +309,26 @@ async def settlement_reconciliation(
     ).all()
     order_agg = {sid: (net, cnt, promoted) for sid, net, cnt, promoted in order_rows}
 
-    # Settlement side, grouped: Σ amount and line count over order-grain lines.
+    # Settlement side, grouped per statement. `settled_total` must be the amount
+    # PAYABLE, to compare against the statement's declared net and the orders' own
+    # net — so it sums ONLY the per-order net/settlement lines. Summing every
+    # order-grain line (as before) double-counted, because each order emits a
+    # gross line, its fee lines AND its net line: for Talabat (fees negative, gross
+    # and net positive) the sum is ≈ 2×net, so `settled_vs_statement_variance`
+    # fired on essentially every statement. `lines_count` counts the DISTINCT
+    # orders the statement itemised (one net line each), which is what it is shown
+    # against `orders_count` to mean.
     line_tbl = AggregatorStatementLine
+    lt = func.lower(func.coalesce(line_tbl.line_type, ""))
+    fc = func.lower(func.coalesce(line_tbl.fee_category, ""))
+    is_net = or_(fc == "net_payable", lt.in_(["net_payable", "payout", "settlement"]))
     line_rows = (
         await db.execute(
-            select(line_tbl.statement_id, func.sum(line_tbl.amount), func.count())
+            select(
+                line_tbl.statement_id,
+                func.sum(line_tbl.amount).filter(is_net),
+                func.count(distinct(line_tbl.external_order_id)),
+            )
             .where(
                 line_tbl.channel == channel,
                 line_tbl.statement_id.in_(statement_ids),

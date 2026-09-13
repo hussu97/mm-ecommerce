@@ -19,9 +19,10 @@ upserted idempotently.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
@@ -36,6 +37,7 @@ from app.models.aggregator import (
     MATCH_MATCHED,
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
+    MATCH_UNMATCHED_MM,
     AggregatorOrder,
     AggregatorOrderItem,
     AggregatorReconciliation,
@@ -44,6 +46,7 @@ from app.models.base import utcnow
 from app.models.grubops import GrubOpsLocationMap
 from app.models.grubops_order import GrubOpsOrderMap
 from app.models.order import Order, OrderItem
+from app.models.pos_order import OrderSourceEnum
 from app.services.aggregators import _isolation, policy
 from app.services.couriers import courier_catalog
 
@@ -572,4 +575,109 @@ async def reconcile_channel(db: AsyncSession, channel: str, *, run_id=None) -> i
             logger.exception(
                 "reconcile %s order %s failed", channel, agg.external_order_id
             )
+    return count
+
+
+#: How far back the reverse sweep looks. It is a set difference, not a change
+#: cursor like the forward pass, so it is bounded by time rather than by
+#: `updated_at`. Comfortably wider than any settlement lag we act on.
+_REVERSE_LOOKBACK_DAYS = 45
+
+
+async def reconcile_reverse_channel(
+    db: AsyncSession,
+    channel: str,
+    *,
+    run_id=None,
+    since: datetime | None = None,
+) -> int:
+    """Surface MM aggregator orders the portal scrape never captured.
+
+    The forward `reconcile_channel` walks the *aggregator* orders, so it can only
+    represent a sale the scrape actually saw. An order that reached MM ONLY through
+    GrubOps (the marketplace's own order push) and was missed by the portal scrape
+    has no `aggregator_order` at all — nothing on the maker side points at it — so
+    `unmatched_mm`, the status defined for exactly this, was never written and a
+    missed sale was invisible to reconciliation.
+
+    This finds those orders — MM orders on this channel with no aggregator_order
+    linking to them — and records an `unmatched_mm` row flagged `scrape_missing`:
+    the one automated signal that a sale was missed rather than merely unmatched.
+    Bounded to the recent window. Converges: once the scrape ingests the order,
+    promotion links an aggregator_order to it and the next pass clears the row.
+    """
+    recon = AggregatorReconciliation
+    cutoff = since or (utcnow() - timedelta(days=_REVERSE_LOOKBACK_DAYS))
+    # The canonical spellings the MM order stores in `aggregator_channel` (e.g.
+    # noon → 'noon'/'noon_food') — the same set GrubOps adopt matches on, NOT the
+    # GrubTech display labels (`grubops_channel_names`, which the STATEMENT lines
+    # use). Getting this wrong silently matches nothing.
+    names = aggregator_channel_match_values_for_name(channel)
+
+    # Every MM order an aggregator_order already points at — "seen by the scrape".
+    linked = select(AggregatorOrder.mm_order_id).where(
+        AggregatorOrder.mm_order_id.isnot(None)
+    )
+
+    # Clear prior unmatched_mm rows the scrape has since caught up on (their order
+    # now has an aggregator_order link), so the signal stays live rather than a
+    # growing pile of resolved rows.
+    await db.execute(
+        delete(recon).where(
+            recon.channel == channel,
+            recon.match_status == MATCH_UNMATCHED_MM,
+            recon.mm_order_id.in_(linked),
+        )
+    )
+
+    missing = list(
+        await db.scalars(
+            select(Order).where(
+                Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.aggregator_channel.in_(names),
+                Order.created_at >= cutoff,
+                Order.id.notin_(linked),
+            )
+        )
+    )
+
+    count = 0
+    for order in missing:
+        # The marketplace id the forward pass would key on if it ever scraped this
+        # order, so the two converge on one row rather than duplicating.
+        key = order.external_reference or order.aggregator_display_code or str(order.id)
+        values = {
+            "channel": channel,
+            "external_order_id": key,
+            "branch_id": order.branch_id,
+            "aggregator_order_id": None,
+            "mm_order_id": order.id,
+            "match_status": MATCH_UNMATCHED_MM,
+            "total_mm": order.total,
+            "flags": ["scrape_missing"],
+            "run_id": run_id,
+            "reconciled_at": utcnow(),
+        }
+        update = {
+            k: v for k, v in values.items() if k not in ("channel", "external_order_id")
+        }
+        update["updated_at"] = utcnow()
+        try:
+            async with db.begin_nested():
+                await db.execute(
+                    pg_insert(AggregatorReconciliation)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        constraint="uq_aggregator_reconciliation",
+                        set_=update,
+                        # Never clobber a real forward match on the same key: only
+                        # refresh a row that is already an unmatched_mm placeholder.
+                        where=recon.match_status == MATCH_UNMATCHED_MM,
+                    )
+                )
+            count += 1
+        except _isolation._SYSTEMIC_DB_ERRORS:
+            raise
+        except Exception:  # noqa: BLE001 — one order must not stop the pass
+            logger.exception("reverse reconcile %s order %s failed", channel, order.id)
     return count

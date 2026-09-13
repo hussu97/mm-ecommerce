@@ -39,6 +39,7 @@ from app.models.aggregator import (
     MATCH_MATCHED,
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
+    MATCH_UNMATCHED_MM,
     AggregatorBranchMap,
     AggregatorOrder,
     AggregatorReconciliation,
@@ -628,6 +629,7 @@ async def reconciliation_summary(
         func.count()
         .filter(r.match_status == MATCH_NO_MAKER_SIDE)
         .label("no_maker_side"),
+        func.count().filter(r.match_status == MATCH_UNMATCHED_MM).label("unmatched_mm"),
         func.count().filter(r.item_flag.is_(True)).label("item_flags"),
         func.count().filter(r.refund_flag.is_(True)).label("refund_flags"),
         func.sum(r.commission_actual).label("commission_actual_sum"),
@@ -651,6 +653,7 @@ async def reconciliation_summary(
             matched=row.matched,
             unmatched_agg=row.unmatched_agg,
             no_maker_side=row.no_maker_side,
+            unmatched_mm=row.unmatched_mm,
             item_flags=row.item_flags,
             refund_flags=row.refund_flags,
             commission_actual_sum=row.commission_actual_sum,
@@ -666,6 +669,7 @@ async def reconciliation_summary(
         matched=totals_row.matched,
         unmatched_agg=totals_row.unmatched_agg,
         no_maker_side=totals_row.no_maker_side,
+        unmatched_mm=totals_row.unmatched_mm,
         item_flags=totals_row.item_flags,
         refund_flags=totals_row.refund_flags,
         commission_actual_sum=totals_row.commission_actual_sum,
