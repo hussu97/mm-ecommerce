@@ -8931,12 +8931,8 @@ export interface components {
             channel: string;
             /** Commission Actual */
             commission_actual?: string | null;
-            /** Commission Expected */
-            commission_expected?: string | null;
             /** Commission Rate Effective */
             commission_rate_effective?: string | null;
-            /** Commission Variance */
-            commission_variance?: string | null;
             /** External Order Id */
             external_order_id: string;
             /** Flags */
@@ -10968,10 +10964,6 @@ export interface components {
         CourierResponse: {
             /** Code */
             code: string;
-            /** Commission Fixed */
-            commission_fixed?: string | null;
-            /** Commission Percent */
-            commission_percent?: string | null;
             /** Is Active */
             is_active: boolean;
             /**
@@ -10981,10 +10973,6 @@ export interface components {
             is_aggregator: boolean;
             /** Name */
             name: string;
-            /** Payment Fee Fixed */
-            payment_fee_fixed?: string | null;
-            /** Payment Fee Percent */
-            payment_fee_percent?: string | null;
             /** Unbatched Promise Days */
             unbatched_promise_days: number;
             /** Unbatched Promise Kind */
@@ -11002,16 +10990,8 @@ export interface components {
          *     the address of the row, not one of its editable fields.
          */
         CourierUpdate: {
-            /** Commission Fixed */
-            commission_fixed?: number | string | null;
-            /** Commission Percent */
-            commission_percent?: number | string | null;
             /** Is Active */
             is_active?: boolean | null;
-            /** Payment Fee Fixed */
-            payment_fee_fixed?: number | string | null;
-            /** Payment Fee Percent */
-            payment_fee_percent?: number | string | null;
             /** Unbatched Promise Days */
             unbatched_promise_days?: number | null;
             /** Unbatched Promise Kind */
@@ -17081,8 +17061,6 @@ export interface components {
             channel: string;
             /** Commission Actual Sum */
             commission_actual_sum?: string | null;
-            /** Commission Variance Count */
-            commission_variance_count: number;
             /** Item Flags */
             item_flags: number;
             /** Matched */

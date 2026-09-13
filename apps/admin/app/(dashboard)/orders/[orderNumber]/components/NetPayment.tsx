@@ -41,12 +41,15 @@ export function NetPayment({
           <span>-{formatCurrency(economics.aggregator_fee)}</span>
         </div>
       ) : order.source === 'aggregator' ? (
-        /* A marketplace whose rate nobody has supplied. Said plainly, with the
-           screen that fixes it named — a blank here is a setup gap, and it
-           makes every figure below it wrong in the flattering direction. */
-        <div className="flex justify-between text-xs font-body text-amber-600">
+        /* A marketplace order whose settlement statement has not been scraped
+           yet — the fee is the marketplace's to report, and some channels
+           settle later (Careem monthly). Not a setup gap; it fills in once the
+           statement lands. */
+        <div className="flex justify-between text-xs font-body text-gray-400">
           <span>Marketplace commission</span>
-          <span title="Set it under Delivery → Estimates">Rate not set</span>
+          <span title="Filled in from the channel's settlement statement, once scraped">
+            Awaiting statement
+          </span>
         </div>
       ) : economics.courier_cost !== null ? (
         <div className="flex justify-between text-xs font-body text-gray-500">
