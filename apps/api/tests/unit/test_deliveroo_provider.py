@@ -903,3 +903,48 @@ def test_every_login_path_persists_through_the_one_helper():
         assert "upsert_bootstrap" not in src, (
             f"{name} must not write the session itself"
         )
+
+
+@pytest.mark.asyncio
+async def test_post_login_impersonates_and_carries_cf_clearance():
+    """The credential mint must replay over the SAME impersonating transport the
+    data calls use, carrying the prior session's Cloudflare cookies. A plain
+    `httpx` POST with no `cf_clearance` is what Cloudflare intermittently 403'd —
+    which left the server-side re-mint unable to self-heal and made the headed
+    worker the only recovery, so every hours sweep that raced ahead of its heal
+    recorded a "deliveroo returned 401" failure."""
+    from types import SimpleNamespace
+
+    import app.services.providers.deliveroo_provider as dp
+
+    client = DeliverooClient()
+    prev = LoadedSession(
+        channel="deliveroo",
+        account_ref="",
+        cookies={"token": "old-jwt", "cf_clearance": "CFTOKEN"},
+        tokens={"access_token": "old-jwt"},
+    )
+    captured: dict = {}
+
+    async def fake_curl(
+        self, method, url, headers, params, json_body, data, *, files=None, timeout=None
+    ):
+        captured.update(method=method, url=url, headers=headers, json_body=json_body)
+        return SimpleNamespace(status_code=200, json=lambda: {})
+
+    def _boom(*a, **k):  # httpx must NOT be reached on the impersonation path
+        raise AssertionError("credential mint fell back to plain httpx")
+
+    with (
+        patch.object(dp, "_HAS_CURL_CFFI", True),
+        patch.object(dp.DeliverooClient, "_curl_request", fake_curl),
+        patch.object(dp.httpx, "AsyncClient", _boom),
+    ):
+        resp = await client._post_login(prev, {"email": "a@b.com", "password": "pw"})
+
+    assert resp.status_code == 200
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/api/session")
+    assert captured["json_body"] == {"email": "a@b.com", "password": "pw"}
+    # The prior session's anti-bot cookies ride along so Cloudflare clears the mint.
+    assert "cf_clearance=CFTOKEN" in captured["headers"]["Cookie"]

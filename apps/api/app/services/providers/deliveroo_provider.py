@@ -34,6 +34,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +68,7 @@ from app.services.providers._agg_parse import DUBAI_TZ as _BUSINESS_TZ
 from app.services.providers._agg_parse import first_present as _first
 from app.services.providers._agg_parse import parse_money as _num
 from app.services.providers.aggregator_base import (
+    _HAS_CURL_CFFI,
     AggregatorAuthError,
     AggregatorUnavailableError,
     BaseAggregatorClient,
@@ -723,6 +725,42 @@ class DeliverooClient(BaseAggregatorClient):
             await db.commit()
             return await session_store.load(db, self.channel)
 
+    async def _post_login(
+        self, previous: LoadedSession | None, payload: dict[str, str]
+    ) -> Any:
+        """POST the credential mint through the SAME transport the rest of the
+        provider uses, carrying the prior session's anti-bot cookies.
+
+        Partner Hub is Cloudflare-fronted (`uses_tls_impersonation`); a plain
+        `httpx` POST with no cookies reaches `/api/session` with a non-browser TLS
+        fingerprint and no `cf_clearance`, which Cloudflare intermittently 403s. That
+        left the server-side re-mint unable to self-heal a server-invalidated token,
+        so the headed worker was the only recovery and every hours sweep that raced
+        ahead of its heal recorded a "deliveroo returned 401" failure (~hourly). Mint
+        over the impersonating transport with the carried cookies — the same way
+        `_curl_request` replays every other call, and the way the browser logs in.
+        """
+        headers = {
+            "User-Agent": _BROWSER_UA,
+            "Accept": "application/json",
+            "Accept-Language": "en-GB,en;q=0.9,ar;q=0.8",
+            "Origin": _HUB,
+            "Referer": f"{_HUB}/login",
+            "Content-Type": "application/json",
+        }
+        cookies = dict((previous.cookies if previous else None) or {})
+        if self.uses_tls_impersonation and _HAS_CURL_CFFI:
+            cookie = self.cookie_header(cookies)
+            if cookie:
+                headers["Cookie"] = cookie
+            return await self._curl_request(
+                "POST", _LOGIN_URL, headers, None, payload, None, timeout=self._timeout
+            )
+        async with httpx.AsyncClient(timeout=self._timeout, http2=True) as client:
+            return await client.post(
+                _LOGIN_URL, headers=headers, json=payload, cookies=cookies or None
+            )
+
     async def _login(
         self, db: AsyncSession, previous: LoadedSession | None
     ) -> LoadedSession | None:
@@ -736,21 +774,9 @@ class DeliverooClient(BaseAggregatorClient):
             # token that will 401 anyway.
             logger.warning("deliveroo: no stored email/password; cannot HTTP-login")
             return None
-        import httpx
-
-        async with httpx.AsyncClient(timeout=self._timeout, http2=True) as client:
-            response = await client.post(
-                _LOGIN_URL,
-                headers={
-                    "User-Agent": _BROWSER_UA,
-                    "Accept": "application/json",
-                    "Accept-Language": "en-GB,en;q=0.9,ar;q=0.8",
-                    "Origin": _HUB,
-                    "Referer": f"{_HUB}/login",
-                    "Content-Type": "application/json",
-                },
-                json={"email": account.email, "password": account.password},
-            )
+        response = await self._post_login(
+            previous, {"email": account.email, "password": account.password}
+        )
         if response.status_code >= 400:
             # A hard login failure is a dead credential, not a transient blip.
             # Returning the *previous* (stale) session here is exactly what made
