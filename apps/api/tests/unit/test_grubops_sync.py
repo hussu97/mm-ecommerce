@@ -50,10 +50,16 @@ def _desired(*, available: bool, until: datetime | None = None) -> svc.Desired:
     )
 
 
-def _state(*, available: bool | None, until: datetime | None = None):
+def _state(
+    *,
+    available: bool | None,
+    until: datetime | None = None,
+    pushed_at: datetime | None = None,
+):
     class _S:
         last_pushed_available = available
         last_pushed_until = until
+        last_pushed_at = pushed_at
 
     return _S()
 
@@ -161,6 +167,30 @@ def test_a_mapping_never_pushed_pushes_only_when_out():
     assert svc.needs_push(_state(available=None), _desired(available=False)) is True
     assert svc.needs_push(None, _desired(available=True)) is False
     assert svc.needs_push(_state(available=None), _desired(available=True)) is False
+
+
+def test_a_stale_out_of_stock_is_re_asserted():
+    """
+    GrubOps can quietly forget an out-of-stock (a menu republish or a daily
+    reset flips a still-out item back on), and a diff against our own last push
+    would never notice. So an item we still believe is out is re-pushed once the
+    last push has aged — the drift that put FG0026 back on sale at Sharjah.
+    """
+    now = datetime.now(timezone.utc)
+    fresh = _state(available=False, pushed_at=now - timedelta(minutes=30))
+    stale = _state(available=False, pushed_at=now - timedelta(hours=4))
+    out = _desired(available=False)
+
+    assert svc.needs_push(fresh, out, now=now) is False
+    assert svc.needs_push(stale, out, now=now) is True
+
+
+def test_a_stale_available_item_is_not_re_asserted():
+    """The upkeep is for the out side only — an available item already matches
+    GrubOps' default and its `available` endpoint rejects a needless re-push."""
+    now = datetime.now(timezone.utc)
+    stale_available = _state(available=True, pushed_at=now - timedelta(days=30))
+    assert svc.needs_push(stale_available, _desired(available=True), now=now) is False
 
 
 def _client() -> GrubOpsClient:

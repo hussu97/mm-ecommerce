@@ -31,7 +31,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -187,7 +187,24 @@ def available_body(
     return _item_info(desired, partner_id=partner_id, location_id=location_id)
 
 
-def needs_push(state: GrubOpsSyncState | None, desired: Desired) -> bool:
+#: GrubOps forgets an out-of-stock without telling us — a menu republish or a
+#: reset on their side flips a still-out item back on (the drift that put a
+#: sold-out cake back on sale at Sharjah on 2026-09-13, an item last pushed out
+#: three weeks earlier). A diff against what we last *pushed* never sees it: our
+#: record still says "we said out". So an item we believe is out is re-asserted
+#: once its last push has aged past this, which bounds how long a silent reset on
+#: their side can leave the kitchen overselling. Only the unavailable side needs
+#: it — an available item already matches GrubOps' default, and its `available`
+#: endpoint rejects a re-push of something not currently marked out.
+_REASSERT_UNAVAILABLE_AFTER = timedelta(hours=3)
+
+
+def needs_push(
+    state: GrubOpsSyncState | None,
+    desired: Desired,
+    *,
+    now: datetime | None = None,
+) -> bool:
     """Whether GrubOps has been told this already.
 
     A missing row means "never told", which is not the same as "told it was
@@ -201,15 +218,24 @@ def needs_push(state: GrubOpsSyncState | None, desired: Desired) -> bool:
     default, so the first tick says nothing about it and reaches steady state
     with zero calls.
 
-    Only the flip matters. A moved return time used to count as a change, back
-    when the return time was sent; it is not sent any more, so pushing on it
-    would be a call that could not alter anything on their side — and
-    `end_of_day` recomputes a few milliseconds off on every tick, so it would
-    have been a call every two minutes until closing.
+    The flip matters, and so does age: an item still out is re-asserted once its
+    last push is older than ``_REASSERT_UNAVAILABLE_AFTER``, because GrubOps can
+    quietly forget an out-of-stock and a diff against our own last push would
+    never catch it. A moved return time is still ignored — it is not sent any
+    more, and `end_of_day` recomputes a few milliseconds off on every tick, so
+    pushing on it would be a call every two minutes that changes nothing.
     """
     if state is None or state.last_pushed_available is None:
         return not desired.available
-    return state.last_pushed_available != desired.available
+    if state.last_pushed_available != desired.available:
+        return True
+    if not desired.available:
+        last = getattr(state, "last_pushed_at", None)
+        if last is not None:
+            now = now or datetime.now(timezone.utc)
+            if now - last >= _REASSERT_UNAVAILABLE_AFTER:
+                return True
+    return False
 
 
 async def send_deltas(
