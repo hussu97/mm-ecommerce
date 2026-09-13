@@ -400,6 +400,11 @@ def _wire_login(monkeypatch, *, status, body):
         return SimpleNamespace(email="e", password="p", extras={"org_id": "497912"})
 
     monkeypatch.setattr("app.services.aggregators.account_store.load", fake_account)
+    # `_post_login` prefers the curl_cffi impersonation transport when it is
+    # installed (it is, in CI); pin the httpx fallback so this fake `AsyncClient`
+    # is the one that answers. The org/cookie handling under test lives in `_login`
+    # and is transport-independent; the curl path is covered in test_deliveroo_provider.
+    monkeypatch.setattr(dp, "_HAS_CURL_CFFI", False)
     monkeypatch.setattr(
         httpx,
         "AsyncClient",
