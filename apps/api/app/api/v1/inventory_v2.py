@@ -152,6 +152,8 @@ async def put_recipe_draft(
             recipe_service.RecipeLineInput(**line.model_dump())
             for line in data.ingredients
         ],
+        basis=data.basis,
+        batch_yield=data.batch_yield,
         source=data.source,
         source_payload_hash=data.source_payload_hash,
         source_metadata=data.source_metadata,

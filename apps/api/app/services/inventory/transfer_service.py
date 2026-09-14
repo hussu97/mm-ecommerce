@@ -846,6 +846,9 @@ async def produce(
                 )
             )
     else:
+        # Legacy InventoryItemIngredient BOM — always per-unit. Batch basis is a
+        # versioned-recipe (v2) concept only, so this fallback multiplies straight
+        # by the output count with no yield divisor.
         recipe_lines = [
             (
                 line.item_id,

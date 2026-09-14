@@ -16922,6 +16922,14 @@ export interface components {
         };
         /** RecipeDraftRequest */
         RecipeDraftRequest: {
+            /**
+             * Basis
+             * @default unit
+             * @enum {string}
+             */
+            basis: "unit" | "batch";
+            /** Batch Yield */
+            batch_yield?: number | string | null;
             /** Ingredients */
             ingredients: components["schemas"]["VersionedRecipeLineInput"][];
             /**
@@ -17100,6 +17108,10 @@ export interface components {
             activated_at: string | null;
             /** Activated By */
             activated_by: string | null;
+            /** Basis */
+            basis: string;
+            /** Batch Yield */
+            batch_yield: string | null;
             /**
              * Created At
              * Format: date-time

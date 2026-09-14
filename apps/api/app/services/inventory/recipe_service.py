@@ -24,6 +24,7 @@ from app.models.inventory import InventoryItem
 from app.models.inventory_v2 import (
     InventoryTrackingModeEnum,
     Recipe,
+    RecipeBasisEnum,
     RecipeLine,
     RecipeOwnerKindEnum,
     RecipeVersion,
@@ -141,16 +142,37 @@ async def active_version(
     return (await db.execute(stmt)).scalars().unique().one_or_none()
 
 
+def _normalise_basis(
+    basis: str, batch_yield: Decimal | None
+) -> tuple[str, Decimal | None]:
+    """Validate the batch fields and coerce them to a canonical pair.
+
+    'unit' recipes never carry a yield; 'batch' recipes require a positive one.
+    """
+    if basis not in (RecipeBasisEnum.UNIT.value, RecipeBasisEnum.BATCH.value):
+        raise BadRequestError(f"Unknown recipe basis '{basis}'")
+    if basis == RecipeBasisEnum.BATCH.value:
+        if batch_yield is None or Decimal(str(batch_yield)) <= 0:
+            raise BadRequestError(
+                "A batch recipe needs a batch yield greater than zero"
+            )
+        return basis, Decimal(str(batch_yield))
+    return basis, None
+
+
 async def create_draft(
     db: AsyncSession,
     *,
     kind: str,
     owner_id: uuid.UUID,
     lines: Iterable[RecipeLineInput],
+    basis: str = RecipeBasisEnum.UNIT.value,
+    batch_yield: Decimal | None = None,
     source: str = "mm",
     source_payload_hash: str | None = None,
     source_metadata: dict[str, Any] | None = None,
 ) -> RecipeVersion:
+    basis, batch_yield = _normalise_basis(basis, batch_yield)
     await _assert_owner_exists(db, kind, owner_id)
     recipe = await get_recipe(db, kind, owner_id)
     if recipe is None:
@@ -205,6 +227,8 @@ async def create_draft(
             recipe_id=recipe.id,
             version_number=latest + 1,
             status=RecipeVersionStatusEnum.DRAFT.value,
+            basis=basis,
+            batch_yield=batch_yield,
             source=source,
             source_payload_hash=source_payload_hash,
             source_metadata=source_metadata or {},
@@ -223,6 +247,8 @@ async def create_draft(
         await db.execute(
             delete(RecipeLine).where(RecipeLine.recipe_version_id == existing_draft.id)
         )
+        existing_draft.basis = basis
+        existing_draft.batch_yield = batch_yield
         existing_draft.source = source
         existing_draft.source_payload_hash = source_payload_hash
         existing_draft.source_metadata = source_metadata or {}
@@ -366,6 +392,7 @@ async def _validate_candidate(db: AsyncSession, candidate: RecipeVersion) -> Rec
     """Validate a draft without publishing it or changing recipe history."""
     if not candidate.lines:
         raise BadRequestError("A recipe must contain at least one inventory item")
+    _normalise_basis(candidate.basis, candidate.batch_yield)
 
     candidate_recipe = await db.get(Recipe, candidate.recipe_id)
     if candidate_recipe is None:
@@ -467,6 +494,15 @@ async def expand_owner(
                 f"No active recipe for {owner_kind.replace('_', ' ')} {current_owner_id}"
             )
         used_versions.add(version.id)
+        # A batch recipe's lines make ``batch_yield`` owner units, so the demand
+        # for this owner is divided by the yield before its lines are drawn. This
+        # composes through nested phantom sub-recipes: each version divides by its
+        # own yield. Output stays in expanded ingredient units — ledger and
+        # reports are unaffected.
+        if version.basis == RecipeBasisEnum.BATCH.value and version.batch_yield:
+            version_scale = Decimal(str(version.batch_yield))
+            gross_scale = gross_scale / version_scale
+            net_scale = net_scale / version_scale
         for recipe_line in sorted(version.lines, key=lambda value: value.display_order):
             if order_type and order_type in (recipe_line.inactive_in_order_types or []):
                 continue

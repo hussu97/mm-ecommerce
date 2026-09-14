@@ -57,6 +57,21 @@ class RecipeVersionStatusEnum(str, enum.Enum):
     RETIRED = "retired"
 
 
+class RecipeBasisEnum(str, enum.Enum):
+    """Whether a version's lines describe one owner unit or one batch.
+
+    ``unit`` (the default and every pre-existing version): the lines are the
+    ingredients for a single owner unit. ``batch``: the lines are the
+    ingredients for one batch, and ``RecipeVersion.batch_yield`` says how many
+    owner units that batch makes — so consuming N units draws ``N / batch_yield``
+    of the lines. Set per version, so a recipe can move between the two across
+    versions.
+    """
+
+    UNIT = "unit"
+    BATCH = "batch"
+
+
 class InventorySourceEventStatusEnum(str, enum.Enum):
     PENDING = "pending"
     PROCESSING = "processing"
@@ -223,6 +238,18 @@ class RecipeVersion(Base, UUIDMixin, TimestampMixin):
             "status IN ('draft', 'active', 'retired')",
             name="ck_recipe_version_status",
         ),
+        CheckConstraint(
+            "basis IN ('unit', 'batch')",
+            name="ck_recipe_version_basis",
+        ),
+        CheckConstraint(
+            # NULL > 0 is NULL and a CHECK passes on NULL, so batch must assert
+            # the yield IS NOT NULL explicitly, or a batch row with no yield slips
+            # through.
+            "(basis = 'unit' AND batch_yield IS NULL) "
+            "OR (basis = 'batch' AND batch_yield IS NOT NULL AND batch_yield > 0)",
+            name="ck_recipe_version_batch_yield",
+        ),
     )
 
     recipe_id: Mapped[uuid.UUID] = mapped_column(
@@ -235,6 +262,13 @@ class RecipeVersion(Base, UUIDMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="draft", index=True
     )
+    #: 'unit' — lines are per one owner unit; 'batch' — lines are per one batch
+    #: that yields ``batch_yield`` owner units. See RecipeBasisEnum.
+    basis: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="unit"
+    )
+    #: Owner units one batch makes; set (and > 0) iff basis == 'batch'.
+    batch_yield: Mapped[Any | None] = mapped_column(Numeric(20, 8), nullable=True)
     source: Mapped[str] = mapped_column(String(30), nullable=False, server_default="mm")
     source_payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_metadata: Mapped[Any] = mapped_column(

@@ -735,6 +735,8 @@ async def _proposed_production_consumption(
                     .scalars()
                     .all()
                 )
+                # Legacy per-unit BOM; batch basis is a versioned-recipe concept,
+                # so this fallback scales straight by the produced delta.
                 for ingredient in legacy:
                     add(
                         ingredient.item_id,
