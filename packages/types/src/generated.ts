@@ -15623,6 +15623,8 @@ export interface components {
             activated_at: string | null;
             /** Activated By Name */
             activated_by_name: string | null;
+            /** Category Name */
+            category_name: string | null;
             /** Ingredients */
             ingredients: components["schemas"]["PosRecipeLine"][];
             /**

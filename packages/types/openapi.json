@@ -20966,6 +20966,17 @@
             ],
             "title": "Activated By Name"
           },
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
           "ingredients": {
             "items": {
               "$ref": "#/components/schemas/PosRecipeLine"
@@ -20999,6 +21010,7 @@
           "item_id",
           "name",
           "sku",
+          "category_name",
           "version_number",
           "activated_at",
           "activated_by_name",

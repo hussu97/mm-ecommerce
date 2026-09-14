@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import search as search_text
 from app.core.exceptions import BadRequestError
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryCategory, InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
@@ -323,6 +323,7 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 RecipeVersion.activated_at,
                 User.display_name,
                 User.email,
+                InventoryCategory.name.label("category_name"),
             )
             .select_from(InventoryItem)
             .join(
@@ -340,6 +341,11 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 ),
             )
             .join(User, User.id == RecipeVersion.activated_by, isouter=True)
+            .join(
+                InventoryCategory,
+                InventoryCategory.id == InventoryItem.category_id,
+                isouter=True,
+            )
             .where(
                 InventoryItem.deleted_at.is_(None),
                 InventoryItem.kind.in_(_MADE_INVENTORY_KINDS),
@@ -388,6 +394,7 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 "item_id": row.id,
                 "name": row.name,
                 "sku": row.sku,
+                "category_name": row.category_name,
                 "version_number": row.version_number,
                 "activated_at": row.activated_at,
                 "activated_by_name": row.display_name or row.email,

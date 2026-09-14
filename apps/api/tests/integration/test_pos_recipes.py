@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryCategory, InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
 from app.models.user import User
 from app.services.inventory import recipe_catalog_service
@@ -96,11 +96,14 @@ async def seeded(engine):
             display_name=f"{MARKER} Baker",
             is_staff=True,
         )
+        category = InventoryCategory(name=f"{MARKER} Bases")
         ingredient = _item(f"{MARKER} Flour", kind="raw_material")
         live = _item(f"{MARKER} Cake Base", kind="produced_good")  # active → shown
         draft_only = _item(f"{MARKER} Sauce", kind="semi_finished")  # draft → hidden
         inactive = _item(f"{MARKER} Old Base", kind="produced_good", is_active=False)
-        db.add_all([activator, ingredient, live, draft_only, inactive])
+        db.add_all([activator, category, ingredient, live, draft_only, inactive])
+        await db.flush()
+        live.category_id = category.id  # the shown card should carry its category
         await db.flush()
 
         await _recipe(
@@ -126,6 +129,7 @@ async def seeded(engine):
         await db.commit()
         ids = {
             "activator": activator.id,
+            "category": category.id,
             "ingredient": ingredient.id,
             "live": live.id,
             "draft_only": draft_only.id,
@@ -155,6 +159,11 @@ async def seeded(engine):
             )
         )
         await db.execute(User.__table__.delete().where(User.id == ids["activator"]))
+        await db.execute(
+            InventoryCategory.__table__.delete().where(
+                InventoryCategory.id == ids["category"]
+            )
+        )
         for trigger, table in (
             ("recipe_owner_immutable", "recipes"),
             ("recipe_version_immutable", "recipe_versions"),
@@ -181,6 +190,7 @@ async def test_only_active_made_items_appear(engine, seeded):
 async def test_card_carries_version_activator_and_lines(engine, seeded):
     (card,) = await _cards(engine)
     assert card["item_id"] == seeded["live"]
+    assert card["category_name"] == f"{MARKER} Bases"
     assert card["version_number"] == 1
     assert card["activated_by_name"] == f"{MARKER} Baker"
     assert card["activated_at"] is not None

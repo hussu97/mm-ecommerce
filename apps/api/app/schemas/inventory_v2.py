@@ -458,6 +458,9 @@ class PosRecipeCard(BaseModel):
     item_id: UUID
     name: str
     sku: str
+    #: The item's inventory category, or null if uncategorised. The tab groups
+    #: cards under this, categories by name then items by name within.
+    category_name: str | None
     version_number: int
     activated_at: datetime | None
     #: Who last activated this version — display name, else email; null if the
