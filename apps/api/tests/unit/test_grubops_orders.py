@@ -902,6 +902,7 @@ async def test_adopting_a_promotion_gapfill_applies_the_push_money():
         last_push_error=None,
     )
     db = AsyncMock()
+    db.add = MagicMock()  # add() is synchronous on a session — not a coroutine
     db.scalar = AsyncMock(return_value=adopted)  # the adopt lookup finds the gap-fill
 
     with (
