@@ -11480,6 +11480,10 @@ export interface components {
              */
             generated_at: string;
             ops: components["schemas"]["DashboardOps"];
+            /** Series */
+            series: components["schemas"]["SeriesPoint"][];
+            /** Series Granularity */
+            series_granularity: string;
             summary: components["schemas"]["DashboardSummary"];
             /** Timezone */
             timezone: string;
@@ -17782,6 +17786,22 @@ export interface components {
                     [key: string]: string;
                 };
             } | null;
+        };
+        /**
+         * SeriesPoint
+         * @description One point on the sales/orders trend line.
+         *
+         *     `bucket` is the shop-local start of the interval (ISO 8601) — an hour for the
+         *     live day or a single-day range, a calendar day for a multi-day range. Every
+         *     interval in the window is present, zero-filled, so the line is continuous.
+         */
+        SeriesPoint: {
+            /** Bucket */
+            bucket: string;
+            /** Orders */
+            orders: number;
+            /** Revenue */
+            revenue: number;
         };
         /** SetAvailabilityRequest */
         SetAvailabilityRequest: {

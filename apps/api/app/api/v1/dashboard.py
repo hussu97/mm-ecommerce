@@ -20,9 +20,10 @@ move, and five-minute-stale headline figures read as a bug, not a saving.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import Text, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -54,6 +55,7 @@ from app.schemas.dashboard import (
     DashboardOps,
     DashboardSummary,
     DashboardTodayResponse,
+    SeriesPoint,
 )
 from app.services.couriers import courier_catalog
 from app.services.orders import order_query
@@ -173,6 +175,68 @@ async def _window_totals(
         )
     ).one()
     return int(result[0]), float(money(result[1]))
+
+
+async def _series(
+    db: AsyncSession,
+    *,
+    start: datetime,
+    end: datetime,
+    tz_name: str,
+    granularity: str,
+    statuses=None,
+    couriers=None,
+) -> list[SeriesPoint]:
+    """Orders and revenue over time, one point per interval across the window.
+
+    Buckets on the shop's local clock (`created_at` is UTC, so it is shifted into
+    the shop timezone before truncating) — by hour for the live day or a
+    single-day range, by day for a multi-day range. Follows the same
+    status/courier selection as every other figure, so the trend line moves with
+    the page filters. Every interval in the window is emitted, zero-filled, so the
+    line is continuous even on a quiet hour or day.
+    """
+    # `tz_name`/`granularity` are cast to text so asyncpg sends typed params —
+    # an untyped bind leaves PG unable to resolve the overloaded timezone()/
+    # date_trunc() signatures and the query fails at runtime.
+    local = func.timezone(cast(tz_name, Text), Order.created_at)
+    bucket = func.date_trunc(cast(granularity, Text), local)
+    rows = (
+        await db.execute(
+            select(
+                bucket.label("b"),
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0),
+            )
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                *_filters(statuses, couriers),
+            )
+            .group_by("b")
+            .order_by("b")
+        )
+    ).all()
+    found = {b: (int(c), float(money(r))) for b, c, r in rows}
+
+    tz = ZoneInfo(tz_name)
+    start_local = start.astimezone(tz).replace(tzinfo=None)
+    end_local = end.astimezone(tz).replace(tzinfo=None)
+    if granularity == "hour":
+        cur = start_local.replace(minute=0, second=0, microsecond=0)
+        step = timedelta(hours=1)
+    else:
+        cur = start_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        step = timedelta(days=1)
+
+    points: list[SeriesPoint] = []
+    while cur <= end_local:
+        orders, revenue = found.get(cur, (0, 0.0))
+        points.append(
+            SeriesPoint(bucket=cur.isoformat(), orders=orders, revenue=revenue)
+        )
+        cur += step
+    return points
 
 
 async def _by_branch(
@@ -453,6 +517,18 @@ async def dashboard_today(
         couriers=carriers,
     )
 
+    # Hourly for a single day (the live day or a from==to range), daily otherwise.
+    granularity = "day" if (to_date and to_date != from_date.isoformat()) else "hour"
+    series = await _series(
+        db,
+        start=start,
+        end=end,
+        tz_name=tz_name,
+        granularity=granularity,
+        statuses=picked,
+        couriers=carriers,
+    )
+
     ops = await _operational_snapshot(db, start=start, end=end, today=from_date)
 
     return DashboardTodayResponse(
@@ -467,6 +543,8 @@ async def dashboard_today(
         by_channel=by_channel,
         by_fulfillment=by_fulfillment,
         by_payment=by_payment,
+        series=series,
+        series_granularity=granularity,
         ops=ops,
     )
 

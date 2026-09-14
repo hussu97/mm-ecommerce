@@ -613,6 +613,14 @@ export interface DashboardOps {
   active_couriers: number;
 }
 
+/** One point on the dashboard sales/orders trend line. */
+export interface DashboardSeriesPoint {
+  /** Shop-local start of the interval (ISO 8601) — an hour or a day. */
+  bucket: string;
+  orders: number;
+  revenue: number;
+}
+
 export interface DashboardToday {
   business_date: string;
   /** The range end (ISO date), or null for the live single-day view. */
@@ -627,6 +635,10 @@ export interface DashboardToday {
   by_channel: DashboardBreakdownRow[];
   by_fulfillment: DashboardBreakdownRow[];
   by_payment: DashboardBreakdownRow[];
+  /** Orders and revenue over time, following the page's status/courier filters. */
+  series: DashboardSeriesPoint[];
+  /** Interval of each `series` point: `hour` (single day) or `day` (range). */
+  series_granularity: 'hour' | 'day';
   ops: DashboardOps;
 }
 

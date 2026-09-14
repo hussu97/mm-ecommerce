@@ -22,6 +22,19 @@ class BreakdownRow(BaseModel):
     revenue: float
 
 
+class SeriesPoint(BaseModel):
+    """One point on the sales/orders trend line.
+
+    `bucket` is the shop-local start of the interval (ISO 8601) — an hour for the
+    live day or a single-day range, a calendar day for a multi-day range. Every
+    interval in the window is present, zero-filled, so the line is continuous.
+    """
+
+    bucket: str
+    orders: int
+    revenue: float
+
+
 class CourierBreakdownRow(BaseModel):
     """One carrier's delivered orders and revenue — a courier scorecard.
 
@@ -103,4 +116,10 @@ class DashboardTodayResponse(BaseModel):
     by_fulfillment: list[BreakdownRow]
     #: Card vs cash on delivery.
     by_payment: list[BreakdownRow]
+    #: Orders and revenue over time, one point per interval across the window,
+    #: following the same status/courier selection as every other figure.
+    series: list[SeriesPoint]
+    #: The interval each `series` point spans: `hour` (live day / single day) or
+    #: `day` (multi-day range). Drives the axis and tooltip formatting.
+    series_granularity: str
     ops: DashboardOps

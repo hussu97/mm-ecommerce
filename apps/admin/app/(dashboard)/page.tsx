@@ -1,10 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { dashboardApi, ordersApi } from '@/lib/api';
-import type { DashboardToday, DashboardBreakdownRow, Order } from '@/lib/types';
+import type {
+  DashboardToday,
+  DashboardBreakdownRow,
+  DashboardSeriesPoint,
+  Order,
+} from '@/lib/types';
 import { Badge, LoadError } from '@/components/ui';
+import { BRAND } from '@/lib/brand';
 import { CourierMark } from '@/components/orders/CourierLogo';
 import {
   useOrderFilters,
@@ -16,6 +23,16 @@ import {
 } from '@/lib/order-filters';
 import { DateRangePresets } from '@/components/orders/DateRangePresets';
 import { formatCurrency, formatTime, formatTimeAgo, cn } from '@/lib/utils';
+
+// Recharts is client-only and heavy — lazy-load the pieces the trend charts use,
+// the same pattern the analytics page follows.
+const LineChart = dynamic(() => import('recharts').then(m => m.LineChart), { ssr: false });
+const Line = dynamic(() => import('recharts').then(m => m.Line), { ssr: false });
+const XAxis = dynamic(() => import('recharts').then(m => m.XAxis), { ssr: false });
+const YAxis = dynamic(() => import('recharts').then(m => m.YAxis), { ssr: false });
+const CartesianGrid = dynamic(() => import('recharts').then(m => m.CartesianGrid), { ssr: false });
+const Tooltip = dynamic(() => import('recharts').then(m => m.Tooltip), { ssr: false });
+const ResponsiveContainer = dynamic(() => import('recharts').then(m => m.ResponsiveContainer), { ssr: false });
 
 /** How often the live figures refetch themselves, in ms. */
 const REFRESH_MS = 60_000;
@@ -173,6 +190,87 @@ function BreakdownBars({ rows, empty }: { rows: DashboardBreakdownRow[]; empty: 
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Short axis tick for a bucket ISO — the hour for an hourly series, the day for
+ *  a daily one. The bucket is already shop-local, so parse it as local time. */
+function tickLabel(bucket: string, granularity: 'hour' | 'day'): string {
+  const d = new Date(bucket);
+  return granularity === 'hour'
+    ? d.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : d.toLocaleDateString('en-AE', { day: 'numeric', month: 'short' });
+}
+
+/** Full label for the tooltip header — the exact hour or the weekday + date. */
+function tooltipLabel(bucket: string, granularity: 'hour' | 'day'): string {
+  const d = new Date(bucket);
+  return granularity === 'hour'
+    ? d.toLocaleString('en-AE', {
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : d.toLocaleDateString('en-AE', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+const AXIS_TICK = { fontSize: 10, fontFamily: 'Jost, sans-serif', fill: '#9ca3af' } as const;
+
+/** One compact hover-able trend line — sales or orders — over the filtered window. */
+function TrendChart({
+  title,
+  series,
+  granularity,
+  dataKey,
+  color,
+  seriesName,
+  format,
+}: {
+  title: string;
+  series: DashboardSeriesPoint[];
+  granularity: 'hour' | 'day';
+  dataKey: 'revenue' | 'orders';
+  color: string;
+  seriesName: string;
+  format: (v: number) => string;
+}) {
+  return (
+    <div className="bg-white border border-gray-200 p-4">
+      <h3 className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-3">{title}</h3>
+      {series.length === 0 ? (
+        <p className="text-xs text-gray-400 font-body py-8 text-center">No orders in this window</p>
+      ) : (
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart data={series} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis
+              dataKey="bucket"
+              tick={AXIS_TICK}
+              tickFormatter={(b: string) => tickLabel(b, granularity)}
+              minTickGap={24}
+            />
+            <YAxis tick={AXIS_TICK} width={40} tickFormatter={(v: number) => String(v)} />
+            <Tooltip
+              formatter={(v: unknown) => [format(Number(v)), seriesName]}
+              labelFormatter={(b: unknown) => tooltipLabel(String(b), granularity)}
+              labelStyle={{ fontSize: 10 }}
+              contentStyle={{ fontSize: 11, borderColor: '#e5e7eb' }}
+            />
+            <Line
+              type="monotone"
+              dataKey={dataKey}
+              stroke={color}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
@@ -412,6 +510,33 @@ export default function DashboardPage() {
           loading={loading}
         />
       </div>
+
+      {/* Sales & orders over time — hourly for a single day, daily for a range.
+          Moves with every filter above (dates, statuses, couriers). */}
+      {!loading && data && (
+        <Section title={isRange ? 'Sales & Orders Over the Range' : 'Sales & Orders Through the Day'}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <TrendChart
+              title={isRange ? 'Revenue' : 'Revenue Today'}
+              series={data.series}
+              granularity={data.series_granularity}
+              dataKey="revenue"
+              color={BRAND.primary}
+              seriesName="Revenue"
+              format={formatCurrency}
+            />
+            <TrendChart
+              title={isRange ? 'Orders' : 'Orders Today'}
+              series={data.series}
+              granularity={data.series_granularity}
+              dataKey="orders"
+              color={BRAND.secondary}
+              seriesName="Orders"
+              format={(v) => String(v)}
+            />
+          </div>
+        </Section>
+      )}
 
       {/* Needs attention — the open operational work, right now */}
       <Section title="Needs Attention">

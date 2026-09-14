@@ -8517,6 +8517,17 @@
           "ops": {
             "$ref": "#/components/schemas/DashboardOps"
           },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/SeriesPoint"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "series_granularity": {
+            "title": "Series Granularity",
+            "type": "string"
+          },
           "summary": {
             "$ref": "#/components/schemas/DashboardSummary"
           },
@@ -8536,6 +8547,8 @@
           "by_channel",
           "by_fulfillment",
           "by_payment",
+          "series",
+          "series_granularity",
           "ops"
         ],
         "title": "DashboardTodayResponse",
@@ -27223,6 +27236,30 @@
           }
         },
         "title": "SectionUpdate",
+        "type": "object"
+      },
+      "SeriesPoint": {
+        "description": "One point on the sales/orders trend line.\n\n`bucket` is the shop-local start of the interval (ISO 8601) \u2014 an hour for the\nlive day or a single-day range, a calendar day for a multi-day range. Every\ninterval in the window is present, zero-filled, so the line is continuous.",
+        "properties": {
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "bucket",
+          "orders",
+          "revenue"
+        ],
+        "title": "SeriesPoint",
         "type": "object"
       },
       "SetAvailabilityRequest": {
