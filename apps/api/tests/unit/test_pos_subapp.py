@@ -54,6 +54,7 @@ def test_the_register_carries_what_a_till_needs():
         "/api/v1/staff",
         "/api/v1/tills",
         "/api/v1/pos/orders",
+        "/api/v1/pos/recipes",
         "/api/v1/products",
         "/api/v1/payment-methods",
         "/api/v1/printers",
