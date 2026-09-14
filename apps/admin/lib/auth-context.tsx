@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { authApi, ApiError } from './api';
+import { canAccessConsole } from './nav';
 import type { User } from './types';
 
 interface AuthContextType {
@@ -21,7 +22,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     authApi.me()
       .then(u => {
-        if (u.is_admin) setUser(u);
+        if (canAccessConsole(u)) setUser(u);
       })
       .catch(() => {/* no-op — no valid session */})
       .finally(() => setIsLoading(false));
@@ -29,16 +30,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await authApi.login(email, password);
-    if (!res.user.is_admin) {
-      throw new ApiError(403, 'You do not have admin access.');
+    if (!canAccessConsole(res.user)) {
+      throw new ApiError(403, 'You do not have console access.');
     }
     setUser(res.user);
   }, []);
 
   const loginWithPasskey = useCallback(async (email: string, credential: unknown) => {
     const res = await authApi.passkeyLoginVerify(email, credential);
-    if (!res.user.is_admin) {
-      throw new ApiError(403, 'You do not have admin access.');
+    if (!canAccessConsole(res.user)) {
+      throw new ApiError(403, 'You do not have console access.');
     }
     setUser(res.user);
   }, []);

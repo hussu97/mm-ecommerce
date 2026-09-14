@@ -42,8 +42,8 @@ export default function LoginPage() {
     setApiError('');
     try {
       const options = await authApi.adminLoginOptions(form.email);
-      if (!options.is_admin) {
-        throw new ApiError(403, 'This email does not have admin access.');
+      if (!options.can_access_console) {
+        throw new ApiError(403, 'This email does not have console access.');
       }
       setLoginOptions(options);
       setForm(f => ({ ...f, email: options.email, password: '' }));

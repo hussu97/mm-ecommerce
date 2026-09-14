@@ -8594,6 +8594,8 @@ export interface components {
         };
         /** AdminLoginOptionsResponse */
         AdminLoginOptionsResponse: {
+            /** Can Access Console */
+            can_access_console: boolean;
             /** Email */
             email: string;
             /** Has Passkey */

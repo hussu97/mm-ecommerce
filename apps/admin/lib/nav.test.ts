@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { NAV, canAccessNav, type NavEntry } from './nav';
+import { NAV, canAccessConsole, canAccessNav, type NavEntry } from './nav';
 
 const ADMIN = join(__dirname, '..');
 
@@ -59,5 +59,24 @@ describe('sidebar nav permissions', () => {
     expect(canAccessNav(orders, { is_superadmin: true, permissions: [] })).toBe(true);
     // No user at all sees nothing.
     expect(canAccessNav(orders, null)).toBe(false);
+  });
+});
+
+describe('console access gate', () => {
+  it('lets in a super-admin, or any staff member with a role permission', () => {
+    // A limited-role cashier (one permission) may enter and is then narrowed by
+    // canAccessNav — this is what "add cashier staff as console users" turns on.
+    expect(canAccessConsole({ permissions: ['inventory.transfers.manage'] })).toBe(true);
+    // Super-admin needs no enumerated permissions.
+    expect(canAccessConsole({ is_superadmin: true, permissions: [] })).toBe(true);
+  });
+
+  it('keeps out a customer (no role, no permissions) and the signed-out', () => {
+    // A shopper who authenticates on the shared /auth/login has no permissions,
+    // so the console door stays shut even though the token is valid.
+    expect(canAccessConsole({ permissions: [] })).toBe(false);
+    expect(canAccessConsole({ is_superadmin: false, permissions: [] })).toBe(false);
+    expect(canAccessConsole(null)).toBe(false);
+    expect(canAccessConsole(undefined)).toBe(false);
   });
 });

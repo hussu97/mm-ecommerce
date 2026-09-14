@@ -118,5 +118,20 @@ class User(Base, UUIDMixin, TimestampMixin):
         """
         return list(self.role.permissions or []) if self.role else []
 
+    @property
+    def can_access_console(self) -> bool:
+        """Whether this user may sign in to the admin console at all.
+
+        Console entry used to be the all-or-nothing `is_admin` flag, which both
+        opened the door and made every permission check moot. It is now a lower
+        bar: a super-admin always may, and so may any staff member whose role
+        grants at least one permission — the sidebar and the per-page gate
+        (F-ADM-7) then restrict them to exactly those screens, so a cashier
+        signs in and sees only what their role covers. A customer (no role, no
+        permissions) still may not, which is what keeps `/auth/login` — open to
+        every active account — from being a console door for shoppers.
+        """
+        return self.is_superadmin or bool(self.permissions)
+
     def __repr__(self) -> str:
         return f"<User {self.email}>"

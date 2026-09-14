@@ -45,6 +45,10 @@ export interface AdminLoginOptions {
   password_enabled: boolean;
   passkey_allowed: boolean;
   is_superadmin: boolean;
+  /** Whether this account may enter the console — a lower bar than `is_admin`:
+   *  any staff member with a role permission qualifies. The login form gates the
+   *  password step on this. */
+  can_access_console: boolean;
 }
 
 export interface AdminPasskey {

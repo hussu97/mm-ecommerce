@@ -294,6 +294,12 @@ class AdminLoginOptionsResponse(BaseModel):
     password_enabled: bool
     passkey_allowed: bool
     is_superadmin: bool
+    #: Whether this account may enter the console at all. No longer the same as
+    #: `is_admin`: a staff member whose role grants any permission may sign in and
+    #: is then restricted to those screens (F-ADM-7). The login form gates the
+    #: password step on this, not on `is_admin`, so a limited-role cashier can get
+    #: past the email step while a shopper still cannot.
+    can_access_console: bool
 
 
 class PasskeyRegistrationOptionsResponse(BaseModel):
@@ -443,7 +449,11 @@ async def admin_login_options(
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 
-    if not user or not user.is_active or not user.is_admin:
+    # The gate is now console access, not full-admin: a limited-role cashier is
+    # let through to the password step and restricted by the sidebar afterwards.
+    # The blank payload for everyone else stays byte-identical to the admin-only
+    # one it replaced, so this still leaks nothing about which emails exist.
+    if not user or not user.is_active or not user.can_access_console:
         return AdminLoginOptionsResponse(
             email=email,
             is_admin=False,
@@ -451,9 +461,12 @@ async def admin_login_options(
             password_enabled=False,
             passkey_allowed=False,
             is_superadmin=False,
+            can_access_console=False,
         )
 
     is_superadmin = email == SUPERADMIN_EMAIL
+    # Passkeys remain an admin-only enrolment (`_is_passkey_allowed` is gated on
+    # `is_admin`), so a limited-role console user signs in with a password.
     passkey_allowed = _is_passkey_allowed(user)
     passkey_count = 0
     if passkey_allowed:
@@ -467,11 +480,12 @@ async def admin_login_options(
 
     return AdminLoginOptionsResponse(
         email=email,
-        is_admin=True,
+        is_admin=user.is_admin,
         has_passkey=passkey_count > 0,
         password_enabled=bool(user.hashed_password),
         passkey_allowed=passkey_allowed,
         is_superadmin=is_superadmin,
+        can_access_console=True,
     )
 
 

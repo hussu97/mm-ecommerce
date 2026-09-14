@@ -444,6 +444,10 @@
       },
       "AdminLoginOptionsResponse": {
         "properties": {
+          "can_access_console": {
+            "title": "Can Access Console",
+            "type": "boolean"
+          },
           "email": {
             "title": "Email",
             "type": "string"
@@ -475,7 +479,8 @@
           "has_passkey",
           "password_enabled",
           "passkey_allowed",
-          "is_superadmin"
+          "is_superadmin",
+          "can_access_console"
         ],
         "title": "AdminLoginOptionsResponse",
         "type": "object"

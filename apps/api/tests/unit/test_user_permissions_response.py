@@ -61,3 +61,34 @@ def test_a_role_less_user_has_no_permissions_and_is_not_superadmin():
     user = _user()
     assert user.is_superadmin is False
     assert user.permissions == []
+
+
+def test_console_access_follows_permissions_not_the_admin_flag():
+    """A super-admin, and any role that grants a permission, may enter the
+    console; a role-less customer may not — the split that lets a limited-role
+    cashier sign in and be narrowed by the sidebar (F-ADM-7)."""
+    assert _user(is_admin=True).can_access_console is True
+    assert (
+        _user(
+            role=Role(name="Owner", permissions=[], is_super_admin=True)
+        ).can_access_console
+        is True
+    )
+    assert (
+        _user(
+            role=Role(
+                name="Cashier Staff",
+                permissions=["orders.read"],
+                is_super_admin=False,
+            )
+        ).can_access_console
+        is True
+    )
+    # No role, or a role that grants nothing, is not a console user.
+    assert _user().can_access_console is False
+    assert (
+        _user(
+            role=Role(name="Empty", permissions=[], is_super_admin=False)
+        ).can_access_console
+        is False
+    )

@@ -95,6 +95,19 @@ export const NAV: Array<NavEntry | NavSection> = [
   { href: '/logs',          label: 'Logs',            icon: 'article',      requires: 'admin.logs.read' },
 ];
 
+/** Whether *user* may sign in to the console at all — the door, not any one
+ *  screen. A super-admin always may; so may any staff member whose role grants
+ *  at least one permission (they are then restricted to their screens by
+ *  `canAccessNav`). A customer, with no role and no permissions, may not —
+ *  which is what keeps the shared `/auth/login` from being a console entrance
+ *  for shoppers. Mirrors `User.can_access_console` on the API. */
+export function canAccessConsole(
+  user: { is_superadmin?: boolean; permissions?: string[] } | null | undefined,
+): boolean {
+  if (!user) return false;
+  return Boolean(user.is_superadmin) || (user.permissions?.length ?? 0) > 0;
+}
+
 /** Whether *user* may see/enter a nav entry. A super-admin sees everything; a
  *  `null` requirement is public to any signed-in admin; otherwise the user must
  *  hold the slug. */
