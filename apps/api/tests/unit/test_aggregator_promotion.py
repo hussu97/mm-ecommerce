@@ -371,6 +371,48 @@ def test_money_fields_caps_reversal_at_total():
     assert fields["refunded_amount"] == Decimal("40.00")
 
 
+def test_overlay_refund_books_reversal_onto_grubops_owned_order():
+    # The GrubOps-owned path never runs `_money_fields`, so a scrape-discovered
+    # reversal (Noon outlet_adj) must be overlaid onto the GrubOps order directly.
+    delivered = datetime(2026, 9, 9, 15, 48)
+    order = _mm_order(
+        total=Decimal("70.00"), refunded_amount=Decimal("0"), refunded_at=None
+    )
+    promote._overlay_refund(
+        order, _agg(refund_amount=Decimal("25.00"), delivered_at=delivered)
+    )
+    assert order.refunded_amount == Decimal("25.00")
+    assert order.refunded_at == delivered
+
+
+def test_overlay_refund_caps_at_total():
+    order = _mm_order(
+        total=Decimal("40.00"), refunded_amount=Decimal("0"), refunded_at=None
+    )
+    promote._overlay_refund(order, _agg(refund_amount=Decimal("60.00")))
+    assert order.refunded_amount == Decimal("40.00")  # net never below zero
+
+
+def test_overlay_refund_noop_without_reversal():
+    order = _mm_order(
+        total=Decimal("40.00"), refunded_amount=Decimal("0"), refunded_at=None
+    )
+    promote._overlay_refund(order, _agg())  # refund_amount defaults None
+    assert order.refunded_amount == Decimal("0")
+    assert order.refunded_at is None
+
+
+def test_overlay_refund_is_idempotent():
+    # A re-promote must not rewrite an unchanged figure (no spurious updated_at).
+    order = _mm_order(
+        total=Decimal("70.00"),
+        refunded_amount=Decimal("25.00"),
+        refunded_at="sentinel",
+    )
+    promote._overlay_refund(order, _agg(refund_amount=Decimal("25.00")))
+    assert order.refunded_at == "sentinel"  # untouched
+
+
 def test_money_fields_derives_vat_even_when_provider_reports_none():
     # A provider that itemised no tax must not book the sale VAT-free: 40.00
     # inclusive is 38.10 + 1.90 (the whole reason the zero-VAT backfill exists).
