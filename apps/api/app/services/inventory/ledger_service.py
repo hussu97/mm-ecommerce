@@ -85,7 +85,7 @@ async def reconcile_levels(
         delta = quantity(line.signed_quantity or 0)
         previous_quantity = quantity(quantities.get(line.item_id, Decimal("0")))
         previous_average = unit_cost(averages.get(line.item_id, Decimal("0")))
-        incoming = inventory_service.line_cost_in_ingredient_unit(line)
+        incoming = inventory_service.line_cost_in_storage_unit(line)
         if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
             previous_average = incoming
         elif transaction.reverses_transaction_id is not None and delta < 0:
@@ -217,15 +217,17 @@ async def reverse_transaction(
         reversal.items.append(
             InventoryTransactionItem(
                 item_id=line.item_id,
+                # signed_quantity is in storage units, so the reversal is a
+                # storage movement; keep the original line's factor snapshot.
                 quantity=quantity(-Decimal(str(line.signed_quantity))),
-                unit="ingredient",
-                conversion_factor=Decimal("1"),
+                unit="storage",
+                conversion_factor=Decimal(str(line.conversion_factor or 1)),
                 unit_cost=(
                     unit_cost(line.previous_unit_cost)
                     if original.type
                     == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value
                     and line.previous_unit_cost is not None
-                    else inventory_service.line_cost_in_ingredient_unit(line)
+                    else inventory_service.line_cost_in_storage_unit(line)
                 ),
                 recipe_version_id=line.recipe_version_id,
                 recipe_path=line.recipe_path or [],
@@ -316,18 +318,22 @@ async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -
         if Decimal(str(row.counted_quantity)) != counted:
             errors.append("Quantity has more than four decimal places")
         if item:
-            ingredient_expected = quantity(
+            # The level is held in storage units (the canonical stock unit).
+            storage_expected = quantity(
                 levels_by_item[item.id].quantity if item.id in levels_by_item else 0
             )
             factor = Decimal(str(item.storage_to_ingredient_factor))
             if row.unit == "storage":
-                expected = quantity(ingredient_expected / factor)
-                normalised = quantity(counted * factor)
-            else:
-                expected = ingredient_expected
+                # Counting in storage: what's shown and the canonical figure match.
+                expected = storage_expected
                 normalised = counted
+            else:
+                # Counting in ingredient units: show the expected in ingredient
+                # units (storage × factor) and convert the count back to storage.
+                expected = quantity(storage_expected * factor)
+                normalised = quantity(counted / factor)
             delta = quantity(counted - expected)
-            normalised_delta = quantity(normalised - ingredient_expected)
+            normalised_delta = quantity(normalised - storage_expected)
             if abs(delta) > max(abs(expected) * Decimal("10"), Decimal("100000")):
                 errors.append("Extreme variance requires manual review")
         category = (
@@ -420,10 +426,10 @@ async def apply_stock_audit(
         input_row = by_sku[result["sku"].casefold()]
         item = await db.get(InventoryItem, result["item_id"])
         level = await inventory_service.level_for(db, item.id, warehouse.id)
-        ingredient_cost = unit_cost(level.average_cost)
-        if is_opening_count or ingredient_cost == 0:
-            ingredient_cost = inventory_service.inventory_item_cost_for_unit(
-                item, "ingredient"
+        canonical_cost = unit_cost(level.average_cost)
+        if is_opening_count or canonical_cost == 0:
+            canonical_cost = inventory_service.inventory_item_cost_for_unit(
+                item, "storage"
             )
         # Both an opening balance and a count now SET the level (see
         # inventory_service.post_transaction), so both post the *counted* quantity
@@ -436,13 +442,11 @@ async def apply_stock_audit(
                 item_id=item.id,
                 quantity=input_row.counted_quantity,
                 unit=entry_unit,
-                conversion_factor=(
-                    item.storage_to_ingredient_factor
-                    if input_row.unit == "storage"
-                    else Decimal("1")
-                ),
-                unit_cost=inventory_service.ingredient_cost_for_unit(
-                    item, ingredient_cost, entry_unit
+                # The item's real factor either way, so post_transaction records
+                # both the storage and ingredient views of the count.
+                conversion_factor=item.storage_to_ingredient_factor,
+                unit_cost=inventory_service.canonical_cost_for_unit(
+                    item, canonical_cost, entry_unit
                 ),
                 notes=input_row.remark,
             )

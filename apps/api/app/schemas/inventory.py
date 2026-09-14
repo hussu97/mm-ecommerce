@@ -219,6 +219,10 @@ class InventoryLevelResponse(ORMModel):
     reconciled_at: datetime | None = None
     item_name: str | None = None
     item_sku: str | None = None
+    #: The stock unit `quantity`, `average_cost` and `total_value` are in — the
+    #: canonical unit the ledger keeps. `ingredient_unit` is the recipe unit,
+    #: carried for reference.
+    storage_unit: str | None = None
     ingredient_unit: str | None = None
     minimum_level: Decimal | None = None
     par_level: Decimal | None = None
@@ -336,6 +340,10 @@ class TransactionLineResponse(ORMModel):
     quantity: Decimal
     unit: str
     conversion_factor: Decimal
+    #: The movement in the canonical storage unit (what actually left the shelf).
+    quantity_in_storage_unit: Decimal
+    #: The same movement in the ingredient unit (the recipe view), so a
+    #: consumption shows both — e.g. 2 tsp and the 8 g it took off the shelf.
     quantity_in_ingredient_unit: Decimal
     unit_cost: Decimal
     previous_unit_cost: Decimal | None = None

@@ -12144,6 +12144,17 @@
             ],
             "title": "Reconciled At"
           },
+          "storage_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Unit"
+          },
           "total_value": {
             "anyOf": [
               {
@@ -31807,6 +31818,11 @@
             "title": "Quantity In Ingredient Unit",
             "type": "string"
           },
+          "quantity_in_storage_unit": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity In Storage Unit",
+            "type": "string"
+          },
           "recipe_path": {
             "default": [],
             "items": {
@@ -31866,6 +31882,7 @@
           "quantity",
           "unit",
           "conversion_factor",
+          "quantity_in_storage_unit",
           "quantity_in_ingredient_unit",
           "unit_cost",
           "total_cost",

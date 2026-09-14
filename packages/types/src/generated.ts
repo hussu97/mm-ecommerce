@@ -12682,6 +12682,8 @@ export interface components {
             quantity: string;
             /** Reconciled At */
             reconciled_at?: string | null;
+            /** Storage Unit */
+            storage_unit?: string | null;
             /** Total Value */
             total_value?: string | null;
             /**
@@ -19277,6 +19279,8 @@ export interface components {
             quantity: string;
             /** Quantity In Ingredient Unit */
             quantity_in_ingredient_unit: string;
+            /** Quantity In Storage Unit */
+            quantity_in_storage_unit: string;
             /**
              * Recipe Path
              * @default []

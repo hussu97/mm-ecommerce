@@ -16,7 +16,7 @@ from app.models.inventory_v2 import RecipeLine, RecipeVersion
 from app.services.inventory.inventory_service import (
     apply_movement,
     apply_reversal_movement,
-    ingredient_cost_for_unit,
+    canonical_cost_for_unit,
     inventory_item_cost_for_unit,
 )
 from app.services.inventory.recipe_service import (
@@ -71,7 +71,10 @@ def test_catalogue_storage_cost_converts_once_for_ingredient_movements():
     assert inventory_item_cost_for_unit(item, "ingredient") == D("0.004000")
 
 
-def test_moving_average_cost_converts_back_to_transfer_entry_unit():
+def test_canonical_storage_cost_converts_to_the_entry_unit():
+    # The moving average is now held per storage unit; converting it to an
+    # entered unit leaves a storage entry untouched and divides a sack's cost
+    # across its 25000 grams for an ingredient entry.
     item = InventoryItem(
         sku="FLOUR-25KG",
         name="Flour",
@@ -79,8 +82,8 @@ def test_moving_average_cost_converts_back_to_transfer_entry_unit():
         ingredient_unit="gram",
         storage_to_ingredient_factor=D("25000"),
     )
-    assert ingredient_cost_for_unit(item, D("0.004"), "ingredient") == D("0.004000")
-    assert ingredient_cost_for_unit(item, D("0.004"), "storage") == D("100.000000")
+    assert canonical_cost_for_unit(item, D("100"), "storage") == D("100.000000")
+    assert canonical_cost_for_unit(item, D("100"), "ingredient") == D("0.004000")
 
 
 def test_unknown_ledger_unit_is_rejected_instead_of_assumed_to_be_storage():

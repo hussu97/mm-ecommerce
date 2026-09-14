@@ -320,16 +320,23 @@ async def post_event(
             return None
         level = await inventory_service.level_for(db, item_id, warehouse.id)
         version_ids = frozen.get("recipe_version_ids", [])
+        # The recipe quantity is in ingredient units; carry the item's factor so
+        # post_transaction converts it to the storage units actually taken off
+        # the shelf. unit_cost is the line's own (ingredient) unit, derived from
+        # the canonical per-storage average.
+        canonical_avg = (
+            level.average_cost
+            or inventory_service.inventory_item_cost_for_unit(item, "storage")
+        )
         transaction.items.append(
             InventoryTransactionItem(
                 item_id=item_id,
                 quantity=Decimal(frozen["quantity"]),
                 unit="ingredient",
-                conversion_factor=Decimal("1"),
+                conversion_factor=Decimal(str(item.storage_to_ingredient_factor or 1)),
                 unit_cost=unit_cost(
-                    level.average_cost
-                    or inventory_service.inventory_item_cost_for_unit(
-                        item, "ingredient"
+                    inventory_service.canonical_cost_for_unit(
+                        item, canonical_avg, "ingredient"
                     )
                 ),
                 recipe_version_id=(
@@ -695,8 +702,7 @@ async def record_return(
         for line in original.items:
             level = await inventory_service.level_for(db, line.item_id, warehouse.id)
             waste_reclassification_costs[line.item_id] = unit_cost(
-                level.average_cost
-                or inventory_service.line_cost_in_ingredient_unit(line)
+                level.average_cost or inventory_service.line_cost_in_storage_unit(line)
             )
 
     async def movement(kind: str, suffix: str) -> InventoryTransaction:
@@ -722,16 +728,19 @@ async def record_return(
             transaction.items.append(
                 InventoryTransactionItem(
                     item_id=line.item_id,
+                    # Rebuilt from signed_quantity, which is in storage units, so
+                    # this reversal is a storage-unit movement; the original
+                    # line's factor snapshot carries the ingredient view.
                     quantity=abs(Decimal(str(line.signed_quantity))) * proportion,
-                    unit="ingredient",
-                    conversion_factor=Decimal("1"),
+                    unit="storage",
+                    conversion_factor=Decimal(str(line.conversion_factor or 1)),
                     # Waste disposition is a reclassification: the return and
                     # immediate waste must leave both quantity *and valuation*
                     # unchanged. A genuine restock retains the original sale
                     # cost snapshot as required for historical returns.
                     unit_cost=waste_reclassification_costs.get(
                         line.item_id,
-                        inventory_service.line_cost_in_ingredient_unit(line),
+                        inventory_service.line_cost_in_storage_unit(line),
                     ),
                     recipe_version_id=line.recipe_version_id,
                     recipe_path=line.recipe_path or [],
