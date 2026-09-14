@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.services.inventory.report_columns import columns_for
 
@@ -30,9 +30,21 @@ class VersionedRecipeLineInput(BaseModel):
 
 class RecipeDraftRequest(BaseModel):
     ingredients: list[VersionedRecipeLineInput] = Field(min_length=1)
+    #: 'unit' — the ingredients make one owner unit; 'batch' — they make one
+    #: batch that yields ``batch_yield`` owner units.
+    basis: Literal["unit", "batch"] = "unit"
+    batch_yield: Decimal | None = Field(None, gt=0)
     source: str = Field("mm", max_length=30)
     source_payload_hash: str | None = Field(None, max_length=64)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_batch_yield(self) -> "RecipeDraftRequest":
+        if self.basis == "batch" and self.batch_yield is None:
+            raise ValueError("A batch recipe needs a batch_yield")
+        if self.basis == "unit" and self.batch_yield is not None:
+            raise ValueError("A unit recipe must not carry a batch_yield")
+        return self
 
 
 class VersionedRecipeLineResponse(ORMModel):
@@ -51,6 +63,8 @@ class RecipeVersionResponse(ORMModel):
     recipe_id: UUID
     version_number: int
     status: str
+    basis: str
+    batch_yield: Decimal | None
     source: str
     source_payload_hash: str | None
     source_metadata: dict[str, Any]

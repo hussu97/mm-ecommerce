@@ -25096,6 +25096,31 @@
       },
       "RecipeDraftRequest": {
         "properties": {
+          "basis": {
+            "default": "unit",
+            "enum": [
+              "unit",
+              "batch"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
+          },
           "ingredients": {
             "items": {
               "$ref": "#/components/schemas/VersionedRecipeLineInput"
@@ -25550,6 +25575,22 @@
             ],
             "title": "Activated By"
           },
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -25624,6 +25665,8 @@
           "recipe_id",
           "version_number",
           "status",
+          "basis",
+          "batch_yield",
           "source",
           "source_payload_hash",
           "source_metadata",

@@ -56,6 +56,11 @@ export function RecipeEditor({
   const [recipe, setRecipe] = useState<VersionedRecipe | null>(null);
   const [savedLines, setSavedLines] = useState<EditLine[]>([]);
   const [draft, setDraft] = useState<EditLine[]>([]);
+  // Batch basis is a property of the version, held here until Save.
+  const [basis, setBasis] = useState<'unit' | 'batch'>('unit');
+  const [batchYield, setBatchYield] = useState('');
+  const [savedBasis, setSavedBasis] = useState<'unit' | 'batch'>('unit');
+  const [savedBatchYield, setSavedBatchYield] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [ingredientId, setIngredientId] = useState('');
   const [ingredientSearch, setIngredientSearch] = useState('');
@@ -86,6 +91,12 @@ export function RecipeEditor({
       const lines = (source?.lines ?? []).map(toEditLine);
       setSavedLines(lines);
       setDraft(lines);
+      const basisValue = source?.basis === 'batch' ? 'batch' : 'unit';
+      const yieldValue = source?.batch_yield != null ? String(source.batch_yield) : '';
+      setBasis(basisValue);
+      setBatchYield(yieldValue);
+      setSavedBasis(basisValue);
+      setSavedBatchYield(yieldValue);
       setMessage(
         existing === null
           ? 'No recipe yet. Add the inventory items used to make one, then press Save.'
@@ -112,6 +123,8 @@ export function RecipeEditor({
   }, [focusOnMount, ownerId]);
 
   const dirty = useMemo(() => {
+    if (basis !== savedBasis) return true;
+    if (basis === 'batch' && Number(batchYield) !== Number(savedBatchYield)) return true;
     if (draft.length !== savedLines.length) return true;
     return draft.some((line, index) => {
       const saved = savedLines[index];
@@ -121,7 +134,7 @@ export function RecipeEditor({
         Number(saved.quantity) !== Number(line.quantity)
       );
     });
-  }, [draft, savedLines]);
+  }, [draft, savedLines, basis, batchYield, savedBasis, savedBatchYield]);
 
   const activeDraft = recipe?.versions.find((version) => version.status === 'draft') ?? null;
 
@@ -168,6 +181,10 @@ export function RecipeEditor({
       setMessage('Every ingredient needs a quantity greater than zero.');
       return;
     }
+    if (basis === 'batch' && !(Number(batchYield) > 0)) {
+      setMessage('A batch recipe needs a batch yield greater than zero.');
+      return;
+    }
     setBusy(true);
     try {
       await inventoryApi.saveRecipeDraft(ownerKind, ownerId, {
@@ -179,6 +196,8 @@ export function RecipeEditor({
           display_order: index,
           source_metadata: line.source_metadata,
         })),
+        basis,
+        batch_yield: basis === 'batch' ? batchYield : null,
         source: 'mm',
         source_metadata: {},
       });
@@ -278,8 +297,11 @@ export function RecipeEditor({
         <div>
           <h2 className="font-display text-lg text-primary">Recipe for {ownerLabel}</h2>
           <p className="text-xs text-gray-500">
-            The inventory items used to make one {ownerKind.replace('_', ' ')}. Edit a
-            quantity in place; expand a made item to see and edit its own recipe.
+            {basis === 'batch'
+              ? `The inventory items used to make one batch${
+                  Number(batchYield) > 0 ? ` of ${batchYield}` : ''
+                } ${ownerKind.replace('_', ' ')} units. Producing or selling fewer draws a fraction of the batch.`
+              : `The inventory items used to make one ${ownerKind.replace('_', ' ')}. Edit a quantity in place; expand a made item to see and edit its own recipe.`}
           </p>
         </div>
         <div className="flex gap-2">
@@ -292,6 +314,31 @@ export function RecipeEditor({
             {dirty ? 'Save' : 'Saved'}
           </Button>
         </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="w-40">
+          <Select
+            label="Recipe basis"
+            value={basis}
+            onChange={(event) => setBasis(event.target.value === 'batch' ? 'batch' : 'unit')}
+            options={[
+              { value: 'unit', label: 'Per unit' },
+              { value: 'batch', label: 'Per batch' },
+            ]}
+          />
+        </div>
+        {basis === 'batch' && (
+          <Input
+            label={`Batch yields (${ownerKind.replace('_', ' ')} units)`}
+            type="number"
+            min="0.0001"
+            step="0.0001"
+            value={batchYield}
+            onChange={(event) => setBatchYield(event.target.value)}
+            className="w-40"
+          />
+        )}
       </div>
 
       {message && (
@@ -371,6 +418,9 @@ export function RecipeEditor({
                 {version.status}
               </Badge>
               v{version.version_number}
+              {version.basis === 'batch' && version.batch_yield != null && (
+                <span className="text-gray-400">· batch/{formatQuantity(version.batch_yield)}</span>
+              )}
             </span>
           ))}
           <span className="text-gray-400">· editing creates a new draft; Activate makes it live for new orders.</span>
