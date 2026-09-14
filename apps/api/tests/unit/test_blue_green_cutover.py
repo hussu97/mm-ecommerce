@@ -308,16 +308,49 @@ def test_deploy_web_and_admin_need_test_api_but_tolerate_it_skipping():
     for job in ("deploy-web:", "deploy-admin:"):
         idx = text.find(job)
         assert idx != -1, job
-        block = text[idx : idx + 800]
-        assert "needs: [changes, test-api]" in block, (
-            f"{job} does not depend on test-api"
+        # Wide enough to clear each job's leading comment and reach its `if:`.
+        block = text[idx : idx + 2200]
+        assert "needs.test-api.result == 'success'" in block, (
+            f"{job} does not tolerate test-api succeeding"
         )
-        assert "needs.test-api.result == 'success'" in block
-        assert "needs.test-api.result == 'skipped'" in block
+        assert "needs.test-api.result == 'skipped'" in block, (
+            f"{job} does not tolerate test-api skipping"
+        )
         assert "always()" in block, (
             f"{job}'s if must start with always(), or Actions skips it "
             "whenever test-api is skipped rather than evaluating the rest"
         )
+
+
+def test_deploy_web_runs_after_the_api_cutover_not_during_it():
+    """
+    The web build statically prerenders the catalogue by bursting product
+    fetches at the PROD API. Run in parallel with `deploy-gcp`'s cutover (which
+    briefly frees RAM by stopping the worker), those fetches hit an API
+    mid-restart and 503'd for longer than the build's retry could absorb,
+    failing the deploy. So deploy-web must depend on deploy-gcp — but keep
+    working on a web-only push, where deploy-gcp is skipped because the api
+    didn't change, while still refusing to ship web when a *changed* API failed
+    to deploy (F-OPS-12).
+    """
+    text = DEPLOY_YML.read_text()
+    idx = text.find("deploy-web:")
+    block = text[idx : idx + 2200]
+    assert "needs: [changes, test-api, deploy-gcp]" in block, (
+        "deploy-web must depend on deploy-gcp so its build runs after cutover"
+    )
+    # Runs on a web-only push (api unchanged ⇒ deploy-gcp skipped) OR only once
+    # a changed API has actually deployed.
+    assert "needs.changes.outputs.api == 'false'" in block
+    assert "needs.deploy-gcp.result == 'success'" in block
+    # deploy-admin does NOT get this gate: it does not fetch the API at build
+    # time, so serialising it behind the cutover would only slow it down.
+    admin_idx = text.find("deploy-admin:")
+    admin_block = text[admin_idx : admin_idx + 2200]
+    assert "needs: [changes, test-api]" in admin_block, (
+        "deploy-admin should still depend only on [changes, test-api]"
+    )
+    assert "deploy-gcp" not in admin_block
 
 
 def test_deploy_yml_checks_shared_types_freshness():
