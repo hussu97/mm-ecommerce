@@ -91,11 +91,28 @@ jobs:
     # test-api only runs when `changes.outputs.api == 'true'` (see its own
     # `if`), so a web-only push leaves it `skipped`, and a bare `needs:
     # test-api` would make Actions skip THIS job too on every such push.
-    needs: [changes, test-api]
+    #
+    # It also waits for `deploy-gcp`, and that is load-bearing, not tidiness.
+    # `vercel build` statically prerenders the whole catalogue (~159 pages, 3
+    # workers) by fetching product data from the PROD API in one burst. When it
+    # ran in parallel with the API's own cutover — a blue/green swap that stops
+    # the aggregator worker to free RAM for the green slot, so the box is
+    # briefly tight — those fetches hit an API mid-restart and came back 503 for
+    # far longer than `fetchJson`'s sub-second retry could absorb, aborting the
+    # build. Every api+web deploy raced this. Ordering web AFTER the cutover
+    # (which only reports success once it has probed https://host/health → 200)
+    # means the build always fetches a healthy, stable API.
+    #
+    # The condition keeps web-only deploys working while still refusing to ship
+    # web when an API change failed to deploy: `deploy-gcp` is skipped when the
+    # api didn't change (run web) and must have succeeded when it did (block web
+    # on a failed or skipped-because-upstream-red cutover — the F-OPS-12 guard).
+    needs: [changes, test-api, deploy-gcp]
     if: >
       always() &&
       needs.changes.outputs.web == 'true' &&
-      (needs.test-api.result == 'success' || needs.test-api.result == 'skipped')
+      (needs.test-api.result == 'success' || needs.test-api.result == 'skipped') &&
+      (needs.changes.outputs.api == 'false' || needs.deploy-gcp.result == 'success')
     runs-on: ubuntu-latest
     environment: production
     env:
