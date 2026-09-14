@@ -7,7 +7,7 @@ import io
 import uuid
 
 import openpyxl
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,6 +26,7 @@ from app.models.inventory_v2 import (
     BranchInventorySettings,
     InventoryReportTemplate,
     InventorySourceEvent,
+    Recipe,
     ShiftInventoryReport,
 )
 from app.models.order import Order
@@ -58,6 +59,7 @@ from app.schemas.inventory_v2 import (
     StockAuditRowInput,
     VersionedRecipeResponse,
 )
+from app.services import audit_service
 from app.services.inventory import (
     access_service,
     ledger_service,
@@ -165,10 +167,17 @@ async def put_recipe_draft(
     owner_kind: str,
     owner_id: uuid.UUID,
     data: RecipeDraftRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("catalogue.recipes.manage")),
+    user: User = Depends(require("catalogue.recipes.manage")),
 ):
-    return await recipe_service.create_draft(
+    # CREATE the first time this owner gets a recipe, UPDATE every edit after —
+    # decided before the write, since create_draft either makes the recipe or
+    # revises its existing draft.
+    existing = await recipe_service.get_recipe(db, owner_kind, owner_id)
+    is_create = existing is None or not existing.versions
+
+    version = await recipe_service.create_draft(
         db,
         kind=owner_kind,
         owner_id=owner_id,
@@ -183,6 +192,24 @@ async def put_recipe_draft(
         source_metadata=data.source_metadata,
     )
 
+    label = await recipe_service.owner_name(db, owner_kind, owner_id)
+    await audit_service.log_action(
+        db,
+        action="CREATE" if is_create else "UPDATE",
+        entity_type="recipe",
+        entity_id=str(owner_id),
+        entity_label=f"{owner_kind.replace('_', ' ')} recipe · {label}",
+        admin=user,
+        changes={
+            "draft_version": version.version_number,
+            "basis": data.basis,
+            "batch_yield": str(data.batch_yield) if data.batch_yield else None,
+            "ingredient_count": len(data.ingredients),
+        },
+        request=request,
+    )
+    return version
+
 
 @control_router.post(
     "/recipes-v2/versions/{version_id}/activate",
@@ -190,10 +217,26 @@ async def put_recipe_draft(
 )
 async def activate_recipe_version(
     version_id: uuid.UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("catalogue.recipes.manage")),
 ):
-    return await recipe_service.activate(db, version_id=version_id, user_id=user.id)
+    version = await recipe_service.activate(db, version_id=version_id, user_id=user.id)
+
+    recipe = await db.get(Recipe, version.recipe_id)
+    owner_kind, owner_id = recipe_service.owner_ref(recipe)
+    label = await recipe_service.owner_name(db, owner_kind, owner_id)
+    await audit_service.log_action(
+        db,
+        action="STATUS_CHANGE",
+        entity_type="recipe",
+        entity_id=str(owner_id),
+        entity_label=f"{owner_kind.replace('_', ' ')} recipe · {label}",
+        admin=user,
+        changes={"activated_version": version.version_number, "status": "active"},
+        request=request,
+    )
+    return version
 
 
 @control_router.post(
