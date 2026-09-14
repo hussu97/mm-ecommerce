@@ -23,6 +23,7 @@ from app.models.inventory import InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
+from app.models.user import User
 
 # Only *made* inventory items can own a recipe — purchased kinds
 # (raw_material/packaging/resale_good) never do, so the inventory tab lists the
@@ -297,3 +298,101 @@ async def list_recipe_owners(
         )
 
     return items, total
+
+
+async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
+    """The read-only recipe cards the POS Recipes tab shows.
+
+    Made inventory items (produced/semi-finished) whose recipe has a live
+    ``active`` version — one card per item, with that version's number, when
+    and by whom it was activated, and its ingredient lines. Purchased kinds
+    and items without an active recipe are excluded by design: the shop floor
+    only ever sees the one live way to build a thing.
+
+    Recipes are global, so this takes no branch — the branch flag gates only
+    whether the tab is shown, never which recipes exist.
+    """
+    head_rows = (
+        await db.execute(
+            select(
+                InventoryItem.id,
+                InventoryItem.name,
+                InventoryItem.sku,
+                RecipeVersion.id.label("version_id"),
+                RecipeVersion.version_number,
+                RecipeVersion.activated_at,
+                User.display_name,
+                User.email,
+            )
+            .select_from(InventoryItem)
+            .join(
+                Recipe,
+                and_(
+                    Recipe.owner_kind == "inventory_item",
+                    Recipe.inventory_item_id == InventoryItem.id,
+                ),
+            )
+            .join(
+                RecipeVersion,
+                and_(
+                    RecipeVersion.recipe_id == Recipe.id,
+                    RecipeVersion.status == "active",
+                ),
+            )
+            .join(User, User.id == RecipeVersion.activated_by, isouter=True)
+            .where(
+                InventoryItem.deleted_at.is_(None),
+                InventoryItem.kind.in_(_MADE_INVENTORY_KINDS),
+                InventoryItem.is_active.is_(True),
+            )
+            .order_by(InventoryItem.name.asc())
+        )
+    ).all()
+
+    version_ids = [row.version_id for row in head_rows]
+    lines_by_version: dict[uuid.UUID, list[dict]] = {}
+    if version_ids:
+        # The ingredient lines of every card in one query. The line's item is a
+        # different InventoryItem row than the card's owner, so this second
+        # query joins InventoryItem afresh with no alias clash.
+        line_rows = (
+            await db.execute(
+                select(
+                    RecipeLine.recipe_version_id,
+                    InventoryItem.name,
+                    RecipeLine.quantity,
+                    RecipeLine.ingredient_unit,
+                    RecipeLine.yield_percentage,
+                )
+                .select_from(RecipeLine)
+                .join(InventoryItem, InventoryItem.id == RecipeLine.item_id)
+                .where(RecipeLine.recipe_version_id.in_(version_ids))
+                .order_by(RecipeLine.recipe_version_id, RecipeLine.display_order)
+            )
+        ).all()
+        for vid, name, quantity, unit, yield_pct in line_rows:
+            lines_by_version.setdefault(vid, []).append(
+                {
+                    "name": name,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "yield_percentage": yield_pct,
+                }
+            )
+
+    cards: list[dict] = []
+    for row in head_rows:
+        ingredients = lines_by_version.get(row.version_id, [])
+        cards.append(
+            {
+                "item_id": row.id,
+                "name": row.name,
+                "sku": row.sku,
+                "version_number": row.version_number,
+                "activated_at": row.activated_at,
+                "activated_by_name": row.display_name or row.email,
+                "line_count": len(ingredients),
+                "ingredients": ingredients,
+            }
+        )
+    return cards

@@ -3427,6 +3427,11 @@
             ],
             "title": "Return Branch Id"
           },
+          "show_recipes": {
+            "default": false,
+            "title": "Show Recipes",
+            "type": "boolean"
+          },
           "tax_group_id": {
             "anyOf": [
               {
@@ -4323,6 +4328,10 @@
             ],
             "title": "Return Branch Id"
           },
+          "show_recipes": {
+            "title": "Show Recipes",
+            "type": "boolean"
+          },
           "tax_group_id": {
             "anyOf": [
               {
@@ -4408,6 +4417,7 @@
           "cash_enabled",
           "offers_pickup",
           "uses_pos",
+          "show_recipes",
           "return_branch_id",
           "accepts_reservations",
           "reservation_duration",
@@ -4725,6 +4735,17 @@
               }
             ],
             "title": "Return Branch Id"
+          },
+          "show_recipes": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Show Recipes"
           },
           "tax_group_id": {
             "anyOf": [
@@ -20917,6 +20938,105 @@
           "updated_at"
         ],
         "title": "PosOrderResponse",
+        "type": "object"
+      },
+      "PosRecipeCard": {
+        "description": "A made inventory item's live recipe, view-only for the register.\n\nOnly items whose recipe has an *active* version appear, so every card is\nthe one live way to build that item \u2014 never a draft or a retired one.",
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "activated_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated By Name"
+          },
+          "ingredients": {
+            "items": {
+              "$ref": "#/components/schemas/PosRecipeLine"
+            },
+            "title": "Ingredients",
+            "type": "array"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "line_count": {
+            "title": "Line Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sku": {
+            "title": "Sku",
+            "type": "string"
+          },
+          "version_number": {
+            "title": "Version Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item_id",
+          "name",
+          "sku",
+          "version_number",
+          "activated_at",
+          "activated_by_name",
+          "line_count",
+          "ingredients"
+        ],
+        "title": "PosRecipeCard",
+        "type": "object"
+      },
+      "PosRecipeLine": {
+        "description": "One ingredient of a POS recipe card, as the shop floor reads it.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          },
+          "yield_percentage": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Yield Percentage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "quantity",
+          "unit",
+          "yield_percentage"
+        ],
+        "title": "PosRecipeLine",
         "type": "object"
       },
       "PreviousDriver": {
@@ -56777,6 +56897,108 @@
         "summary": "Void Order",
         "tags": [
           "POS Orders"
+        ]
+      }
+    },
+    "/api/v1/pos/recipes": {
+      "get": {
+        "description": "Read-only recipe cards for the register's Recipes tab.\n\nEvery made inventory item with a live (active) recipe, its version and who\nactivated it, and its ingredient lines. Device-token auth: any paired\nterminal may read. Whether the tab appears is decided per branch by\n``branch.show_recipes`` on the terminal's branch payload, not here.",
+        "operationId": "list_pos_recipes_api_v1_pos_recipes_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Device-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PosRecipeCard"
+                  },
+                  "title": "Response List Pos Recipes Api V1 Pos Recipes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Pos Recipes",
+        "tags": [
+          "POS Recipes"
         ]
       }
     },

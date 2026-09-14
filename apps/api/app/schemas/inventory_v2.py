@@ -436,3 +436,32 @@ class RecipeReadinessResponse(BaseModel):
     ready: bool
     products_missing_recipe: list[UUID]
     modifier_options_missing_recipe: list[UUID]
+
+
+class PosRecipeLine(BaseModel):
+    """One ingredient of a POS recipe card, as the shop floor reads it."""
+
+    name: str
+    quantity: Decimal
+    unit: str
+    #: The usable fraction after trim/loss (1 = no loss). Shown only when < 1.
+    yield_percentage: Decimal
+
+
+class PosRecipeCard(BaseModel):
+    """A made inventory item's live recipe, view-only for the register.
+
+    Only items whose recipe has an *active* version appear, so every card is
+    the one live way to build that item — never a draft or a retired one.
+    """
+
+    item_id: UUID
+    name: str
+    sku: str
+    version_number: int
+    activated_at: datetime | None
+    #: Who last activated this version — display name, else email; null if the
+    #: user was since deleted (``activated_by`` is SET NULL) or never stamped.
+    activated_by_name: str | None
+    line_count: int
+    ingredients: list[PosRecipeLine]

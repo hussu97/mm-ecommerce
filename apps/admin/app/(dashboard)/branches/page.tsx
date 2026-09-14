@@ -40,6 +40,7 @@ export default function BranchesPage() {
         offers_pickup: false,
         cash_enabled: true,
         uses_pos: true,
+        show_recipes: false,
         accepts_reservations: false,
         is_active: true,
         display_order: 0,
@@ -138,6 +139,13 @@ export default function BranchesPage() {
           type: 'checkbox',
           helper:
             'Turn off for a branch with no till (e.g. DSO, Karama). A transfer or return sent to it is auto-received on its behalf, and it gets no "to receive" notification.',
+        },
+        {
+          name: 'show_recipes',
+          label: 'Show the Recipes tab on the POS',
+          type: 'checkbox',
+          helper:
+            'Adds a read-only Recipes tab to every terminal at this branch — the shop-floor reference for how made items are built from their ingredients. View-only; recipes are edited in the Recipes console.',
         },
         {
           name: 'return_branch_id',

@@ -58,6 +58,7 @@ from .inventory_v2 import (
 from .inventory_v2 import (
     order_inventory_router,
     pos_inventory_router,
+    pos_recipes_router,
 )
 from .item_mappings import router as item_mappings_router
 from .marketing import (
@@ -232,6 +233,9 @@ api_router.include_router(
 )
 api_router.include_router(
     pos_inventory_router, prefix="/pos/inventory", tags=["POS Inventory"]
+)
+api_router.include_router(
+    pos_recipes_router, prefix="/pos/recipes", tags=["POS Recipes"]
 )
 
 # ─── Marketing ────────────────────────────────────────────────────────────────

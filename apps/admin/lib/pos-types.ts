@@ -53,6 +53,8 @@ export interface Branch {
   cash_enabled: boolean;
   /** Whether this branch runs the POS. Off = a branch with no till (DSO, Karama); a transfer/return to it is auto-received on its behalf. */
   uses_pos: boolean;
+  /** Whether this branch's POS terminals show the read-only Recipes tab (shop-floor reference for how made items are built). Off by default. */
+  show_recipes: boolean;
   /** The branch this one returns surplus/expired/damaged stock to. Null = returns not routed from here. */
   return_branch_id: string | null;
   accepts_reservations: boolean;

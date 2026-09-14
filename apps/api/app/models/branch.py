@@ -150,6 +150,14 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     uses_pos: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    #: Whether this branch's POS terminals show the read-only Recipes tab — the
+    #: shop-floor reference for how made items are built from their ingredients.
+    #: Off by default; turned on per branch (Sharjah first). It gates only the
+    #: tab's visibility on every terminal paired to the branch — recipes
+    #: themselves are global, so this changes display, not data.
+    show_recipes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     #: Where this branch sends returns — surplus, expired or damaged goods go back
     #: to a central branch (e.g. Sharjah). A self-reference; null means returns are
     #: not routed from here. Set once in admin so the till never picks a destination.

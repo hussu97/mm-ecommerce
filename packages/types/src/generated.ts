@@ -6757,6 +6757,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pos Recipes
+         * @description Read-only recipe cards for the register's Recipes tab.
+         *
+         *     Every made inventory item with a live (active) recipe, its version and who
+         *     activated it, and its ingredient lines. Device-token auth: any paired
+         *     terminal may read. Whether the tab appears is decided per branch by
+         *     ``branch.show_recipes`` on the terminal's branch payload, not here.
+         */
+        get: operations["list_pos_recipes_api_v1_pos_recipes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/reports/cost-adjustment-history": {
         parameters: {
             query?: never;
@@ -9805,6 +9830,11 @@ export interface components {
             } | null;
             /** Return Branch Id */
             return_branch_id?: string | null;
+            /**
+             * Show Recipes
+             * @default false
+             */
+            show_recipes: boolean;
             /** Tax Group Id */
             tax_group_id?: string | null;
             /** Tax Number */
@@ -10111,6 +10141,8 @@ export interface components {
             } | null;
             /** Return Branch Id */
             return_branch_id: string | null;
+            /** Show Recipes */
+            show_recipes: boolean;
             /** Tax Group Id */
             tax_group_id: string | null;
             /** Tax Number */
@@ -10187,6 +10219,8 @@ export interface components {
             } | null;
             /** Return Branch Id */
             return_branch_id?: string | null;
+            /** Show Recipes */
+            show_recipes?: boolean | null;
             /** Tax Group Id */
             tax_group_id?: string | null;
             /** Tax Number */
@@ -15576,6 +15610,48 @@ export interface components {
              * @default 0
              */
             vat_rate: string;
+        };
+        /**
+         * PosRecipeCard
+         * @description A made inventory item's live recipe, view-only for the register.
+         *
+         *     Only items whose recipe has an *active* version appear, so every card is
+         *     the one live way to build that item — never a draft or a retired one.
+         */
+        PosRecipeCard: {
+            /** Activated At */
+            activated_at: string | null;
+            /** Activated By Name */
+            activated_by_name: string | null;
+            /** Ingredients */
+            ingredients: components["schemas"]["PosRecipeLine"][];
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Line Count */
+            line_count: number;
+            /** Name */
+            name: string;
+            /** Sku */
+            sku: string;
+            /** Version Number */
+            version_number: number;
+        };
+        /**
+         * PosRecipeLine
+         * @description One ingredient of a POS recipe card, as the shop floor reads it.
+         */
+        PosRecipeLine: {
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: string;
+            /** Unit */
+            unit: string;
+            /** Yield Percentage */
+            yield_percentage: string;
         };
         /**
          * PreviousDriver
@@ -33003,6 +33079,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pos_recipes_api_v1_pos_recipes_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosRecipeCard"][];
                 };
             };
             /** @description Validation Error */

@@ -46,6 +46,8 @@ class BranchCreate(BaseModel):
     #: Whether this branch runs the POS. False for a branch (DSO, Karama) with no
     #: till — a transfer/return to it is auto-received on its behalf.
     uses_pos: bool = True
+    #: Whether this branch's terminals show the read-only Recipes tab. Off by default.
+    show_recipes: bool = False
     #: The branch this one returns stock to (surplus/expired/damaged). Null = none.
     return_branch_id: UUID | None = None
     accepts_reservations: bool = False
@@ -81,6 +83,7 @@ class BranchUpdate(BaseModel):
     cash_enabled: bool | None = None
     offers_pickup: bool | None = None
     uses_pos: bool | None = None
+    show_recipes: bool | None = None
     return_branch_id: UUID | None = None
     accepts_reservations: bool | None = None
     reservation_duration: int | None = Field(None, ge=5, le=600)
@@ -116,6 +119,7 @@ class BranchResponse(ORMModel):
     cash_enabled: bool
     offers_pickup: bool
     uses_pos: bool
+    show_recipes: bool
     return_branch_id: UUID | None
     accepts_reservations: bool
     reservation_duration: int

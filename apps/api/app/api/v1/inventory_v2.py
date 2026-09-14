@@ -20,6 +20,7 @@ from app.core.exceptions import (
 )
 from app.core.permissions import require
 from app.models.branch import Branch
+from app.models.device import Device
 from app.models.inventory import InventoryItem, InventoryTransaction
 from app.models.inventory_v2 import (
     BranchInventorySettings,
@@ -37,6 +38,7 @@ from app.schemas.inventory_v2 import (
     OrderInventoryConsumptionResponse,
     OrderInventoryReturnRequest,
     PaginatedRecipeOwners,
+    PosRecipeCard,
     ProjectionDriftResponse,
     RecipeDraftRequest,
     RecipeExpansionRequest,
@@ -65,8 +67,15 @@ from app.services.inventory import (
     source_event_service,
 )
 
+from .devices import get_current_device
+
 control_router = APIRouter()
 pos_inventory_router = APIRouter()
+# The register's read-only Recipes tab. Device-token auth like Website Stock
+# (no signed-in cashier, no per-user permission): any terminal paired to a
+# branch may read the recipe cards. The tab is shown per branch by a flag on
+# the branch payload, so this router just serves the (global) recipes.
+pos_recipes_router = APIRouter()
 # This is intentionally separate from ``pos_inventory_router``: the latter is
 # the register's report-entry workflow, while this router is the manager
 # companion's branch-scoped, read-only view of the ledger and reconciliation.
@@ -76,6 +85,21 @@ order_inventory_router = APIRouter()
 
 _assert_branch_access = access_service.assert_branch_access
 _branch_ids_for = access_service.branch_ids_for
+
+
+@pos_recipes_router.get("", response_model=list[PosRecipeCard])
+async def list_pos_recipes(
+    db: AsyncSession = Depends(get_db),
+    _: Device = Depends(get_current_device),
+):
+    """Read-only recipe cards for the register's Recipes tab.
+
+    Every made inventory item with a live (active) recipe, its version and who
+    activated it, and its ingredient lines. Device-token auth: any paired
+    terminal may read. Whether the tab appears is decided per branch by
+    ``branch.show_recipes`` on the terminal's branch payload, not here.
+    """
+    return await recipe_catalog_service.list_active_inventory_recipes(db)
 
 
 @control_router.get("/recipe-owners/{owner_kind}", response_model=PaginatedRecipeOwners)
