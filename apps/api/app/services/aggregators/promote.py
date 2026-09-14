@@ -382,6 +382,26 @@ def _money_fields(agg: AggregatorOrder, *, vat_registered: bool = True) -> dict:
     }
 
 
+def _overlay_refund(order: Order, agg: AggregatorOrder) -> None:
+    """Book a scrape-discovered marketplace reversal onto a GrubOps-owned order.
+
+    The standalone promote path books `refunded_amount` in `_money_fields`, but a
+    GrubOps-owned order never runs that — its money header is GrubOps'. A
+    post-delivery reversal (Noon `outlet_adj`, a Talabat vendor refund), though,
+    is a fact only the scrape sees, so it is overlaid here the same way the actual
+    fees are: the money already moved at the marketplace, net revenue subtracts
+    `refunded_amount`, and gross stays on the header. Capped at the order total so
+    net cannot go below zero; `refunded_at` marks when it settled. Idempotent —
+    writes only when the figure changes, so a re-promote is a no-op."""
+    if not agg.refund_amount:
+        return
+    refunded = money(min(agg.refund_amount, order.total or Decimal("0")))
+    if order.refunded_amount == refunded:
+        return
+    order.refunded_amount = refunded
+    order.refunded_at = agg.delivered_at or agg.placed_at or utcnow()
+
+
 def _actual_fee_overrides(agg: AggregatorOrder) -> dict:
     """The marketplace's own settled figures, when it has reported them.
 
@@ -1083,6 +1103,11 @@ async def promote_order(
             _fill_scraped_contact(grubops_order, agg)
             if agg.commission_amount is not None or agg.payment_fee is not None:
                 await order_fees.stamp(db, grubops_order, **_actual_fee_overrides(agg))
+            # A scrape-discovered post-delivery reversal (Noon `outlet_adj`, a
+            # Talabat vendor refund) is a fact the GrubOps push never carries —
+            # like the actual fees just above — so overlay it onto the GrubOps-
+            # owned order's `refunded_amount`, the field net revenue subtracts.
+            _overlay_refund(grubops_order, agg)
             # Carry the terminal status the scrape reports. This is the one
             # deliberate exception to "never touch a GrubOps order's status here":
             # GrubOps' live push climbs the order only as far as out_for_delivery —
