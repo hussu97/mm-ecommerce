@@ -15623,6 +15623,13 @@ export interface components {
             activated_at: string | null;
             /** Activated By Name */
             activated_by_name: string | null;
+            /**
+             * Basis
+             * @enum {string}
+             */
+            basis: "unit" | "batch";
+            /** Batch Yield */
+            batch_yield: string | null;
             /** Category Name */
             category_name: string | null;
             /** Ingredients */
@@ -17105,6 +17112,14 @@ export interface components {
         RecipeOwnerRow: {
             /** Active Version Number */
             active_version_number?: number | null;
+            /**
+             * Basis
+             * @default unit
+             * @enum {string}
+             */
+            basis: "unit" | "batch";
+            /** Batch Yield */
+            batch_yield?: string | null;
             /** Draft Version Number */
             draft_version_number?: number | null;
             /** Has Recipe */

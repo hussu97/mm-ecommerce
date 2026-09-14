@@ -56,7 +56,16 @@ def _item(name: str, *, kind: str, is_active: bool = True) -> InventoryItem:
     )
 
 
-async def _recipe(db, *, owner_id, status, ingredient_id, activated_by=None):
+async def _recipe(
+    db,
+    *,
+    owner_id,
+    status,
+    ingredient_id,
+    activated_by=None,
+    basis="unit",
+    batch_yield=None,
+):
     """An inventory-item recipe with one version and one line.
 
     Lines are added while the version is a draft (a trigger freezes them once
@@ -66,7 +75,13 @@ async def _recipe(db, *, owner_id, status, ingredient_id, activated_by=None):
     recipe = Recipe(owner_kind="inventory_item", inventory_item_id=owner_id)
     db.add(recipe)
     await db.flush()
-    version = RecipeVersion(recipe_id=recipe.id, version_number=1, status="draft")
+    version = RecipeVersion(
+        recipe_id=recipe.id,
+        version_number=1,
+        status="draft",
+        basis=basis,
+        batch_yield=batch_yield,
+    )
     db.add(version)
     await db.flush()
     db.add(
@@ -112,6 +127,8 @@ async def seeded(engine):
             status="active",
             ingredient_id=ingredient.id,
             activated_by=activator.id,
+            basis="batch",
+            batch_yield=Decimal("12"),
         )
         await _recipe(
             db,
@@ -191,6 +208,8 @@ async def test_card_carries_version_activator_and_lines(engine, seeded):
     (card,) = await _cards(engine)
     assert card["item_id"] == seeded["live"]
     assert card["category_name"] == f"{MARKER} Bases"
+    assert card["basis"] == "batch"
+    assert card["batch_yield"] == Decimal("12")
     assert card["version_number"] == 1
     assert card["activated_by_name"] == f"{MARKER} Baker"
     assert card["activated_at"] is not None

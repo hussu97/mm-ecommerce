@@ -244,6 +244,27 @@ async def list_recipe_owners(
                 {"name": name, "quantity": quantity, "unit": unit}
             )
 
+    # The basis + batch yield of each shown recipe's active/draft version — a
+    # separate query so a version with no lines still reports its basis. Keyed
+    # by (recipe_id, status) to match the recipe_status the row will report.
+    basis_by_version: dict[tuple[uuid.UUID, str], tuple[str, object]] = {}
+    if recipe_ids:
+        basis_rows = (
+            await db.execute(
+                select(
+                    RecipeVersion.recipe_id,
+                    RecipeVersion.status,
+                    RecipeVersion.basis,
+                    RecipeVersion.batch_yield,
+                ).where(
+                    RecipeVersion.recipe_id.in_(recipe_ids),
+                    RecipeVersion.status.in_(("active", "draft")),
+                )
+            )
+        ).all()
+        for rid, status, basis, batch_yield in basis_rows:
+            basis_by_version[(rid, status)] = (basis, batch_yield)
+
     # For modifier options, the products that carry this option's modifier — so
     # the console can say where the option is used. One query for the page.
     product_names: dict[uuid.UUID, list[str]] = {}
@@ -280,6 +301,11 @@ async def list_recipe_owners(
             if has_recipe and recipe_status != "none"
             else []
         )
+        basis, batch_yield = (
+            basis_by_version.get((row.recipe_id, recipe_status), ("unit", None))
+            if has_recipe and recipe_status != "none"
+            else ("unit", None)
+        )
         items.append(
             {
                 "id": row.id,
@@ -292,6 +318,8 @@ async def list_recipe_owners(
                 "recipe_status": recipe_status,
                 "active_version_number": row.active_version,
                 "draft_version_number": row.draft_version,
+                "basis": basis,
+                "batch_yield": batch_yield,
                 "line_count": len(ingredients),
                 "ingredients": ingredients,
             }
@@ -321,6 +349,8 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 RecipeVersion.id.label("version_id"),
                 RecipeVersion.version_number,
                 RecipeVersion.activated_at,
+                RecipeVersion.basis,
+                RecipeVersion.batch_yield,
                 User.display_name,
                 User.email,
                 InventoryCategory.name.label("category_name"),
@@ -395,6 +425,8 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                 "name": row.name,
                 "sku": row.sku,
                 "category_name": row.category_name,
+                "basis": row.basis,
+                "batch_yield": row.batch_yield,
                 "version_number": row.version_number,
                 "activated_at": row.activated_at,
                 "activated_by_name": row.display_name or row.email,

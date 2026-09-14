@@ -104,6 +104,7 @@ class RecipeExpansionResponse(BaseModel):
 
 
 RecipeStatus = Literal["none", "draft", "active"]
+RecipeBasis = Literal["unit", "batch"]
 
 
 class RecipeOwnerIngredient(BaseModel):
@@ -139,6 +140,12 @@ class RecipeOwnerRow(BaseModel):
     recipe_status: RecipeStatus
     active_version_number: int | None = None
     draft_version_number: int | None = None
+    # How the current version's lines are authored: "unit" (per one owner unit)
+    # or "batch" (per one batch that yields ``batch_yield`` owner units). Defaults
+    # to "unit" when the owner has no recipe.
+    basis: RecipeBasis = "unit"
+    # Owner units one batch makes; set only when basis == "batch".
+    batch_yield: Decimal | None = None
     line_count: int = 0
     # The lines of the current version (active if present, else draft) — a
     # read-only summary so the list shows each recipe's ingredients at a glance.
@@ -461,6 +468,11 @@ class PosRecipeCard(BaseModel):
     #: The item's inventory category, or null if uncategorised. The tab groups
     #: cards under this, categories by name then items by name within.
     category_name: str | None
+    #: How the lines are authored: "unit" (per one of this item) or "batch"
+    #: (per one batch that yields ``batch_yield`` of it).
+    basis: RecipeBasis
+    #: How many of this item one batch makes; set only when basis == "batch".
+    batch_yield: Decimal | None
     version_number: int
     activated_at: datetime | None
     #: Who last activated this version — display name, else email; null if the

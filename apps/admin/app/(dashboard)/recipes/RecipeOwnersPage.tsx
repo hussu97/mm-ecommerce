@@ -40,8 +40,15 @@ function IngredientSummary({ row }: { row: RecipeOwnerRow }) {
   const MAX = 6;
   const shown = row.ingredients.slice(0, MAX);
   const extra = row.ingredients.length - shown.length;
+  const basisLabel =
+    row.basis === 'batch'
+      ? `Per batch of ${formatQuantity(row.batch_yield ?? '0')}`
+      : 'Per unit';
   return (
     <div className="space-y-0.5 text-[11px] font-body text-gray-600">
+      <div className="mb-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">
+        {basisLabel}
+      </div>
       {shown.map((ing, i) => (
         <div key={i}>
           <span className="tabular-nums text-gray-800">

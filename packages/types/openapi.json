@@ -20966,6 +20966,26 @@
             ],
             "title": "Activated By Name"
           },
+          "basis": {
+            "enum": [
+              "unit",
+              "batch"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
+          },
           "category_name": {
             "anyOf": [
               {
@@ -21011,6 +21031,8 @@
           "name",
           "sku",
           "category_name",
+          "basis",
+          "batch_yield",
           "version_number",
           "activated_at",
           "activated_by_name",
@@ -25511,6 +25533,27 @@
               }
             ],
             "title": "Active Version Number"
+          },
+          "basis": {
+            "default": "unit",
+            "enum": [
+              "unit",
+              "batch"
+            ],
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
           },
           "draft_version_number": {
             "anyOf": [
