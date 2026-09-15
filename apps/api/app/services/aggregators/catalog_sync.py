@@ -1268,16 +1268,38 @@ async def enrich_existing_item(
         if dry_run:
             out["note"] = "Dry run — noon item/edit (name_ar + desc EN/AR)."
             return out
+        # noon's `image` does NOT take a foreign URL — the field accepts the string
+        # but noon renders it corrupt (confirmed live 2026-09-15). The picture must
+        # be uploaded to noon's own storage first: `upload_menu_item_image` asks the
+        # RMS gateway for a GCS signed PUT URL, PUTs the bytes, and returns the
+        # stored path to set as `image`. Best-effort — a failed upload leaves the
+        # image unset (corrupt is worse than none) but never blocks name/desc/price.
+        noon_image_path: str | None = None
+        image_status = "skipped (no product image)"
+        if i18n["image_url"]:
+            fetched = await _fetch_image_bytes(i18n["image_url"])
+            if fetched is None:
+                image_status = "skipped (image fetch failed)"
+            else:
+                image_bytes, ctype = fetched
+                ext = (ctype.split("/", 1)[-1] or "png").split(";")[0]
+                try:
+                    noon_image_path = await np.provider.upload_menu_item_image(
+                        session,
+                        image_bytes=image_bytes,
+                        filename=f"{product.sku or _norm(product.name)}.{ext}",
+                        content_type=ctype,
+                    )
+                    image_status = "uploaded"
+                except Exception as exc:  # noqa: BLE001 — image is best-effort
+                    logger.warning(
+                        "noon image upload failed for %s: %s", product.id, exc
+                    )
+                    image_status = f"skipped (upload failed: {str(exc)[:80]})"
         # Stage only: noon refuses to auto-publish name/description changes
         # ("item changes are not approved for auto publish"), so the edit lands on
         # the draft menu and a human approves it in the noon console. Publishing
-        # here would just 400. noon's `image` takes our public URL directly
-        # (verified live 2026-09-15), so it is set here alongside name/desc.
-        # NB: noon's `image` does NOT take a foreign URL — the field accepts the
-        # string but noon renders it corrupt (confirmed live 2026-09-15). noon
-        # needs the picture uploaded to its own media first; until that upload is
-        # wired, DON'T push the URL (a corrupt image is worse than none). Image is
-        # therefore left for the noon media-upload path.
+        # here would just 400.
         await np.provider.update_menu_item(
             session,
             menu_code=menu_code,
@@ -1286,18 +1308,18 @@ async def enrich_existing_item(
             description=i18n["description"],
             description_ar=i18n["description_ar"],
             price=product.base_price,
+            image=noon_image_path,
             publish=False,
         )
         out["fields"] = {
             "name_ar": "staged",
             "description": "staged",
             "price": "staged",
-            "image": "skipped (noon needs its own media upload; URL renders corrupt)",
+            "image": image_status,
         }
         out["note"] = (
-            "Noon name/desc/price staged on the draft menu — approve in the noon "
-            "console (noon won't auto-publish these). Image needs the noon media "
-            "upload (a foreign URL renders corrupt)."
+            "Noon name/desc/price/image staged on the draft menu — approve in the "
+            "noon console (noon won't auto-publish these)."
         )
         return out
 
@@ -1815,11 +1837,32 @@ async def _create_on_noon(
     # noon-hosted media path (no foreign-URL fetch, and no uploader in the client),
     # so the image is the one field a noon create/enrich cannot set here — it stays
     # a console step. Best-effort: a failed enrich never unwinds the create.
+    # noon renders a foreign image URL corrupt, so upload the picture to noon's own
+    # storage first and set the returned path (see `upload_menu_item_image`). Both
+    # image and text go through the one item/edit read-modify-write. Best-effort: a
+    # failed enrich never unwinds the create.
     enrich: dict[str, Any] = {}
-    if new_item is not None and (i18n["description"] or i18n["description_ar"]):
+    noon_image_path: str | None = None
+    if new_item is not None and i18n["image_url"]:
+        fetched = await _fetch_image_bytes(i18n["image_url"])
+        if fetched is not None:
+            image_bytes, ctype = fetched
+            ext = (ctype.split("/", 1)[-1] or "png").split(";")[0]
+            try:
+                noon_image_path = await np.provider.upload_menu_item_image(
+                    session,
+                    image_bytes=image_bytes,
+                    filename=f"{product.sku or _norm(product.name)}.{ext}",
+                    content_type=ctype,
+                )
+                enrich["image"] = "uploaded"
+            except Exception as exc:  # noqa: BLE001 — image is best-effort
+                logger.warning("noon image upload failed for %s: %s", noon_id, exc)
+                enrich["image"] = f"error: {str(exc)[:80]}"
+    if new_item is not None and (
+        i18n["description"] or i18n["description_ar"] or noon_image_path
+    ):
         try:
-            # No image here: noon renders a foreign URL corrupt (see enrich path);
-            # the picture needs noon's own media upload, wired separately.
             await np.provider.update_menu_item(
                 session,
                 menu_code=menu_code,
@@ -1827,6 +1870,7 @@ async def _create_on_noon(
                 description=i18n["description"],
                 description_ar=i18n["description_ar"],
                 name_ar=i18n["name_ar"],
+                image=noon_image_path,
                 publish=False,  # noon won't auto-publish name/desc; stage for approval
             )
             enrich["text"] = "staged"
@@ -1837,9 +1881,9 @@ async def _create_on_noon(
     plan["noon_item_code"] = noon_id
     plan["enrich"] = enrich
     plan["note"] = (
-        "Created on noon (off-shelf) and mapped; name/desc EN+AR staged on the "
-        "draft menu (approve in the noon console — noon won't auto-publish these). "
-        "Image needs the noon media upload (a foreign URL renders corrupt)."
+        "Created on noon (off-shelf) and mapped; name/desc EN+AR + image staged on "
+        "the draft menu (approve in the noon console — noon won't auto-publish "
+        "these)."
     )
     return plan
 
