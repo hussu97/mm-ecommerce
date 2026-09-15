@@ -114,6 +114,7 @@ function CreateItemPanel({ branches }: { branches: Branch[] }) {
         target,
         branch_id: branchId || null,
         dry_run: true,
+        force: false,
       });
       setPlan(JSON.stringify(res, null, 2));
     } catch (e) {
