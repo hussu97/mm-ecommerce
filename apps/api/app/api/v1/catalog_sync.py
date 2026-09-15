@@ -90,16 +90,21 @@ async def branch_drift(
 async def refresh(
     branch_id: UUID,
     targets: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
     _: User = Depends(require("catalogue.manage")),
 ) -> dict:
     """Read each integrator's live menu/hours into a fresh snapshot. Gated.
 
     503s unless `CATALOG_SYNC_READ_ENABLED` — it opens marketplace sessions. Per
     target isolated, so one dead session never blocks the rest.
+
+    Deliberately takes no request `db`: the read is a sweep that commits per target
+    and spans minutes of portal calls, so it runs on its own scheduler-pool session
+    (`refresh_all_on_own_session`) rather than committing and pinning the request's
+    storefront connection (F-AGG-16). Still awaited — the caller reads drift on the
+    result.
     """
-    return await catalog_sync.refresh_all(
-        db, branch_id=branch_id, targets=_parse_targets(targets)
+    return await catalog_sync.refresh_all_on_own_session(
+        branch_id=branch_id, targets=_parse_targets(targets)
     )
 
 
@@ -173,6 +178,7 @@ async def create_item(
         target=payload.target,
         branch_id=UUID(payload.branch_id) if payload.branch_id else None,
         dry_run=payload.dry_run,
+        force=payload.force,
     )
     if not payload.dry_run:
         await audit_service.log_action(

@@ -7513,6 +7513,11 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
           "product_id": {
             "title": "Product Id",
             "type": "string"
@@ -41612,7 +41617,7 @@
     },
     "/api/v1/catalog-sync/refresh": {
       "post": {
-        "description": "Read each integrator's live menu/hours into a fresh snapshot. Gated.\n\n503s unless `CATALOG_SYNC_READ_ENABLED` \u2014 it opens marketplace sessions. Per\ntarget isolated, so one dead session never blocks the rest.",
+        "description": "Read each integrator's live menu/hours into a fresh snapshot. Gated.\n\n503s unless `CATALOG_SYNC_READ_ENABLED` \u2014 it opens marketplace sessions. Per\ntarget isolated, so one dead session never blocks the rest.\n\nDeliberately takes no request `db`: the read is a sweep that commits per target\nand spans minutes of portal calls, so it runs on its own scheduler-pool session\n(`refresh_all_on_own_session`) rather than committing and pinning the request's\nstorefront connection (F-AGG-16). Still awaited \u2014 the caller reads drift on the\nresult.",
         "operationId": "refresh_api_v1_catalog_sync_refresh_post",
         "parameters": [
           {

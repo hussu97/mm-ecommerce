@@ -100,6 +100,32 @@ async def fetch_hours(
     return await reader(db, branch_id)
 
 
+async def _session_for(db: AsyncSession, channel: str, provider: Any):
+    """Load + enrich + prepare a channel session for a catalog read, or raise.
+
+    Mirrors `ingest._session_for` — the one gate every marketplace call goes
+    through — but **raises** rather than returning None, because a menu/hours read
+    has no run to skip and a `None` session handed to a provider is exactly the
+    `AttributeError` these readers used to store as the snapshot error (F-AGG-15).
+    `enrich_session` fills the ids the raw blob lacks (Talabat account ids, noon
+    scope); `is_session_usable` keeps a status-dead or past-expiry session off the
+    portal — replaying one is the anti-ban rule every ingest sweep already honours,
+    and the readers were the one path that skipped it. `prepare_session` (Deliveroo
+    only; absent elsewhere) mints/refreshes the httpx JWT.
+    """
+    from app.services.aggregators import session_store
+
+    session = await session_store.load(db, channel)
+    session = await session_store.enrich_session(db, session)
+    prepare = getattr(provider, "prepare_session", None)
+    if callable(prepare):
+        session = await prepare(db, session)
+    if not session_store.is_session_usable(session):
+        reason = session_store.session_unusable_reason(session)
+        raise AggregatorUnavailableError(f"{channel} session not usable: {reason}")
+    return session
+
+
 # ── Foodics Grubtech reader (integrated branches) ─────────────────────────────
 # The aggregator menu for Sharjah + Barsha IS the Foodics "Grubtech" price tag
 # (verified live 2026-08-31): its products carry the aggregator price in
@@ -338,10 +364,9 @@ async def _careem_ids(db: AsyncSession, branch_id: Any) -> tuple[str, str, str]:
 
 
 async def _read_careem_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
-    from app.services.aggregators import session_store
     from app.services.providers import careem_provider as cp
 
-    session = await session_store.load(db, "careem")
+    session = await _session_for(db, "careem", cp.provider)
     company, brand, outlet = await _careem_ids(db, branch_id)
     catalogs = await cp.provider.list_catalogs(session, company, brand, outlet)
     catalog_list = (
@@ -433,10 +458,9 @@ def parse_careem_hours(rows: Any) -> NormalizedHours:
 
 
 async def _read_careem_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
-    from app.services.aggregators import session_store
     from app.services.providers import careem_provider as cp
 
-    session = await session_store.load(db, "careem")
+    session = await _session_for(db, "careem", cp.provider)
     company, brand, outlet = await _careem_ids(db, branch_id)
     rows = await cp.provider.get_operational_hours(session, company, brand, outlet)
     return parse_careem_hours(rows)
@@ -623,10 +647,9 @@ async def _talabat_vendor(db: AsyncSession, branch_id: Any) -> str:
 
 
 async def _read_talabat_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
-    from app.services.aggregators import session_store
     from app.services.providers import talabat_provider as tp
 
-    session = await session_store.load(db, "talabat")
+    session = await _session_for(db, "talabat", tp.provider)
     vendor = await _talabat_vendor(db, branch_id)
     catalogs = await tp.provider.list_catalogs(session, vendor)
     catalog_list = (
@@ -724,10 +747,9 @@ async def _read_talabat_hours(db: AsyncSession, branch_id: Any) -> NormalizedHou
     """Talabat opening hours, read live server-side from the DeliveryHero Vendor
     Time Service — the same TLS-impersonated session the menu/sales reads use, no
     headed browser (verified live 2026-09-02 for all 3 vendors)."""
-    from app.services.aggregators import session_store
     from app.services.providers import talabat_provider as tp
 
-    session = await session_store.load(db, "talabat")
+    session = await _session_for(db, "talabat", tp.provider)
     vendor = await _talabat_vendor(db, branch_id)
     raw = await tp.provider.get_delivery_calendars(session, vendor)
     return parse_talabat_hours(raw)
@@ -854,10 +876,9 @@ def parse_noon_menu(details: Any) -> NormalizedMenu:
 
 
 async def _read_noon_menu(db: AsyncSession, branch_id: Any) -> NormalizedMenu:
-    from app.services.aggregators import session_store
     from app.services.providers import noon_provider as np
 
-    session = await session_store.load(db, "noon")
+    session = await _session_for(db, "noon", np.provider)
     menus = await np.provider.list_menus(session)
     rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
     # The MM-managed menu is the one that is NOT the Foodics-fed "Ext. grubtech".
@@ -927,10 +948,9 @@ async def _noon_outlet_code(db: AsyncSession, branch_id: Any) -> str:
 
 
 async def _read_noon_hours(db: AsyncSession, branch_id: Any) -> NormalizedHours:
-    from app.services.aggregators import session_store
     from app.services.providers import noon_provider as np
 
-    session = await session_store.load(db, "noon")
+    session = await _session_for(db, "noon", np.provider)
     outlet_code = await _noon_outlet_code(db, branch_id)
     details = await np.provider.get_outlet_details(session, outlet_code)
     return parse_noon_hours(details)
@@ -1255,17 +1275,13 @@ async def _read_deliveroo_hours(db: AsyncSession, branch_id: Any) -> NormalizedH
     TLS-impersonating transport with the session's cf_clearance — the SPA just
     stopped firing it on page load after the Partner Hub's /api-gw/ restructure, so
     a direct fetch is both correct and more robust than the passive page-capture."""
-    from app.services.aggregators import session_store
     from app.services.providers import deliveroo_provider as dp
 
-    session = await session_store.load(db, "deliveroo")
-    # prepare_session RETURNS the prepared session — a NEW object when it refreshes
-    # or re-logs-in a stale token (and it augments org_id / outlet ids onto it). Use
-    # the return value: the passed-in `session` stays stale, which 401s on an expired
-    # token and loses the org_id augmentation.
-    session = await dp.provider.prepare_session(db, session)
-    if session is None:
-        raise AggregatorUnavailableError("no deliveroo session")
+    # `_session_for` loads, enriches, runs `prepare_session` (which mints/refreshes
+    # the JWT and augments org_id / outlet ids onto a NEW object) and gates on
+    # `is_session_usable` — raising if the session is not live rather than handing a
+    # stale or None session to the portal (F-AGG-15).
+    session = await _session_for(db, "deliveroo", dp.provider)
     outlet = await _deliveroo_outlet_id(db, branch_id)
     raw = await dp.provider.get_opening_hours(session, outlet)
     return parse_deliveroo_hours(raw)

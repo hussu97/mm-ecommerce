@@ -289,14 +289,17 @@ def is_session_usable(
 
 
 async def _row(
-    db: AsyncSession, channel: str, account_ref: str = ""
+    db: AsyncSession, channel: str, account_ref: str = "", *, lock: bool = False
 ) -> AggregatorSession | None:
-    return await db.scalar(
-        select(AggregatorSession).where(
-            AggregatorSession.channel == channel,
-            AggregatorSession.account_ref == account_ref,
-        )
+    stmt = select(AggregatorSession).where(
+        AggregatorSession.channel == channel,
+        AggregatorSession.account_ref == account_ref,
     )
+    if lock:
+        # Held against a concurrent writer so `upsert_bootstrap`'s read-then-write
+        # of the freshest login cannot interleave with another sweep's (F-AGG-13).
+        stmt = stmt.with_for_update()
+    return await db.scalar(stmt)
 
 
 async def status_for(
@@ -344,6 +347,7 @@ async def upsert_bootstrap(
     storage_state: dict | None = None,
     token_expires_at: datetime | None = None,
     cookie_expires_at: datetime | None = None,
+    minted_at: datetime | None = None,
 ) -> AggregatorSession:
     """Store a freshly captured session, replacing whatever was there.
 
@@ -351,11 +355,26 @@ async def upsert_bootstrap(
     `last_bootstrap_at` — a new login is by definition the freshest the session
     ever gets. `storage_state` is optional: an older worker that only captured
     cookies must not wipe a blob a headed login already stored.
+
+    **The overwrite is guarded on `minted_at`** (when the session was actually
+    captured; defaults to now). A mint no newer than the row's stored
+    `last_bootstrap_at` is dropped rather than written, and the fresher row is
+    returned untouched (F-AGG-13). Three writers reach this — the headed worker
+    push, `deliveroo_provider._persist_minted`, and the two overlapping Deliveroo
+    sweeps (`_SALES_LOCK`/`_RANGE_LOCK`) that can each mint — so without the guard
+    a stale login committing late clobbered a newer one and every following call
+    401'd. The row is taken `FOR UPDATE`, so the check and the write cannot
+    interleave with another writer's.
     """
-    row = await _row(db, channel, account_ref)
+    captured_at = minted_at or utcnow()
+    row = await _row(db, channel, account_ref, lock=True)
     if row is None:
         row = AggregatorSession(channel=channel, account_ref=account_ref)
         db.add(row)
+    elif row.last_bootstrap_at is not None and row.last_bootstrap_at >= captured_at:
+        # A newer login already landed (an overlapping sweep, or the headed
+        # worker). Leave it — a stale mint must not overwrite a fresher session.
+        return row
     row.cookies_encrypted = crypto.encrypt_json(cookies)
     row.tokens_encrypted = crypto.encrypt_json(tokens)
     row.header_profile_encrypted = crypto.encrypt_json(header_profile)
@@ -364,7 +383,7 @@ async def upsert_bootstrap(
     row.token_expires_at = token_expires_at
     row.cookie_expires_at = cookie_expires_at
     row.status = SESSION_LIVE
-    row.last_bootstrap_at = utcnow()
+    row.last_bootstrap_at = captured_at
     row.last_warmed_at = utcnow()
     row.last_error = None
     # A fresh login means the channel is healthy again — forget any published heal

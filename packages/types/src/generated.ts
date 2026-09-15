@@ -2231,6 +2231,12 @@ export interface paths {
          *
          *     503s unless `CATALOG_SYNC_READ_ENABLED` — it opens marketplace sessions. Per
          *     target isolated, so one dead session never blocks the rest.
+         *
+         *     Deliberately takes no request `db`: the read is a sweep that commits per target
+         *     and spans minutes of portal calls, so it runs on its own scheduler-pool session
+         *     (`refresh_all_on_own_session`) rather than committing and pinning the request's
+         *     storefront connection (F-AGG-16). Still awaited — the caller reads drift on the
+         *     result.
          */
         post: operations["refresh_api_v1_catalog_sync_refresh_post"];
         delete?: never;
@@ -11174,6 +11180,11 @@ export interface components {
              * @default true
              */
             dry_run: boolean;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
             /** Product Id */
             product_id: string;
             /**
