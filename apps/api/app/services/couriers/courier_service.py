@@ -318,6 +318,47 @@ async def dispatch(
     return await _record_outcome(db, order, await _dispatch_once(db, order, delivery))
 
 
+async def enqueue_for_dispatch(db: AsyncSession, order: Order) -> OrderDelivery | None:
+    """
+    Mark this order's delivery due for the scheduler to book, without calling a
+    courier here.
+
+    The booking spends real money and commits the session on the way out
+    (`lalamove_service.dispatch_order`, and its noon Send / Slider siblings, all
+    `db.commit()` because a driver has been engaged outside our transaction and
+    cannot be rolled back with it). Inside a request that is *confirming* an
+    order that commit is a trap: the payment webhook still owes its dedup row and
+    the confirmation email their own commit, so a booking here flushes a
+    half-finished handler to disk, and anything that fails afterwards leaves the
+    dedup row committed — Stripe's retry is discarded as a duplicate and the
+    email never goes (F-ORD-8).
+
+    So confirmation enqueues instead of booking. The delivery is stamped due
+    *now* and left with no `courier_order_id`, which is exactly the shape
+    `retry_failed_dispatches` sweeps up — it re-reads the row `FOR UPDATE SKIP
+    LOCKED` on its own session, on the very next delivery-scheduler tick, and
+    books the courier there, after this request has safely committed. The
+    register was already told inline (`arrival_service.land` transitions to
+    `arrived_at_pos` before it calls this), so only the van waits for the tick,
+    not the kitchen.
+
+    Returns the row (untouched for an order no courier books itself, or one
+    already out with a driver), so a caller can log what it queued.
+    """
+    delivery = await _delivery_for_dispatch(db, order.id, lock=False)
+    if delivery is None or not books_itself(delivery.provider):
+        return delivery
+    # Already out with a live booking — the same guard `_dispatch_once` applies.
+    # A terminal-and-failed id is not a booking, so a re-confirm of a rejected
+    # order still re-queues.
+    if delivery.courier_order_id and not is_failed(
+        delivery.provider, delivery.courier_status
+    ):
+        return delivery
+    delivery.next_attempt_at = datetime.now(timezone.utc)
+    return delivery
+
+
 async def _ensure_receiver_loaded(db: AsyncSession, order: Order) -> None:
     """Load `order.receiver` if the caller's order load did not.
 

@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from app.services.aggregators.catalog_mapping import _fold_index
+from types import SimpleNamespace
+
+import pytest
+
+from app.models.external_item_map import METHOD_EXACT, METHOD_FUZZY, METHOD_MANUAL
+from app.services.aggregators.catalog_mapping import (
+    KIND_PRODUCT,
+    _fold_index,
+    _upsert,
+)
 
 
 def test_fold_index_matches_ampersand_and_plural():
@@ -35,3 +44,63 @@ def test_fold_index_keeps_unambiguous():
 
     assert idx[normalize_name("Basque Cheesecakes")] == 1  # plural still maps
     assert idx[normalize_name("Chocolate Mousse")] == 2
+
+
+# ── _upsert approval/method (F-AGG-20) ────────────────────────────────────────
+#
+# A fold (fuzzy) match must never be auto-approved as a manual mapping — a
+# plural/singular collision would point one item's stock at the wrong product.
+
+
+class _UpsertDb:
+    def __init__(self, existing=None):
+        self._existing = existing
+        self.added = []
+        self.flushed = 0
+
+    async def execute(self, _stmt):
+        return SimpleNamespace(scalar_one_or_none=lambda: self._existing)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        self.flushed += 1
+
+
+@pytest.mark.asyncio
+async def test_upsert_fold_match_is_unapproved_fuzzy():
+    db = _UpsertDb()
+    approved = await _upsert(
+        db,
+        system="careem",
+        external_ref="Cookies",
+        external_name="Cookies",
+        mm_kind=KIND_PRODUCT,
+        product_id=1,
+        approve=False,
+        method=METHOD_FUZZY,
+    )
+    assert approved is False
+    row = db.added[0]
+    assert not row.approved
+    assert row.match_method == METHOD_FUZZY
+
+
+@pytest.mark.asyncio
+async def test_upsert_exact_match_is_approved_manual():
+    db = _UpsertDb()
+    approved = await _upsert(
+        db,
+        system="careem",
+        external_ref="Basque Cheesecake",
+        external_name="Basque Cheesecake",
+        mm_kind=KIND_PRODUCT,
+        product_id=1,
+        approve=True,
+        method=METHOD_EXACT,
+    )
+    assert approved is True
+    row = db.added[0]
+    assert row.approved
+    assert row.match_method == METHOD_MANUAL

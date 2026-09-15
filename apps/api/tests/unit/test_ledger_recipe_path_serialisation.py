@@ -29,6 +29,7 @@ def test_transaction_line_accepts_nested_recipe_paths():
             "quantity": Decimal("1"),
             "unit": "kg",
             "conversion_factor": Decimal("1"),
+            "quantity_in_storage_unit": Decimal("1"),
             "quantity_in_ingredient_unit": Decimal("1"),
             "unit_cost": Decimal("1"),
             "total_cost": Decimal("1"),

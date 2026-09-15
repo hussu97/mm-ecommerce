@@ -850,7 +850,7 @@ async def _create_report(
             # lines eager-loaded.
             report_id=report.id,
             item_id=item.id,
-            unit=item.ingredient_unit,
+            unit=item.storage_unit,
             source_summary={
                 "item_name": item.name,
                 "item_sku": item.sku,
@@ -1010,15 +1010,15 @@ async def _write_line_edits(
                 if item
                 else None
             )
-            per_ingredient_cost = (
+            per_storage_cost = (
                 unit_cost(level.average_cost)
                 if level and Decimal(str(level.average_cost or 0)) > 0
-                else inventory_service.inventory_item_cost_for_unit(item, "ingredient")
+                else inventory_service.inventory_item_cost_for_unit(item, "storage")
                 if item
                 else Decimal("0")
             )
             line.variance_cost = money(
-                abs(Decimal(str(line.variance_quantity))) * per_ingredient_cost
+                abs(Decimal(str(line.variance_quantity))) * per_storage_cost
             )
 
 
@@ -1373,14 +1373,14 @@ async def post_report(
             current_cost = unit_cost(level.average_cost)
             if current_cost == 0:
                 current_cost = inventory_service.inventory_item_cost_for_unit(
-                    item, "ingredient"
+                    item, "storage"
                 )
             transaction.items.append(
                 InventoryTransactionItem(
                     item_id=item.id,
                     quantity=value,
-                    unit="ingredient",
-                    conversion_factor=Decimal("1"),
+                    unit="storage",
+                    conversion_factor=item.storage_to_ingredient_factor,
                     unit_cost=current_cost,
                 )
             )
@@ -1439,14 +1439,14 @@ async def post_report(
                 or current_cost == 0
             ):
                 current_cost = inventory_service.inventory_item_cost_for_unit(
-                    item, "ingredient"
+                    item, "storage"
                 )
             transaction.items.append(
                 InventoryTransactionItem(
                     item_id=item.id,
                     quantity=entered,
-                    unit="ingredient",
-                    conversion_factor=Decimal("1"),
+                    unit="storage",
+                    conversion_factor=item.storage_to_ingredient_factor,
                     unit_cost=current_cost,
                     expected_quantity=(
                         report_line.expected_quantity

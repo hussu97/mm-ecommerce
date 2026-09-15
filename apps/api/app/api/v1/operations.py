@@ -660,6 +660,9 @@ class PosOnHandResponse(BaseModel):
     quantity: Decimal
     item_name: str | None = None
     item_sku: str | None = None
+    #: The stock unit `quantity` is in (the canonical unit); the ingredient unit
+    #: is the recipe view, kept for reference.
+    storage_unit: str | None = None
     ingredient_unit: str | None = None
     #: The item's inventory category, so the returns picker can group by it. Both
     #: null for an uncategorised item (sort last).
@@ -703,6 +706,7 @@ async def pos_on_hand(
                 quantity=quantity,
                 item_name=item.name,
                 item_sku=item.sku,
+                storage_unit=item.storage_unit,
                 ingredient_unit=item.ingredient_unit,
             )
     categories = await _category_map(db, list(items))

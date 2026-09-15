@@ -115,6 +115,29 @@ async def _assert_owner_exists(
         )
 
 
+async def owner_name(db: AsyncSession, kind: str, owner_id: uuid.UUID) -> str:
+    """The owner's display name for an audit-log label, or the id if unknown."""
+    model = {
+        RecipeOwnerKindEnum.PRODUCT.value: Product,
+        RecipeOwnerKindEnum.MODIFIER_OPTION.value: ModifierOption,
+        RecipeOwnerKindEnum.INVENTORY_ITEM.value: InventoryItem,
+    }.get(kind)
+    if model is None:
+        return str(owner_id)
+    name = (
+        await db.execute(select(model.name).where(model.id == owner_id))
+    ).scalar_one_or_none()
+    return name or str(owner_id)
+
+
+def owner_ref(recipe: Recipe) -> tuple[str, uuid.UUID]:
+    """A recipe's (owner_kind, owner_id) from whichever owner FK is set."""
+    owner_id = (
+        recipe.product_id or recipe.modifier_option_id or recipe.inventory_item_id
+    )
+    return recipe.owner_kind, owner_id
+
+
 async def get_recipe(db: AsyncSession, kind: str, owner_id: uuid.UUID) -> Recipe | None:
     column = _owner_column(kind)
     stmt = (

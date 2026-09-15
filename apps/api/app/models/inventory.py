@@ -330,11 +330,13 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
-    #: Held in the item's ingredient unit.
+    #: Held in the item's storage unit — the canonical stock unit. Purchases and
+    #: counts are in storage units; a recipe consumption is converted from its
+    #: ingredient unit to storage before it moves this figure.
     quantity: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
-    #: Weighted-average cost per ingredient unit.
+    #: Weighted-average cost per storage unit (matches ``InventoryItem.cost``).
     average_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
     )
@@ -592,11 +594,18 @@ class InventoryTransactionItem(Base, UUIDMixin):
     conversion_factor: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="1"
     )
-    #: `quantity` normalised into the item's ingredient unit.
+    #: `quantity` normalised into the item's storage unit — the canonical unit
+    #: the level and `signed_quantity` are kept in. Every movement records this.
+    quantity_in_storage_unit: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    #: `quantity` normalised into the item's ingredient unit — the recipe/prep
+    #: view of the same movement, carried alongside the storage figure so a
+    #: consumption shows both (e.g. 2 tsp and the 8 g it took off the shelf).
     quantity_in_ingredient_unit: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
-    #: Immutable signed movement used by projection rebuilds.
+    #: Immutable signed movement (in storage units) used by projection rebuilds.
     signed_quantity: Mapped[Any] = mapped_column(
         Numeric(20, 6), nullable=False, server_default="0"
     )

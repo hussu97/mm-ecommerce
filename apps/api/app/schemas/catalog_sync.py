@@ -72,6 +72,9 @@ class CreateItemRequest(BaseModel):
     target: str = "foodics"
     branch_id: str | None = None
     dry_run: bool = True
+    #: Override the duplicate guard to create again when the product is already
+    #: mapped on the target (F-AGG-14). Ignored on a dry run.
+    force: bool = False
 
 
 class MappingResolveResult(BaseModel):

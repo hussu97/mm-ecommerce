@@ -45,11 +45,12 @@ def _order(status: OrderStatusEnum = OrderStatusEnum.CONFIRMED, **overrides) -> 
 @pytest.fixture
 def stubs(monkeypatch):
     """The world around a scheduling decision, recorded rather than run."""
-    calls: dict[str, list] = {"landed": [], "reasons": []}
+    calls: dict[str, list] = {"landed": [], "reasons": [], "book": []}
 
-    async def land(db, order, *, because):
+    async def land(db, order, *, because, book=True):
         calls["landed"].append(order)
         calls["reasons"].append(because)
+        calls["book"].append(book)
         return True
 
     monkeypatch.setattr(arrival_service, "land", land)
@@ -79,6 +80,29 @@ async def test_an_open_shop_is_told_at_once(stubs, shop_is_open):
 
     assert stubs["landed"] == [order]
     assert stamped == order.arrives_at, "schedule returns the moment it stamped"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_enqueues_the_van_rather_than_booking_it(
+    stubs, shop_is_open
+):
+    """
+    The confirmation runs inside the request that is settling the money — on the
+    ordinary route the payment webhook, which still owes its dedup row and the
+    confirmation email a commit. A courier booking commits the session on the way
+    out (a driver has been engaged and cannot be rolled back), so booking here
+    would flush that half-finished handler to disk and a later failure would
+    discard Stripe's retry with the email never sent (F-ORD-8). So `schedule`
+    lands with `book=False`: the register is told this instant, the van is left
+    for the scheduler's retry sweep to book on its own session once the request
+    commits.
+    """
+    order = _order()
+
+    await arrival_service.schedule(None, order)
+
+    assert stubs["landed"] == [order]
+    assert stubs["book"] == [False], "the courier must not be booked inline on confirm"
 
 
 @pytest.mark.asyncio
@@ -119,6 +143,68 @@ class _Db:
         return None
 
 
+class _TripwireDb:
+    """A session that hands back one delivery row and fails the test on `commit`.
+
+    The whole point of F-ORD-8 is that confirmation does not commit the request
+    mid-flight — the courier booking used to, and that commit flushed a
+    half-finished payment webhook to disk. This stands in for the settling
+    request: `execute` gives `enqueue_for_dispatch` its delivery row, and any
+    `commit` at all raises.
+    """
+
+    def __init__(self, delivery):
+        self.delivery = delivery
+
+    async def execute(self, _stmt):
+        import types
+
+        return types.SimpleNamespace(
+            scalars=lambda: types.SimpleNamespace(first=lambda: self.delivery)
+        )
+
+    async def commit(self):
+        raise AssertionError("confirmation committed the request mid-flight (F-ORD-8)")
+
+    async def rollback(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_confirmation_neither_books_nor_commits_and_queues_the_van(
+    monkeypatch, shop_is_open, quiet_publish
+):
+    """
+    End to end over the real chain: `schedule` → `land(book=False)` →
+    `enqueue_for_dispatch`, against a session that raises on `commit` and a
+    provider spy that raises if a courier is ever called. Confirmation must reach
+    `arrived_at_pos` (the register is told), leave the van queued for the sweep
+    (`next_attempt_at` set, still unbooked), and never commit or touch a courier.
+    """
+    from app.models.order_delivery import OrderDelivery
+    from app.services.couriers import (
+        lalamove_service,
+        noon_send_service,
+        slider_service,
+    )
+
+    async def must_not_book(db, order):
+        raise AssertionError("a courier was booked inline on the confirm path")
+
+    for provider in (lalamove_service, noon_send_service, slider_service):
+        monkeypatch.setattr(provider, "dispatch_order", must_not_book)
+
+    delivery = OrderDelivery(order_id=uuid.uuid4(), provider="noon_send")
+    order = _order()
+
+    stamped = await arrival_service.schedule(_TripwireDb(delivery), order)
+
+    assert stamped is not None
+    assert order.status == OrderStatusEnum.ARRIVED_AT_POS
+    assert delivery.next_attempt_at is not None, "the van is queued for the sweep"
+    assert delivery.courier_order_id is None, "still unbooked — the sweep books it"
+
+
 @pytest.fixture
 def quiet_publish(monkeypatch):
     """`arrived_at_pos` publishes to the register; that has its own tests."""
@@ -150,6 +236,36 @@ async def test_a_courier_that_refuses_still_lets_the_kitchen_know(
 
     assert await arrival_service.land(_Db(), order, because="test") is True
     assert order.status == OrderStatusEnum.ARRIVED_AT_POS
+
+
+@pytest.mark.asyncio
+async def test_landing_with_book_false_queues_the_courier_and_never_calls_it(
+    monkeypatch, quiet_publish
+):
+    """
+    `book=False` is the confirmation path: the register is still told (the
+    `arrived_at_pos` transition happens), but the courier is enqueued for the
+    sweep rather than booked here, because booking commits the settling request
+    mid-flight (F-ORD-8).
+    """
+    from app.services.couriers import courier_service
+
+    async def must_not_book(db, order, **kwargs):
+        raise AssertionError("a courier was booked inline on the confirm path")
+
+    queued: list = []
+
+    async def enqueue(db, order):
+        queued.append(order)
+        return None
+
+    monkeypatch.setattr(courier_service, "dispatch", must_not_book)
+    monkeypatch.setattr(courier_service, "enqueue_for_dispatch", enqueue)
+    order = _order()
+
+    assert await arrival_service.land(_Db(), order, because="test", book=False) is True
+    assert order.status == OrderStatusEnum.ARRIVED_AT_POS
+    assert queued == [order]
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from app.services.providers.deliveroo_provider import (
     DeliverooClient,
     _num,
     _parse_date,
+    _remint_attempted,
     _restaurant_records_from_login,
 )
 
@@ -635,7 +636,7 @@ async def test_request_json_remints_once_on_401_then_retries():
     client = DeliverooClient()
     session = _org_session()
     client._db = object()
-    client._remint_attempted = False
+    _remint_attempted.set(False)
     calls = {"n": 0}
 
     async def fake_super(self, sess, method, url, **kwargs):
@@ -672,7 +673,7 @@ async def test_request_json_does_not_remint_twice():
     client = DeliverooClient()
     session = _org_session()
     client._db = object()
-    client._remint_attempted = False
+    _remint_attempted.set(False)
     remints = {"n": 0}
 
     async def always_401(self, sess, method, url, **kwargs):
@@ -736,7 +737,7 @@ async def test_remint_commits_on_its_own_session():
     Deliveroo issues a replacement, so a caller's rollback would leave every
     following call authenticating with a token that no longer works."""
     client = DeliverooClient()
-    client._remint_attempted = False
+    _remint_attempted.set(False)
     session = _org_session()
     fresh = _org_session()
     fresh.tokens = {"access_token": "new-token"}
@@ -788,7 +789,7 @@ async def test_remint_commits_even_when_the_augment_returns_nothing():
     follow-up lookup came back empty is what leaves the next call 401-ing — the four
     logins in eight seconds in the outage logs."""
     client = DeliverooClient()
-    client._remint_attempted = False
+    _remint_attempted.set(False)
     committed: list[str] = []
 
     class _FakeSession:
@@ -824,7 +825,7 @@ async def test_remint_commits_even_when_the_augment_returns_nothing():
 @pytest.mark.asyncio
 async def test_remint_runs_at_most_once_per_sweep():
     client = DeliverooClient()
-    client._remint_attempted = True
+    _remint_attempted.set(True)
     assert await client._remint_after_stale_token(_org_session()) is None
 
 

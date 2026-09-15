@@ -80,7 +80,7 @@ __all__ = [
     "level_for",
     "inventory_item_cost_for_unit",
     "assert_warehouse_for_branch",
-    "line_cost_in_ingredient_unit",
+    "line_cost_in_storage_unit",
     "next_reference",
     "next_inventory_reference",
     "post_transaction",
@@ -125,10 +125,12 @@ async def assert_warehouse_for_branch(
 def inventory_item_cost_for_unit(item: InventoryItem, unit: str) -> Decimal:
     """Return the catalogue cost in the requested unit.
 
-    ``InventoryItem.cost`` is explicitly the cost of one storage unit while
-    ledger levels are valued per ingredient unit. Keeping the conversion here
-    prevents every fallback path (sales, counts, waste and production) from
-    inventing its own, often wrong, interpretation.
+    ``InventoryItem.cost`` is the cost of one storage unit — which is also the
+    unit the ledger values stock in (see ``InventoryLevel``). Cost in the
+    ingredient unit is that divided by the factor (fewer, larger ingredient
+    units cost proportionally more). Keeping the conversion here prevents every
+    fallback path (sales, counts, waste and production) from inventing its own,
+    often wrong, interpretation.
     """
     if unit not in {"storage", "ingredient"}:
         raise BadRequestError(f"Unknown inventory entry unit '{unit}'")
@@ -141,32 +143,42 @@ def inventory_item_cost_for_unit(item: InventoryItem, unit: str) -> Decimal:
     return _c(storage_cost / factor)
 
 
-def ingredient_cost_for_unit(
-    item: InventoryItem, ingredient_cost: Decimal, unit: str
+def canonical_cost_for_unit(
+    item: InventoryItem, storage_cost: Decimal, unit: str
 ) -> Decimal:
-    """Convert a per-ingredient-unit moving average to an entered-unit cost."""
+    """Convert a per-storage-unit moving average to an entered-unit cost.
+
+    The ledger's canonical cost is per storage unit; a line entered in storage
+    units carries it unchanged, one entered in ingredient units carries it
+    divided by the factor (ingredient = storage ÷ factor for cost too).
+    """
     if unit not in {"storage", "ingredient"}:
         raise BadRequestError(f"Unknown inventory entry unit '{unit}'")
-    cost = Decimal(str(ingredient_cost))
-    if unit == "ingredient":
+    cost = Decimal(str(storage_cost))
+    if unit == "storage":
         return _c(cost)
     factor = Decimal(str(item.storage_to_ingredient_factor or 1))
     if factor <= 0:
         raise BadRequestError(f"{item.name} has an invalid unit conversion factor")
-    return _c(cost * factor)
+    return _c(cost / factor)
 
 
-def line_cost_in_ingredient_unit(line: InventoryTransactionItem) -> Decimal:
-    """Read an immutable ledger line's cost as cost per ingredient unit."""
+def line_cost_in_storage_unit(line: InventoryTransactionItem) -> Decimal:
+    """Read an immutable ledger line's cost as cost per storage unit.
+
+    Storage is the canonical valuation unit; a storage-entered line's cost is
+    already per storage, an ingredient-entered line's is per ingredient and
+    multiplies by the snapshot factor to reach per storage.
+    """
     if line.unit not in {"storage", "ingredient"}:
         raise BadRequestError(f"Unknown inventory entry unit '{line.unit}'")
     entered_cost = Decimal(str(line.unit_cost or 0))
-    if line.unit == "ingredient":
+    if line.unit == "storage":
         return _c(entered_cost)
     factor = Decimal(str(line.conversion_factor or 1))
     if factor <= 0:
         raise BadRequestError("A ledger line has an invalid conversion factor")
-    return _c(entered_cost / factor)
+    return _c(entered_cost * factor)
 
 
 async def next_reference(db: AsyncSession, transaction_type: str) -> str:
@@ -390,14 +402,27 @@ async def post_transaction(
         if line.unit not in {"storage", "ingredient"}:
             raise BadRequestError(f"Unknown inventory entry unit '{line.unit}'")
 
-        # Normalise into the ingredient unit using the factor snapshotted on the
-        # line, falling back to the item's current factor for new lines.
+        # Normalise into the canonical STORAGE unit using the factor snapshotted
+        # on the line, falling back to the item's current factor for new lines.
+        # factor = ingredient units per one storage unit (ingredient = storage ×
+        # factor), so a storage-entered line passes straight through and an
+        # ingredient-entered line (a recipe consumption) divides by the factor to
+        # reach the grams actually taken off the shelf. Both figures are recorded
+        # so a movement shows the amount in each unit.
         factor = _c(line.conversion_factor or item.storage_to_ingredient_factor or 1)
-        if line.unit == "ingredient":
-            factor = Decimal("1")
+        if factor <= 0:
+            raise BadRequestError(f"{item.name} has an invalid unit conversion factor")
         line.conversion_factor = factor
-        normalised = _q(Decimal(str(line.quantity)) * factor)
-        line.quantity_in_ingredient_unit = normalised
+        entered = Decimal(str(line.quantity))
+        if line.unit == "ingredient":
+            storage_quantity = _q(entered / factor)
+            ingredient_quantity = _q(entered)
+        else:
+            storage_quantity = _q(entered)
+            ingredient_quantity = _q(entered * factor)
+        line.quantity_in_storage_unit = storage_quantity
+        line.quantity_in_ingredient_unit = ingredient_quantity
+        normalised = storage_quantity
 
         # Adjustments and counts carry their own sign in the quantity.
         delta = normalised if sign >= 0 else -normalised
@@ -422,21 +447,21 @@ async def post_transaction(
             line.expected_quantity = _q(level.quantity)
             delta = _q(normalised - _q(level.quantity))
 
-        unit_cost_in_ingredient_unit = line_cost_in_ingredient_unit(line)
+        unit_cost_canonical = line_cost_in_storage_unit(line)
         line.previous_unit_cost = _c(level.average_cost)
         if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
             previous_average = _c(level.average_cost)
             line.quantity = _q(level.quantity)
-            line.quantity_in_ingredient_unit = _q(level.quantity)
+            line.quantity_in_storage_unit = _q(level.quantity)
+            line.quantity_in_ingredient_unit = _q(Decimal(str(level.quantity)) * factor)
             line.signed_quantity = Decimal("0")
-            level.average_cost = unit_cost_in_ingredient_unit
+            level.average_cost = unit_cost_canonical
             line.total_cost = _money(
-                (unit_cost_in_ingredient_unit - previous_average)
-                * Decimal(str(level.quantity))
+                (unit_cost_canonical - previous_average) * Decimal(str(level.quantity))
             )
             line.balance_after_quantity = _q(level.quantity)
             line.balance_after_value = _money(
-                Decimal(str(level.quantity)) * unit_cost_in_ingredient_unit
+                Decimal(str(level.quantity)) * unit_cost_canonical
             )
             level.projected_through_sequence = posting_sequence
             total += Decimal(str(line.total_cost))
@@ -444,16 +469,14 @@ async def post_transaction(
 
         if prevent_negative and delta < 0 and _q(level.quantity) + delta < 0:
             raise ConflictError(
-                f"{item.name}: only {_q(level.quantity)} {item.ingredient_unit} "
+                f"{item.name}: only {_q(level.quantity)} {item.storage_unit} "
                 f"available, cannot issue {abs(delta)}"
             )
 
         if transaction.reverses_transaction_id is not None:
-            apply_reversal_movement(level, delta, unit_cost_in_ingredient_unit)
+            apply_reversal_movement(level, delta, unit_cost_canonical)
         else:
-            apply_movement(
-                level, delta, unit_cost_in_ingredient_unit if delta > 0 else None
-            )
+            apply_movement(level, delta, unit_cost_canonical if delta > 0 else None)
         line.signed_quantity = _q(delta)
         cost_quantity = (
             delta
@@ -466,7 +489,7 @@ async def post_transaction(
             else Decimal(str(line.quantity))
         )
         cost_per_unit = (
-            unit_cost_in_ingredient_unit
+            unit_cost_canonical
             if transaction.type
             in {
                 InventoryTransactionTypeEnum.QUANTITY_ADJUSTMENT.value,
@@ -557,9 +580,9 @@ async def adjust_level(
             transaction_id=transaction.id,
             item_id=item_id,
             quantity=_q(quantity_delta),
-            unit="ingredient",
-            conversion_factor=Decimal("1"),
-            unit_cost=inventory_item_cost_for_unit(item, "ingredient"),
+            unit="storage",
+            conversion_factor=Decimal(str(item.storage_to_ingredient_factor or 1)),
+            unit_cost=inventory_item_cost_for_unit(item, "storage"),
         )
     )
     await db.flush()
@@ -1027,9 +1050,9 @@ async def record_waste(
             # Positive: the waste transaction type already carries sign -1,
             # so negating here as well would put stock back on the shelf.
             quantity=_q(abs(quantity)),
-            unit="ingredient",
-            conversion_factor=Decimal("1"),
-            unit_cost=inventory_item_cost_for_unit(item, "ingredient"),
+            unit="storage",
+            conversion_factor=Decimal(str(item.storage_to_ingredient_factor or 1)),
+            unit_cost=inventory_item_cost_for_unit(item, "storage"),
         )
     )
     await db.flush()
@@ -1094,7 +1117,7 @@ async def adjust_cost(
         InventoryTransactionItem(
             item_id=item_id,
             quantity=_q(quantity),
-            unit="ingredient",
+            unit="storage",
             conversion_factor=Decimal("1"),
             unit_cost=_c(new_average_cost),
         )
@@ -1163,7 +1186,7 @@ async def open_count(
                 # Zero until counted; the frozen system figure rides along as
                 # the unit cost slot's sibling on the level itself.
                 quantity=Decimal("0"),
-                unit="ingredient",
+                unit="storage",
                 conversion_factor=Decimal("1"),
                 unit_cost=_c(level.average_cost),
                 expected_quantity=_q(level.quantity),

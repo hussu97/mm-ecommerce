@@ -30,6 +30,7 @@ import csv
 import io
 import json
 import logging
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -92,6 +93,17 @@ _REFRESH_URL = f"{_API}/session/refresh"
 #: Re-login this far before JWT `exp` so a sweep never presents an expired
 #: Bearer. The identity token this login mints lasts under an hour.
 _REFRESH_SKEW = timedelta(minutes=5)
+
+#: Whether this sweep has already re-minted after a stale-token 401, so a second
+#: 401 in the same sweep does not drive a second full login. A `ContextVar`, not
+#: an attribute on the module-singleton provider (F-AGG-13): the two overlapping
+#: Deliveroo sweeps (`_SALES_LOCK`/`_RANGE_LOCK`) run as separate asyncio tasks
+#: with separate contexts, so an instance flag let one sweep's remint suppress
+#: the other's, or one sweep's `prepare_session` reset the flag out from under a
+#: mid-flight remint. Per-context, each sweep re-mints at most once, independently.
+_remint_attempted: ContextVar[bool] = ContextVar(
+    "deliveroo_remint_attempted", default=False
+)
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -321,17 +333,20 @@ class DeliverooClient(BaseAggregatorClient):
 
     def __init__(self, *, timeout: float | None = None) -> None:
         super().__init__(timeout=timeout)
-        #: Guards the in-band re-mint to one attempt per sweep. Note what is NOT
-        #: here any more: a stashed `AsyncSession`. `prepare_session` used to keep
-        #: the caller's session on `self` so a mid-sweep 401 could re-mint through
-        #: it, and the reasoning ("leader-locked, one caller at a time") was about
-        #: concurrency when the problem was LIFETIME. This is a module-level
-        #: singleton, so the handle outlived the `async with AsyncSessionFactory()`
-        #: block it came from, and the re-mint's write opened a transaction inside a
-        #: scope that had already exited — nobody left to commit or roll it back.
-        #: On 2026-09-06 one of those sat open for three hours holding a row lock on
-        #: `aggregator_session`; nine backends queued behind it and the API 503'd.
-        self._remint_attempted = False
+        # The in-band re-mint is guarded to one attempt per sweep by the
+        # module-level `_remint_attempted` ContextVar, NOT by an attribute here.
+        # Note what is also NOT here any more: a stashed `AsyncSession`.
+        # `prepare_session` used to keep the caller's session on `self` so a
+        # mid-sweep 401 could re-mint through it, and the reasoning
+        # ("leader-locked, one caller at a time") was about concurrency when the
+        # problem was LIFETIME. This is a module-level singleton, so the handle
+        # outlived the `async with AsyncSessionFactory()` block it came from, and
+        # the re-mint's write opened a transaction inside a scope that had already
+        # exited — nobody left to commit or roll it back. On 2026-09-06 one of
+        # those sat open for three hours holding a row lock on `aggregator_session`;
+        # nine backends queued behind it and the API 503'd. A per-instance remint
+        # flag was the same class of bug (shared singleton state across the two
+        # concurrent sweeps), which is why the flag is a ContextVar now (F-AGG-13).
 
     def build_headers(
         self, session: LoadedSession, extra: dict[str, str] | None = None
@@ -573,9 +588,9 @@ class DeliverooClient(BaseAggregatorClient):
         regardless: `_login` persists it through `_persist_minted`, which owns its
         own committed session.
         """
-        if self._remint_attempted:
+        if _remint_attempted.get():
             return None
-        self._remint_attempted = True
+        _remint_attempted.set(True)
         logger.info(
             "deliveroo: 401 with a still-unexpired token; reminting via _login "
             "(not /api/session/refresh)"
@@ -616,7 +631,7 @@ class DeliverooClient(BaseAggregatorClient):
         the DB (account `extras` + `aggregator_branch_map`) so the sweep never
         relies on the stale hard-coded fallbacks.
         """
-        self._remint_attempted = False
+        _remint_attempted.set(False)
         prepared = await self._resolve_session(db, session)
         return await self._augment_from_db(db, prepared)
 

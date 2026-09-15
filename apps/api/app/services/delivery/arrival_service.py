@@ -99,7 +99,14 @@ async def schedule(db: AsyncSession, order: Order) -> datetime | None:
     # sweep remains the backstop for anything this misses — a rollback between
     # here and the flush, a branch that was shut when the money landed.
     if order.arrives_at is not None and order.arrives_at <= datetime.now(timezone.utc):
-        await land(db, order, because="confirmed, with no run to wait for")
+        # `book=False`: this runs inside the confirming request's transaction —
+        # on the ordinary route the payment webhook, which still owes its dedup
+        # row and the confirmation email a commit. Booking a courier here would
+        # commit that half-finished handler to disk (the provider spends real
+        # money and commits), so the van is enqueued for the scheduler's retry
+        # sweep to book on its own session once this request lands (F-ORD-8). The
+        # register is still told this instant, inside `land`.
+        await land(db, order, because="confirmed, with no run to wait for", book=False)
 
     return order.arrives_at
 
@@ -174,7 +181,9 @@ async def due(db: AsyncSession, *, limit: int = _SWEEP_LIMIT) -> list[Order]:
     )
 
 
-async def land(db: AsyncSession, order: Order, *, because: str) -> bool:
+async def land(
+    db: AsyncSession, order: Order, *, because: str, book: bool = True
+) -> bool:
     """
     Put one order on the register, and get a driver moving for it.
 
@@ -203,6 +212,16 @@ async def land(db: AsyncSession, order: Order, *, because: str) -> bool:
     box has to be made either way, and `courier_service.dispatch` writes its own
     failure to the delivery row where the retry ladder and the admin's
     needs-a-human list both read it.
+
+    `book` is how the van is booked, not whether. The scheduler sweep (`book`
+    True) has its own session and commits per order, so it books the courier
+    inline here. The confirmation path (`book` False) runs inside the request
+    that is settling the money — the payment webhook, which still owes its dedup
+    row and the confirmation email a commit — and a courier booking commits that
+    half-finished handler to disk (F-ORD-8), so it enqueues the delivery for the
+    retry sweep to book on its own session once the request lands. Either way the
+    register is told first, and a courier that never books is a red delivery row
+    and a retry, not a kitchen left in the dark.
     """
     from app.services.couriers import courier_service
     from app.services.orders import order_lifecycle
@@ -215,7 +234,10 @@ async def land(db: AsyncSession, order: Order, *, because: str) -> bool:
         return False
 
     try:
-        await courier_service.dispatch(db, order)
+        if book:
+            await courier_service.dispatch(db, order)
+        else:
+            await courier_service.enqueue_for_dispatch(db, order)
     except Exception:  # noqa: BLE001 — a courier must not stop the kitchen
         logger.exception(
             "Booking a courier for %s blew up on arrival; it needs a person",

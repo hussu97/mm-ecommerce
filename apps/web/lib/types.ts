@@ -113,6 +113,14 @@ export interface SelectedOptionSnapshot {
   option_name: string;
   option_translations?: Record<string, Record<string, string>>;
   option_price: number;
+  /**
+   * Counter dialect. `selected_options_snapshot` is written in two shapes: a
+   * website order carries `option_name`/`option_price`, a counter/POS sale
+   * carries `name`/`price` (see api services/option_snapshot.py). Readers must
+   * fall back to these, or a counter order shows a blank modifier name.
+   */
+  name?: string;
+  price?: number;
 }
 
 /**

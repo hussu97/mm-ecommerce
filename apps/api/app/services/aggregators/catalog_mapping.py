@@ -32,6 +32,7 @@ from app.models.external_item_map import (
     KIND_OPTION,
     KIND_PRODUCT,
     METHOD_EXACT,
+    METHOD_FUZZY,
     METHOD_MANUAL,
     ExternalItemMap,
 )
@@ -117,9 +118,17 @@ async def _upsert(
     modifier_option_id: Any = None,
     category_id: Any = None,
     approve: bool,
+    method: str = METHOD_EXACT,
 ) -> bool:
     """Insert or update one map row to point at the matched entity. Returns True if
-    it was approved. Never un-approves or overwrites a human's manual edit."""
+    it was approved. Never un-approves or overwrites a human's manual edit.
+
+    `method` records *how* the match was found for an unapproved row — `exact`
+    for a `normalize_ref` hit, `fuzzy` for a fold-index fallback (`&`↔`and`,
+    singular/plural). Only an exact match is ever auto-approved (`approve`); a
+    fold hit is a proposal for the console, never a silent live mapping, because
+    a plural/singular collision would otherwise point one item's stock at the
+    wrong product (F-AGG-20)."""
     ref = normalize_ref(external_ref)
     if ref is None:
         return False
@@ -149,7 +158,10 @@ async def _upsert(
         row.match_method = METHOD_MANUAL
         row.approved_by = "catalog-mapping"
     else:
-        row.match_method = row.match_method or METHOD_EXACT
+        # Record how it was found so the console can tell a strong exact proposal
+        # from a cosmetic fold guess. `or` preserves an existing stronger method
+        # (a row already `exact` is not downgraded to `fuzzy` by a later re-run).
+        row.match_method = row.match_method or method
     await db.flush()
     return bool(row.approved)
 
@@ -198,10 +210,14 @@ async def resolve_menu(
     options_fold = {k: v for k, v in options_fold.items() if opt_fold_counts[k] == 1}
 
     for cat in menu.categories:
-        cid = categories.get(normalize_ref(cat.name)) or categories_fold.get(
-            normalize_name(cat.name)
+        exact_cid = categories.get(normalize_ref(cat.name))
+        cid = (
+            exact_cid
+            if exact_cid is not None
+            else categories_fold.get(normalize_name(cat.name))
         )
         if cid is not None:
+            exact = exact_cid is not None
             rep.categories_matched += 1
             await _upsert(
                 db,
@@ -210,13 +226,18 @@ async def resolve_menu(
                 external_name=cat.name,
                 mm_kind=KIND_CATEGORY,
                 category_id=cid,
-                approve=approve_exact,
+                approve=approve_exact and exact,
+                method=METHOD_EXACT if exact else METHOD_FUZZY,
             )
         for item in cat.items:
-            pid = products.get(normalize_ref(item.name)) or products_fold.get(
-                normalize_name(item.name)
+            exact_pid = products.get(normalize_ref(item.name))
+            pid = (
+                exact_pid
+                if exact_pid is not None
+                else products_fold.get(normalize_name(item.name))
             )
             if pid is not None:
+                exact = exact_pid is not None
                 rep.products_matched += 1
                 if await _upsert(
                     db,
@@ -225,7 +246,8 @@ async def resolve_menu(
                     external_name=item.name,
                     mm_kind=KIND_PRODUCT,
                     product_id=pid,
-                    approve=approve_exact,
+                    approve=approve_exact and exact,
+                    method=METHOD_EXACT if exact else METHOD_FUZZY,
                 ):
                     rep.approved += 1
             else:
@@ -243,11 +265,15 @@ async def resolve_menu(
                     if opt.price is None:
                         continue
                     price_dec = Decimal(str(opt.price))
-                    oid = options.get(
-                        (normalize_ref(opt.name), price_dec)
-                    ) or options_fold.get((normalize_name(opt.name), price_dec))
+                    exact_oid = options.get((normalize_ref(opt.name), price_dec))
+                    oid = (
+                        exact_oid
+                        if exact_oid is not None
+                        else options_fold.get((normalize_name(opt.name), price_dec))
+                    )
                     ref = opt.external_ref or opt.name
                     if oid is not None:
+                        exact = exact_oid is not None
                         rep.options_matched += 1
                         if await _upsert(
                             db,
@@ -256,7 +282,8 @@ async def resolve_menu(
                             external_name=opt.name,
                             mm_kind=KIND_OPTION,
                             modifier_option_id=oid,
-                            approve=approve_exact,
+                            approve=approve_exact and exact,
+                            method=METHOD_EXACT if exact else METHOD_FUZZY,
                         ):
                             rep.approved += 1
                     else:

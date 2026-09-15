@@ -25,6 +25,7 @@ from . import observability, push
 from .accounts import PortalAccount, from_env, pull_account
 from .browser import ChromeLaunchError, NeedsHumanLogin, login_with_account
 from .config import settings
+from .session_capture import payload_from_probe
 from .warm import push_probe
 
 logger = logging.getLogger("aggregator-bootstrap")
@@ -45,6 +46,12 @@ class ReloginOutcome(Enum):
     OK = "ok"
     NEEDS_HUMAN = "needs_human"
     TRANSIENT = "transient"
+    #: The headed login SUCCEEDED but the API push failed (a 500, a network blip).
+    #: The captured session is parked to `<channel>.pending_push.json` and retried
+    #: HTTP-only by `_drain_pending_pushes` — re-driving a headed Chrome would waste
+    #: a login (and a Careem reCAPTCHA / Talabat PerimeterX challenge) on a session
+    #: we already hold (F-AGG-12).
+    PUSH_PENDING = "push_pending"
 
 
 def _load_account(channel: str, *, require_password: bool = True) -> PortalAccount:
@@ -123,11 +130,129 @@ def _try_auto_relogin(channel: str) -> ReloginOutcome:
         return ReloginOutcome.TRANSIENT
     try:
         asyncio.run(push_probe(channel, result))
-    except Exception:  # noqa: BLE001 — captured locally; a later warm will push it
+    except Exception:  # noqa: BLE001 — captured locally; the drain will push it
         logger.exception("%s auto re-login captured but the API push failed", channel)
+        # The login WORKED — only the push to the API did not. Park the captured
+        # session and let `_drain_pending_pushes` retry it HTTP-only; re-driving a
+        # headed Chrome (the old TRANSIENT path) would burn a fresh login and an
+        # anti-bot challenge on a session we already hold (F-AGG-12). If parking
+        # itself fails there is nothing to drain, so fall back to a transient retry.
+        if _park_pending_push(channel, result):
+            return ReloginOutcome.PUSH_PENDING
         return ReloginOutcome.TRANSIENT
     logger.info("%s auto re-login succeeded — session refreshed", channel)
     return ReloginOutcome.OK
+
+
+# ── parked pushes (a captured session the API push could not land) ─────────────
+# A headed login is expensive (a Chrome, an anti-bot wall); its output — the
+# session bundle — must not be thrown away because the API happened to be down
+# for the push. It is parked here and re-pushed HTTP-only on the next heal ticks.
+
+#: Discard a parked push older than this and let a fresh headed login happen, so a
+#: genuinely unpushable payload (a rejected schema, a rotated token) cannot wedge a
+#: channel forever. The API being down is minutes, not hours; six hours is slack.
+_PENDING_PUSH_MAX_AGE_SECONDS = 6 * 60 * 60
+
+
+def _pending_push_path(channel: str) -> Path:
+    return Path(settings.STORAGE_STATE_DIR) / f"{channel}.pending_push.json"
+
+
+def _park_pending_push(channel: str, result) -> bool:
+    """Write the captured session bundle to disk for an HTTP-only retry. Returns
+    whether it was parked (False if the payload could not even be built/written, so
+    the caller falls back to a transient headed retry)."""
+    try:
+        payload = payload_from_probe(channel, result)
+    except Exception:  # noqa: BLE001 — a probe we cannot serialise cannot be parked
+        logger.exception("%s: could not build a payload to park for retry", channel)
+        return False
+    path = _pending_push_path(channel)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"parked_at": time.time(), "payload": payload}),
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.exception("%s: could not park the captured session for retry", channel)
+        return False
+    logger.warning(
+        "%s: session captured but the push failed — parked for an HTTP-only retry "
+        "(no new headed login until it drains)",
+        channel,
+    )
+    return True
+
+
+def _has_pending_push(channel: str) -> bool:
+    """Whether a captured-but-unpushed session is parked and still fresh enough to
+    prefer draining over a new headed login."""
+    path = _pending_push_path(channel)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    parked_at = float(data.get("parked_at", 0) or 0)
+    if time.time() - parked_at > _PENDING_PUSH_MAX_AGE_SECONDS:
+        return False  # stale — a headed relogin may proceed and replace it
+    return True
+
+
+def _drain_pending_pushes(only: set[str] | None = None) -> int:
+    """Re-push every parked session over HTTP — no browser, no login. Returns how
+    many landed. A stale park (older than the max age) is discarded so it cannot
+    wedge a channel; a still-failing push is left for the next tick."""
+    drained = 0
+    try:
+        parked = list(Path(settings.STORAGE_STATE_DIR).glob("*.pending_push.json"))
+    except OSError:  # pragma: no cover — the volume should always be readable
+        return 0
+    for path in parked:
+        channel = path.name[: -len(".pending_push.json")]
+        if only is not None and channel not in only:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            _discard_pending_push(path)
+            continue
+        parked_at = float(data.get("parked_at", 0) or 0)
+        payload = data.get("payload")
+        if not payload or time.time() - parked_at > _PENDING_PUSH_MAX_AGE_SECONDS:
+            logger.warning(
+                "%s: parked push is empty or stale — discarding so a fresh login can "
+                "run",
+                channel,
+            )
+            _discard_pending_push(path)
+            continue
+        try:
+            asyncio.run(push.push_session(payload))
+        except Exception:  # noqa: BLE001 — API still unreachable; keep it parked
+            logger.warning(
+                "%s: parked push still failing — leaving it for the next tick",
+                channel,
+            )
+            continue
+        _discard_pending_push(path)
+        # The parked session is now live on the API — the same end state a fresh
+        # login reaches, so stamp success and clear any standing backoff.
+        _record_relogin_success(channel)
+        _clear_reauth_backoff(channel)
+        drained += 1
+        logger.info(
+            "%s: parked session pushed on retry — no headed login needed", channel
+        )
+    return drained
+
+
+def _discard_pending_push(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:  # pragma: no cover — best effort
+        pass
 
 
 def _channel_needs_reauth(bundle: dict) -> str | None:
@@ -340,12 +465,14 @@ def _heal_once(only: set[str] | None = None) -> int:
     """Re-login every channel the API reports dead/expired. Returns how many were
     healed. Cheap when all are healthy: one API call, and headed Chrome only for
     a channel that actually needs it — and only one that is out of its backoff."""
+    # First, retry any session already captured but not yet pushed — HTTP only, no
+    # browser. A channel that drains here needs no headed login below (F-AGG-12).
+    healed = _drain_pending_pushes(only)
     try:
         bundles = asyncio.run(push.pull_sessions())
     except Exception:  # noqa: BLE001 — a transient API blip must not kill the loop
         logger.exception("reauth: could not read session health from the API")
-        return 0
-    healed = 0
+        return healed
     for bundle in bundles:
         ch = bundle.get("channel")
         if not ch or (only is not None and ch not in only):
@@ -353,6 +480,17 @@ def _heal_once(only: set[str] | None = None) -> int:
         reason = _channel_needs_reauth(bundle)
         if reason is None:
             _clear_reauth_backoff(ch)  # healthy → forget any past failures
+            continue
+        if _has_pending_push(ch):
+            # We already hold a fresh session for this channel; the API just has
+            # not accepted it yet. Wait for the drain rather than re-driving a
+            # headed Chrome on a session we captured minutes ago (F-AGG-12).
+            logger.info(
+                "reauth: %s is %s but a captured session is parked — awaiting the "
+                "HTTP push retry, not re-logging in",
+                ch,
+                reason,
+            )
             continue
         if bundle.get("server_refreshable"):
             # The API re-mints this channel's session itself (httpx); a headed
@@ -387,6 +525,16 @@ def _heal_once(only: set[str] | None = None) -> int:
             _record_relogin_success(ch)
             _clear_reauth_backoff(ch)
             healed += 1
+        elif outcome is ReloginOutcome.PUSH_PENDING:
+            # The login worked; the session is parked. Do NOT arm a reauth backoff
+            # (that would schedule another headed login) — the next tick's drain
+            # pushes it HTTP-only, and the pending-push check above keeps a headed
+            # relogin from running while it waits.
+            logger.info(
+                "reauth: %s captured but the push is pending — the drain will retry "
+                "it without a new login",
+                ch,
+            )
         else:
             # A transient failure retries on the next tick (short backoff); only a
             # genuine human-needed wall parks the channel for the long backoff.

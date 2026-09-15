@@ -617,7 +617,7 @@ async def mark_transfer_sent(
                 quantity=quantity,
                 unit=line.unit,
                 conversion_factor=line.conversion_factor,
-                unit_cost=inventory_service.ingredient_cost_for_unit(
+                unit_cost=inventory_service.canonical_cost_for_unit(
                     item, ingredient_cost, line.unit
                 ),
                 notes=f"transfer_item:{line.id}",
@@ -885,9 +885,21 @@ async def produce(
         for ingredient_id, used, planned_waste, paths, version_id in recipe_lines:
             ingredient = await db.get(InventoryItem, ingredient_id)
             level = await inventory_service.level_for(db, ingredient_id, warehouse)
+            # `used` is in the ingredient's ingredient unit, so cost is per that
+            # unit (the canonical per-storage average divided by the factor), and
+            # the line carries the item's factor so post_transaction converts the
+            # consumption to the storage units taken off the shelf.
+            ing_factor = (
+                Decimal(str(ingredient.storage_to_ingredient_factor or 1))
+                if ingredient
+                else Decimal("1")
+            )
             cost = _c(
-                level.average_cost
-                or (
+                inventory_service.canonical_cost_for_unit(
+                    ingredient, level.average_cost, "ingredient"
+                )
+                if ingredient and Decimal(str(level.average_cost or 0)) > 0
+                else (
                     inventory_service.inventory_item_cost_for_unit(
                         ingredient, "ingredient"
                     )
@@ -903,7 +915,7 @@ async def produce(
                         item_id=ingredient_id,
                         quantity=consumed,
                         unit="ingredient",
-                        conversion_factor=Decimal("1"),
+                        conversion_factor=ing_factor,
                         unit_cost=cost,
                         recipe_version_id=version_id,
                         recipe_path=paths,
@@ -911,7 +923,7 @@ async def produce(
                 )
             if planned_waste > 0:
                 planned_waste_lines.append(
-                    (ingredient_id, planned_waste, cost, paths, version_id)
+                    (ingredient_id, planned_waste, cost, paths, version_id, ing_factor)
                 )
 
         await db.flush()
@@ -939,13 +951,20 @@ async def produce(
             )
             db.add(waste)
             await db.flush()
-            for ingredient_id, wasted, cost, paths, version_id in planned_waste_lines:
+            for (
+                ingredient_id,
+                wasted,
+                cost,
+                paths,
+                version_id,
+                ing_factor,
+            ) in planned_waste_lines:
                 waste.items.append(
                     InventoryTransactionItem(
                         item_id=ingredient_id,
                         quantity=wasted,
                         unit="ingredient",
-                        conversion_factor=Decimal("1"),
+                        conversion_factor=ing_factor,
                         unit_cost=cost,
                         recipe_version_id=version_id,
                         recipe_path=paths,
@@ -993,7 +1012,7 @@ async def produce(
             item_id=item_id,
             quantity=net_output,
             unit="ingredient",
-            conversion_factor=Decimal("1"),
+            conversion_factor=Decimal(str(item.storage_to_ingredient_factor or 1)),
             unit_cost=unit_cost,
             recipe_version_id=active_output_version.id
             if active_output_version

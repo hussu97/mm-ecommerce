@@ -378,6 +378,7 @@ async def list_levels(
         row = InventoryLevelResponse.model_validate(level)
         row.item_name = item.name
         row.item_sku = item.sku
+        row.storage_unit = item.storage_unit
         row.ingredient_unit = item.ingredient_unit
         row.minimum_level = item.minimum_level
         row.par_level = item.par_level

@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -43,7 +43,11 @@ from app.core.config import settings
 from app.core.database import (
     SchedulerSessionFactory as AsyncSessionFactory,  # noqa: N813 — scheduler pool, kept under this name for existing patch points
 )
-from app.core.exceptions import BadRequestError, ServiceUnavailableError
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    ServiceUnavailableError,
+)
 from app.models.aggregator import AGGREGATOR_CHANNELS
 from app.models.branch import Branch
 from app.models.catalog_sync import (
@@ -55,6 +59,7 @@ from app.models.catalog_sync import (
     TARGET_FOODICS,
     AggregatorMenuSnapshot,
 )
+from app.models.external_item_map import METHOD_FUZZY, ExternalItemMap
 from app.models.menu import MenuGroup
 from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
@@ -855,6 +860,39 @@ _DIRECT_CREATE_CHANNELS = ("careem", "noon", "talabat")
 _CREATE_NEEDS_WORKER = ("keeta", "deliveroo")
 
 
+#: A Talabat create returns only an async `{commandId}`, no item id to map. A
+#: provisional row is stamped with this `external_ref` prefix so the create is not
+#: invisible until the next menu read AND a second create is caught as a duplicate;
+#: the real id-keyed row replaces it on the next read + resolve.
+_PENDING_CREATE_PREFIX = "pending-command:"
+
+
+async def _already_created_on(
+    db: AsyncSession, *, system: str, product_id: Any
+) -> ExternalItemMap | None:
+    """An existing map that means this product is already on `system` — an approved
+    product mapping (created here, or the product already exists on the channel) or a
+    provisional Talabat create still awaiting its id. A bare unapproved *proposal*
+    from a menu read does not count: nothing was created for it (F-AGG-14)."""
+    return (
+        (
+            await db.execute(
+                select(ExternalItemMap).where(
+                    ExternalItemMap.system == system,
+                    ExternalItemMap.product_id == product_id,
+                    ExternalItemMap.mm_kind == catalog_mapping.KIND_PRODUCT,
+                    or_(
+                        ExternalItemMap.approved.is_(True),
+                        ExternalItemMap.external_ref.like(f"{_PENDING_CREATE_PREFIX}%"),
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
 async def create_menu_item(
     db: AsyncSession,
     *,
@@ -862,6 +900,7 @@ async def create_menu_item(
     target: str = TARGET_FOODICS,
     branch_id: Any = None,
     dry_run: bool = True,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Create one MM product on a target. Hard-gated by `CATALOG_SYNC_ENABLED`.
 
@@ -885,6 +924,21 @@ async def create_menu_item(
     ).scalar_one_or_none()
     if product is None:
         raise BadRequestError(f"Product {product_id} not found")
+
+    # Idempotency: a real create (`dry_run=False`) refuses when this product is
+    # already on the target — an approved map (created here before, or an exact
+    # menu-read match meaning it already exists on the channel) or a pending Talabat
+    # create. Without it a double-click created the product twice on Foodics and
+    # cascaded the duplicate to every marketplace (F-AGG-14). `force` overrides for a
+    # deliberate re-create. Dry runs still resolve and return the plan.
+    if not dry_run and not force:
+        existing = await _already_created_on(db, system=target, product_id=product.id)
+        if existing is not None:
+            raise ConflictError(
+                f"{product.name!r} is already on {target} "
+                f"(mapped as {existing.external_ref!r}); pass force=true to create "
+                f"it again."
+            )
 
     if target in _CREATE_NEEDS_WORKER:
         raise BadRequestError(
@@ -1877,10 +1931,26 @@ async def _create_on_talabat(
         image_url=i18n["image_url"],
         active=False,
     )
+    command_id = (created or {}).get("commandId") if isinstance(created, dict) else None
+    if command_id:
+        # No item id yet (async create), so map the commandId provisionally — the
+        # create is not invisible until the next read, and a second create for this
+        # product is refused as a duplicate (`_already_created_on`). The real
+        # id-keyed row replaces this on the next menu read + resolve (F-AGG-14).
+        db.add(
+            ExternalItemMap(
+                system="talabat",
+                external_ref=f"{_PENDING_CREATE_PREFIX}{command_id}",
+                mm_kind=catalog_mapping.KIND_PRODUCT,
+                product_id=product.id,
+                external_name=product.name[:255],
+                approved=False,
+                match_method=METHOD_FUZZY,
+            )
+        )
+        await db.flush()
     plan["dry_run"] = False
-    plan["command_id"] = (
-        (created or {}).get("commandId") if isinstance(created, dict) else None
-    )
+    plan["command_id"] = command_id
     plan["note"] = (
         "Queued on Talabat (off-shelf, async commandId). The product id maps "
         "on the next menu read."
@@ -1963,6 +2033,26 @@ async def refresh_all(
                     results[kind] = f"error: {exc}"
             out[target] = results
     return out
+
+
+async def refresh_all_on_own_session(
+    *,
+    branch_id: Any,
+    targets: list[str] | None = None,
+    kinds: tuple[str, ...] = (SNAPSHOT_MENU, SNAPSHOT_HOURS),
+) -> dict[str, Any]:
+    """`refresh_all` on a session of its own, for the admin `POST /refresh`.
+
+    `refresh_all` is a sweep: it commits per (target, kind) and holds its session
+    across 5 targets × 2 kinds of portal reads. Handed the request session that was
+    the bug (F-AGG-16) — it committed a half-finished request (canon rule 2) and
+    pinned the storefront's pooled connection in a transaction for the minutes those
+    reads take. So the endpoint runs it here, on the scheduler pool the autonomous
+    sweep already uses, isolated from the request pool. Awaited (not fire-and-forget)
+    because the admin Refresh button reads the drift the moment it returns.
+    """
+    async with AsyncSessionFactory() as db:
+        return await refresh_all(db, branch_id=branch_id, targets=targets, kinds=kinds)
 
 
 async def integrated_branches(db: AsyncSession) -> list[Branch]:
