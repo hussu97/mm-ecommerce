@@ -61,6 +61,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+import httpx
+
 from app.core.config import settings
 from app.models.aggregator import CHANNEL_NOON
 from app.services.aggregators.modifiers import expand_modifiers
@@ -496,7 +498,8 @@ class NoonClient(BaseAggregatorClient):
                 "itemType": "main",
                 "nameEn": name,
                 "nameAr": name_ar or name,
-                "price": price,
+                # float at the wire boundary: json can't serialise a Decimal.
+                "price": float(price),
                 "categoryCode": category_code,
                 "isActive": active,
             },
@@ -568,8 +571,10 @@ class NoonClient(BaseAggregatorClient):
         overlays only the fields given (`nameEn`/`nameAr`/`descEn`/`descAr`/`price`/
         `image`/`isActive`). The edit only STAGES the change on the draft menu; a
         change "eligible for auto approval" then needs a per-item publish, so by
-        default this follows the edit with `publish_menu_item`. `image` is a noon
-        media path (`food/menu/<menuCode>/<name>.png`), not a foreign URL."""
+        default this follows the edit with `publish_menu_item`. `image` must be a
+        noon-hosted media path: the field ACCEPTS a foreign URL string, but noon
+        renders it CORRUPT (confirmed live 2026-09-15), so upload the picture to
+        noon's media first and pass that path — never a raw GCS URL."""
         body = {k: item.get(k) for k in self._EDIT_FIELDS}
         body["menuCode"] = menu_code
         if name is not None:
@@ -581,7 +586,7 @@ class NoonClient(BaseAggregatorClient):
         if description_ar is not None:
             body["descAr"] = description_ar
         if price is not None:
-            body["price"] = price
+            body["price"] = float(price)
         if image is not None:
             body["image"] = image
         if active is not None:
@@ -613,6 +618,83 @@ class NoonClient(BaseAggregatorClient):
             headers=self._rms_headers(session),
             json_body={"menuCode": menu_code, "itemCode": item_code},
         )
+
+    # ── item image upload ────────────────────────────────────────────────────
+    async def upload_menu_item_image(
+        self,
+        session: LoadedSession,
+        *,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str = "image/png",
+    ) -> str:
+        """Upload a picture to noon's own storage; return the stored PATH to set as
+        an item's `image`.
+
+        noon renders a foreign image URL corrupt (confirmed live 2026-09-15), so
+        the RMS console never sends one — it asks its gateway for a signed upload
+        URL, PUTs the bytes straight to storage, then saves the returned path on the
+        item. Reverse-engineered from the public RMS bundle 2026-09-15 (noon Food
+        RMS is the Meituan "sailorProduct" backend):
+          1. ``POST /_food-restaurant/menu/item/image-signed-url``
+             ``{filename, filetype, idPartner}`` -> ``{data:{putSignedUrl, path}}``
+             — ``putSignedUrl`` is a Google Cloud Storage signed PUT URL, ``path``
+             the reference to persist.
+          2. ``PUT putSignedUrl`` with only ``Content-Type`` and the raw bytes. The
+             signature is in the URL, so this call must NOT carry the noon session:
+             any extra signed-out-of-band header breaks the GCS signature check,
+             which is exactly why a plain foreign URL renders corrupt. Uses a bare
+             ``httpx`` client, bypassing ``build_headers``.
+          3. Return ``path``; the caller passes it to ``update_menu_item(image=…)``.
+        Only reached behind ``CATALOG_SYNC_ENABLED``.
+        """
+        code, _project, _locale = self._rms_context(session)
+        tokens = session.tokens or {}
+        # `idPartner` scopes the upload; the RMS console derives it from the
+        # partner identity. Prefer an explicitly captured value, else the
+        # restaurant code the reads already scope by.
+        id_partner = (
+            tokens.get("id_partner")
+            or tokens.get("partner_id")
+            or tokens.get("idpartner")
+            or code
+        )
+        filetype = (content_type.split("/", 1)[-1] or "png").lower()
+        signed = await self.request_json(
+            session,
+            "POST",
+            f"{_RMS}/_food-restaurant/menu/item/image-signed-url",
+            headers=self._rms_headers(session),
+            json_body={
+                "filename": filename,
+                "filetype": filetype,
+                "idPartner": id_partner,
+            },
+        )
+        data = (signed or {}).get("data") or {}
+        put_url = (
+            data.get("putSignedUrl") or data.get("signedUrl") or data.get("uploadUrl")
+        )
+        path = data.get("path") or data.get("picUrl") or data.get("cdnUrl")
+        if not put_url or not path:
+            raise AggregatorUnavailableError(
+                f"{self.channel} image-signed-url returned no putSignedUrl/path: "
+                f"{str(signed)[:200]}"
+            )
+        # A clean client: the GCS signature covers only method + URL + Content-Type,
+        # so the noon session's cookies/headers must not ride along.
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            put = await client.put(
+                str(put_url),
+                content=image_bytes,
+                headers={"Content-Type": content_type},
+            )
+        if put.status_code >= 400:
+            raise AggregatorUnavailableError(
+                f"{self.channel} image PUT to storage failed {put.status_code}: "
+                f"{put.text[:200]}"
+            )
+        return str(path)
 
     # ── anti-bot ─────────────────────────────────────────────────────────────
     def _is_auth_failure(self, response: Any) -> bool:

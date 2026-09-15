@@ -295,6 +295,42 @@ async def delete_keeta_item_in_page(*, shop_id: str, spu_id: str) -> dict[str, A
     return result if isinstance(result, dict) else {"raw": result}
 
 
+async def set_keeta_item_image_in_page(
+    *, shop_id: str, spu_id: str, image_url: str
+) -> dict[str, Any]:
+    """Upload a product photo to Keeta's Venus store and attach it to one SPU
+    in-page (mtgsig). Fetches the image bytes from `image_url` (the product's public
+    GCS URL — the same source every other channel uses), so the VM does the whole
+    thing headlessly. A live storefront write, deliberate, never part of a sweep."""
+    import httpx
+
+    from .engine import async_playwright
+    from .keeta_pull import set_keeta_spu_image
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        resp = await client.get(image_url)
+        resp.raise_for_status()
+        image_bytes = resp.content
+        content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+    ext = (content_type.split("/", 1)[-1] or "jpg").replace("jpeg", "jpg")
+
+    async with async_playwright() as pw:
+        opened = await _open_persistent(pw, "keeta")
+        try:
+            result = await set_keeta_spu_image(
+                opened.context,
+                shop_id=shop_id,
+                spu_id=spu_id,
+                image_bytes=image_bytes,
+                filename=f"item.{ext}",
+                content_type=content_type,
+            )
+        finally:
+            await opened.close()
+    logger.info("keeta set-image result: %s", result)
+    return result if isinstance(result, dict) else {"raw": result}
+
+
 async def copy_keeta_menu_in_page(
     *, source_shop_id: str, target_shop_ids: list[str]
 ) -> dict[str, Any]:

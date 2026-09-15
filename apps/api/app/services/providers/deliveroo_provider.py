@@ -30,6 +30,7 @@ import csv
 import io
 import json
 import logging
+import uuid
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -81,6 +82,14 @@ _HUB = "https://partner-hub.deliveroo.com"
 _API = f"{_HUB}/api"
 _LOGIN_URL = f"{_API}/session"
 _REFRESH_URL = f"{_API}/session/refresh"
+
+#: The self-serve Menu Manager API — a DIFFERENT host from the hub, reached with
+#: the same `token` JWT as `Authorization: Bearer` (verified live 2026-09-15: the
+#: session's `token` cookie authenticates it over httpx, so menu WRITES need no
+#: headed worker, unlike the webrom READ menu). Whole-draft model: GET a draft,
+#: mutate its `menu`, PATCH it back, POST publish. One draft per org for the
+#: self-serve (non-Foodics) outlets; `branch_drn_ids` says which outlets it serves.
+_SELFSERVE = "https://restaurant-hub-api.deliveroo.net/api/menus_api/selfserve"
 
 #: The org and outlet ids are read from the DB ONLY — the org from
 #: `aggregator_account.extras.org_id`, the outlets from the `aggregator_branch_map`
@@ -483,6 +492,345 @@ class DeliverooClient(BaseAggregatorClient):
             f"{_API}/restaurants/{drn}/opening_hours",
             json_body=hours,
         )
+
+    # ── Self-serve Menu Manager (catalog-sync writer) ─────────────────────────
+    # The non-Foodics outlets (DSO) are edited through the self-serve draft model
+    # on `restaurant-hub-api.deliveroo.net`, authenticated by the session's `token`
+    # JWT as a Bearer — no headed worker. The token is short-lived, so these ride
+    # the same `_remint_after_stale_token` recovery as every other call. A live
+    # write is only ever reached behind `CATALOG_SYNC_ENABLED`.
+
+    def _org_drn(self, session: LoadedSession) -> str:
+        """The org's DRN (a UUID), distinct from the numeric `orgId` — the
+        self-serve API scopes drafts by it. Stored on the account's extras
+        (`org_drn_id`) since it is not in the JWT."""
+        for source in (session.tokens or {}, session.header_profile or {}):
+            value = _first(source, "org_drn_id", "org_drn", "organisation_drn_id")
+            if value:
+                return str(value)
+        raise AggregatorUnavailableError(
+            "deliveroo: no org_drn_id (set aggregator_account.extras.org_drn_id)"
+        )
+
+    async def selfserve_list_drafts(self, session: LoadedSession) -> list[dict]:
+        """The org's self-serve menu drafts (one per non-Foodics menu). Each row:
+        `{drn_id, name, branch_drn_ids, external_id, published_at, images}`."""
+        body = await self.request_json(
+            session,
+            "GET",
+            f"{_SELFSERVE}/drafts",
+            params={"org_drn_id": self._org_drn(session)},
+        )
+        return body if isinstance(body, list) else (body or {}).get("drafts", [])
+
+    async def selfserve_get_draft(self, session: LoadedSession, draft_id: str) -> dict:
+        """One draft in full — `{drn_id, org_drn_id, name, menu:{items, categories,
+        mealtimes, …}}`. The `menu` is what a PATCH replaces wholesale."""
+        return await self.request_json(
+            session, "GET", f"{_SELFSERVE}/drafts/{draft_id}"
+        )
+
+    async def selfserve_patch_draft(
+        self, session: LoadedSession, draft_id: str, body: dict[str, Any]
+    ) -> Any:
+        """Replace a draft's menu — `{last_updated_at, name, menu:{…}}` (the shape
+        the console PATCHes). Read-modify-write: never send a partial `menu`."""
+        return await self.request_json(
+            session, "PATCH", f"{_SELFSERVE}/drafts/{draft_id}", json_body=body
+        )
+
+    async def selfserve_publish_draft(
+        self, session: LoadedSession, draft_id: str
+    ) -> Any:
+        """Publish a draft live — `POST /drafts/{id}/publish` (empty body)."""
+        return await self.request_raw(
+            session, "POST", f"{_SELFSERVE}/drafts/{draft_id}/publish"
+        )
+
+    async def selfserve_upload_image(
+        self,
+        session: LoadedSession,
+        *,
+        draft_id: str,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str = "image/jpeg",
+    ) -> dict[str, Any]:
+        """Upload one product photo to a self-serve draft; return `{cdn_url, s3key}`
+        to set as an item's ``image``.
+
+        Captured live 2026-09-15 from the Menu Manager bulk-photo Save:
+        ``POST /organizations/{org_drn}/upload_image`` as **multipart/form-data** with
+        fields ``file`` (the image), ``source="ai_media_moderation"``,
+        ``entry_point="bulk_upload"``, ``platform="desktop"`` and ``draft_drn_id``.
+        Returns ``{cdn_url, s3key, status}``.
+
+        **Deliveroo runs automated photo QA on upload** — a low-quality or synthetic
+        image is rejected (``status`` not approved, or an error), so only a real
+        product photo goes through. The caller then puts the returned ``cdn_url`` +
+        ``s3key`` on the item and PATCHes the draft. Only reached behind
+        ``CATALOG_SYNC_ENABLED``.
+        """
+        org = self._org_drn(session)
+        # curl_cffi (impersonation path) wants a CurlMime; httpx wants `files=`. The
+        # base's request_raw already branches on the transport, so hand it `files=`
+        # for httpx and let it translate. Deliveroo has no bot wall, so httpx is fine.
+        files = {"file": (filename, image_bytes, content_type)}
+        data = {
+            "source": "ai_media_moderation",
+            "entry_point": "bulk_upload",
+            "platform": "desktop",
+            "draft_drn_id": draft_id,
+        }
+        resp = await self.request_raw(
+            session,
+            "POST",
+            f"{_SELFSERVE}/organizations/{org}/upload_image",
+            headers={"X-Hub-Api-Caller": "https://menus.deliveroo.com"},
+            data=data,
+            files=files,
+        )
+        status = getattr(resp, "status_code", 0)
+        if status >= 400:
+            raise AggregatorUnavailableError(
+                f"deliveroo upload_image failed {status}: "
+                f"{getattr(resp, 'text', '')[:200]}"
+            )
+        try:
+            body = resp.json()
+        except Exception as exc:  # noqa: BLE001 — a non-JSON 200 is a provider fault
+            raise AggregatorUnavailableError(
+                "deliveroo upload_image returned non-JSON"
+            ) from exc
+        data_obj = body.get("data") if isinstance(body, dict) else None
+        img = data_obj if isinstance(data_obj, dict) else (body or {})
+        cdn = img.get("cdn_url") or img.get("cdnUrl")
+        s3key = img.get("s3key") or img.get("s3_key")
+        if not cdn:
+            raise AggregatorUnavailableError(
+                f"deliveroo upload_image returned no cdn_url (rejected by photo QA?): "
+                f"{str(body)[:200]}"
+            )
+        return {"cdn_url": cdn, "s3key": s3key, "status": img.get("status")}
+
+    async def selfserve_draft_for_branch(
+        self, session: LoadedSession, branch_drn: str | None = None
+    ) -> dict | None:
+        """The draft serving `branch_drn` (or the only draft when the org has one).
+        Returns the FULL draft (via `selfserve_get_draft`), or None."""
+        drafts = await self.selfserve_list_drafts(session)
+        if not drafts:
+            return None
+        chosen = None
+        if branch_drn:
+            chosen = next(
+                (d for d in drafts if branch_drn in (d.get("branch_drn_ids") or [])),
+                None,
+            )
+        chosen = chosen or (drafts[0] if len(drafts) == 1 else None)
+        if chosen is None:
+            return None
+        return await self.selfserve_get_draft(session, chosen["drn_id"])
+
+    @staticmethod
+    def _norm_name(value: Any) -> str:
+        """Lower/space-collapsed name for matching (handles a plain string or a
+        `{en, ar}` localised dict)."""
+        if isinstance(value, dict):
+            value = value.get("en") or value.get("ar") or ""
+        return " ".join(str(value or "").strip().lower().split())
+
+    async def selfserve_upsert_item(
+        self,
+        session: LoadedSession,
+        *,
+        draft: dict[str, Any],
+        name_en: str,
+        name_ar: str | None = None,
+        description_en: str | None = None,
+        description_ar: str | None = None,
+        price: Decimal | None = None,
+        plu: str | None = None,
+        image_cdn_url: str | None = None,
+        image_s3key: str | None = None,
+        category_name: str | None = None,
+        publish: bool = False,
+    ) -> dict[str, Any]:
+        """Create-or-update ONE item in a self-serve draft, then PATCH the WHOLE draft
+        back and (optionally) publish.
+
+        Deliveroo's self-serve model replaces the entire menu on a PATCH, so this is
+        a strict read-modify-write: it mutates only the one target item (and, for a
+        new item, the one category link) inside the draft the caller already read,
+        and sends the rest back untouched. It never publishes unless asked — the
+        draft stays staged for review, the same hold every other channel uses.
+
+        Item shape (captured live 2026-09-15):
+        ``{id, name:{en,ar}, operational_name, description:{en,ar},
+        price_info:{price,…}, plu, ian, barcodes, image:{cdn_url}}``. The match is by
+        ``plu``==sku first, else by English name.
+
+        **Price safety.** ``price_info.price`` is in the menu's minor units, and the
+        scale is *inferred* from the matched item's existing value against the MM
+        price (×100 vs ×1) rather than assumed — a wrong unit would turn 40.00 into
+        0.40, a money bug. On a NEW item the scale is unknown, so price is left for
+        the reviewer (an unset price is safe; a wrong one is not).
+
+        **Create is best-effort / verify-live.** The draft's category-item link shape
+        is read from the live draft (``item_ids`` vs ``items``) rather than hardcoded,
+        and the new item id is a UUID; both are unverified against a live create
+        (captured shape covers update). The update path — the ongoing "a product
+        changed, flow it out" case — is fully known and safe.
+        """
+        menu = draft.get("menu") or {}
+        items = menu.get("items")
+        if not isinstance(items, list):
+            raise AggregatorUnavailableError(
+                "deliveroo draft has no menu.items list to upsert into"
+            )
+        target = None
+        if plu:
+            target = next(
+                (it for it in items if str(it.get("plu") or "") == str(plu)), None
+            )
+        if target is None:
+            target = next(
+                (
+                    it
+                    for it in items
+                    if self._norm_name(it.get("name")) == self._norm_name(name_en)
+                ),
+                None,
+            )
+        is_new = target is None
+        if is_new:
+            # Deliveroo mints short base36 item ids (e.g. "mks94r8szs"), never UUIDs;
+            # a fresh 11-char base36 id matches that shape. The rest of the fields are
+            # the item schema the draft PATCH round-trips (captured live 2026-09-15) —
+            # omitting `type`/`product_type` makes the item render as an empty row.
+            new_id = uuid.uuid4().int
+            b36 = ""
+            while new_id and len(b36) < 11:
+                new_id, r = divmod(new_id, 36)
+                b36 = "0123456789abcdefghijklmnopqrstuvwxyz"[r] + b36
+            target = {
+                "id": b36 or "0",
+                "plu": str(plu or ""),
+                "ian": "",
+                "barcodes": [],
+                "type": "ITEM",
+                "product_type": "FRESH_FOOD",
+                "tax_rate": "0",
+                "price_info": {"price": 0, "overrides": [], "fees": []},
+                "modifier_ids": [],
+                "allergies": [],
+                "diets": [],
+                "classifications": [],
+                "contains_alcohol": False,
+                "availability": None,
+                "nutritional_info": {},
+            }
+            items.append(target)
+
+        # Names / descriptions are localised dicts; overlay only what was given.
+        name = target.get("name") if isinstance(target.get("name"), dict) else {}
+        name["en"] = name_en
+        name["ar"] = name_ar or name.get("ar") or name_en
+        target["name"] = name
+        target.setdefault("operational_name", name_en)
+        if description_en is not None or description_ar is not None:
+            desc = (
+                target.get("description")
+                if isinstance(target.get("description"), dict)
+                else {}
+            )
+            if description_en is not None:
+                desc["en"] = description_en
+            if description_ar is not None:
+                desc["ar"] = description_ar
+            target["description"] = desc
+        if image_cdn_url:
+            image = target.get("image") if isinstance(target.get("image"), dict) else {}
+            image["cdn_url"] = image_cdn_url
+            # The item image carries both the CDN url and its s3key; upload_image
+            # returns both and the draft round-trips both.
+            if image_s3key:
+                image["s3key"] = image_s3key
+            target["image"] = image
+
+        # Price: infer the minor-unit scale from the item's current value; never
+        # guess on a new item.
+        price_status = "unchanged"
+        if price is not None:
+            existing = (target.get("price_info") or {}).get("price")
+            mm = float(price)
+            if isinstance(existing, (int, float)) and existing > 0:
+                # minor units if the existing value tracks mm×100 more closely
+                minor = abs(existing - mm * 100) <= abs(existing - mm)
+                new_price = int(round(mm * 100)) if minor else mm
+                pi = (
+                    target.get("price_info")
+                    if isinstance(target.get("price_info"), dict)
+                    else {}
+                )
+                pi["price"] = new_price
+                target["price_info"] = pi
+                price_status = f"updated ({'minor' if minor else 'major'} units)"
+            else:
+                price_status = "skipped (unit unknown on new/priceless item)"
+
+        # New item: link it into its category, adapting to the draft's own link shape.
+        category_status = "n/a (existing item)"
+        if is_new and category_name:
+            cats = menu.get("categories") or []
+            cat = next(
+                (
+                    c
+                    for c in cats
+                    if self._norm_name(c.get("name")) == self._norm_name(category_name)
+                ),
+                None,
+            )
+            if cat is None:
+                category_status = f"warning: no category matching {category_name!r}"
+            elif isinstance(cat.get("item_ids"), list):
+                cat["item_ids"].append(target["id"])
+                category_status = "linked (item_ids)"
+            elif isinstance(cat.get("items"), list):
+                # a list of id strings, or of {id} objects — match the existing shape
+                sample = cat["items"][0] if cat["items"] else None
+                cat["items"].append(
+                    {"id": target["id"]} if isinstance(sample, dict) else target["id"]
+                )
+                category_status = "linked (items)"
+            else:
+                category_status = "warning: category has no known item-link field"
+
+        # The PATCH's `last_updated_at` is the optimistic-concurrency token, and it is
+        # the GET's `updated_at` (a nanosecond-string version) — NOT a field named
+        # last_updated_at on the draft. Sending the wrong value → 400 conflict "draft
+        # menu is out of date". Verified live 2026-09-15.
+        body = {
+            "last_updated_at": draft.get("updated_at") or draft.get("last_updated_at"),
+            "name": draft.get("name"),
+            "menu": menu,
+        }
+        draft_id = draft.get("drn_id") or draft.get("id")
+        if not draft_id:
+            raise AggregatorUnavailableError("deliveroo draft has no drn_id to PATCH")
+        patched = await self.selfserve_patch_draft(session, str(draft_id), body)
+        published = False
+        if publish:
+            await self.selfserve_publish_draft(session, str(draft_id))
+            published = True
+        return {
+            "action": "create" if is_new else "update",
+            "item_id": target["id"],
+            "price": price_status,
+            "category": category_status,
+            "published": published,
+            "patch_ok": bool(patched) or patched is None,
+        }
 
     async def request_raw(
         self,

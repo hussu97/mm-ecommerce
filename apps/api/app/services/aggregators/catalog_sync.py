@@ -93,6 +93,47 @@ logger = logging.getLogger(__name__)
 _CATALOG_SYNC_LOCK_KEY = 0x6D6D_4241_5443_480B
 
 
+def _product_i18n(product: Product) -> dict[str, Any]:
+    """The full bilingual card MM holds for a product, in one shape every provider
+    create/enrich pulls from — so a new item lands on the marketplaces with its
+    English + Arabic name and description and its image, not just a bare name.
+
+    Arabic lives in `product.translations["ar"]` (`{name, description}`); the
+    English are the scalar `name`/`description`; the image is the first entry of
+    `image_urls` (a public GCS URL). Missing pieces come back as None so a provider
+    that cannot take one simply omits it.
+    """
+    tr = product.translations or {}
+    ar = tr.get("ar") if isinstance(tr, dict) else {}
+    ar = ar if isinstance(ar, dict) else {}
+    images = product.image_urls or []
+    return {
+        "name": product.name,
+        "name_ar": (ar.get("name") or None),
+        "description": (product.description or None),
+        "description_ar": (ar.get("description") or None),
+        "image_url": (images[0] if images else None),
+    }
+
+
+async def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
+    """Download a product image (our public GCS URL) → (bytes, content_type), for
+    the providers that host images on their own CDN (Careem) rather than fetching a
+    foreign URL. Returns None on any failure — an image is enrichment, never a
+    reason to fail the create."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            ctype = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+            return resp.content, ctype
+    except Exception as exc:  # noqa: BLE001 — image is best-effort
+        logger.warning("catalog-sync: image fetch failed for %s: %s", url, exc)
+        return None
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -904,33 +945,38 @@ async def create_menu_item(
             f"{target} has no server-callable menu API (H5guard / separate login) — "
             f"its create runs through the headed worker, not here."
         )
+
+    # The category an item lands in on EVERY target is its integrator menu grouping
+    # — the L1 group it hangs under in the integrator tree — not its website
+    # `product.category`. The two usually agree, but the integrator tree is the
+    # authoritative "what the marketplaces show" mapping (its `reference` is also
+    # the Foodics subgroup id), so both the Foodics create and the portal creates
+    # resolve their category from it. A product not in the integrator menu has no
+    # marketplace home, so every create refuses it the same way.
+    l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
+    if l1 is None:
+        raise BadRequestError(
+            f"Product {product.name!r} is not in the integrator menu — add it to a "
+            f"category in the integrator menu before syncing."
+        )
+    cat_name = l1.name
+    subgroup_id = l1.reference
+
     if target in _DIRECT_CREATE_CHANNELS:
         if target == "careem":
-            return await _create_on_careem(db, product, branch_id, dry_run)
+            return await _create_on_careem(db, product, branch_id, dry_run, cat_name)
         if target == "talabat":
-            return await _create_on_talabat(db, product, branch_id, dry_run)
-        return await _create_on_noon(db, product, dry_run, branch_id=branch_id)
+            return await _create_on_talabat(db, product, branch_id, dry_run, cat_name)
+        return await _create_on_noon(db, product, dry_run, category_name=cat_name)
     if target != TARGET_FOODICS:
         raise BadRequestError(f"Unknown create target {target!r}")
 
     from app.services.providers import foodics_provider as fp
 
-    # The Grubtech subgroup is now the product's category group in the integrator
-    # menu — its `reference` is the Foodics subgroup id — rather than a hardcoded
-    # dict keyed by the product's website category. Membership in that tree is
-    # what "syncs to the marketplaces" means.
-    l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
-    cat_name = l1.name if l1 is not None else None
-    subgroup_id = l1.reference if l1 is not None else None
     price = product.base_price
     if price is None:
         raise BadRequestError(
             f"Product {product.name!r} has no base price; set one before syncing."
-        )
-    if l1 is None:
-        raise BadRequestError(
-            f"Product {product.name!r} is not in the integrator menu — add it to a "
-            f"category in the integrator menu before syncing."
         )
     if subgroup_id is None:
         raise BadRequestError(
@@ -939,12 +985,17 @@ async def create_menu_item(
             f"has nowhere to land — add the subgroup in Foodics first."
         )
 
+    i18n = _product_i18n(product)
     plan = {
         "target": TARGET_FOODICS,
         "route": _route_for(TARGET_FOODICS),
         "product": {"id": str(product.id), "name": product.name, "sku": product.sku},
         "foodics_create": {
             "name": product.name,
+            "name_localized": i18n["name_ar"],
+            "description": i18n["description"],
+            "description_localized": i18n["description_ar"],
+            "image": i18n["image_url"],
             "price": str(price),
             "aggregator_price": str(price),  # strict parity
             "category": cat_name,
@@ -956,9 +1007,10 @@ async def create_menu_item(
         plan["dry_run"] = True
         plan["note"] = (
             "Dry run — nothing created. This is the exact Foodics product create "
-            "(product + Grubtech subgroup membership + price-tag price at parity) "
-            "that CATALOG_SYNC_ENABLED with dry_run=False would POST. Marketplaces "
-            "sync from Foodics; their mappings record on the next menu read."
+            "(product + name/description EN+AR + image URL + Grubtech subgroup "
+            "membership + price-tag price at parity) that CATALOG_SYNC_ENABLED with "
+            "dry_run=False would POST. Marketplaces sync from Foodics; their "
+            "mappings record on the next menu read."
         )
         return plan
 
@@ -972,12 +1024,33 @@ async def create_menu_item(
         name=product.name,
         price=price,
         category_id=foodics_category_id,
+        name_localized=i18n["name_ar"],
+        description=i18n["description"],
+        description_localized=i18n["description_ar"],
+        image=i18n["image_url"],
         sku=product.sku,
         subgroup_id=subgroup_id,
         aggregator_price=price,
     )
     foodics_id = (created or {}).get("data", {}).get("id") or (created or {}).get("id")
+    # Attach the Grubtech price tag as a SEPARATE POST — the product create's inline
+    # `price_tags` does not create the pivot (verified live 2026-09-15: a created
+    # product came back with empty `price_tags`), and without the tag Foodics has no
+    # aggregator price to propagate to the marketplaces. `/price_tags/{tag}/products/
+    # {id}` upserts the pivot; this is the same route that adds any product to the
+    # tag. Without it the item sits in the Grubtech subgroup but never reaches the
+    # marketplaces for the two integrated branches.
+    price_tag_attached = False
     if foodics_id:
+        try:
+            await fp.provider.set_price_tag_product_price(
+                fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(foodics_id), float(price)
+            )
+            price_tag_attached = True
+        except Exception as exc:  # noqa: BLE001 — surfaced in the plan, not fatal
+            logger.warning(
+                "foodics price-tag attach failed for %s: %s", foodics_id, exc
+            )
         await catalog_mapping._upsert(  # noqa: SLF001 — one recorder, reused
             db,
             system=TARGET_FOODICS,
@@ -989,6 +1062,7 @@ async def create_menu_item(
         )
     plan["dry_run"] = False
     plan["foodics_id"] = foodics_id
+    plan["price_tag_attached"] = price_tag_attached
     plan["note"] = (
         "Created in Foodics and mapped. The marketplaces sync from Foodics; their "
         "external_item_map rows record on the next menu read + resolve."
@@ -996,15 +1070,659 @@ async def create_menu_item(
     return plan
 
 
+async def _foodics_ref_for(db: AsyncSession, product_id: Any) -> str | None:
+    """The Foodics product UUID mapped to an MM product (the create stores it as the
+    `foodics` external_ref). Prefers a real UUID over the name-based row."""
+    from app.models.external_item_map import KIND_PRODUCT, ExternalItemMap
+
+    rows = (
+        (
+            await db.execute(
+                select(ExternalItemMap.external_ref).where(
+                    ExternalItemMap.system == TARGET_FOODICS,
+                    ExternalItemMap.product_id == product_id,
+                    ExternalItemMap.mm_kind == KIND_PRODUCT,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for ref in rows:
+        if ref and len(ref) == 36 and ref.count("-") == 4:
+            return ref
+    return rows[0] if rows else None
+
+
+async def _careem_numeric_ref_for(db: AsyncSession, product_id: Any) -> str | None:
+    from app.models.external_item_map import KIND_PRODUCT, ExternalItemMap
+
+    rows = (
+        (
+            await db.execute(
+                select(ExternalItemMap.external_ref).where(
+                    ExternalItemMap.system == "careem",
+                    ExternalItemMap.product_id == product_id,
+                    ExternalItemMap.mm_kind == KIND_PRODUCT,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return next((r for r in rows if r and r.isdigit()), None)
+
+
+async def _deliveroo_branch_drn(db: AsyncSession) -> str | None:
+    """The deliveroo `branch_drn` for the non-Foodics (DSO) outlet, if stored.
+
+    The self-serve draft is scoped by an org-level DRN and served to a branch DRN,
+    which is distinct from the numeric branchId. We store what we have in
+    `aggregator_branch_map.channel_ref`; when it is absent (or not the DRN),
+    `selfserve_draft_for_branch` falls back to the org's sole self-serve draft —
+    the MM-managed DSO menu, since Barsha/Sharjah are Foodics-fed rather than
+    self-serve. Best-effort by design; never the single point of failure.
+    """
+    from app.models.aggregator import AggregatorBranchMap
+
+    rows = (
+        await db.execute(
+            select(AggregatorBranchMap.channel_ref, Branch.has_foodics)
+            .join(Branch, Branch.id == AggregatorBranchMap.branch_id)
+            .where(
+                AggregatorBranchMap.channel == "deliveroo",
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).all()
+    # A DRN is a UUID; prefer a non-Foodics branch's ref that looks like one.
+    for ref, has_foodics in rows:
+        if not has_foodics and ref and len(ref) == 36 and ref.count("-") == 4:
+            return ref
+    return None
+
+
+async def enrich_existing_item(
+    db: AsyncSession, *, product_id: Any, target: str, dry_run: bool = True
+) -> dict[str, Any]:
+    """Add the full bilingual card + image to an item that already exists on a
+    target — the enrich counterpart to `create_menu_item`, for products created
+    before enrichment (or whose create couldn't carry every field). Resolves the
+    live external id from `external_item_map` / a menu read, then patches name(_ar),
+    description(en/ar) and (where the platform hosts images) the image. Best-effort
+    and idempotent. Foodics image = console only; noon image = console only.
+    """
+    _ensure_write_enabled()
+    product = (
+        await db.execute(
+            select(Product)
+            .where(Product.id == product_id)
+            .options(selectinload(Product.category))
+        )
+    ).scalar_one_or_none()
+    if product is None:
+        raise BadRequestError(f"Product {product_id} not found")
+    i18n = _product_i18n(product)
+    out: dict[str, Any] = {"target": target, "product": product.name, "fields": {}}
+
+    if target == TARGET_FOODICS:
+        ref = await _foodics_ref_for(db, product_id)
+        out["foodics_id"] = ref
+        if ref is None:
+            raise BadRequestError(f"{product.name!r} has no foodics mapping to enrich.")
+        if dry_run:
+            out["would_set"] = {
+                "name_localized": i18n["name_ar"],
+                "description": i18n["description"],
+                "description_localized": i18n["description_ar"],
+            }
+            out["note"] = "Dry run — foodics update_product (name_ar + desc EN/AR)."
+            return out
+        from app.services.providers import foodics_provider as fp
+
+        price = product.base_price
+        await fp.provider.update_product(
+            ref,
+            name_localized=i18n["name_ar"],
+            description=i18n["description"],
+            description_localized=i18n["description_ar"],
+            image=i18n["image_url"],
+            price=price,
+        )
+        # Keep the Grubtech price-tag pivot at parity so the marketplaces get the
+        # new price too (the product price alone does not drive the aggregator).
+        if price is not None:
+            await fp.provider.set_price_tag_product_price(
+                fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(ref), float(price)
+            )
+        out["fields"] = {
+            "name_ar": "ok",
+            "description": "ok",
+            "image": "ok",
+            "price": "ok",
+        }
+        out["note"] = "Foodics enriched (name_ar + desc EN/AR + image + price parity)."
+        return out
+
+    if target == "careem":
+        ref = await _careem_numeric_ref_for(db, product_id)
+        out["careem_id"] = ref
+        if ref is None:
+            raise BadRequestError(f"{product.name!r} has no careem mapping to enrich.")
+        # careem items are per-outlet; enrich on the non-Foodics careem outlet (DSO).
+        branch = next(
+            (
+                b
+                for b in (
+                    (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
+                    .scalars()
+                    .all()
+                )
+                if not b.has_foodics and "careem" in b.aggregators
+            ),
+            None,
+        )
+        if branch is None:
+            raise BadRequestError("no non-Foodics careem outlet to enrich on.")
+        if dry_run:
+            out["outlet"] = branch.name
+            out["note"] = "Dry run — careem update_product + image upload."
+            return out
+        from app.services.aggregators import session_store
+        from app.services.aggregators.menu_readers import _careem_ids
+        from app.services.providers import careem_provider as cp
+
+        company, brand, outlet = await _careem_ids(db, branch.id)
+        session = await session_store.load(db, "careem")
+        await cp.provider.update_product(
+            session,
+            company,
+            brand,
+            outlet,
+            ref,
+            name=product.name,
+            name_ar=i18n["name_ar"],
+            description=i18n["description"],
+            description_ar=i18n["description_ar"],
+            price=product.base_price,
+        )
+        out["fields"]["text"] = "ok"
+        out["fields"]["price"] = "ok"
+        if i18n["image_url"]:
+            fetched = await _fetch_image_bytes(i18n["image_url"])
+            if fetched is not None:
+                image_bytes, ctype = fetched
+                ext = "png" if "png" in ctype else "jpg"
+                await cp.provider.set_product_image(
+                    session,
+                    company,
+                    brand,
+                    outlet,
+                    ref,
+                    image_bytes=image_bytes,
+                    filename=f"{(product.sku or 'item').lower()}.{ext}",
+                    content_type=ctype,
+                )
+                out["fields"]["image"] = "ok"
+        out["note"] = "Careem enriched (name/desc EN+AR + image)."
+        return out
+
+    if target == "noon":
+        from app.services.aggregators import session_store
+        from app.services.providers import noon_provider as np
+
+        session = await session_store.load(db, "noon")
+        if session is None:
+            raise BadRequestError("no noon session")
+        menus = await np.provider.list_menus(session)
+        rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
+        mm_menus = [
+            m for m in rows if not str(m.get("menuName", "")).startswith("Ext.")
+        ]
+        if not (mm_menus or rows):
+            raise BadRequestError("noon returned no menu.")
+        menu_code = (mm_menus or rows)[0]["menuCode"]
+        details = await np.provider.get_menu_details(session, menu_code)
+        item = next(
+            (
+                it
+                for it in ((details.get("data") or {}).get("items") or [])
+                if _norm(it.get("nameEn")) == _norm(product.name)
+            ),
+            None,
+        )
+        out["noon_item_code"] = item.get("itemCode") if item else None
+        if item is None:
+            raise BadRequestError(f"{product.name!r} not found on the noon menu.")
+        if dry_run:
+            out["note"] = "Dry run — noon item/edit (name_ar + desc EN/AR)."
+            return out
+        # noon's `image` does NOT take a foreign URL — the field accepts the string
+        # but noon renders it corrupt (confirmed live 2026-09-15). The picture must
+        # be uploaded to noon's own storage first: `upload_menu_item_image` asks the
+        # RMS gateway for a GCS signed PUT URL, PUTs the bytes, and returns the
+        # stored path to set as `image`. Best-effort — a failed upload leaves the
+        # image unset (corrupt is worse than none) but never blocks name/desc/price.
+        noon_image_path: str | None = None
+        image_status = "skipped (no product image)"
+        if i18n["image_url"]:
+            fetched = await _fetch_image_bytes(i18n["image_url"])
+            if fetched is None:
+                image_status = "skipped (image fetch failed)"
+            else:
+                image_bytes, ctype = fetched
+                ext = (ctype.split("/", 1)[-1] or "png").split(";")[0]
+                try:
+                    noon_image_path = await np.provider.upload_menu_item_image(
+                        session,
+                        image_bytes=image_bytes,
+                        filename=f"{product.sku or _norm(product.name)}.{ext}",
+                        content_type=ctype,
+                    )
+                    image_status = "uploaded"
+                except Exception as exc:  # noqa: BLE001 — image is best-effort
+                    logger.warning(
+                        "noon image upload failed for %s: %s", product.id, exc
+                    )
+                    image_status = f"skipped (upload failed: {str(exc)[:80]})"
+        # Stage only: noon refuses to auto-publish name/description changes
+        # ("item changes are not approved for auto publish"), so the edit lands on
+        # the draft menu and a human approves it in the noon console. Publishing
+        # here would just 400.
+        await np.provider.update_menu_item(
+            session,
+            menu_code=menu_code,
+            item=item,
+            name_ar=i18n["name_ar"],
+            description=i18n["description"],
+            description_ar=i18n["description_ar"],
+            price=product.base_price,
+            image=noon_image_path,
+            publish=False,
+        )
+        out["fields"] = {
+            "name_ar": "staged",
+            "description": "staged",
+            "price": "staged",
+            "image": image_status,
+        }
+        out["note"] = (
+            "Noon name/desc/price/image staged on the draft menu — approve in the "
+            "noon console (noon won't auto-publish these)."
+        )
+        return out
+
+    if target == "deliveroo":
+        from app.services.aggregators import session_store
+        from app.services.providers import deliveroo_provider as dp
+
+        session = await session_store.load(db, "deliveroo")
+        if session is None:
+            raise BadRequestError("no deliveroo session")
+        # The MM-managed DSO menu is the only self-serve draft (Barsha/Sharjah are
+        # Foodics-fed, not self-serve), so the branch_drn is best-effort — the
+        # single-draft fallback in `selfserve_draft_for_branch` resolves it either
+        # way. `channel_ref` carries a deliveroo branch id where one is stored.
+        branch_drn = await _deliveroo_branch_drn(db)
+        draft = await dp.provider.selfserve_draft_for_branch(session, branch_drn)
+        if draft is None:
+            raise BadRequestError("no deliveroo self-serve draft to enrich on.")
+        out["draft_id"] = draft.get("drn_id")
+        if dry_run:
+            out["note"] = (
+                "Dry run — deliveroo self-serve upsert (name/desc EN+AR + price), "
+                "staged on the draft (no publish)."
+            )
+            return out
+        cat_name = await menu_group_service.integrator_l1_group_for_product(
+            db, product.id
+        )
+        # Image: upload the product photo to deliveroo's own CDN, then set the
+        # returned cdn_url/s3key on the item. Deliveroo runs automated photo QA, so a
+        # real photo is required — a rejected upload raises and we fall back to no
+        # image (best-effort; never blocks text/price). `draft.get("drn_id")` is the
+        # draft the upsert PATCHes.
+        image_cdn_url: str | None = None
+        image_s3key: str | None = None
+        image_status = "skipped (no product image)"
+        if i18n["image_url"]:
+            fetched = await _fetch_image_bytes(i18n["image_url"])
+            if fetched is None:
+                image_status = "skipped (image fetch failed)"
+            else:
+                image_bytes, ctype = fetched
+                ext = (ctype.split("/", 1)[-1] or "jpeg").split(";")[0]
+                try:
+                    up = await dp.provider.selfserve_upload_image(
+                        session,
+                        draft_id=str(draft.get("drn_id")),
+                        image_bytes=image_bytes,
+                        filename=f"{product.sku or _norm(product.name)}.{ext}",
+                        content_type=ctype,
+                    )
+                    image_cdn_url = up.get("cdn_url")
+                    image_s3key = up.get("s3key")
+                    image_status = "uploaded"
+                except Exception as exc:  # noqa: BLE001 — image is best-effort
+                    logger.warning(
+                        "deliveroo image upload failed for %s: %s", product.id, exc
+                    )
+                    image_status = f"skipped (upload failed: {str(exc)[:80]})"
+        result = await dp.provider.selfserve_upsert_item(
+            session,
+            draft=draft,
+            name_en=product.name,
+            name_ar=i18n["name_ar"],
+            description_en=i18n["description"],
+            description_ar=i18n["description_ar"],
+            price=product.base_price,
+            plu=product.sku,
+            image_cdn_url=image_cdn_url,
+            image_s3key=image_s3key,
+            category_name=cat_name,
+            publish=False,
+        )
+        result["image"] = image_status
+        out["fields"] = result
+        out["note"] = (
+            "Deliveroo DSO item upserted on the self-serve draft (staged, NOT "
+            "published — review + publish in the Menu Manager)."
+        )
+        return out
+
+    if target == "talabat":
+        branch = next(
+            (
+                b
+                for b in (
+                    (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
+                    .scalars()
+                    .all()
+                )
+                if not b.has_foodics and "talabat" in b.aggregators
+            ),
+            None,
+        )
+        if branch is None:
+            raise BadRequestError("no non-Foodics talabat outlet to enrich on.")
+        if dry_run:
+            out["outlet"] = branch.name
+            out["note"] = "Dry run — talabat update_product (name/desc/price/image)."
+            return out
+        from app.services.aggregators import session_store
+        from app.services.aggregators.menu_readers import _talabat_vendor
+        from app.services.providers import talabat_provider as tp
+
+        # Talabat's map is name-based (the create returns an async commandId, not an
+        # id), so resolve the live product id by name from the vendor's catalog.
+        vendor = await _talabat_vendor(db, branch.id)
+        session = await session_store.load(db, "talabat")
+        session = await tp.provider.prepare_session(db, session)
+        catalogs = await tp.provider.list_catalogs(session, vendor)
+        clist = (
+            catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
+        ) or []
+        talabat_id = None
+        for cat in clist:
+            cid = str(cat["id"])
+            for c in cat.get("categories") or []:
+                prods = await tp.provider.list_category_products(
+                    session, vendor, cid, str(c.get("id"))
+                )
+                plist = (
+                    prods
+                    if isinstance(prods, list)
+                    else (prods.get("products") or prods.get("data") or [])
+                )
+                match = next(
+                    (p for p in plist if _norm(p.get("name")) == _norm(product.name)),
+                    None,
+                )
+                if match:
+                    talabat_id = str(match.get("id"))
+                    break
+            if talabat_id:
+                break
+        out["talabat_id"] = talabat_id
+        if talabat_id is None:
+            raise BadRequestError(f"{product.name!r} not found on the talabat menu.")
+        await tp.provider.update_product(
+            session,
+            vendor,
+            talabat_id,
+            name=product.name,
+            name_ar=i18n["name_ar"],
+            description=i18n["description"],
+            description_ar=i18n["description_ar"],
+            price=product.base_price,
+            image_url=i18n["image_url"],
+        )
+        out["fields"] = {"text": "ok", "price": "ok", "image": "ok"}
+        out["note"] = "Talabat enriched (name/desc EN+AR + price + image)."
+        return out
+
+    raise BadRequestError(f"enrich not supported for target {target!r}")
+
+
+# ── The one entry point: sync a product to every integrator (create-or-update) ──
+
+#: Systems the API can drive itself (httpx / Foodics console). keeta + deliveroo
+#: are worker/manual (keeta = mtgsig worker, deliveroo = Menu Manager), handled out
+#: of band; foodics propagates the product to their Barsha/Sharjah API stores.
+_SERVER_SYSTEMS: tuple[str, ...] = (
+    TARGET_FOODICS,
+    "careem",
+    "noon",
+    "talabat",
+    "deliveroo",
+)
+
+
+async def _is_mapped(db: AsyncSession, system: str, product_id: Any) -> bool:
+    """True if an approved product mapping already exists for (system, product) —
+    the create-vs-update decision."""
+    from app.models.external_item_map import KIND_PRODUCT, ExternalItemMap
+
+    row = (
+        await db.execute(
+            select(ExternalItemMap.id).where(
+                ExternalItemMap.system == system,
+                ExternalItemMap.product_id == product_id,
+                ExternalItemMap.mm_kind == KIND_PRODUCT,
+                ExternalItemMap.approved.is_(True),
+            )
+        )
+    ).first()
+    return row is not None
+
+
+async def _create_branch_for(db: AsyncSession, system: str) -> tuple[bool, Any]:
+    """(has_target, branch_id) for a CREATE of `system`. foodics/noon are account-
+    level (branch None). careem/talabat create on a non-Foodics outlet that trades
+    on the channel; returns has_target False when there is none."""
+    if system in (TARGET_FOODICS, "noon"):
+        return True, None
+    branches = (
+        (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
+        .scalars()
+        .all()
+    )
+    for b in branches:
+        if not b.has_foodics and system in b.aggregators:
+            return True, b.id
+    return False, None
+
+
+async def sync_product(
+    db: AsyncSession, *, product_id: Any, dry_run: bool = False
+) -> dict[str, Any]:
+    """Create-or-update one product on every integrator it belongs on — the single
+    action behind both the admin "save product" (via the outbox) and a manual
+    resync. Idempotent: for each server-callable system it UPDATES when a mapping
+    exists (name EN/AR, description EN/AR, price, image) and CREATES otherwise.
+    Foodics is the master — its create/update propagates to the Barsha/Sharjah API
+    stores of every marketplace, so only the non-Foodics outlets (Karama/DSO) are
+    driven per channel here. deliveroo (DSO) goes through the self-serve draft upsert
+    (staged, not published); keeta (Karama/DSO) still needs the VM worker (mtgsig +
+    Venus) and is reported, never silently dropped. Per-system isolated; gated by
+    `CATALOG_SYNC_ENABLED`."""
+    _ensure_write_enabled()
+    product = (
+        await db.execute(
+            select(Product)
+            .where(Product.id == product_id)
+            .options(selectinload(Product.category))
+        )
+    ).scalar_one_or_none()
+    if product is None:
+        raise BadRequestError(f"Product {product_id} not found")
+    l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
+    if l1 is None:
+        return {"skipped": "product is not in the integrator menu"}
+
+    results: dict[str, Any] = {}
+    for system in _SERVER_SYSTEMS:
+        try:
+            # Deliveroo self-serve is a single create-or-update (`selfserve_upsert_item`
+            # matches the item on the live draft by plu/name), so it always takes the
+            # enrich path — no separate create branch to keep in sync.
+            if system == "deliveroo" or await _is_mapped(db, system, product_id):
+                results[system] = await enrich_existing_item(
+                    db, product_id=product_id, target=system, dry_run=dry_run
+                )
+                results[system].setdefault(
+                    "action", results[system].get("fields", {}).get("action", "update")
+                )
+            else:
+                has_target, branch_id = await _create_branch_for(db, system)
+                if not has_target:
+                    results[system] = {"skipped": "no outlet trades on this channel"}
+                    continue
+                results[system] = await create_menu_item(
+                    db,
+                    product_id=product_id,
+                    target=system,
+                    branch_id=branch_id,
+                    dry_run=dry_run,
+                )
+                results[system]["action"] = "create"
+            if not dry_run:
+                # Commit per system, like the ingest/read sweeps: this runs off the
+                # scheduler (a job, not a request), and a system that synced cleanly
+                # must persist even if a later system then throws — the try/except
+                # gives isolation only if each success is already durable.
+                await db.commit()
+        except Exception as exc:  # noqa: BLE001 — one system must not stop the rest
+            if not dry_run:
+                await db.rollback()
+            logger.warning("sync_product %s for %s: %s", system, product_id, exc)
+            results[system] = {"error": str(exc)}
+    # keeta: Barsha/Sharjah ride Foodics; Karama/DSO still need the VM worker
+    # (mtgsig create + Venus updateSpuPicture) — not an httpx target. deliveroo is
+    # now handled in the loop above via the self-serve draft upsert.
+    results["keeta"] = {
+        "handoff": "VM worker: aggregator-bootstrap create-keeta-item + set-keeta-image"
+    }
+    return results
+
+
+async def enqueue_product_sync(
+    db: AsyncSession, *, product_id: Any, reason: str = "updated"
+) -> None:
+    """Record (in the caller's transaction) that a product changed and must fan out
+    to the integrators. Coalesces to one `pending` row per product via the partial
+    unique index, so a burst of edits is a single sync. Never raises past the
+    caller — enqueuing must not fail a product save; it only flushes (the request
+    commits). No-op when writes are disabled."""
+    if not settings.CATALOG_SYNC_ENABLED:
+        return
+    from app.models.catalog_sync import OUTBOX_PENDING, CatalogSyncOutbox
+
+    existing = (
+        await db.execute(
+            select(CatalogSyncOutbox).where(
+                CatalogSyncOutbox.product_id == product_id,
+                CatalogSyncOutbox.status == OUTBOX_PENDING,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.reason = reason  # keep one open job; refresh its provenance
+        await db.flush()
+        return
+    db.add(CatalogSyncOutbox(product_id=product_id, reason=reason))
+    try:
+        await db.flush()
+    except Exception as exc:  # noqa: BLE001 — a race lost the unique; fine, one job stands
+        logger.info("enqueue_product_sync: coalesced (%s)", exc)
+
+
+async def process_outbox(db: AsyncSession, *, limit: int = 20) -> dict[str, Any]:
+    """Drain pending catalog-sync outbox jobs — the scheduler's product-change half.
+    Each job runs `sync_product` (create-or-update on every integrator) and is
+    marked done/error with its per-system result. Gated by `CATALOG_SYNC_ENABLED`;
+    per-job isolated. Returns a summary for the cron log."""
+    if not settings.CATALOG_SYNC_ENABLED:
+        return {"skipped": "writes disabled (CATALOG_SYNC_ENABLED)"}
+    from app.models.catalog_sync import (
+        OUTBOX_DONE,
+        OUTBOX_ERROR,
+        OUTBOX_PENDING,
+        CatalogSyncOutbox,
+    )
+
+    jobs = (
+        (
+            await db.execute(
+                select(CatalogSyncOutbox)
+                .where(CatalogSyncOutbox.status == OUTBOX_PENDING)
+                .order_by(CatalogSyncOutbox.created_at)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    summary: dict[str, Any] = {"processed": 0, "errors": 0}
+    for job in jobs:
+        job.attempts += 1
+        try:
+            result = await sync_product(db, product_id=job.product_id, dry_run=False)
+            job.status = OUTBOX_DONE
+            job.result = result
+            job.last_error = None
+            job.processed_at = _utcnow()
+            summary["processed"] += 1
+        except Exception as exc:  # noqa: BLE001 — one bad job must not stop the drain
+            await db.rollback()
+            job = await db.get(CatalogSyncOutbox, job.id)
+            if job is not None:
+                job.status = OUTBOX_ERROR
+                job.last_error = str(exc)[:1000]
+                job.processed_at = _utcnow()
+            summary["errors"] += 1
+        # Commit each job's terminal state as the drain goes (scheduler job, not a
+        # request): a done/error job must not be re-run because a later job in the
+        # same batch failed and rolled the request back.
+        await db.commit()
+    return summary
+
+
 async def _create_on_careem(
-    db: AsyncSession, product: Product, branch_id: Any, dry_run: bool
+    db: AsyncSession,
+    product: Product,
+    branch_id: Any,
+    dry_run: bool,
+    category_name: str,
 ) -> dict[str, Any]:
     """Create one product directly on a non-Foodics Careem outlet.
 
     Verified surface (create-then-delete on a live outlet): POST catalog-products
-    with the product's MM category resolved to the Careem category id. Created
-    INACTIVE — a sync never makes an item live before review. Records the
-    `external_item_map` (careem) inline from the returned id.
+    with the product's integrator category resolved to the Careem category id.
+    Created INACTIVE — a sync never makes an item live before review. Records the
+    `external_item_map` (careem) inline from the returned id. `category_name` is
+    the integrator menu grouping (passed by `create_menu_item`), so the portal
+    placement matches our menu tree, not the raw website category.
     """
     from app.services.aggregators import session_store
     from app.services.aggregators.menu_readers import _careem_ids
@@ -1012,7 +1730,8 @@ async def _create_on_careem(
 
     if branch_id is None:
         raise BadRequestError("careem create needs a branch_id (the outlet).")
-    cat_name = product.category.name if product.category else None
+    cat_name = category_name
+    i18n = _product_i18n(product)
     price = product.base_price
     if price is None:
         raise BadRequestError(f"Product {product.name!r} has no base price.")
@@ -1071,6 +1790,7 @@ async def _create_on_careem(
         price=price,
         catalog_id=catalog_id,
         category_id=careem_cat.get("id"),
+        name_ar=i18n["name_ar"],
         active=False,
     )
     careem_id = (created or {}).get("id") if isinstance(created, dict) else None
@@ -1084,14 +1804,59 @@ async def _create_on_careem(
             product_id=product.id,
             approve=True,
         )
+    # Enrich: the create takes only name(+ar); description (en/ar) and the image
+    # go on with a follow-up PUT + a multipart image upload (Careem hosts images on
+    # its own CDN and never fetches a foreign URL). Best-effort — a failed enrich
+    # never unwinds the create/mapping.
+    enrich: dict[str, Any] = {}
+    if careem_id and (i18n["description"] or i18n["name_ar"]):
+        try:
+            await cp.provider.update_product(
+                session,
+                company,
+                brand,
+                outlet,
+                careem_id,
+                name=product.name,
+                name_ar=i18n["name_ar"],
+                description=i18n["description"],
+                description_ar=i18n["description_ar"],
+            )
+            enrich["text"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("careem enrich text failed for %s: %s", careem_id, exc)
+            enrich["text"] = f"error: {exc}"
+    if careem_id and i18n["image_url"]:
+        fetched = await _fetch_image_bytes(i18n["image_url"])
+        if fetched is not None:
+            image_bytes, ctype = fetched
+            ext = "png" if "png" in ctype else "jpg"
+            try:
+                await cp.provider.set_product_image(
+                    session,
+                    company,
+                    brand,
+                    outlet,
+                    careem_id,
+                    image_bytes=image_bytes,
+                    filename=f"{(product.sku or 'item').lower()}.{ext}",
+                    content_type=ctype,
+                )
+                enrich["image"] = "ok"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("careem image failed for %s: %s", careem_id, exc)
+                enrich["image"] = f"error: {exc}"
     plan["dry_run"] = False
     plan["careem_id"] = careem_id
-    plan["note"] = "Created on Careem (INACTIVE) and mapped."
+    plan["enrich"] = enrich
+    plan["note"] = (
+        "Created on Careem (INACTIVE), enriched (name/desc/image) and mapped."
+    )
     return plan
 
 
 async def _create_on_noon(
-    db: AsyncSession, product: Product, dry_run: bool, branch_id: Any = None
+    db: AsyncSession, product: Product, dry_run: bool, *, category_name: str
 ) -> dict[str, Any]:
     """Create one product on the MM-managed noon menu (verified per-item create).
 
@@ -1100,16 +1865,23 @@ async def _create_on_noon(
     off-shelf. Records the noon `external_item_map` from the returned item code.
     Verified live by a controlled create-then-delete (2026-09-01).
 
-    `branch_id` scopes RMS to that outlet's `n-restaurantcode` (Karama/DSO).
-    Without it the captured session's restaurant code is used.
+    noon is **per-restaurant, not per-outlet**: our partner login is one restaurant
+    (`R…`) whose MM-managed "Melting Moments" menu serves every non-Foodics outlet
+    at once (Karama `MLTNGMTB9M` + DSO `MLTNGMG2B1`), while the "Ext. grubtech" menu
+    on the same restaurant serves the two Foodics outlets. So one create on the
+    MM-managed menu covers Karama and DSO together — there is nothing per-branch to
+    do. `branch_id` is accepted for a uniform caller signature but deliberately
+    ignored: RMS scopes by the restaurant code (`n-restaurantcode`), and the outlet
+    codes in `aggregator_branch_map` (OMS/hours ids like `MLTNGM…`) are a different
+    identifier — feeding one as a restaurant code returns E0115 "restaurant code is
+    not valid for this partner". The captured session's own restaurant code is the
+    only valid one, and it is where the shared menu lives.
     """
-    from dataclasses import replace as dc_replace
-
     from app.services.aggregators import session_store
-    from app.services.aggregators.menu_readers import _noon_outlet_code
     from app.services.providers import noon_provider as np
 
-    cat_name = product.category.name if product.category else None
+    cat_name = category_name
+    i18n = _product_i18n(product)
     price = product.base_price
     if price is None:
         raise BadRequestError(f"Product {product.name!r} has no base price.")
@@ -1117,11 +1889,6 @@ async def _create_on_noon(
     session = await session_store.load(db, "noon")
     if session is None:
         raise BadRequestError("no noon session")
-    if branch_id is not None:
-        outlet_code = await _noon_outlet_code(db, branch_id)
-        tokens = dict(session.tokens or {})
-        tokens["restaurant_code"] = outlet_code
-        session = dc_replace(session, tokens=tokens)
     menus = await np.provider.list_menus(session)
     rows = (menus.get("data") if isinstance(menus, dict) else menus) or []
     mm_menus = [m for m in rows if not str(m.get("menuName", "")).startswith("Ext.")]
@@ -1167,6 +1934,7 @@ async def _create_on_noon(
         name=product.name,
         category_code=category_code,
         price=price,
+        name_ar=i18n["name_ar"],
         active=False,
     )
     # The create returns the whole menu; the new item is the one matching our name.
@@ -1185,21 +1953,76 @@ async def _create_on_noon(
             product_id=product.id,
             approve=True,
         )
+    # Enrich the description (EN + AR) via the item/edit read-modify-write. The
+    # create carries name + name_ar; descEn/descAr go on here. noon's image is a
+    # noon-hosted media path (no foreign-URL fetch, and no uploader in the client),
+    # so the image is the one field a noon create/enrich cannot set here — it stays
+    # a console step. Best-effort: a failed enrich never unwinds the create.
+    # noon renders a foreign image URL corrupt, so upload the picture to noon's own
+    # storage first and set the returned path (see `upload_menu_item_image`). Both
+    # image and text go through the one item/edit read-modify-write. Best-effort: a
+    # failed enrich never unwinds the create.
+    enrich: dict[str, Any] = {}
+    noon_image_path: str | None = None
+    if new_item is not None and i18n["image_url"]:
+        fetched = await _fetch_image_bytes(i18n["image_url"])
+        if fetched is not None:
+            image_bytes, ctype = fetched
+            ext = (ctype.split("/", 1)[-1] or "png").split(";")[0]
+            try:
+                noon_image_path = await np.provider.upload_menu_item_image(
+                    session,
+                    image_bytes=image_bytes,
+                    filename=f"{product.sku or _norm(product.name)}.{ext}",
+                    content_type=ctype,
+                )
+                enrich["image"] = "uploaded"
+            except Exception as exc:  # noqa: BLE001 — image is best-effort
+                logger.warning("noon image upload failed for %s: %s", noon_id, exc)
+                enrich["image"] = f"error: {str(exc)[:80]}"
+    if new_item is not None and (
+        i18n["description"] or i18n["description_ar"] or noon_image_path
+    ):
+        try:
+            await np.provider.update_menu_item(
+                session,
+                menu_code=menu_code,
+                item=new_item,
+                description=i18n["description"],
+                description_ar=i18n["description_ar"],
+                name_ar=i18n["name_ar"],
+                image=noon_image_path,
+                publish=False,  # noon won't auto-publish name/desc; stage for approval
+            )
+            enrich["text"] = "staged"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("noon enrich text failed for %s: %s", noon_id, exc)
+            enrich["text"] = f"error: {exc}"
     plan["dry_run"] = False
     plan["noon_item_code"] = noon_id
-    plan["note"] = "Created on noon (off-shelf) and mapped."
+    plan["enrich"] = enrich
+    plan["note"] = (
+        "Created on noon (off-shelf) and mapped; name/desc EN+AR + image staged on "
+        "the draft menu (approve in the noon console — noon won't auto-publish "
+        "these)."
+    )
     return plan
 
 
 async def _create_on_talabat(
-    db: AsyncSession, product: Product, branch_id: Any, dry_run: bool
+    db: AsyncSession,
+    product: Product,
+    branch_id: Any,
+    dry_run: bool,
+    category_name: str,
 ) -> dict[str, Any]:
     """Create one product on a Talabat vendor (Karama; Barsha/Sharjah via Foodics).
 
     Captured 2026-09-04 from the partner Add Product drawer
     (`POST .../vendors/{vendor}/catalogs/products`). Created off-shelf. The
     response is `{commandId}` (async), so the `external_item_map` row lands on
-    the next menu read rather than inline.
+    the next menu read rather than inline. `category_name` is the integrator menu
+    grouping (passed by `create_menu_item`), so placement matches our menu tree.
     """
     from app.services.aggregators import session_store
     from app.services.aggregators.menu_readers import _talabat_vendor
@@ -1207,7 +2030,8 @@ async def _create_on_talabat(
 
     if branch_id is None:
         raise BadRequestError("talabat create needs a branch_id (the outlet).")
-    cat_name = product.category.name if product.category else None
+    cat_name = category_name
+    i18n = _product_i18n(product)
     price = product.base_price
     if price is None:
         raise BadRequestError(f"Product {product.name!r} has no base price.")
@@ -1244,8 +2068,8 @@ async def _create_on_talabat(
             "name": product.name,
             "unitPrice": float(price),
             "catalogIds": [catalog_id],
-            "category": category_id,
-            "type": "Simple",
+            "categories": [category_id],
+            "type": "PRODUCT",
             "active": False,
         },
     }
@@ -1264,7 +2088,12 @@ async def _create_on_talabat(
         name=product.name,
         catalog_id=catalog_id,
         category_id=category_id,
+        category_name=cat_name,
         price=price,
+        description=i18n["description"] or "",
+        name_ar=i18n["name_ar"],
+        description_ar=i18n["description_ar"],
+        image_url=i18n["image_url"],
         active=False,
     )
     command_id = (created or {}).get("commandId") if isinstance(created, dict) else None
@@ -1421,8 +2250,17 @@ async def run_catalog_sync_once(
     approves the definitionally-correct matches. Idempotent; returns a per-branch,
     per-target summary for the cron log.
     """
+    out_outbox: dict[str, Any] = {}
+    if settings.CATALOG_SYNC_ENABLED:
+        try:
+            out_outbox = await process_outbox(db)
+        except Exception as exc:  # noqa: BLE001 — never let the drain kill the pass
+            await db.rollback()
+            logger.exception("catalog-sync outbox drain failed")
+            out_outbox = {"error": str(exc)}
+
     if not settings.CATALOG_SYNC_READ_ENABLED:
-        return {"skipped": "reads disabled (CATALOG_SYNC_READ_ENABLED)"}
+        return {"outbox": out_outbox, "skipped": "reads disabled"}
     if branch_ids:
         branches = [
             b
@@ -1432,7 +2270,7 @@ async def run_catalog_sync_once(
     else:
         branches = await integrated_branches(db)
 
-    out: dict[str, Any] = {"branches": {}, "mappings": {}}
+    out: dict[str, Any] = {"outbox": out_outbox, "branches": {}, "mappings": {}}
     for branch in branches:
         read = await refresh_all(db, branch_id=branch.id)
         drift = await compute_drift_all(db, branch_id=branch.id)
@@ -1500,7 +2338,9 @@ async def run_catalog_sync_scheduler_forever() -> None:
     while True:
         try:
             await asyncio.sleep(interval * 60)
-            if settings.CATALOG_SYNC_READ_ENABLED:
+            # Tick when reads OR writes are on: run_catalog_sync_once drains the
+            # product-change outbox (write-gated) even when menu reads are off.
+            if settings.CATALOG_SYNC_READ_ENABLED or settings.CATALOG_SYNC_ENABLED:
                 async with AsyncSessionFactory() as db:
                     await run_catalog_sync_once(db)
         except asyncio.CancelledError:
@@ -1519,6 +2359,10 @@ __all__ = [
     "compute_drift_all",
     "plan_push",
     "create_menu_item",
+    "enrich_existing_item",
+    "sync_product",
+    "enqueue_product_sync",
+    "process_outbox",
     "resolve_and_approve_mappings",
     "run_catalog_sync_once",
     "run_catalog_sync_scheduler_forever",

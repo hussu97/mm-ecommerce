@@ -33,15 +33,24 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.aggregator import AGGREGATOR_CHANNELS
 from app.models.base import Base, TimestampMixin, UUIDMixin
+
+# ── Outbox: a product change that must fan out to the integrators ──────────────
+OUTBOX_PENDING = "pending"
+OUTBOX_DONE = "done"
+OUTBOX_ERROR = "error"
+OUTBOX_STATUSES: tuple[str, ...] = (OUTBOX_PENDING, OUTBOX_DONE, OUTBOX_ERROR)
+_OUTBOX_STATUSES_SQL = ", ".join(f"'{s}'" for s in OUTBOX_STATUSES)
 
 # ── Sync targets ──────────────────────────────────────────────────────────────
 # Where a menu/hours write lands. The five marketplaces plus Foodics — the master
@@ -147,3 +156,59 @@ class AggregatorMenuSnapshot(Base, UUIDMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<AggregatorMenuSnapshot {self.target} {self.kind} {self.status}>"
+
+
+class CatalogSyncOutbox(Base, UUIDMixin, TimestampMixin):
+    """One "this product changed — fan it out to the integrators" job.
+
+    Written **in the same transaction** as the product create/update (so a save
+    that rolls back never leaves a phantom job), then drained by the catalog-sync
+    scheduler which runs an idempotent create-or-update of the product on every
+    integrator it belongs on (name EN/AR, description EN/AR, price, image). This is
+    the system half of "menu sync is driven from the admin, not a script": the
+    admin just saves the product; the sync is a consequence, not a separate action.
+
+    Deliberately a durable row, not an in-process task: the sync opens marketplace
+    sessions and the Foodics console, must survive a redeploy/rollback, and must
+    retry — none of which a fire-and-forget task gives. `sync_product` is idempotent,
+    so a duplicate row is harmless (it just re-asserts parity)."""
+
+    __tablename__ = "catalog_sync_outbox"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    #: `created` / `updated` — provenance for the log; both drain the same way.
+    reason: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=OUTBOX_PENDING
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The per-target result of the last drain, for the admin/console + debugging.
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_OUTBOX_STATUSES_SQL})",
+            name="ck_catalog_sync_outbox_status",
+        ),
+        # One open job per product: rapid successive edits coalesce to a single
+        # pending row (the drain always reads the product's current state), so a
+        # burst of saves is one sync, not N.
+        Index(
+            "uq_catalog_sync_outbox_pending",
+            "product_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CatalogSyncOutbox {self.product_id} {self.status}>"

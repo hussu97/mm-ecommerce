@@ -949,3 +949,133 @@ async def test_post_login_impersonates_and_carries_cf_clearance():
     assert captured["json_body"] == {"email": "a@b.com", "password": "pw"}
     # The prior session's anti-bot cookies ride along so Cloudflare clears the mint.
     assert "cf_clearance=CFTOKEN" in captured["headers"]["Cookie"]
+
+
+# ── self-serve upsert (catalog-sync writer) ────────────────────────────────────
+# Pure transformation tests: `selfserve_patch_draft`/`publish` are stubbed, so
+# these assert the read-modify-write on the draft dict without any network.
+
+
+def _draft_with(items, categories=None):
+    # `updated_at` is deliveroo's real concurrency token (a nanosecond string); the
+    # PATCH body sends it back as `last_updated_at`.
+    return {
+        "drn_id": "draft-1",
+        "org_drn_id": "org-1",
+        "name": "Melting Moments",
+        "updated_at": "1789480054965248000",
+        "menu": {"items": list(items), "categories": list(categories or [])},
+    }
+
+
+@pytest.mark.asyncio
+async def test_selfserve_upsert_updates_existing_item_and_infers_minor_units():
+    client = DeliverooClient()
+    session = _org_session()
+    # Existing price 4000 minor units == AED 40.00; MM price is 70.00.
+    draft = _draft_with(
+        [
+            {
+                "id": "itm-1",
+                "plu": "FG0133",
+                "name": {"en": "Lotus 250g", "ar": "لوتس"},
+                "price_info": {"price": 4000},
+            }
+        ]
+    )
+    captured = {}
+
+    async def fake_patch(self, sess, draft_id, body):
+        captured["draft_id"] = draft_id
+        captured["body"] = body
+        return {}
+
+    with patch.object(DeliverooClient, "selfserve_patch_draft", fake_patch):
+        result = await client.selfserve_upsert_item(
+            session,
+            draft=draft,
+            name_en="Lotus 250g",
+            name_ar="لوتس ٢٥٠",
+            description_en="Warm cookie",
+            description_ar="كوكي",
+            price=Decimal("70.00"),
+            plu="FG0133",
+        )
+
+    assert result["action"] == "update"
+    assert result["item_id"] == "itm-1"
+    assert result["published"] is False
+    assert "minor" in result["price"]
+    item = captured["body"]["menu"]["items"][0]
+    assert item["price_info"]["price"] == 7000  # 70.00 in minor units
+    assert item["description"] == {"en": "Warm cookie", "ar": "كوكي"}
+    assert item["name"]["ar"] == "لوتس ٢٥٠"
+    # whole-draft PATCH sends the GET's `updated_at` back as `last_updated_at`
+    assert captured["body"]["last_updated_at"] == "1789480054965248000"
+    assert captured["body"]["name"] == "Melting Moments"
+
+
+@pytest.mark.asyncio
+async def test_selfserve_upsert_creates_and_links_new_item_via_item_ids():
+    client = DeliverooClient()
+    session = _org_session()
+    draft = _draft_with(
+        items=[],
+        categories=[{"id": "cat-1", "name": "Cookie Melt", "item_ids": []}],
+    )
+
+    async def fake_patch(self, sess, draft_id, body):
+        return {}
+
+    with patch.object(DeliverooClient, "selfserve_patch_draft", fake_patch):
+        result = await client.selfserve_upsert_item(
+            session,
+            draft=draft,
+            name_en="Lotus 500g",
+            name_ar="لوتس",
+            price=Decimal("70.00"),
+            plu="FG0134",
+            category_name="Cookie Melt",
+        )
+
+    assert result["action"] == "create"
+    # new item appended and linked into the matching category
+    new_item = draft["menu"]["items"][0]
+    assert new_item["plu"] == "FG0134"
+    assert result["category"] == "linked (item_ids)"
+    assert draft["menu"]["categories"][0]["item_ids"] == [result["item_id"]]
+    # price scale unknown on a brand-new item → left for the reviewer, never guessed
+    assert result["price"].startswith("skipped")
+    # new item carries deliveroo's required schema, and a short base36 id (not a UUID)
+    assert new_item["type"] == "ITEM"
+    assert new_item["product_type"] == "FRESH_FOOD"
+    assert new_item["price_info"] == {"price": 0, "overrides": [], "fees": []}
+    assert "-" not in new_item["id"] and len(new_item["id"]) <= 11
+
+
+@pytest.mark.asyncio
+async def test_selfserve_upsert_publishes_when_asked():
+    client = DeliverooClient()
+    session = _org_session()
+    draft = _draft_with([{"id": "itm-1", "plu": "FG0133", "name": {"en": "Lotus"}}])
+    published = {}
+
+    async def fake_patch(self, sess, draft_id, body):
+        return {}
+
+    async def fake_publish(self, sess, draft_id):
+        published["id"] = draft_id
+        return SimpleNamespace(status_code=200)
+
+    from types import SimpleNamespace
+
+    with (
+        patch.object(DeliverooClient, "selfserve_patch_draft", fake_patch),
+        patch.object(DeliverooClient, "selfserve_publish_draft", fake_publish),
+    ):
+        result = await client.selfserve_upsert_item(
+            session, draft=draft, name_en="Lotus", plu="FG0133", publish=True
+        )
+
+    assert result["published"] is True
+    assert published["id"] == "draft-1"
