@@ -1019,6 +1019,13 @@ class DeliverooClient(BaseAggregatorClient):
                     "(set aggregator_account.extras.org_id)"
                 )
             tokens["org_id"] = org
+        # org_drn_id (self-serve Menu Manager scope) is not in the JWT and only some
+        # accounts carry it; backfill from extras when present, never raise (finance
+        # does not need it — only the catalog self-serve writer does).
+        if not _first(tokens, "org_drn_id", "org_drn", "organisation_drn_id"):
+            drn = await self._org_drn_from_account(db)
+            if drn:
+                tokens["org_drn_id"] = drn
         if not _outlet_ids_in(tokens):
             outlets = await _outlet_ids_from_map(db)
             if not outlets:
@@ -1036,6 +1043,18 @@ class DeliverooClient(BaseAggregatorClient):
         account = await account_store.load(db, self.channel)
         if account is not None and account.extras:
             value = _first(account.extras, "org_id", "orgId")
+            if value:
+                return str(value)
+        return None
+
+    async def _org_drn_from_account(self, db: AsyncSession) -> str | None:
+        from app.services.aggregators import account_store
+
+        account = await account_store.load(db, self.channel)
+        if account is not None and account.extras:
+            value = _first(
+                account.extras, "org_drn_id", "org_drn", "organisation_drn_id"
+            )
             if value:
                 return str(value)
         return None
