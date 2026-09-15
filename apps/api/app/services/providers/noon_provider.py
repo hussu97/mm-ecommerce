@@ -569,8 +569,10 @@ class NoonClient(BaseAggregatorClient):
         overlays only the fields given (`nameEn`/`nameAr`/`descEn`/`descAr`/`price`/
         `image`/`isActive`). The edit only STAGES the change on the draft menu; a
         change "eligible for auto approval" then needs a per-item publish, so by
-        default this follows the edit with `publish_menu_item`. `image` is a noon
-        media path (`food/menu/<menuCode>/<name>.png`), not a foreign URL."""
+        default this follows the edit with `publish_menu_item`. `image` takes a
+        plain URL — noon stores our public GCS URL directly (verified live
+        2026-09-15; the earlier "noon media path only, not a foreign URL" claim
+        was wrong)."""
         body = {k: item.get(k) for k in self._EDIT_FIELDS}
         body["menuCode"] = menu_code
         if name is not None:

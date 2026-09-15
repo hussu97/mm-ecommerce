@@ -941,6 +941,7 @@ async def create_menu_item(
             "name_localized": i18n["name_ar"],
             "description": i18n["description"],
             "description_localized": i18n["description_ar"],
+            "image": i18n["image_url"],
             "price": str(price),
             "aggregator_price": str(price),  # strict parity
             "category": cat_name,
@@ -952,10 +953,10 @@ async def create_menu_item(
         plan["dry_run"] = True
         plan["note"] = (
             "Dry run — nothing created. This is the exact Foodics product create "
-            "(product + name/description EN+AR + Grubtech subgroup membership + "
-            "price-tag price at parity) that CATALOG_SYNC_ENABLED with dry_run=False "
-            "would POST. Marketplaces sync from Foodics; their mappings record on "
-            "the next menu read. (Foodics image has no API upload — set in console.)"
+            "(product + name/description EN+AR + image URL + Grubtech subgroup "
+            "membership + price-tag price at parity) that CATALOG_SYNC_ENABLED with "
+            "dry_run=False would POST. Marketplaces sync from Foodics; their "
+            "mappings record on the next menu read."
         )
         return plan
 
@@ -972,6 +973,7 @@ async def create_menu_item(
         name_localized=i18n["name_ar"],
         description=i18n["description"],
         description_localized=i18n["description_ar"],
+        image=i18n["image_url"],
         sku=product.sku,
         subgroup_id=subgroup_id,
         aggregator_price=price,
@@ -1100,9 +1102,10 @@ async def enrich_existing_item(
             name_localized=i18n["name_ar"],
             description=i18n["description"],
             description_localized=i18n["description_ar"],
+            image=i18n["image_url"],
         )
-        out["fields"] = {"name_ar": "ok", "description": "ok"}
-        out["note"] = "Foodics enriched (name_ar + desc EN/AR). Image = console only."
+        out["fields"] = {"name_ar": "ok", "description": "ok", "image": "ok"}
+        out["note"] = "Foodics enriched (name_ar + desc EN/AR + image URL)."
         return out
 
     if target == "careem":
@@ -1199,7 +1202,8 @@ async def enrich_existing_item(
         # Stage only: noon refuses to auto-publish name/description changes
         # ("item changes are not approved for auto publish"), so the edit lands on
         # the draft menu and a human approves it in the noon console. Publishing
-        # here would just 400.
+        # here would just 400. noon's `image` takes our public URL directly
+        # (verified live 2026-09-15), so it is set here alongside name/desc.
         await np.provider.update_menu_item(
             session,
             menu_code=menu_code,
@@ -1207,12 +1211,17 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description=i18n["description"],
             description_ar=i18n["description_ar"],
+            image=i18n["image_url"],
             publish=False,
         )
-        out["fields"] = {"name_ar": "staged", "description": "staged"}
+        out["fields"] = {
+            "name_ar": "staged",
+            "description": "staged",
+            "image": "staged",
+        }
         out["note"] = (
-            "Noon name/desc staged on the draft menu — approve in the noon console "
-            "(noon won't auto-publish these). Image = console only."
+            "Noon name/desc/image staged on the draft menu — approve in the noon "
+            "console (noon won't auto-publish these)."
         )
         return out
 
@@ -1479,6 +1488,7 @@ async def _create_on_noon(
                 description=i18n["description"],
                 description_ar=i18n["description_ar"],
                 name_ar=i18n["name_ar"],
+                image=i18n["image_url"],
                 publish=False,  # noon won't auto-publish name/desc; stage for approval
             )
             enrich["text"] = "staged"
@@ -1489,9 +1499,8 @@ async def _create_on_noon(
     plan["noon_item_code"] = noon_id
     plan["enrich"] = enrich
     plan["note"] = (
-        "Created on noon (off-shelf) and mapped; name/desc EN+AR staged on the "
-        "draft menu (approve in the noon console — noon won't auto-publish these). "
-        "Image is a noon-hosted media path — set it in the noon console."
+        "Created on noon (off-shelf) and mapped; name/desc EN+AR + image staged on "
+        "the draft menu (approve in the noon console — noon won't auto-publish these)."
     )
     return plan
 

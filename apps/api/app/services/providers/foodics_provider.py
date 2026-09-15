@@ -904,6 +904,7 @@ class FoodicsClient:
         name_localized: str | None = None,
         description: str | None = None,
         description_localized: str | None = None,
+        image: str | None = None,
         sku: str | None = None,
         subgroup_id: str | None = None,
         aggregator_price: Any | None = None,
@@ -936,6 +937,10 @@ class FoodicsClient:
         if description is not None:
             payload["description"] = description
             payload["description_localized"] = description_localized or description
+        if image:
+            # Foodics stores a plain image URL directly (verified live 2026-09-15:
+            # a PUT with our public GCS URL sticks; base64 is rejected 422).
+            payload["image"] = image
         if sku:
             payload["sku"] = sku
         if subgroup_id:
@@ -965,20 +970,22 @@ class FoodicsClient:
         name_localized: str | None = None,
         description: str | None = None,
         description_localized: str | None = None,
+        image: str | None = None,
     ) -> Any:
         """Patch a product's descriptive fields on an EXISTING product — the enrich
         counterpart to `create_product`, for items already created without their
-        Arabic name / bilingual description. Uses the same `{url, payload}` updating
-        envelope as `add_product_to_grubtech`; only the passed fields are sent.
-
-        Note: a product's IMAGE is uploaded through the Foodics console (its media
-        S3 bucket), not this API — there is no image field on the product PUT."""
+        Arabic name / bilingual description / image. Uses the same `{url, payload}`
+        updating envelope as `add_product_to_grubtech`; only the passed fields are
+        sent. `image` is a plain URL — Foodics stores our public GCS URL directly
+        (verified live 2026-09-15; base64 is rejected 422)."""
         payload: dict[str, Any] = {}
         if name_localized is not None:
             payload["name_localized"] = name_localized
         if description is not None:
             payload["description"] = description
             payload["description_localized"] = description_localized or description
+        if image:
+            payload["image"] = image
         if not payload:
             return None
         return await self._call(

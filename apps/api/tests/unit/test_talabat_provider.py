@@ -1343,19 +1343,21 @@ async def test_create_menu_item_posts_captured_add_product_path():
             name="ZZ Test Slice",
             catalog_id="1334277",
             category_id="20241871",
+            category_name="Cookie Melt",
             price=Decimal("35"),
         )
     assert out == {"commandId": "cmd-1"}
     assert captured["method"] == "POST"
     assert captured["url"] == f"{_MENU_API}/vendors/793319/catalogs/products"
+    # Shape verified live 2026-09-15: `categories` is an array of id STRINGS,
+    # `type` is "PRODUCT", and there is NO `active` key (the create rejects it).
     assert captured["json"] == {
         "name": "ZZ Test Slice",
         "description": "",
         "unitPrice": 35.0,
         "catalogIds": ["1334277"],
-        "category": "20241871",
-        "type": "Simple",
-        "active": False,
+        "categories": ["20241871"],
+        "type": "PRODUCT",
     }
 
 

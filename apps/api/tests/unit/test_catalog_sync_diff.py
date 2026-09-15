@@ -903,6 +903,20 @@ async def test_create_dispatch_gates_unverified_and_worker_channels(
         category = None
 
     mock_db.execute.return_value.scalar_one_or_none.return_value = _P()
+
+    # A product must be in the integrator menu; category now comes from that L1
+    # grouping. Mock it so the dispatch (not the membership guard) is under test.
+    class _L1:
+        name = "Cookie Melt"
+        reference = "sub-1"
+
+    async def fake_l1(_db, _pid):
+        return _L1()
+
+    monkeypatch.setattr(
+        "app.services.catalog.menu_group_service.integrator_l1_group_for_product",
+        fake_l1,
+    )
     # Keeta/Deliveroo → headed worker. Careem/Noon/Talabat are httpx (need branch_id).
     for target in ("keeta", "deliveroo"):
         with pytest.raises(BadRequestError, match="headed worker"):
@@ -930,8 +944,25 @@ async def test_talabat_create_dry_run_uses_captured_add_product_shape(
         sku = "s"
         base_price = Decimal("35")
         category = _Cat()
+        translations: dict = {}
+        description = None
+        image_urls: list = []
 
     mock_db.execute.return_value.scalar_one_or_none.return_value = _P()
+
+    # Category now comes from the integrator L1 grouping; name it to match the
+    # Talabat catalog's "Cakes" category so the create resolves the right id.
+    class _L1:
+        name = "Cakes"
+        reference = "sub-1"
+
+    async def fake_l1(_db, _pid):
+        return _L1()
+
+    monkeypatch.setattr(
+        "app.services.catalog.menu_group_service.integrator_l1_group_for_product",
+        fake_l1,
+    )
 
     async def fake_vendor(_db, branch_id):
         assert branch_id == "karama"
@@ -983,8 +1014,8 @@ async def test_talabat_create_dry_run_uses_captured_add_product_shape(
         "name": "ZZ Test Slice",
         "unitPrice": 35.0,
         "catalogIds": ["1334277"],
-        "category": "20241871",
-        "type": "Simple",
+        "categories": ["20241871"],
+        "type": "PRODUCT",
         "active": False,
     }
     assert posted == []
