@@ -1125,19 +1125,23 @@ async def _deliveroo_branch_drn(db: AsyncSession) -> str | None:
     """
     from app.models.aggregator import AggregatorBranchMap
 
+    # `Branch.has_foodics` is a Python property over the foodics_map relationship, not
+    # a column, so it cannot go in a select() — load the Branch objects (with the map
+    # eager-loaded) and read it in Python.
     rows = (
         await db.execute(
-            select(AggregatorBranchMap.channel_ref, Branch.has_foodics)
+            select(AggregatorBranchMap.channel_ref, Branch)
             .join(Branch, Branch.id == AggregatorBranchMap.branch_id)
             .where(
                 AggregatorBranchMap.channel == "deliveroo",
                 AggregatorBranchMap.is_active.is_(True),
             )
+            .options(selectinload(Branch.foodics_map))
         )
     ).all()
     # A DRN is a UUID; prefer a non-Foodics branch's ref that looks like one.
-    for ref, has_foodics in rows:
-        if not has_foodics and ref and len(ref) == 36 and ref.count("-") == 4:
+    for ref, branch in rows:
+        if not branch.has_foodics and ref and len(ref) == 36 and ref.count("-") == 4:
             return ref
     return None
 
@@ -1359,6 +1363,12 @@ async def enrich_existing_item(
         session = await session_store.load(db, "deliveroo")
         if session is None:
             raise BadRequestError("no deliveroo session")
+        # prepare_session refreshes the short-lived Partner Hub JWT (it expires ~hourly,
+        # and a stale token 401s every self-serve call) and augments the session with
+        # org_id / org_drn_id from the account extras — bare load() does neither.
+        session = await dp.provider.prepare_session(db, session)
+        if session is None:
+            raise BadRequestError("deliveroo session could not be prepared")
         # The MM-managed DSO menu is the only self-serve draft (Barsha/Sharjah are
         # Foodics-fed, not self-serve), so the branch_drn is best-effort — the
         # single-draft fallback in `selfserve_draft_for_branch` resolves it either
