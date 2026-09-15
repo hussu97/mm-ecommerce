@@ -11,7 +11,7 @@ edits coalesces to a single sync (the drain always reads the product's current
 state).
 
 Revision ID: 246_catalog_sync_outbox
-Revises: 245_branch_show_recipes
+Revises: 246_inventory_storage_canon
 Create Date: 2026-09-15
 """
 
@@ -24,8 +24,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "246_catalog_sync_outbox"
-down_revision: Union[str, None] = "245_branch_show_recipes"
+revision: str = "247_catalog_sync_outbox"
+down_revision: Union[str, None] = "246_inventory_storage_canon"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

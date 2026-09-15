@@ -1219,6 +1219,11 @@ async def enrich_existing_item(
         # the draft menu and a human approves it in the noon console. Publishing
         # here would just 400. noon's `image` takes our public URL directly
         # (verified live 2026-09-15), so it is set here alongside name/desc.
+        # NB: noon's `image` does NOT take a foreign URL — the field accepts the
+        # string but noon renders it corrupt (confirmed live 2026-09-15). noon
+        # needs the picture uploaded to its own media first; until that upload is
+        # wired, DON'T push the URL (a corrupt image is worse than none). Image is
+        # therefore left for the noon media-upload path.
         await np.provider.update_menu_item(
             session,
             menu_code=menu_code,
@@ -1226,19 +1231,19 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description=i18n["description"],
             description_ar=i18n["description_ar"],
-            image=i18n["image_url"],
             price=product.base_price,
             publish=False,
         )
         out["fields"] = {
             "name_ar": "staged",
             "description": "staged",
-            "image": "staged",
             "price": "staged",
+            "image": "skipped (noon needs its own media upload; URL renders corrupt)",
         }
         out["note"] = (
-            "Noon name/desc/image/price staged on the draft menu — approve in the "
-            "noon console (noon won't auto-publish these)."
+            "Noon name/desc/price staged on the draft menu — approve in the noon "
+            "console (noon won't auto-publish these). Image needs the noon media "
+            "upload (a foreign URL renders corrupt)."
         )
         return out
 
@@ -1759,6 +1764,8 @@ async def _create_on_noon(
     enrich: dict[str, Any] = {}
     if new_item is not None and (i18n["description"] or i18n["description_ar"]):
         try:
+            # No image here: noon renders a foreign URL corrupt (see enrich path);
+            # the picture needs noon's own media upload, wired separately.
             await np.provider.update_menu_item(
                 session,
                 menu_code=menu_code,
@@ -1766,7 +1773,6 @@ async def _create_on_noon(
                 description=i18n["description"],
                 description_ar=i18n["description_ar"],
                 name_ar=i18n["name_ar"],
-                image=i18n["image_url"],
                 publish=False,  # noon won't auto-publish name/desc; stage for approval
             )
             enrich["text"] = "staged"
@@ -1777,8 +1783,9 @@ async def _create_on_noon(
     plan["noon_item_code"] = noon_id
     plan["enrich"] = enrich
     plan["note"] = (
-        "Created on noon (off-shelf) and mapped; name/desc EN+AR + image staged on "
-        "the draft menu (approve in the noon console — noon won't auto-publish these)."
+        "Created on noon (off-shelf) and mapped; name/desc EN+AR staged on the "
+        "draft menu (approve in the noon console — noon won't auto-publish these). "
+        "Image needs the noon media upload (a foreign URL renders corrupt)."
     )
     return plan
 
