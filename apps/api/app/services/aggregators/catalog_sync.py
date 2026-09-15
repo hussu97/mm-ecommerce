@@ -1377,6 +1377,37 @@ async def enrich_existing_item(
         cat_name = await menu_group_service.integrator_l1_group_for_product(
             db, product.id
         )
+        # Image: upload the product photo to deliveroo's own CDN, then set the
+        # returned cdn_url/s3key on the item. Deliveroo runs automated photo QA, so a
+        # real photo is required — a rejected upload raises and we fall back to no
+        # image (best-effort; never blocks text/price). `draft.get("drn_id")` is the
+        # draft the upsert PATCHes.
+        image_cdn_url: str | None = None
+        image_s3key: str | None = None
+        image_status = "skipped (no product image)"
+        if i18n["image_url"]:
+            fetched = await _fetch_image_bytes(i18n["image_url"])
+            if fetched is None:
+                image_status = "skipped (image fetch failed)"
+            else:
+                image_bytes, ctype = fetched
+                ext = (ctype.split("/", 1)[-1] or "jpeg").split(";")[0]
+                try:
+                    up = await dp.provider.selfserve_upload_image(
+                        session,
+                        draft_id=str(draft.get("drn_id")),
+                        image_bytes=image_bytes,
+                        filename=f"{product.sku or _norm(product.name)}.{ext}",
+                        content_type=ctype,
+                    )
+                    image_cdn_url = up.get("cdn_url")
+                    image_s3key = up.get("s3key")
+                    image_status = "uploaded"
+                except Exception as exc:  # noqa: BLE001 — image is best-effort
+                    logger.warning(
+                        "deliveroo image upload failed for %s: %s", product.id, exc
+                    )
+                    image_status = f"skipped (upload failed: {str(exc)[:80]})"
         result = await dp.provider.selfserve_upsert_item(
             session,
             draft=draft,
@@ -1386,18 +1417,16 @@ async def enrich_existing_item(
             description_ar=i18n["description_ar"],
             price=product.base_price,
             plu=product.sku,
-            # deliveroo hosts images on its own CDN (rs-menus-api.roocdn.com); that
-            # upload endpoint is not captured, so the image is left to the Menu
-            # Manager until it is. Text/price flow headlessly here.
-            image_cdn_url=None,
+            image_cdn_url=image_cdn_url,
+            image_s3key=image_s3key,
             category_name=cat_name,
             publish=False,
         )
+        result["image"] = image_status
         out["fields"] = result
         out["note"] = (
             "Deliveroo DSO item upserted on the self-serve draft (staged, NOT "
-            "published — review + publish in the Menu Manager). Image needs the "
-            "deliveroo CDN upload (not captured)."
+            "published — review + publish in the Menu Manager)."
         )
         return out
 

@@ -957,11 +957,13 @@ async def test_post_login_impersonates_and_carries_cf_clearance():
 
 
 def _draft_with(items, categories=None):
+    # `updated_at` is deliveroo's real concurrency token (a nanosecond string); the
+    # PATCH body sends it back as `last_updated_at`.
     return {
         "drn_id": "draft-1",
         "org_drn_id": "org-1",
         "name": "Melting Moments",
-        "last_updated_at": "2026-09-15T00:00:00Z",
+        "updated_at": "1789480054965248000",
         "menu": {"items": list(items), "categories": list(categories or [])},
     }
 
@@ -1008,8 +1010,8 @@ async def test_selfserve_upsert_updates_existing_item_and_infers_minor_units():
     assert item["price_info"]["price"] == 7000  # 70.00 in minor units
     assert item["description"] == {"en": "Warm cookie", "ar": "كوكي"}
     assert item["name"]["ar"] == "لوتس ٢٥٠"
-    # whole-draft PATCH preserves the concurrency token + name
-    assert captured["body"]["last_updated_at"] == "2026-09-15T00:00:00Z"
+    # whole-draft PATCH sends the GET's `updated_at` back as `last_updated_at`
+    assert captured["body"]["last_updated_at"] == "1789480054965248000"
     assert captured["body"]["name"] == "Melting Moments"
 
 
@@ -1038,11 +1040,17 @@ async def test_selfserve_upsert_creates_and_links_new_item_via_item_ids():
 
     assert result["action"] == "create"
     # new item appended and linked into the matching category
-    assert draft["menu"]["items"][0]["plu"] == "FG0134"
+    new_item = draft["menu"]["items"][0]
+    assert new_item["plu"] == "FG0134"
     assert result["category"] == "linked (item_ids)"
     assert draft["menu"]["categories"][0]["item_ids"] == [result["item_id"]]
     # price scale unknown on a brand-new item → left for the reviewer, never guessed
     assert result["price"].startswith("skipped")
+    # new item carries deliveroo's required schema, and a short base36 id (not a UUID)
+    assert new_item["type"] == "ITEM"
+    assert new_item["product_type"] == "FRESH_FOOD"
+    assert new_item["price_info"] == {"price": 0, "overrides": [], "fees": []}
+    assert "-" not in new_item["id"] and len(new_item["id"]) <= 11
 
 
 @pytest.mark.asyncio

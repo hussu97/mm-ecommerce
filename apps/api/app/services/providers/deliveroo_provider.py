@@ -547,6 +547,72 @@ class DeliverooClient(BaseAggregatorClient):
             session, "POST", f"{_SELFSERVE}/drafts/{draft_id}/publish"
         )
 
+    async def selfserve_upload_image(
+        self,
+        session: LoadedSession,
+        *,
+        draft_id: str,
+        image_bytes: bytes,
+        filename: str,
+        content_type: str = "image/jpeg",
+    ) -> dict[str, Any]:
+        """Upload one product photo to a self-serve draft; return `{cdn_url, s3key}`
+        to set as an item's ``image``.
+
+        Captured live 2026-09-15 from the Menu Manager bulk-photo Save:
+        ``POST /organizations/{org_drn}/upload_image`` as **multipart/form-data** with
+        fields ``file`` (the image), ``source="ai_media_moderation"``,
+        ``entry_point="bulk_upload"``, ``platform="desktop"`` and ``draft_drn_id``.
+        Returns ``{cdn_url, s3key, status}``.
+
+        **Deliveroo runs automated photo QA on upload** — a low-quality or synthetic
+        image is rejected (``status`` not approved, or an error), so only a real
+        product photo goes through. The caller then puts the returned ``cdn_url`` +
+        ``s3key`` on the item and PATCHes the draft. Only reached behind
+        ``CATALOG_SYNC_ENABLED``.
+        """
+        org = self._org_drn(session)
+        # curl_cffi (impersonation path) wants a CurlMime; httpx wants `files=`. The
+        # base's request_raw already branches on the transport, so hand it `files=`
+        # for httpx and let it translate. Deliveroo has no bot wall, so httpx is fine.
+        files = {"file": (filename, image_bytes, content_type)}
+        data = {
+            "source": "ai_media_moderation",
+            "entry_point": "bulk_upload",
+            "platform": "desktop",
+            "draft_drn_id": draft_id,
+        }
+        resp = await self.request_raw(
+            session,
+            "POST",
+            f"{_SELFSERVE}/organizations/{org}/upload_image",
+            headers={"X-Hub-Api-Caller": "https://menus.deliveroo.com"},
+            data=data,
+            files=files,
+        )
+        status = getattr(resp, "status_code", 0)
+        if status >= 400:
+            raise AggregatorUnavailableError(
+                f"deliveroo upload_image failed {status}: "
+                f"{getattr(resp, 'text', '')[:200]}"
+            )
+        try:
+            body = resp.json()
+        except Exception as exc:  # noqa: BLE001 — a non-JSON 200 is a provider fault
+            raise AggregatorUnavailableError(
+                "deliveroo upload_image returned non-JSON"
+            ) from exc
+        data_obj = body.get("data") if isinstance(body, dict) else None
+        img = data_obj if isinstance(data_obj, dict) else (body or {})
+        cdn = img.get("cdn_url") or img.get("cdnUrl")
+        s3key = img.get("s3key") or img.get("s3_key")
+        if not cdn:
+            raise AggregatorUnavailableError(
+                f"deliveroo upload_image returned no cdn_url (rejected by photo QA?): "
+                f"{str(body)[:200]}"
+            )
+        return {"cdn_url": cdn, "s3key": s3key, "status": img.get("status")}
+
     async def selfserve_draft_for_branch(
         self, session: LoadedSession, branch_drn: str | None = None
     ) -> dict | None:
@@ -586,6 +652,7 @@ class DeliverooClient(BaseAggregatorClient):
         price: Decimal | None = None,
         plu: str | None = None,
         image_cdn_url: str | None = None,
+        image_s3key: str | None = None,
         category_name: str | None = None,
         publish: bool = False,
     ) -> dict[str, Any]:
@@ -637,7 +704,32 @@ class DeliverooClient(BaseAggregatorClient):
             )
         is_new = target is None
         if is_new:
-            target = {"id": str(uuid.uuid4()), "plu": str(plu or "")}
+            # Deliveroo mints short base36 item ids (e.g. "mks94r8szs"), never UUIDs;
+            # a fresh 11-char base36 id matches that shape. The rest of the fields are
+            # the item schema the draft PATCH round-trips (captured live 2026-09-15) —
+            # omitting `type`/`product_type` makes the item render as an empty row.
+            new_id = uuid.uuid4().int
+            b36 = ""
+            while new_id and len(b36) < 11:
+                new_id, r = divmod(new_id, 36)
+                b36 = "0123456789abcdefghijklmnopqrstuvwxyz"[r] + b36
+            target = {
+                "id": b36 or "0",
+                "plu": str(plu or ""),
+                "ian": "",
+                "barcodes": [],
+                "type": "ITEM",
+                "product_type": "FRESH_FOOD",
+                "tax_rate": "0",
+                "price_info": {"price": 0, "overrides": [], "fees": []},
+                "modifier_ids": [],
+                "allergies": [],
+                "diets": [],
+                "classifications": [],
+                "contains_alcohol": False,
+                "availability": None,
+                "nutritional_info": {},
+            }
             items.append(target)
 
         # Names / descriptions are localised dicts; overlay only what was given.
@@ -660,6 +752,10 @@ class DeliverooClient(BaseAggregatorClient):
         if image_cdn_url:
             image = target.get("image") if isinstance(target.get("image"), dict) else {}
             image["cdn_url"] = image_cdn_url
+            # The item image carries both the CDN url and its s3key; upload_image
+            # returns both and the draft round-trips both.
+            if image_s3key:
+                image["s3key"] = image_s3key
             target["image"] = image
 
         # Price: infer the minor-unit scale from the item's current value; never
@@ -710,9 +806,12 @@ class DeliverooClient(BaseAggregatorClient):
             else:
                 category_status = "warning: category has no known item-link field"
 
+        # The PATCH's `last_updated_at` is the optimistic-concurrency token, and it is
+        # the GET's `updated_at` (a nanosecond-string version) — NOT a field named
+        # last_updated_at on the draft. Sending the wrong value → 400 conflict "draft
+        # menu is out of date". Verified live 2026-09-15.
         body = {
-            "last_updated_at": draft.get("last_updated_at")
-            or menu.get("last_updated_at"),
+            "last_updated_at": draft.get("updated_at") or draft.get("last_updated_at"),
             "name": draft.get("name"),
             "menu": menu,
         }
