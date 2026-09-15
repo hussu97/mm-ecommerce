@@ -30,6 +30,7 @@ import csv
 import io
 import json
 import logging
+import uuid
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -564,6 +565,173 @@ class DeliverooClient(BaseAggregatorClient):
         if chosen is None:
             return None
         return await self.selfserve_get_draft(session, chosen["drn_id"])
+
+    @staticmethod
+    def _norm_name(value: Any) -> str:
+        """Lower/space-collapsed name for matching (handles a plain string or a
+        `{en, ar}` localised dict)."""
+        if isinstance(value, dict):
+            value = value.get("en") or value.get("ar") or ""
+        return " ".join(str(value or "").strip().lower().split())
+
+    async def selfserve_upsert_item(
+        self,
+        session: LoadedSession,
+        *,
+        draft: dict[str, Any],
+        name_en: str,
+        name_ar: str | None = None,
+        description_en: str | None = None,
+        description_ar: str | None = None,
+        price: Decimal | None = None,
+        plu: str | None = None,
+        image_cdn_url: str | None = None,
+        category_name: str | None = None,
+        publish: bool = False,
+    ) -> dict[str, Any]:
+        """Create-or-update ONE item in a self-serve draft, then PATCH the WHOLE draft
+        back and (optionally) publish.
+
+        Deliveroo's self-serve model replaces the entire menu on a PATCH, so this is
+        a strict read-modify-write: it mutates only the one target item (and, for a
+        new item, the one category link) inside the draft the caller already read,
+        and sends the rest back untouched. It never publishes unless asked — the
+        draft stays staged for review, the same hold every other channel uses.
+
+        Item shape (captured live 2026-09-15):
+        ``{id, name:{en,ar}, operational_name, description:{en,ar},
+        price_info:{price,…}, plu, ian, barcodes, image:{cdn_url}}``. The match is by
+        ``plu``==sku first, else by English name.
+
+        **Price safety.** ``price_info.price`` is in the menu's minor units, and the
+        scale is *inferred* from the matched item's existing value against the MM
+        price (×100 vs ×1) rather than assumed — a wrong unit would turn 40.00 into
+        0.40, a money bug. On a NEW item the scale is unknown, so price is left for
+        the reviewer (an unset price is safe; a wrong one is not).
+
+        **Create is best-effort / verify-live.** The draft's category-item link shape
+        is read from the live draft (``item_ids`` vs ``items``) rather than hardcoded,
+        and the new item id is a UUID; both are unverified against a live create
+        (captured shape covers update). The update path — the ongoing "a product
+        changed, flow it out" case — is fully known and safe.
+        """
+        menu = draft.get("menu") or {}
+        items = menu.get("items")
+        if not isinstance(items, list):
+            raise AggregatorUnavailableError(
+                "deliveroo draft has no menu.items list to upsert into"
+            )
+        target = None
+        if plu:
+            target = next(
+                (it for it in items if str(it.get("plu") or "") == str(plu)), None
+            )
+        if target is None:
+            target = next(
+                (
+                    it
+                    for it in items
+                    if self._norm_name(it.get("name")) == self._norm_name(name_en)
+                ),
+                None,
+            )
+        is_new = target is None
+        if is_new:
+            target = {"id": str(uuid.uuid4()), "plu": str(plu or "")}
+            items.append(target)
+
+        # Names / descriptions are localised dicts; overlay only what was given.
+        name = target.get("name") if isinstance(target.get("name"), dict) else {}
+        name["en"] = name_en
+        name["ar"] = name_ar or name.get("ar") or name_en
+        target["name"] = name
+        target.setdefault("operational_name", name_en)
+        if description_en is not None or description_ar is not None:
+            desc = (
+                target.get("description")
+                if isinstance(target.get("description"), dict)
+                else {}
+            )
+            if description_en is not None:
+                desc["en"] = description_en
+            if description_ar is not None:
+                desc["ar"] = description_ar
+            target["description"] = desc
+        if image_cdn_url:
+            image = target.get("image") if isinstance(target.get("image"), dict) else {}
+            image["cdn_url"] = image_cdn_url
+            target["image"] = image
+
+        # Price: infer the minor-unit scale from the item's current value; never
+        # guess on a new item.
+        price_status = "unchanged"
+        if price is not None:
+            existing = (target.get("price_info") or {}).get("price")
+            mm = float(price)
+            if isinstance(existing, (int, float)) and existing > 0:
+                # minor units if the existing value tracks mm×100 more closely
+                minor = abs(existing - mm * 100) <= abs(existing - mm)
+                new_price = int(round(mm * 100)) if minor else mm
+                pi = (
+                    target.get("price_info")
+                    if isinstance(target.get("price_info"), dict)
+                    else {}
+                )
+                pi["price"] = new_price
+                target["price_info"] = pi
+                price_status = f"updated ({'minor' if minor else 'major'} units)"
+            else:
+                price_status = "skipped (unit unknown on new/priceless item)"
+
+        # New item: link it into its category, adapting to the draft's own link shape.
+        category_status = "n/a (existing item)"
+        if is_new and category_name:
+            cats = menu.get("categories") or []
+            cat = next(
+                (
+                    c
+                    for c in cats
+                    if self._norm_name(c.get("name")) == self._norm_name(category_name)
+                ),
+                None,
+            )
+            if cat is None:
+                category_status = f"warning: no category matching {category_name!r}"
+            elif isinstance(cat.get("item_ids"), list):
+                cat["item_ids"].append(target["id"])
+                category_status = "linked (item_ids)"
+            elif isinstance(cat.get("items"), list):
+                # a list of id strings, or of {id} objects — match the existing shape
+                sample = cat["items"][0] if cat["items"] else None
+                cat["items"].append(
+                    {"id": target["id"]} if isinstance(sample, dict) else target["id"]
+                )
+                category_status = "linked (items)"
+            else:
+                category_status = "warning: category has no known item-link field"
+
+        body = {
+            "last_updated_at": draft.get("last_updated_at")
+            or menu.get("last_updated_at"),
+            "name": draft.get("name"),
+            "menu": menu,
+        }
+        draft_id = draft.get("drn_id") or draft.get("id")
+        if not draft_id:
+            raise AggregatorUnavailableError("deliveroo draft has no drn_id to PATCH")
+        patched = await self.selfserve_patch_draft(session, str(draft_id), body)
+        published = False
+        if publish:
+            await self.selfserve_publish_draft(session, str(draft_id))
+            published = True
+        return {
+            "action": "create" if is_new else "update",
+            "item_id": target["id"],
+            "price": price_status,
+            "category": category_status,
+            "published": published,
+            "patch_ok": bool(patched) or patched is None,
+        }
 
     async def request_raw(
         self,

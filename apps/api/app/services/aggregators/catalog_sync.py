@@ -1113,6 +1113,35 @@ async def _careem_numeric_ref_for(db: AsyncSession, product_id: Any) -> str | No
     return next((r for r in rows if r and r.isdigit()), None)
 
 
+async def _deliveroo_branch_drn(db: AsyncSession) -> str | None:
+    """The deliveroo `branch_drn` for the non-Foodics (DSO) outlet, if stored.
+
+    The self-serve draft is scoped by an org-level DRN and served to a branch DRN,
+    which is distinct from the numeric branchId. We store what we have in
+    `aggregator_branch_map.channel_ref`; when it is absent (or not the DRN),
+    `selfserve_draft_for_branch` falls back to the org's sole self-serve draft —
+    the MM-managed DSO menu, since Barsha/Sharjah are Foodics-fed rather than
+    self-serve. Best-effort by design; never the single point of failure.
+    """
+    from app.models.aggregator import AggregatorBranchMap
+
+    rows = (
+        await db.execute(
+            select(AggregatorBranchMap.channel_ref, Branch.has_foodics)
+            .join(Branch, Branch.id == AggregatorBranchMap.branch_id)
+            .where(
+                AggregatorBranchMap.channel == "deliveroo",
+                AggregatorBranchMap.is_active.is_(True),
+            )
+        )
+    ).all()
+    # A DRN is a UUID; prefer a non-Foodics branch's ref that looks like one.
+    for ref, has_foodics in rows:
+        if not has_foodics and ref and len(ref) == 36 and ref.count("-") == 4:
+            return ref
+    return None
+
+
 async def enrich_existing_item(
     db: AsyncSession, *, product_id: Any, target: str, dry_run: bool = True
 ) -> dict[str, Any]:
@@ -1323,6 +1352,55 @@ async def enrich_existing_item(
         )
         return out
 
+    if target == "deliveroo":
+        from app.services.aggregators import session_store
+        from app.services.providers import deliveroo_provider as dp
+
+        session = await session_store.load(db, "deliveroo")
+        if session is None:
+            raise BadRequestError("no deliveroo session")
+        # The MM-managed DSO menu is the only self-serve draft (Barsha/Sharjah are
+        # Foodics-fed, not self-serve), so the branch_drn is best-effort — the
+        # single-draft fallback in `selfserve_draft_for_branch` resolves it either
+        # way. `channel_ref` carries a deliveroo branch id where one is stored.
+        branch_drn = await _deliveroo_branch_drn(db)
+        draft = await dp.provider.selfserve_draft_for_branch(session, branch_drn)
+        if draft is None:
+            raise BadRequestError("no deliveroo self-serve draft to enrich on.")
+        out["draft_id"] = draft.get("drn_id")
+        if dry_run:
+            out["note"] = (
+                "Dry run — deliveroo self-serve upsert (name/desc EN+AR + price), "
+                "staged on the draft (no publish)."
+            )
+            return out
+        cat_name = await menu_group_service.integrator_l1_group_for_product(
+            db, product.id
+        )
+        result = await dp.provider.selfserve_upsert_item(
+            session,
+            draft=draft,
+            name_en=product.name,
+            name_ar=i18n["name_ar"],
+            description_en=i18n["description"],
+            description_ar=i18n["description_ar"],
+            price=product.base_price,
+            plu=product.sku,
+            # deliveroo hosts images on its own CDN (rs-menus-api.roocdn.com); that
+            # upload endpoint is not captured, so the image is left to the Menu
+            # Manager until it is. Text/price flow headlessly here.
+            image_cdn_url=None,
+            category_name=cat_name,
+            publish=False,
+        )
+        out["fields"] = result
+        out["note"] = (
+            "Deliveroo DSO item upserted on the self-serve draft (staged, NOT "
+            "published — review + publish in the Menu Manager). Image needs the "
+            "deliveroo CDN upload (not captured)."
+        )
+        return out
+
     if target == "talabat":
         branch = next(
             (
@@ -1402,7 +1480,13 @@ async def enrich_existing_item(
 #: Systems the API can drive itself (httpx / Foodics console). keeta + deliveroo
 #: are worker/manual (keeta = mtgsig worker, deliveroo = Menu Manager), handled out
 #: of band; foodics propagates the product to their Barsha/Sharjah API stores.
-_SERVER_SYSTEMS: tuple[str, ...] = (TARGET_FOODICS, "careem", "noon", "talabat")
+_SERVER_SYSTEMS: tuple[str, ...] = (
+    TARGET_FOODICS,
+    "careem",
+    "noon",
+    "talabat",
+    "deliveroo",
+)
 
 
 async def _is_mapped(db: AsyncSession, system: str, product_id: Any) -> bool:
@@ -1449,8 +1533,9 @@ async def sync_product(
     exists (name EN/AR, description EN/AR, price, image) and CREATES otherwise.
     Foodics is the master — its create/update propagates to the Barsha/Sharjah API
     stores of every marketplace, so only the non-Foodics outlets (Karama/DSO) are
-    driven per channel here. keeta (Karama/DSO) + deliveroo (DSO) are worker/manual
-    and reported, never silently dropped. Per-system isolated; gated upstream by
+    driven per channel here. deliveroo (DSO) goes through the self-serve draft upsert
+    (staged, not published); keeta (Karama/DSO) still needs the VM worker (mtgsig +
+    Venus) and is reported, never silently dropped. Per-system isolated; gated by
     `CATALOG_SYNC_ENABLED`."""
     _ensure_write_enabled()
     product = (
@@ -1469,11 +1554,16 @@ async def sync_product(
     results: dict[str, Any] = {}
     for system in _SERVER_SYSTEMS:
         try:
-            if await _is_mapped(db, system, product_id):
+            # Deliveroo self-serve is a single create-or-update (`selfserve_upsert_item`
+            # matches the item on the live draft by plu/name), so it always takes the
+            # enrich path — no separate create branch to keep in sync.
+            if system == "deliveroo" or await _is_mapped(db, system, product_id):
                 results[system] = await enrich_existing_item(
                     db, product_id=product_id, target=system, dry_run=dry_run
                 )
-                results[system]["action"] = "update"
+                results[system].setdefault(
+                    "action", results[system].get("fields", {}).get("action", "update")
+                )
             else:
                 has_target, branch_id = await _create_branch_for(db, system)
                 if not has_target:
@@ -1498,10 +1588,10 @@ async def sync_product(
                 await db.rollback()
             logger.warning("sync_product %s for %s: %s", system, product_id, exc)
             results[system] = {"error": str(exc)}
-    # keeta + deliveroo: Barsha/Sharjah ride Foodics; Karama/DSO need the worker
-    # (keeta mtgsig create/updateSpuPicture) / the Deliveroo Menu Manager.
+    # keeta: Barsha/Sharjah ride Foodics; Karama/DSO still need the VM worker
+    # (mtgsig create + Venus updateSpuPicture) — not an httpx target. deliveroo is
+    # now handled in the loop above via the self-serve draft upsert.
     results["keeta"] = {"handoff": "worker (create-keeta-item / updateSpuPicture)"}
-    results["deliveroo"] = {"handoff": "Barsha/Sharjah via Foodics; DSO = Menu Manager"}
     return results
 
 
