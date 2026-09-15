@@ -476,6 +476,41 @@ def delete_keeta_item(
         raise typer.Exit(code=1)
 
 
+@app.command("set-keeta-image")
+def set_keeta_image(
+    shop_id: str = typer.Option(..., help="Keeta shop id (from SHOP_IDS)"),
+    spu_id: str = typer.Option(..., help="Keeta spuId (from the menu read / listSpu)"),
+    image_url: str = typer.Option(
+        ..., help="Public image URL (the product's GCS URL) to upload to Venus"
+    ),
+) -> None:
+    """Upload a photo to Keeta's Venus store and attach it to one SPU (mtgsig,
+    in-page). Keeta rejects a foreign picUrl (107000224), so the image must live on
+    Keeta's own store first — this signs an upload, POSTs the bytes, and calls
+    updateSpuPicture. A live storefront WRITE, deliberate, never part of a sweep.
+    Reads the hydrated Keeta session; open a headed `login --channel keeta` first if
+    the session is dead. First run: inspect the logged `sign`/`upload` to confirm the
+    Venus field shape (only observable under mtgsig)."""
+    from .warm import set_keeta_item_image_in_page
+
+    try:
+        result = asyncio.run(
+            set_keeta_item_image_in_page(
+                shop_id=shop_id, spu_id=spu_id, image_url=image_url
+            )
+        )
+    except (NeedsHumanLogin, NotLoggedInError) as exc:
+        logger.error("keeta set-image needs a headed login: %s", exc)
+        raise typer.Exit(code=1) from exc
+    update = result.get("update") if isinstance(result, dict) else None
+    code = update.get("code") if isinstance(update, dict) else None
+    if code == 0:
+        logger.info("keeta image set (code 0) for spu %s", spu_id)
+    else:
+        logger.error("keeta set-image did not succeed: %s", result)
+        raise typer.Exit(code=1)
+
+
 @app.command("copy-keeta-menu")
 def copy_keeta_menu(
     source_shop_id: str = typer.Option(

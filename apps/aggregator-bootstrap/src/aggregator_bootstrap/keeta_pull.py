@@ -622,6 +622,143 @@ async def create_keeta_spu(
         await page.close()
 
 
+# ── item image (Meituan "Venus" upload) ──────────────────────────────────────
+# Keeta rejects a foreign picUrl (`107000224 "Incorrect picture URL"`), so a photo
+# must be uploaded to keeta's own Venus store first, then attached to the SPU. The
+# whole flow is mtgsig-signed, so — like saveSpu — it runs in the page's MAIN world
+# via `page.evaluate`, where the site's own request signing applies. Decoded from
+# the PC portal bundle 2026-09-15 (`img-up-eu.mykeeta.com`, `/api/operate/venus/
+# getUploadSign` → S3/OSS POST-policy `{policy,signature,callback,url,…}` →
+# `/api/sailorProduct/spu/w/updateSpuPicture`).
+KEETA_VENUS_CONFIG_PATH = "/api/operate/venus/getUploadConfig"
+KEETA_VENUS_SIGN_PATH = "/api/operate/venus/getUploadSign"
+KEETA_SPU_UPDATE_PICTURE_ENDPOINT = "/api/sailorProduct/spu/w/updateSpuPicture"
+#: Prod Venus upload host (the sign response's own `host`/`url` is preferred when
+#: present; this is the documented fallback for the EU region).
+KEETA_VENUS_UPLOAD_HOST = "https://img-up-eu.mykeeta.com"
+
+# One in-page pass: sign → OSS form-POST the bytes → attach to the SPU. Written to
+# be adaptive because the Venus SDK's exact request/field names are only observable
+# under mtgsig (which is live only here, in the page): it spreads EVERY scalar field
+# the sign returns into the upload form (so whatever OSS policy fields Venus uses ride
+# along), tries the known picUrl shapes, and returns every intermediate response so
+# the first VM run confirms — or corrects — the shape. `imageB64` is the raw image.
+_UPLOAD_SPU_IMAGE_JS = """
+async ({ configPath, signPath, updatePath, uploadHost, shopId, spuId, imageB64, filename, contentType }) => {
+  const headers = {
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "accountid": sessionStorage.getItem("LOGIN_ACCOUNTID") || "",
+    "shopid": String(shopId),
+    "cityid": sessionStorage.getItem("cityId") || "",
+    "region": sessionStorage.getItem("region") || "AE",
+    "opcenterselectedregion": sessionStorage.getItem("region") || "AE"
+  };
+  const post = async (endpoint, body) => {
+    const r = await fetch(endpoint, { method: "POST", credentials: "include", headers,
+      body: JSON.stringify(body || {}) });
+    const t = await r.text();
+    try { return JSON.parse(t); } catch (e) { return { status: r.status, text: t }; }
+  };
+  const out = {};
+  // 1. Venus config (scene/bizId/token the sign call may need) — best-effort.
+  out.config = await post(configPath, { shopId: Number(shopId) });
+  const cfg = (out.config && out.config.data) || {};
+  // 2. Sign: pass a superset; Venus ignores what it does not use.
+  out.sign = await post(signPath, {
+    shopId: Number(shopId), fileName: filename, name: filename,
+    contentType, mimeType: contentType, count: 1, ...cfg
+  });
+  const sd = (out.sign && out.sign.data) || {};
+  const s = Array.isArray(sd) ? (sd[0] || {}) : (sd.list && sd.list[0]) || sd;
+  // 3. OSS/S3 form-POST the bytes. Spread every scalar field the sign returned
+  //    (policy, signature, OSSAccessKeyId/accessid, key, callback, …) into the form.
+  const bin = atob(imageB64); const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const blob = new Blob([arr], { type: contentType });
+  const form = new FormData();
+  for (const [k, v] of Object.entries(s)) {
+    if (v != null && typeof v !== "object") form.append(k, String(v));
+  }
+  form.append("file", blob, filename);
+  const uploadUrl = s.host || s.url || s.uploadUrl || s.endpoint || uploadHost;
+  try {
+    const up = await fetch(uploadUrl, { method: "POST", body: form });
+    const ut = await up.text();
+    out.uploadStatus = up.status;
+    try { out.upload = JSON.parse(ut); } catch (e) { out.upload = { text: ut.slice(0, 300) }; }
+  } catch (e) { out.uploadError = String(e); }
+  // 4. Derive the stored picUrl from the sign/upload response (adaptive).
+  const ud = (out.upload && (out.upload.data || out.upload)) || {};
+  const picUrl = ud.url || ud.downloadUrl || ud.originUrl || ud.picUrl
+    || s.downloadUrl || s.originUrl || s.picUrl || s.resUrl
+    || (s.key ? (uploadHost.replace(/-up\\./, ".") + "/" + s.key) : null);
+  out.picUrl = picUrl;
+  // 5. Attach to the SPU (mtgsig-signed). Body shape mirrors updateSpu* siblings.
+  if (picUrl) {
+    out.update = await post(updatePath, { shopId: Number(shopId), spuId: Number(spuId), picUrl });
+  }
+  return out;
+}
+"""
+
+
+async def set_keeta_spu_image(
+    context: Any,
+    *,
+    shop_id: Any,
+    spu_id: Any,
+    image_bytes: bytes,
+    filename: str = "item.jpg",
+    content_type: str = "image/jpeg",
+) -> dict:
+    """Upload a photo to Keeta's Venus store and attach it to one SPU (mtgsig-signed,
+    in-page). Returns every intermediate response (`config`/`sign`/`upload`/`picUrl`/
+    `update`) so a run can be inspected; `update.code == 0` means the picture is set.
+
+    Only invoked behind CATALOG_SYNC_ENABLED. Primes on the order-LIST route for the
+    same "restaurant" context saveSpu needs. **First-run note:** the Venus SDK's exact
+    sign request/response field names are only observable under mtgsig (live only in
+    the page), so this pass is deliberately adaptive — it spreads whatever fields the
+    sign returns into the OSS upload and tries the known picUrl shapes. If a first VM
+    run's returned `sign`/`upload` shows different keys, tighten `_UPLOAD_SPU_IMAGE_JS`
+    accordingly; the structure (sign → OSS POST → updateSpuPicture) is fixed."""
+    import base64
+
+    page = await context.new_page()
+    try:
+        await page.goto(
+            KEETA_ORDER_LIST_ROUTE, wait_until="domcontentloaded", timeout=60_000
+        )
+        account_id = ""
+        for _ in range(12):  # poll up to ~24s for the SPA to prime the session
+            await page.wait_for_timeout(2_000)
+            await _reseed_keeta_storage(page)
+            account_id = await evaluate_in_page(page, _LOGIN_ACCOUNTID_JS)
+            if account_id:
+                break
+        if not account_id:
+            from .browser import NeedsHumanLogin
+
+            raise NeedsHumanLogin("keeta image: in-page session signed out")
+        return await page.evaluate(
+            _UPLOAD_SPU_IMAGE_JS,
+            {
+                "configPath": KEETA_VENUS_CONFIG_PATH + KEETA_QUERY_SUFFIX,
+                "signPath": KEETA_VENUS_SIGN_PATH + KEETA_QUERY_SUFFIX,
+                "updatePath": KEETA_SPU_UPDATE_PICTURE_ENDPOINT + KEETA_QUERY_SUFFIX,
+                "uploadHost": KEETA_VENUS_UPLOAD_HOST,
+                "shopId": int(shop_id),
+                "spuId": int(spu_id),
+                "imageB64": base64.b64encode(image_bytes).decode(),
+                "filename": filename,
+                "contentType": content_type,
+            },
+        )
+    finally:
+        await page.close()
+
+
 #: Item delete — verified live 2026-09-01: `deleteSpu` returns a *validation* error
 #: ("shopId not exist!") for a bad id, while `delSpu`/`removeSpu`/`offShelf` return
 #: "no matched api config found". So this is the real remove verb; it de-lists the

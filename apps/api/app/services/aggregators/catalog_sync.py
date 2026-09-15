@@ -1620,7 +1620,9 @@ async def sync_product(
     # keeta: Barsha/Sharjah ride Foodics; Karama/DSO still need the VM worker
     # (mtgsig create + Venus updateSpuPicture) — not an httpx target. deliveroo is
     # now handled in the loop above via the self-serve draft upsert.
-    results["keeta"] = {"handoff": "worker (create-keeta-item / updateSpuPicture)"}
+    results["keeta"] = {
+        "handoff": "VM worker: aggregator-bootstrap create-keeta-item + set-keeta-image"
+    }
     return results
 
 
