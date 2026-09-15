@@ -887,3 +887,49 @@ async def test_an_unstamped_row_falls_back_to_the_zone_provider():
         cart=_quoted_cart(),
     )
     assert delivery.provider == "lalamove"
+
+
+# ── enqueue instead of booking on the confirm path (F-ORD-8) ──────────────────
+#
+# The confirmation runs inside the request settling the money; a courier booking
+# commits that request mid-flight, so confirmation enqueues the van for the
+# retry sweep instead. `enqueue_for_dispatch` never touches a provider — leaving
+# the provider clients unpatched here is the assertion that it does not, since a
+# real HTTP call would blow the test up.
+
+
+@pytest.mark.asyncio
+async def test_enqueue_stamps_the_row_due_now_without_calling_a_courier():
+    delivery = _delivery(provider="noon_send")
+    assert delivery.next_attempt_at is None
+
+    result = await courier_service.enqueue_for_dispatch(_Db(delivery), _order())
+
+    assert result is delivery
+    assert delivery.next_attempt_at is not None, "the sweep keys off next_attempt_at"
+    assert delivery.courier_order_id is None, "still unbooked — the sweep books it"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_leaves_a_third_party_zone_alone():
+    """A zone no courier books itself has nothing to queue."""
+    delivery = _delivery(provider="third_party")
+
+    result = await courier_service.enqueue_for_dispatch(_Db(delivery), _order())
+
+    assert result is delivery
+    assert delivery.next_attempt_at is None
+
+
+@pytest.mark.asyncio
+async def test_enqueue_does_not_requeue_an_order_already_out_with_a_driver():
+    """A live booking (courier_order_id set, status not terminal-failed) is not
+    re-queued — the same guard `_dispatch_once` applies before it books."""
+    delivery = _delivery(provider="noon_send")
+    delivery.courier_order_id = "EHG84NNJMVG35BTDE"
+    delivery.courier_status = None  # not a failed status → a live booking
+
+    result = await courier_service.enqueue_for_dispatch(_Db(delivery), _order())
+
+    assert result is delivery
+    assert delivery.next_attempt_at is None
