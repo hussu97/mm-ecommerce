@@ -1075,9 +1075,17 @@ export default function OrderDetailPage() {
                   */}
                   {item.selected_options_snapshot && item.selected_options_snapshot.length > 0 && (
                     <div className="text-[11px] font-body text-gray-400 mt-0.5">
-                      {item.selected_options_snapshot.map((o, i) => (
-                        <span key={i}>{i > 0 ? ', ' : ''}{o.quantity ?? 1} &times; {o.option_name}{o.option_price > 0 ? ` (+${o.option_price.toFixed(2)})` : ''}</span>
-                      ))}
+                      {item.selected_options_snapshot.map((o, i) => {
+                        // Read either dialect: a website order carries
+                        // option_name/option_price, a counter/POS sale carries
+                        // name/price (services/option_snapshot.py). Without the
+                        // fallback a POS order's modifier renders a blank name.
+                        const optionName = o.option_name ?? o.name;
+                        const optionPrice = o.option_price ?? o.price ?? 0;
+                        return (
+                          <span key={i}>{i > 0 ? ', ' : ''}{o.quantity ?? 1} &times; {optionName}{optionPrice > 0 ? ` (+${optionPrice.toFixed(2)})` : ''}</span>
+                        );
+                      })}
                     </div>
                   )}
                   {/*

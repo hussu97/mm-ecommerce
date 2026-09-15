@@ -137,7 +137,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
                 <p className="text-sm font-body text-gray-800">{localizedField({ translations: item.product_translations }, 'name', item.product_name, locale)}</p>
                 {item.selected_options_snapshot && item.selected_options_snapshot.length > 0 && (
                   <p className="text-xs text-gray-400 font-body">
-                    {item.selected_options_snapshot.map(o => localizedField({ translations: o.option_translations }, 'name', o.option_name, locale)).join(', ')}
+                    {item.selected_options_snapshot.map(o => localizedField({ translations: o.option_translations }, 'name', o.option_name ?? o.name ?? '', locale)).join(', ')}
                   </p>
                 )}
               </div>

@@ -248,6 +248,16 @@ export interface SelectedOptionSnapshot {
   option_name: string;
   option_price: number;
   /**
+   * Counter dialect. `order_items.selected_options_snapshot` is written in two
+   * shapes: a website order carries `option_name`/`option_price`, a counter/POS
+   * sale carries `name`/`price` (see `services/option_snapshot.py`). Readers
+   * must fall back to these, or a POS order shows a blank modifier name.
+   */
+  name?: string;
+  price?: number;
+  modifier_option_id?: string;
+  sku?: string;
+  /**
    * How many of this option are on the line — five fudge brownies in a box of
    * six, not one.
    *
