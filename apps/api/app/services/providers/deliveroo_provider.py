@@ -82,6 +82,14 @@ _API = f"{_HUB}/api"
 _LOGIN_URL = f"{_API}/session"
 _REFRESH_URL = f"{_API}/session/refresh"
 
+#: The self-serve Menu Manager API — a DIFFERENT host from the hub, reached with
+#: the same `token` JWT as `Authorization: Bearer` (verified live 2026-09-15: the
+#: session's `token` cookie authenticates it over httpx, so menu WRITES need no
+#: headed worker, unlike the webrom READ menu). Whole-draft model: GET a draft,
+#: mutate its `menu`, PATCH it back, POST publish. One draft per org for the
+#: self-serve (non-Foodics) outlets; `branch_drn_ids` says which outlets it serves.
+_SELFSERVE = "https://restaurant-hub-api.deliveroo.net/api/menus_api/selfserve"
+
 #: The org and outlet ids are read from the DB ONLY — the org from
 #: `aggregator_account.extras.org_id`, the outlets from the `aggregator_branch_map`
 #: rows for this channel. There are deliberately NO hard-coded fallbacks: the old
@@ -483,6 +491,79 @@ class DeliverooClient(BaseAggregatorClient):
             f"{_API}/restaurants/{drn}/opening_hours",
             json_body=hours,
         )
+
+    # ── Self-serve Menu Manager (catalog-sync writer) ─────────────────────────
+    # The non-Foodics outlets (DSO) are edited through the self-serve draft model
+    # on `restaurant-hub-api.deliveroo.net`, authenticated by the session's `token`
+    # JWT as a Bearer — no headed worker. The token is short-lived, so these ride
+    # the same `_remint_after_stale_token` recovery as every other call. A live
+    # write is only ever reached behind `CATALOG_SYNC_ENABLED`.
+
+    def _org_drn(self, session: LoadedSession) -> str:
+        """The org's DRN (a UUID), distinct from the numeric `orgId` — the
+        self-serve API scopes drafts by it. Stored on the account's extras
+        (`org_drn_id`) since it is not in the JWT."""
+        for source in (session.tokens or {}, session.header_profile or {}):
+            value = _first(source, "org_drn_id", "org_drn", "organisation_drn_id")
+            if value:
+                return str(value)
+        raise AggregatorUnavailableError(
+            "deliveroo: no org_drn_id (set aggregator_account.extras.org_drn_id)"
+        )
+
+    async def selfserve_list_drafts(self, session: LoadedSession) -> list[dict]:
+        """The org's self-serve menu drafts (one per non-Foodics menu). Each row:
+        `{drn_id, name, branch_drn_ids, external_id, published_at, images}`."""
+        body = await self.request_json(
+            session,
+            "GET",
+            f"{_SELFSERVE}/drafts",
+            params={"org_drn_id": self._org_drn(session)},
+        )
+        return body if isinstance(body, list) else (body or {}).get("drafts", [])
+
+    async def selfserve_get_draft(self, session: LoadedSession, draft_id: str) -> dict:
+        """One draft in full — `{drn_id, org_drn_id, name, menu:{items, categories,
+        mealtimes, …}}`. The `menu` is what a PATCH replaces wholesale."""
+        return await self.request_json(
+            session, "GET", f"{_SELFSERVE}/drafts/{draft_id}"
+        )
+
+    async def selfserve_patch_draft(
+        self, session: LoadedSession, draft_id: str, body: dict[str, Any]
+    ) -> Any:
+        """Replace a draft's menu — `{last_updated_at, name, menu:{…}}` (the shape
+        the console PATCHes). Read-modify-write: never send a partial `menu`."""
+        return await self.request_json(
+            session, "PATCH", f"{_SELFSERVE}/drafts/{draft_id}", json_body=body
+        )
+
+    async def selfserve_publish_draft(
+        self, session: LoadedSession, draft_id: str
+    ) -> Any:
+        """Publish a draft live — `POST /drafts/{id}/publish` (empty body)."""
+        return await self.request_raw(
+            session, "POST", f"{_SELFSERVE}/drafts/{draft_id}/publish"
+        )
+
+    async def selfserve_draft_for_branch(
+        self, session: LoadedSession, branch_drn: str | None = None
+    ) -> dict | None:
+        """The draft serving `branch_drn` (or the only draft when the org has one).
+        Returns the FULL draft (via `selfserve_get_draft`), or None."""
+        drafts = await self.selfserve_list_drafts(session)
+        if not drafts:
+            return None
+        chosen = None
+        if branch_drn:
+            chosen = next(
+                (d for d in drafts if branch_drn in (d.get("branch_drn_ids") or [])),
+                None,
+            )
+        chosen = chosen or (drafts[0] if len(drafts) == 1 else None)
+        if chosen is None:
+            return None
+        return await self.selfserve_get_draft(session, chosen["drn_id"])
 
     async def request_raw(
         self,
