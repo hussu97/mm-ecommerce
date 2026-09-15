@@ -454,7 +454,8 @@ class CareemClient(BaseAggregatorClient):
         payload = {
             "name": name,
             "nameLocalized": {"en": name, "ar": name_ar or name},
-            "defaultPrice": price,
+            # float at the wire boundary: json can't serialise a Decimal.
+            "defaultPrice": float(price),
             "status": "ACTIVE" if active else "INACTIVE",
             "catalogId": catalog_id,
             "categories": [category_id],

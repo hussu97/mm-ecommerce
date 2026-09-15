@@ -496,7 +496,8 @@ class NoonClient(BaseAggregatorClient):
                 "itemType": "main",
                 "nameEn": name,
                 "nameAr": name_ar or name,
-                "price": price,
+                # float at the wire boundary: json can't serialise a Decimal.
+                "price": float(price),
                 "categoryCode": category_code,
                 "isActive": active,
             },

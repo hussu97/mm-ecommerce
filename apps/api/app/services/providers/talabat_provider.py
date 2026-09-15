@@ -703,7 +703,7 @@ class TalabatClient(BaseAggregatorClient):
     # Create: the nested per-category products URL is GET-only (405 on POST).
     # The Add Product drawer (menuManagementV2 1.15.11, captured 2026-09-04 on
     # Karama vendor 793319) POSTs `{_MENU_API}/vendors/{v}/catalogs/products`
-    # with `{name, description, unitPrice, catalogIds, category, type:"Simple",
+    # with `{name, description, unitPrice, catalogIds, category, type:"PRODUCT",
     # active}`. Response is `{commandId}` (async command, not an immediate
     # product id). Still behind `CATALOG_SYNC_ENABLED`, dry-run default.
 
@@ -784,29 +784,60 @@ class TalabatClient(BaseAggregatorClient):
         name: str,
         catalog_id: str,
         category_id: str,
+        category_name: str,
         price: Any,
         description: str = "",
+        name_ar: str | None = None,
+        description_ar: str | None = None,
+        image_url: str | None = None,
         active: bool = False,
     ) -> Any:
         """Create one item via the partner Add Product drawer POST.
 
         Nested `.../catalogs/{id}/categories/{id}/products` is GET-only (405).
-        Off-shelf (`active=false`) by default so a sync never goes live before
-        review. Response is `{commandId}` — map the product on the next menu read.
+        Created off-shelf: the create does NOT take an `active` field (any value —
+        bool or "ACTIVE"/"INACTIVE" — 400s; only omitting it validates, probed live
+        2026-09-15). On-shelf activation is the separate async `set_availability`
+        call, so a created item is not customer-visible until someone flips it —
+        exactly the "never go live before review" the `active` arg still expresses
+        (True would additionally call set_availability; here we only ever create
+        off-shelf). Response is `{commandId}` — map the product on the next menu read.
+
+        Bilingual + image land in the same create the console uses: `names` /
+        `descriptions` are the `[{locale,value}]` arrays (en-AE + ar-AE, same as the
+        PATCH), and `imageUrls` takes our public image URL directly — Talabat is the
+        one channel that accepts a foreign URL (no upload step). All three are only
+        emitted when present.
         """
+        body: dict[str, Any] = {
+            "name": name,
+            "description": description or "",
+            "unitPrice": float(price),
+            "catalogIds": [str(catalog_id)],
+            # The model field is `categories` — an array of category-id STRINGS
+            # (`["20241871"]`), not the scalar `category` the 2026-09-04 drawer
+            # capture used (400 on `category`) and not an array of {id,name}
+            # objects (400 on `categories[0]`). Probed live 2026-09-15: the plain
+            # id-string array is the shape the create validator accepts.
+            "categories": [str(category_id)],
+            # Talabat's product-type enum is "PRODUCT" (verified live from an
+            # existing catalog item 2026-09-15); the drawer once captured
+            # "Simple", which the model-validation now rejects (400 on `type`).
+            "type": "PRODUCT",
+            # NB: no `active` key — the create rejects it (any value 400s); the item
+            # is created off-shelf and `set_availability` toggles it separately.
+        }
+        if name_ar is not None:
+            body["names"] = self._locales(name, name_ar)
+        if description or description_ar:
+            body["descriptions"] = self._locales(description or None, description_ar)
+        if image_url:
+            body["imageUrls"] = [image_url]
         return await self.request_json(
             session,
             "POST",
             f"{_MENU_API}/vendors/{vendor}/catalogs/products",
-            json_body={
-                "name": name,
-                "description": description or "",
-                "unitPrice": float(price),
-                "catalogIds": [str(catalog_id)],
-                "category": str(category_id),
-                "type": "Simple",
-                "active": bool(active),
-            },
+            json_body=body,
         )
 
     @staticmethod
