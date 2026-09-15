@@ -525,7 +525,7 @@ class CareemClient(BaseAggregatorClient):
                 "ar": description_ar or description,
             }
         if price is not None:
-            payload["defaultPrice"] = price
+            payload["defaultPrice"] = float(price)
         if status is not None:
             payload["status"] = status
         if image_url is not None:

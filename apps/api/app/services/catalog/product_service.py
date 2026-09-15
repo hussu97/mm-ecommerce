@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from sqlalchemy import case, func, select
@@ -34,6 +35,8 @@ from app.services.catalog.storefront_visibility import (
 # executing this file when it runs, so `from app.services import redirect_service`
 # would look for an attribute that is not set yet (see `category_service`).
 from app.services.redirect_service import record_rename
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "create",
@@ -343,7 +346,23 @@ async def create(db: AsyncSession, data: ProductCreate) -> ProductResponse:
     )
     result = await db.execute(stmt)
     product = result.scalar_one()
+    await _enqueue_integrator_sync(db, product.id, "created")
     return ProductResponse.model_validate(product)
+
+
+async def _enqueue_integrator_sync(db: AsyncSession, product_id, reason: str) -> None:
+    """Queue the product to fan out to every integrator (create-or-update: name
+    EN/AR, description EN/AR, price, image) — the admin just saves; the sync is a
+    consequence. Writes one outbox row in THIS transaction (the request commits it),
+    drained by the catalog-sync scheduler. Never raises past a product save."""
+    from app.services.aggregators import catalog_sync
+
+    try:
+        await catalog_sync.enqueue_product_sync(
+            db, product_id=product_id, reason=reason
+        )
+    except Exception:  # noqa: BLE001 — a sync-queue hiccup must not fail the save
+        logger.warning("integrator sync enqueue failed for %s", product_id)
 
 
 async def update(db: AsyncSession, slug: str, data: ProductUpdate) -> ProductResponse:
@@ -399,6 +418,7 @@ async def update(db: AsyncSession, slug: str, data: ProductUpdate) -> ProductRes
     )
     result = await db.execute(stmt)
     product = result.scalar_one()
+    await _enqueue_integrator_sync(db, product.id, "updated")
     return ProductResponse.model_validate(product)
 
 

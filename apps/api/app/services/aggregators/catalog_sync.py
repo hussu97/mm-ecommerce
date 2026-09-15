@@ -1097,15 +1097,28 @@ async def enrich_existing_item(
             return out
         from app.services.providers import foodics_provider as fp
 
+        price = product.base_price
         await fp.provider.update_product(
             ref,
             name_localized=i18n["name_ar"],
             description=i18n["description"],
             description_localized=i18n["description_ar"],
             image=i18n["image_url"],
+            price=price,
         )
-        out["fields"] = {"name_ar": "ok", "description": "ok", "image": "ok"}
-        out["note"] = "Foodics enriched (name_ar + desc EN/AR + image URL)."
+        # Keep the Grubtech price-tag pivot at parity so the marketplaces get the
+        # new price too (the product price alone does not drive the aggregator).
+        if price is not None:
+            await fp.provider.set_price_tag_product_price(
+                fp.FOODICS_GRUBTECH_PRICE_TAG_ID, str(ref), float(price)
+            )
+        out["fields"] = {
+            "name_ar": "ok",
+            "description": "ok",
+            "image": "ok",
+            "price": "ok",
+        }
+        out["note"] = "Foodics enriched (name_ar + desc EN/AR + image + price parity)."
         return out
 
     if target == "careem":
@@ -1148,8 +1161,10 @@ async def enrich_existing_item(
             name_ar=i18n["name_ar"],
             description=i18n["description"],
             description_ar=i18n["description_ar"],
+            price=product.base_price,
         )
         out["fields"]["text"] = "ok"
+        out["fields"]["price"] = "ok"
         if i18n["image_url"]:
             fetched = await _fetch_image_bytes(i18n["image_url"])
             if fetched is not None:
@@ -1212,20 +1227,283 @@ async def enrich_existing_item(
             description=i18n["description"],
             description_ar=i18n["description_ar"],
             image=i18n["image_url"],
+            price=product.base_price,
             publish=False,
         )
         out["fields"] = {
             "name_ar": "staged",
             "description": "staged",
             "image": "staged",
+            "price": "staged",
         }
         out["note"] = (
-            "Noon name/desc/image staged on the draft menu — approve in the noon "
-            "console (noon won't auto-publish these)."
+            "Noon name/desc/image/price staged on the draft menu — approve in the "
+            "noon console (noon won't auto-publish these)."
         )
         return out
 
+    if target == "talabat":
+        branch = next(
+            (
+                b
+                for b in (
+                    (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
+                    .scalars()
+                    .all()
+                )
+                if not b.has_foodics and "talabat" in b.aggregators
+            ),
+            None,
+        )
+        if branch is None:
+            raise BadRequestError("no non-Foodics talabat outlet to enrich on.")
+        if dry_run:
+            out["outlet"] = branch.name
+            out["note"] = "Dry run — talabat update_product (name/desc/price/image)."
+            return out
+        from app.services.aggregators import session_store
+        from app.services.aggregators.menu_readers import _talabat_vendor
+        from app.services.providers import talabat_provider as tp
+
+        # Talabat's map is name-based (the create returns an async commandId, not an
+        # id), so resolve the live product id by name from the vendor's catalog.
+        vendor = await _talabat_vendor(db, branch.id)
+        session = await session_store.load(db, "talabat")
+        session = await tp.provider.prepare_session(db, session)
+        catalogs = await tp.provider.list_catalogs(session, vendor)
+        clist = (
+            catalogs.get("catalogs") if isinstance(catalogs, dict) else catalogs
+        ) or []
+        talabat_id = None
+        for cat in clist:
+            cid = str(cat["id"])
+            for c in cat.get("categories") or []:
+                prods = await tp.provider.list_category_products(
+                    session, vendor, cid, str(c.get("id"))
+                )
+                plist = (
+                    prods
+                    if isinstance(prods, list)
+                    else (prods.get("products") or prods.get("data") or [])
+                )
+                match = next(
+                    (p for p in plist if _norm(p.get("name")) == _norm(product.name)),
+                    None,
+                )
+                if match:
+                    talabat_id = str(match.get("id"))
+                    break
+            if talabat_id:
+                break
+        out["talabat_id"] = talabat_id
+        if talabat_id is None:
+            raise BadRequestError(f"{product.name!r} not found on the talabat menu.")
+        await tp.provider.update_product(
+            session,
+            vendor,
+            talabat_id,
+            name=product.name,
+            name_ar=i18n["name_ar"],
+            description=i18n["description"],
+            description_ar=i18n["description_ar"],
+            price=product.base_price,
+            image_url=i18n["image_url"],
+        )
+        out["fields"] = {"text": "ok", "price": "ok", "image": "ok"}
+        out["note"] = "Talabat enriched (name/desc EN+AR + price + image)."
+        return out
+
     raise BadRequestError(f"enrich not supported for target {target!r}")
+
+
+# ── The one entry point: sync a product to every integrator (create-or-update) ──
+
+#: Systems the API can drive itself (httpx / Foodics console). keeta + deliveroo
+#: are worker/manual (keeta = mtgsig worker, deliveroo = Menu Manager), handled out
+#: of band; foodics propagates the product to their Barsha/Sharjah API stores.
+_SERVER_SYSTEMS: tuple[str, ...] = (TARGET_FOODICS, "careem", "noon", "talabat")
+
+
+async def _is_mapped(db: AsyncSession, system: str, product_id: Any) -> bool:
+    """True if an approved product mapping already exists for (system, product) —
+    the create-vs-update decision."""
+    from app.models.external_item_map import KIND_PRODUCT, ExternalItemMap
+
+    row = (
+        await db.execute(
+            select(ExternalItemMap.id).where(
+                ExternalItemMap.system == system,
+                ExternalItemMap.product_id == product_id,
+                ExternalItemMap.mm_kind == KIND_PRODUCT,
+                ExternalItemMap.approved.is_(True),
+            )
+        )
+    ).first()
+    return row is not None
+
+
+async def _create_branch_for(db: AsyncSession, system: str) -> tuple[bool, Any]:
+    """(has_target, branch_id) for a CREATE of `system`. foodics/noon are account-
+    level (branch None). careem/talabat create on a non-Foodics outlet that trades
+    on the channel; returns has_target False when there is none."""
+    if system in (TARGET_FOODICS, "noon"):
+        return True, None
+    branches = (
+        (await db.execute(select(Branch).where(Branch.is_active.is_(True))))
+        .scalars()
+        .all()
+    )
+    for b in branches:
+        if not b.has_foodics and system in b.aggregators:
+            return True, b.id
+    return False, None
+
+
+async def sync_product(
+    db: AsyncSession, *, product_id: Any, dry_run: bool = False
+) -> dict[str, Any]:
+    """Create-or-update one product on every integrator it belongs on — the single
+    action behind both the admin "save product" (via the outbox) and a manual
+    resync. Idempotent: for each server-callable system it UPDATES when a mapping
+    exists (name EN/AR, description EN/AR, price, image) and CREATES otherwise.
+    Foodics is the master — its create/update propagates to the Barsha/Sharjah API
+    stores of every marketplace, so only the non-Foodics outlets (Karama/DSO) are
+    driven per channel here. keeta (Karama/DSO) + deliveroo (DSO) are worker/manual
+    and reported, never silently dropped. Per-system isolated; gated upstream by
+    `CATALOG_SYNC_ENABLED`."""
+    _ensure_write_enabled()
+    product = (
+        await db.execute(
+            select(Product)
+            .where(Product.id == product_id)
+            .options(selectinload(Product.category))
+        )
+    ).scalar_one_or_none()
+    if product is None:
+        raise BadRequestError(f"Product {product_id} not found")
+    l1 = await menu_group_service.integrator_l1_group_for_product(db, product.id)
+    if l1 is None:
+        return {"skipped": "product is not in the integrator menu"}
+
+    results: dict[str, Any] = {}
+    for system in _SERVER_SYSTEMS:
+        try:
+            if await _is_mapped(db, system, product_id):
+                results[system] = await enrich_existing_item(
+                    db, product_id=product_id, target=system, dry_run=dry_run
+                )
+                results[system]["action"] = "update"
+            else:
+                has_target, branch_id = await _create_branch_for(db, system)
+                if not has_target:
+                    results[system] = {"skipped": "no outlet trades on this channel"}
+                    continue
+                results[system] = await create_menu_item(
+                    db,
+                    product_id=product_id,
+                    target=system,
+                    branch_id=branch_id,
+                    dry_run=dry_run,
+                )
+                results[system]["action"] = "create"
+            if not dry_run:
+                # Commit per system, like the ingest/read sweeps: this runs off the
+                # scheduler (a job, not a request), and a system that synced cleanly
+                # must persist even if a later system then throws — the try/except
+                # gives isolation only if each success is already durable.
+                await db.commit()
+        except Exception as exc:  # noqa: BLE001 — one system must not stop the rest
+            if not dry_run:
+                await db.rollback()
+            logger.warning("sync_product %s for %s: %s", system, product_id, exc)
+            results[system] = {"error": str(exc)}
+    # keeta + deliveroo: Barsha/Sharjah ride Foodics; Karama/DSO need the worker
+    # (keeta mtgsig create/updateSpuPicture) / the Deliveroo Menu Manager.
+    results["keeta"] = {"handoff": "worker (create-keeta-item / updateSpuPicture)"}
+    results["deliveroo"] = {"handoff": "Barsha/Sharjah via Foodics; DSO = Menu Manager"}
+    return results
+
+
+async def enqueue_product_sync(
+    db: AsyncSession, *, product_id: Any, reason: str = "updated"
+) -> None:
+    """Record (in the caller's transaction) that a product changed and must fan out
+    to the integrators. Coalesces to one `pending` row per product via the partial
+    unique index, so a burst of edits is a single sync. Never raises past the
+    caller — enqueuing must not fail a product save; it only flushes (the request
+    commits). No-op when writes are disabled."""
+    if not settings.CATALOG_SYNC_ENABLED:
+        return
+    from app.models.catalog_sync import OUTBOX_PENDING, CatalogSyncOutbox
+
+    existing = (
+        await db.execute(
+            select(CatalogSyncOutbox).where(
+                CatalogSyncOutbox.product_id == product_id,
+                CatalogSyncOutbox.status == OUTBOX_PENDING,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.reason = reason  # keep one open job; refresh its provenance
+        await db.flush()
+        return
+    db.add(CatalogSyncOutbox(product_id=product_id, reason=reason))
+    try:
+        await db.flush()
+    except Exception as exc:  # noqa: BLE001 — a race lost the unique; fine, one job stands
+        logger.info("enqueue_product_sync: coalesced (%s)", exc)
+
+
+async def process_outbox(db: AsyncSession, *, limit: int = 20) -> dict[str, Any]:
+    """Drain pending catalog-sync outbox jobs — the scheduler's product-change half.
+    Each job runs `sync_product` (create-or-update on every integrator) and is
+    marked done/error with its per-system result. Gated by `CATALOG_SYNC_ENABLED`;
+    per-job isolated. Returns a summary for the cron log."""
+    if not settings.CATALOG_SYNC_ENABLED:
+        return {"skipped": "writes disabled (CATALOG_SYNC_ENABLED)"}
+    from app.models.catalog_sync import (
+        OUTBOX_DONE,
+        OUTBOX_ERROR,
+        OUTBOX_PENDING,
+        CatalogSyncOutbox,
+    )
+
+    jobs = (
+        (
+            await db.execute(
+                select(CatalogSyncOutbox)
+                .where(CatalogSyncOutbox.status == OUTBOX_PENDING)
+                .order_by(CatalogSyncOutbox.created_at)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    summary: dict[str, Any] = {"processed": 0, "errors": 0}
+    for job in jobs:
+        job.attempts += 1
+        try:
+            result = await sync_product(db, product_id=job.product_id, dry_run=False)
+            job.status = OUTBOX_DONE
+            job.result = result
+            job.last_error = None
+            job.processed_at = _utcnow()
+            summary["processed"] += 1
+        except Exception as exc:  # noqa: BLE001 — one bad job must not stop the drain
+            await db.rollback()
+            job = await db.get(CatalogSyncOutbox, job.id)
+            if job is not None:
+                job.status = OUTBOX_ERROR
+                job.last_error = str(exc)[:1000]
+                job.processed_at = _utcnow()
+            summary["errors"] += 1
+        # Commit each job's terminal state as the drain goes (scheduler job, not a
+        # request): a done/error job must not be re-run because a later job in the
+        # same batch failed and rolled the request back.
+        await db.commit()
+    return summary
 
 
 async def _create_on_careem(
@@ -1710,8 +1988,17 @@ async def run_catalog_sync_once(
     approves the definitionally-correct matches. Idempotent; returns a per-branch,
     per-target summary for the cron log.
     """
+    out_outbox: dict[str, Any] = {}
+    if settings.CATALOG_SYNC_ENABLED:
+        try:
+            out_outbox = await process_outbox(db)
+        except Exception as exc:  # noqa: BLE001 — never let the drain kill the pass
+            await db.rollback()
+            logger.exception("catalog-sync outbox drain failed")
+            out_outbox = {"error": str(exc)}
+
     if not settings.CATALOG_SYNC_READ_ENABLED:
-        return {"skipped": "reads disabled (CATALOG_SYNC_READ_ENABLED)"}
+        return {"outbox": out_outbox, "skipped": "reads disabled"}
     if branch_ids:
         branches = [
             b
@@ -1721,7 +2008,7 @@ async def run_catalog_sync_once(
     else:
         branches = await integrated_branches(db)
 
-    out: dict[str, Any] = {"branches": {}, "mappings": {}}
+    out: dict[str, Any] = {"outbox": out_outbox, "branches": {}, "mappings": {}}
     for branch in branches:
         read = await refresh_all(db, branch_id=branch.id)
         drift = await compute_drift_all(db, branch_id=branch.id)
@@ -1789,7 +2076,9 @@ async def run_catalog_sync_scheduler_forever() -> None:
     while True:
         try:
             await asyncio.sleep(interval * 60)
-            if settings.CATALOG_SYNC_READ_ENABLED:
+            # Tick when reads OR writes are on: run_catalog_sync_once drains the
+            # product-change outbox (write-gated) even when menu reads are off.
+            if settings.CATALOG_SYNC_READ_ENABLED or settings.CATALOG_SYNC_ENABLED:
                 async with AsyncSessionFactory() as db:
                     await run_catalog_sync_once(db)
         except asyncio.CancelledError:
@@ -1809,6 +2098,9 @@ __all__ = [
     "plan_push",
     "create_menu_item",
     "enrich_existing_item",
+    "sync_product",
+    "enqueue_product_sync",
+    "process_outbox",
     "resolve_and_approve_mappings",
     "run_catalog_sync_once",
     "run_catalog_sync_scheduler_forever",

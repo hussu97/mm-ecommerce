@@ -971,6 +971,7 @@ class FoodicsClient:
         description: str | None = None,
         description_localized: str | None = None,
         image: str | None = None,
+        price: Any | None = None,
     ) -> Any:
         """Patch a product's descriptive fields on an EXISTING product — the enrich
         counterpart to `create_product`, for items already created without their
@@ -986,6 +987,8 @@ class FoodicsClient:
             payload["description_localized"] = description_localized or description
         if image:
             payload["image"] = image
+        if price is not None:
+            payload["price"] = float(price)
         if not payload:
             return None
         return await self._call(

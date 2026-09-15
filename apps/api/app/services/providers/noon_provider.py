@@ -584,7 +584,7 @@ class NoonClient(BaseAggregatorClient):
         if description_ar is not None:
             body["descAr"] = description_ar
         if price is not None:
-            body["price"] = price
+            body["price"] = float(price)
         if image is not None:
             body["image"] = image
         if active is not None:
