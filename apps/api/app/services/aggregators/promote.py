@@ -52,6 +52,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Integer, and_, cast, delete, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.config import settings
 from app.core.money import money
@@ -1049,6 +1050,52 @@ def _grubops_adopt_grace_elapsed(agg: AggregatorOrder) -> bool:
     return True  # nothing to date it by — do not defer indefinitely
 
 
+async def _stamp_promoted(
+    db: AsyncSession, agg: AggregatorOrder, mm_order_id: Any
+) -> None:
+    """Record the promotion (`mm_order_id` + `promoted_at`) WITHOUT advancing
+    `updated_at`.
+
+    `updated_at` is the honest per-scrape change signal that the incremental promote
+    (`updated_at > promoted_at`) and reconcile (`updated_at > reconciled_at`) cursors
+    both key on — reconcile.py says so in as many words: "Promotion advances
+    promoted_at, not updated_at." But `updated_at` carries `onupdate=utcnow`, so ANY
+    ORM flush of a dirtied `aggregator_order` row bumps it to flush-time — a few
+    hundred microseconds AFTER the `promoted_at` we just set. That makes
+    `updated_at > promoted_at` true again the instant we promote, so every order
+    re-selects on the very next sweep: a full re-promote AND re-reconcile of the
+    whole ~30-day window every pass, pinning the box's CPU (F-AGG-11).
+
+    A Core UPDATE that lists `updated_at` explicitly keeps `onupdate` from firing
+    (it fills only columns absent from the SET clause), and `set_committed_value`
+    mirrors the new values onto the in-memory object without marking it dirty — so
+    the later `db.flush()` in `promote_order` emits no second UPDATE that would bump
+    `updated_at` again.
+    """
+    now = utcnow()
+    await db.execute(
+        sql_update(AggregatorOrder)
+        .where(AggregatorOrder.id == agg.id)
+        # `updated_at=updated_at` is a no-op self-assignment that keeps the column IN
+        # the SET clause — `onupdate` only fills columns that are ABSENT — so the value
+        # is preserved rather than advanced to flush-time.
+        .values(
+            mm_order_id=mm_order_id,
+            promoted_at=now,
+            updated_at=AggregatorOrder.updated_at,
+        )
+    )
+    # Mirror the promotion metadata onto the in-memory row so the rest of the pass
+    # sees it — as ALREADY-committed values, never as dirty attributes: a dirty flush
+    # would re-fire `onupdate=utcnow` on `updated_at` and undo the whole point above.
+    if isinstance(agg, AggregatorOrder):
+        set_committed_value(agg, "mm_order_id", mm_order_id)
+        set_committed_value(agg, "promoted_at", now)
+    else:  # unit-test stand-ins that are not ORM-mapped instances
+        agg.mm_order_id = mm_order_id
+        agg.promoted_at = now
+
+
 async def promote_order(
     db: AsyncSession, agg: AggregatorOrder, *, draw_stock: bool = True
 ) -> Order | None:
@@ -1089,8 +1136,7 @@ async def promote_order(
             business_date=agg.business_date,
         )
         if grubops_order is not None:
-            agg.mm_order_id = grubops_order.id
-            agg.promoted_at = utcnow()
+            await _stamp_promoted(db, agg, grubops_order.id)
             await _backfill_statement_lines(
                 db, agg.channel, _marketplace_line_ids(agg), grubops_order.id
             )
@@ -1192,8 +1238,7 @@ async def promote_order(
         db, order, placed_at=agg.placed_at, delivered_at=agg.delivered_at
     )
 
-    agg.mm_order_id = order.id
-    agg.promoted_at = utcnow()
+    await _stamp_promoted(db, agg, order.id)
     await db.flush()
     await _backfill_statement_lines(
         db, agg.channel, _marketplace_line_ids(agg), order.id
