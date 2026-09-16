@@ -15,9 +15,23 @@ from app.schemas.modifier import (
     ModifierResponse,
     ModifierUpdate,
 )
-from app.services.catalog import modifier_service
+from app.services.catalog import catalogue_cache, modifier_service
 
 router = APIRouter()
+
+
+async def _invalidate_catalogue_caches() -> None:
+    """
+    Retire what a modifier edit can have changed on the storefront.
+
+    A modifier and its options carry the add-on prices that feed a product's
+    "from" price and the cart's add-on tray, both of which are cached per branch
+    by `catalogue_cache`. Editing them here never used to retire those answers —
+    the storefront read them from a different router, so the cache had no reason
+    to know a price had moved — and the shopper kept seeing yesterday's "from
+    AED x" until the entry aged out. Mirrors `products._invalidate_catalogue_caches`.
+    """
+    await catalogue_cache.retire()
 
 
 @router.get("", response_model=list[ModifierResponse])
@@ -43,7 +57,9 @@ async def create_modifier(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Create a modifier (admin only)."""
-    return await modifier_service.create(db, data)
+    modifier = await modifier_service.create(db, data)
+    await _invalidate_catalogue_caches()
+    return modifier
 
 
 @router.get("/{modifier_id}", response_model=ModifierResponse)
@@ -64,7 +80,9 @@ async def update_modifier(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Update a modifier (admin only)."""
-    return await modifier_service.update(db, modifier_id, data)
+    modifier = await modifier_service.update(db, modifier_id, data)
+    await _invalidate_catalogue_caches()
+    return modifier
 
 
 @router.delete("/{modifier_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -75,6 +93,7 @@ async def delete_modifier(
 ):
     """Delete a modifier (admin only)."""
     await modifier_service.delete(db, modifier_id)
+    await _invalidate_catalogue_caches()
 
 
 @router.post(
@@ -89,7 +108,9 @@ async def add_modifier_option(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Add an option to a modifier (admin only)."""
-    return await modifier_service.add_option(db, modifier_id, data)
+    modifier = await modifier_service.add_option(db, modifier_id, data)
+    await _invalidate_catalogue_caches()
+    return modifier
 
 
 @router.put("/{modifier_id}/options/{option_id}", response_model=ModifierResponse)
@@ -101,7 +122,9 @@ async def update_modifier_option(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Update a modifier option (admin only)."""
-    return await modifier_service.update_option(db, modifier_id, option_id, data)
+    modifier = await modifier_service.update_option(db, modifier_id, option_id, data)
+    await _invalidate_catalogue_caches()
+    return modifier
 
 
 @router.delete(
@@ -115,4 +138,6 @@ async def delete_modifier_option(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Delete a modifier option (admin only)."""
-    return await modifier_service.delete_option(db, modifier_id, option_id)
+    modifier = await modifier_service.delete_option(db, modifier_id, option_id)
+    await _invalidate_catalogue_caches()
+    return modifier

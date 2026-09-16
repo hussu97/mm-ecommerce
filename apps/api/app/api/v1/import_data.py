@@ -19,20 +19,47 @@ from app.services.inventory import import_service
 
 router = APIRouter()
 
+#: The most an import upload may weigh and the most rows it may carry. Both are
+#: read into memory whole — `upload.read()` then a full `list(reader)` — on a
+#: single-worker API, so an unbounded file is a way to stall the storefront with
+#: one request. 5 MB mirrors the image uploader's cap (`uploads.MAX_FILE_SIZE`),
+#: and 5,000 rows is comfortably above the whole catalogue while refusing a file
+#: that is a catalogue-import route by URL and a memory bomb by content.
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+_MAX_UPLOAD_ROWS = 5000
+
+
+def _guard_upload_size(content: bytes) -> None:
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise BadRequestError(
+            f"File too large. Maximum size is {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
+        )
+
+
+def _guard_row_count(rows: list[dict]) -> list[dict]:
+    if len(rows) > _MAX_UPLOAD_ROWS:
+        raise BadRequestError(
+            f"Too many rows. Maximum is {_MAX_UPLOAD_ROWS} per import."
+        )
+    return rows
+
 
 async def _parse_csv(upload: UploadFile) -> list[dict]:
-    return _parse_csv_content(await upload.read())
+    content = await upload.read()
+    _guard_upload_size(content)
+    return _parse_csv_content(content)
 
 
 def _parse_csv_content(content: bytes) -> list[dict]:
     text = content.decode("utf-8-sig")  # handle BOM
     reader = csv.DictReader(io.StringIO(text))
-    return list(reader)
+    return _guard_row_count(list(reader))
 
 
 async def _parse_recipe_upload(upload: UploadFile) -> list[dict]:
     """Read the editable recipe sheet and deliberately ignore workbook references."""
     content = await upload.read()
+    _guard_upload_size(content)
     filename = (upload.filename or "").lower()
     if not (filename.endswith(".xlsx") or content.startswith(b"PK")):
         return _parse_csv_content(content)
@@ -57,11 +84,13 @@ async def _parse_recipe_upload(upload: UploadFile) -> list[dict]:
             raise BadRequestError("Recipes worksheet has no headers")
         if len(headers) != len(set(headers)):
             raise BadRequestError("Recipes worksheet has duplicate headers")
-        return [
-            dict(zip(headers, values, strict=False))
-            for values in rows
-            if any(value is not None and str(value).strip() for value in values)
-        ]
+        return _guard_row_count(
+            [
+                dict(zip(headers, values, strict=False))
+                for values in rows
+                if any(value is not None and str(value).strip() for value in values)
+            ]
+        )
     finally:
         workbook.close()
 

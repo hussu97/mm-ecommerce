@@ -358,7 +358,12 @@ async def link_modifier(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Link a modifier to a product (admin only)."""
-    return await product_service.link_modifier(db, slug, data)
+    # A modifier link changes the product's add-on tray and can move its "from"
+    # price, both cached per branch — retire them so the storefront does not keep
+    # serving the pre-link answer (F-INV-17).
+    linked = await product_service.link_modifier(db, slug, data)
+    await _invalidate_catalogue_caches()
+    return linked
 
 
 @router.delete("/{slug}/modifiers/{modifier_id}", response_model=ProductResponse)
@@ -369,7 +374,9 @@ async def unlink_modifier(
     _admin: User = Depends(require("catalogue.manage")),
 ):
     """Unlink a modifier from a product (admin only)."""
-    return await product_service.unlink_modifier(db, slug, modifier_id)
+    unlinked = await product_service.unlink_modifier(db, slug, modifier_id)
+    await _invalidate_catalogue_caches()
+    return unlinked
 
 
 @router.get("/availability/{branch_id}", response_model=list[BranchProductResponse])

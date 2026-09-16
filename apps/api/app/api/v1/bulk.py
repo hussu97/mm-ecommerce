@@ -18,8 +18,24 @@ from app.models.product import Product
 from app.models.promo_code import PromoCode
 from app.models.user import User
 from app.schemas.product import SalesChannel
+from app.services.catalog import catalogue_cache
 
 router = APIRouter()
+
+
+async def _invalidate_catalogue_caches() -> None:
+    """
+    Retire what a bulk edit can have changed on the storefront.
+
+    Activating, deactivating or re-channelling a swathe of products moves what
+    appears in the catalogue and at what "from" price, all of which
+    `catalogue_cache` answers per branch. A bulk write that skipped this left the
+    storefront serving the old set until the entries aged out — the same gap
+    `products`/`modifiers` close on their single-row edits. Mirrors
+    `products._invalidate_catalogue_caches`.
+    """
+    await catalogue_cache.retire()
+
 
 _ENTITY_MAP = {
     "products": Product,
@@ -56,6 +72,7 @@ async def bulk_update_status(
         .execution_options(synchronize_session=False)
     )
     result = await db.execute(stmt)
+    await _invalidate_catalogue_caches()
     return {"updated": result.rowcount}
 
 
@@ -110,4 +127,5 @@ async def bulk_update_visibility(
     )
     result = await db.execute(stmt)
     await cache_delete_pattern("categories:channel:*")
+    await _invalidate_catalogue_caches()
     return {"updated": result.rowcount}

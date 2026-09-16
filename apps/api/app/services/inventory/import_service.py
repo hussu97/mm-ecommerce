@@ -830,38 +830,45 @@ async def import_recipes(db: AsyncSession, rows: list[dict]) -> ImportResult:
 
     for (owner_kind, owner_id), group in groups.items():
         try:
-            lines = []
-            for row_number, row in group:
-                ingredient_id = _uuid_or_error(
-                    row.get("ingredient_item_id"), "ingredient_item_id"
-                )
-                inactive_types = [
-                    value.strip()
-                    for value in str(row.get("inactive_in_order_types") or "").split(
-                        "|"
+            # Each owner's draft is written inside its own savepoint, so a group
+            # that fails partway — a draft half-built before `create_draft` raised
+            # — rolls back to before it rather than leaving orphaned rows in the
+            # session to ride out on the request commit. A clean group commits at
+            # the savepoint and the next owner starts from a consistent state
+            # (F-INV-21; the shape F-AGG-18 uses for its per-order sweep).
+            async with db.begin_nested():
+                lines = []
+                for row_number, row in group:
+                    ingredient_id = _uuid_or_error(
+                        row.get("ingredient_item_id"), "ingredient_item_id"
                     )
-                    if value.strip()
-                ]
-                lines.append(
-                    recipe_service.RecipeLineInput(
-                        item_id=ingredient_id,
-                        quantity=_required_decimal(row, "quantity", row_number),
-                        yield_percentage=_required_decimal(
-                            row, "yield_percentage", row_number
-                        ),
-                        inactive_in_order_types=inactive_types,
-                        display_order=_parse_int(row.get("display_order", "0")),
-                        source_metadata={"bulk_import_row": row_number},
+                    inactive_types = [
+                        value.strip()
+                        for value in str(
+                            row.get("inactive_in_order_types") or ""
+                        ).split("|")
+                        if value.strip()
+                    ]
+                    lines.append(
+                        recipe_service.RecipeLineInput(
+                            item_id=ingredient_id,
+                            quantity=_required_decimal(row, "quantity", row_number),
+                            yield_percentage=_required_decimal(
+                                row, "yield_percentage", row_number
+                            ),
+                            inactive_in_order_types=inactive_types,
+                            display_order=_parse_int(row.get("display_order", "0")),
+                            source_metadata={"bulk_import_row": row_number},
+                        )
                     )
+                await recipe_service.create_draft(
+                    db,
+                    kind=owner_kind,
+                    owner_id=owner_id,
+                    lines=lines,
+                    source="mm",
+                    source_metadata={"import": "recipes-workbook"},
                 )
-            await recipe_service.create_draft(
-                db,
-                kind=owner_kind,
-                owner_id=owner_id,
-                lines=lines,
-                source="mm",
-                source_metadata={"import": "recipes-workbook"},
-            )
             result.updated += 1
         except Exception as exc:  # noqa: BLE001 - turn a bad group into spreadsheet feedback
             for row_number, _ in group:

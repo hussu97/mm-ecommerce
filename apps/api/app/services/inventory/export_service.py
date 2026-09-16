@@ -53,6 +53,36 @@ RECIPE_OWNER_REFERENCE_HEADERS = ["owner_kind", "owner_id", "owner_sku", "owner_
 _WORKBOOK_HEADER_FILL = PatternFill("solid", fgColor="2D241E")
 _WORKBOOK_HEADER_FONT = Font(color="FFFFFF", bold=True)
 
+#: The leading characters Excel and Google Sheets read as the start of a formula.
+#: A cell beginning with one of these is executed on open, so an item name typed
+#: as `=cmd|'/c calc'!A1` becomes code the moment an operator opens the file.
+_FORMULA_INJECTION_PREFIXES = frozenset("=+-@\t\r")
+
+
+def _safe(value: str | int) -> str | int:
+    """Neutralise spreadsheet formula injection on one user-derived cell.
+
+    A value that begins with `=`, `+`, `-`, `@`, a tab or a carriage return is
+    prefixed with a single quote so a spreadsheet treats it as text rather than
+    executing it (F-INV-19). This mirrors the admin-side `csvCell()` guard that
+    already protects the browser-built counts CSV; every column here is filled
+    from catalogue names, SKUs, references and descriptions that an operator can
+    type, so each one is attacker-influenced data.
+
+    Integers pass through untouched — they cannot open a formula, and keeping
+    them numeric preserves both the workbook's numeric cells and the round-trip
+    back through the importer. The `csv`/`openpyxl` writers already handle quote
+    doubling and escaping, so this only ever adds the leading quote.
+    """
+    if isinstance(value, str) and value[:1] in _FORMULA_INJECTION_PREFIXES:
+        return f"'{value}"
+    return value
+
+
+def _safe_row(row: Sequence[str | int]) -> list[str | int]:
+    """`_safe` across a whole data row, ready to hand to a writer."""
+    return [_safe(cell) for cell in row]
+
 
 async def export_categories(db: AsyncSession, languages: list[str]) -> str:
     result = await db.execute(select(Category).order_by(Category.display_order))
@@ -74,7 +104,7 @@ async def export_categories(db: AsyncSession, languages: list[str]) -> str:
         row_data.extend(
             [r.reference or "", r.image_url or "", r.display_order, str(r.is_active)]
         )
-        w.writerow(row_data)
+        w.writerow(_safe_row(row_data))
     return buf.getvalue()
 
 
@@ -146,7 +176,7 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
                 str(r.is_sold_by_weight),
             ]
         )
-        w.writerow(row_data)
+        w.writerow(_safe_row(row_data))
     return buf.getvalue()
 
 
@@ -167,7 +197,7 @@ async def export_modifiers(db: AsyncSession, languages: list[str]) -> str:
         for code in languages:
             row_data.append(t.get(code, {}).get("name", ""))
         row_data.append(str(r.is_active))
-        w.writerow(row_data)
+        w.writerow(_safe_row(row_data))
     return buf.getvalue()
 
 
@@ -200,7 +230,7 @@ async def export_modifier_options(db: AsyncSession, languages: list[str]) -> str
         for code in languages:
             row_data.append(t.get(code, {}).get("name", ""))
         row_data.extend([str(r.is_active), str(r.display_order)])
-        w.writerow(row_data)
+        w.writerow(_safe_row(row_data))
     return buf.getvalue()
 
 
@@ -252,26 +282,28 @@ async def export_orders(
         # from a dropdown that no longer exists.
         zone = r.delivery.zone_name if r.delivery else ""
         w.writerow(
-            [
-                r.order_number,
-                r.created_at.strftime("%Y-%m-%d"),
-                r.email,
-                r.status.value,
-                len(r.items),
-                str(r.subtotal),
-                str(r.discount_amount),
-                str(r.delivery_fee),
-                # Next to the delivery fee rather than appended at the end,
-                # because the two read together — and the header above moves
-                # with it, which is the only thing that keeps this file's
-                # positional columns honest.
-                str(r.low_order_fee or 0),
-                str(r.total),
-                r.payment_provider or "",
-                r.delivery_method.value,
-                zone or "",
-                r.promo_code_used or "",
-            ]
+            _safe_row(
+                [
+                    r.order_number,
+                    r.created_at.strftime("%Y-%m-%d"),
+                    r.email,
+                    r.status.value,
+                    len(r.items),
+                    str(r.subtotal),
+                    str(r.discount_amount),
+                    str(r.delivery_fee),
+                    # Next to the delivery fee rather than appended at the end,
+                    # because the two read together — and the header above moves
+                    # with it, which is the only thing that keeps this file's
+                    # positional columns honest.
+                    str(r.low_order_fee or 0),
+                    str(r.total),
+                    r.payment_provider or "",
+                    r.delivery_method.value,
+                    zone or "",
+                    r.promo_code_used or "",
+                ]
+            )
         )
     return buf.getvalue()
 
@@ -302,15 +334,17 @@ async def export_product_modifiers(db: AsyncSession) -> str:
     )
     for r in rows:
         w.writerow(
-            [
-                r.product.sku or "",
-                r.modifier.reference,
-                r.minimum_options,
-                r.maximum_options,
-                r.free_options,
-                r.unique_options,
-                r.display_order,
-            ]
+            _safe_row(
+                [
+                    r.product.sku or "",
+                    r.modifier.reference,
+                    r.minimum_options,
+                    r.maximum_options,
+                    r.free_options,
+                    r.unique_options,
+                    r.display_order,
+                ]
+            )
         )
     return buf.getvalue()
 
@@ -361,28 +395,30 @@ async def export_inventory_items(db: AsyncSession) -> str:
     )
     for item in rows:
         writer.writerow(
-            [
-                str(item.id),
-                item.sku,
-                item.name,
-                item.barcode or "",
-                item.category.reference if item.category else "",
-                item.kind,
-                item.tracking_mode,
-                item.storage_unit,
-                item.ingredient_unit,
-                str(item.storage_to_ingredient_factor),
-                str(item.cost),
-                item.costing_method,
-                str(item.yield_percentage),
-                str(item.minimum_level),
-                str(item.par_level),
-                str(item.maximum_level),
-                str(item.is_product),
-                item.storage_zone or "",
-                item.count_order,
-                str(item.is_active),
-            ]
+            _safe_row(
+                [
+                    str(item.id),
+                    item.sku,
+                    item.name,
+                    item.barcode or "",
+                    item.category.reference if item.category else "",
+                    item.kind,
+                    item.tracking_mode,
+                    item.storage_unit,
+                    item.ingredient_unit,
+                    str(item.storage_to_ingredient_factor),
+                    str(item.cost),
+                    item.costing_method,
+                    str(item.yield_percentage),
+                    str(item.minimum_level),
+                    str(item.par_level),
+                    str(item.maximum_level),
+                    str(item.is_product),
+                    item.storage_zone or "",
+                    item.count_order,
+                    str(item.is_active),
+                ]
+            )
         )
     return buf.getvalue()
 
@@ -538,7 +574,7 @@ async def export_recipes(db: AsyncSession) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(RECIPE_EXPORT_HEADERS)
-    writer.writerows(editable_rows)
+    writer.writerows(_safe_row(row) for row in editable_rows)
     return buf.getvalue()
 
 
@@ -558,7 +594,7 @@ def _write_workbook_sheet(
         f"A1:{get_column_letter(len(headers))}{max(1, len(rows) + 1)}"
     )
     for row in rows:
-        sheet.append(row)
+        sheet.append(_safe_row(row))
     for column_index, header in enumerate(headers, start=1):
         values = [header, *(str(row[column_index - 1]) for row in rows)]
         sheet.column_dimensions[get_column_letter(column_index)].width = min(

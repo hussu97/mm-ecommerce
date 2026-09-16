@@ -884,25 +884,41 @@ purchase_orders_router = APIRouter()
 
 
 async def _serialise_po(
-    db: AsyncSession, purchase_order: PurchaseOrder
+    db: AsyncSession,
+    purchase_order: PurchaseOrder,
+    *,
+    items_lookup: dict[uuid.UUID, InventoryItem] | None = None,
+    suppliers_lookup: dict[uuid.UUID, Supplier] | None = None,
 ) -> PurchaseOrderResponse:
+    """Serialise one purchase order, resolving its line items and supplier.
+
+    A list caller that has already loaded every page's items and suppliers in one
+    query each passes them in (`items_lookup`/`suppliers_lookup`), so this runs no
+    query per order — the N+1 that `list_purchase_orders` had at up to 1,000 rows
+    (F-INV-24). The single-order write paths pass neither and it fetches its own,
+    exactly as before.
+    """
     payload = PurchaseOrderResponse.model_validate(purchase_order)
-    ids = {line.item_id for line in purchase_order.items}
-    items = (
-        (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
-        .scalars()
-        .all()
-        if ids
-        else []
-    )
-    lookup = {i.id: i for i in items}
+    if items_lookup is None:
+        ids = {line.item_id for line in purchase_order.items}
+        items = (
+            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(ids))))
+            .scalars()
+            .all()
+            if ids
+            else []
+        )
+        items_lookup = {i.id: i for i in items}
     for line, source in zip(payload.items, purchase_order.items):
         line.outstanding_quantity = source.outstanding_quantity
-        item = lookup.get(line.item_id)
+        item = items_lookup.get(line.item_id)
         if item is not None:
             line.item_name = item.name
             line.item_sku = item.sku
-    supplier = await db.get(Supplier, purchase_order.supplier_id)
+    if suppliers_lookup is None:
+        supplier = await db.get(Supplier, purchase_order.supplier_id)
+    else:
+        supplier = suppliers_lookup.get(purchase_order.supplier_id)
     payload.supplier_name = supplier.name if supplier else None
     return payload
 
@@ -936,7 +952,39 @@ async def list_purchase_orders(
         stmt = stmt.where(PurchaseOrder.status == status_filter)
     stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
     orders = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_po(db, o) for o in orders]
+
+    # Resolve every page's line items and suppliers in one query each, rather
+    # than two per order — the N+1 that scaled with the page (F-INV-24).
+    item_ids = {line.item_id for o in orders for line in o.items}
+    items_lookup: dict[uuid.UUID, InventoryItem] = {}
+    if item_ids:
+        items_lookup = {
+            i.id: i
+            for i in (
+                await db.execute(
+                    select(InventoryItem).where(InventoryItem.id.in_(item_ids))
+                )
+            )
+            .scalars()
+            .all()
+        }
+    supplier_ids = {o.supplier_id for o in orders if o.supplier_id}
+    suppliers_lookup: dict[uuid.UUID, Supplier] = {}
+    if supplier_ids:
+        suppliers_lookup = {
+            s.id: s
+            for s in (
+                await db.execute(select(Supplier).where(Supplier.id.in_(supplier_ids)))
+            )
+            .scalars()
+            .all()
+        }
+    return [
+        await _serialise_po(
+            db, o, items_lookup=items_lookup, suppliers_lookup=suppliers_lookup
+        )
+        for o in orders
+    ]
 
 
 @purchase_orders_router.post(
