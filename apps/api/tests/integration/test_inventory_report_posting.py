@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -38,6 +39,7 @@ from app.models.inventory_v2 import (
     ShiftInventoryReportLine,
     ShiftInventoryReportStatusEnum,
 )
+from app.models.till import Till, TillStatusEnum
 from app.models.user import User
 from app.services.inventory import inventory_service, report_service
 
@@ -516,3 +518,109 @@ async def test_a_sale_does_not_block_submit_but_an_adjustment_does(engine, env):
         user = await db.get(User, user_id)
         with pytest.raises(ConflictError):
             await report_service.submit_report(db, report=report2, user=user)
+
+
+# --- Per-till count windows tile the timeline (dead-zone fix, F-INV) --------------
+#
+# A per-till count window used to run from till.opened_at to till.closed_at, so an
+# order consumed while no till was open (aggregators sell round the clock) fell in
+# no report at all. The window now opens where the previous same-type report closed,
+# so the next count sweeps up everything sold since the last one.
+
+
+def _prior_report(
+    branch_id, template_id, warehouse_id, *, report_type, opened_at, closed_at
+):
+    return ShiftInventoryReport(
+        branch_id=branch_id,
+        template_id=template_id,
+        business_date=BUSINESS_DATE,
+        status=ShiftInventoryReportStatusEnum.POSTED.value,
+        idempotency_key=f"prior:{uuid.uuid4()}",
+        base_posting_sequence=None,
+        template_snapshot={
+            "cadence": "per_till",
+            "report_type": report_type,
+            "warehouse_id": str(warehouse_id),
+            "window_opened_at": opened_at.isoformat(),
+            "window_closed_at": closed_at.isoformat(),
+        },
+    )
+
+
+def _till(branch_id, user_id, *, opened_at, closed_at=None):
+    return Till(
+        branch_id=branch_id,
+        user_id=user_id,
+        device_id=None,
+        business_date=BUSINESS_DATE,
+        status=(
+            TillStatusEnum.CLOSED.value if closed_at else TillStatusEnum.OPEN.value
+        ),
+        opened_at=opened_at,
+        closed_at=closed_at,
+    )
+
+
+async def _created_window_open(engine, env, *, prior_close, till_open):
+    """Create a per-till report for a till and return its window_opened_at instant,
+    with an optional prior same-type report closing at ``prior_close``."""
+    branch_id, warehouse_id, user_id, _item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        if prior_close is not None:
+            db.add(
+                _prior_report(
+                    branch_id,
+                    template_id,
+                    warehouse_id,
+                    report_type="raw_materials",
+                    opened_at=prior_close - timedelta(hours=8),
+                    closed_at=prior_close,
+                )
+            )
+        till = _till(branch_id, user_id, opened_at=till_open)
+        db.add(till)
+        await db.flush()
+        template = await db.get(InventoryReportTemplate, template_id)
+        report = await report_service._create_report(
+            db, template=template, till=till, idempotency_key=f"chain:{uuid.uuid4()}"
+        )
+        await db.commit()
+        opened = datetime.fromisoformat(report.template_snapshot["window_opened_at"])
+    # Tills are not swept by the env teardown; drop them so the branch/user delete
+    # there does not trip the tills FK. Reports keep a SET NULL till_id.
+    async with Session() as db:
+        await db.execute(Till.__table__.delete().where(Till.branch_id == branch_id))
+        await db.commit()
+    return opened
+
+
+async def test_per_till_window_chains_to_previous_close(engine, env):
+    now = report_service.utcnow()
+    prev_close = now - timedelta(hours=6)
+    opened = await _created_window_open(
+        engine, env, prior_close=prev_close, till_open=now - timedelta(hours=1)
+    )
+    # Reaches back to the previous report's close (covering the gap), not till.opened_at.
+    assert opened == prev_close
+
+
+async def test_first_per_till_report_opens_at_till_open(engine, env):
+    now = report_service.utcnow()
+    till_open = now - timedelta(hours=1)
+    opened = await _created_window_open(
+        engine, env, prior_close=None, till_open=till_open
+    )
+    assert opened == till_open
+
+
+async def test_overlapping_till_does_not_chain(engine, env):
+    now = report_service.utcnow()
+    till_open = now - timedelta(hours=2)
+    # Previous same-type report is still "open" past this till's open (concurrent
+    # tills): chaining would overlap and double-count, so it falls back to till open.
+    opened = await _created_window_open(
+        engine, env, prior_close=now, till_open=till_open
+    )
+    assert opened == till_open

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import DateTime, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -779,6 +779,52 @@ async def _category_map(
     return {category.id: category for category in categories}
 
 
+async def _chained_window_open(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID,
+    report_type: str,
+    till: Till,
+) -> datetime:
+    """Where this per-till report's movement window should open.
+
+    A per-till report reconciles inventory over its till's open->close window, and
+    ``_movement_totals`` attributes each transaction to the report whose window its
+    ``posted_at`` falls in. Opening at ``till.opened_at`` leaves a *dead zone*
+    between one till closing and the next opening: aggregator and online orders
+    consume stock around the clock, so anything sold while no till is open lands in
+    no report at all — correct on the ledger, but never counted as sold, and missing
+    from the count sheet's sales column.
+
+    So the window opens where the previous same-type report's window closed, tiling
+    the timeline with no gap — the next count sweeps up everything sold since the
+    last one, the ledger transactions keeping their own timestamps. Chained only
+    across a *gap* (previous close at or before this till opened), never across an
+    *overlap*: if two tills of the same type are open at once the second falls back
+    to ``till.opened_at``, so their windows cannot double-count the shared span. That
+    overlap case does not arise in current operations (tills run sequentially); the
+    fuller fix is a business-day cadence, out of scope here.
+    """
+    closed_at = func.cast(
+        ShiftInventoryReport.template_snapshot.op("->>")("window_closed_at"),
+        DateTime(timezone=True),
+    )
+    previous_close = await db.scalar(
+        select(closed_at)
+        .where(
+            ShiftInventoryReport.branch_id == branch_id,
+            ShiftInventoryReport.template_snapshot.op("->>")("cadence")
+            == InventoryReportCadenceEnum.PER_TILL.value,
+            ShiftInventoryReport.template_snapshot.op("->>")("report_type")
+            == report_type,
+            closed_at <= till.opened_at,
+        )
+        .order_by(closed_at.desc())
+        .limit(1)
+    )
+    return previous_close or till.opened_at
+
+
 async def _create_report(
     db: AsyncSession,
     *,
@@ -788,6 +834,19 @@ async def _create_report(
 ) -> ShiftInventoryReport:
     warehouse = await inventory_service.default_warehouse(db, till.branch_id)
     base_sequence = await current_sequence(db, till.branch_id)
+    # Per-till windows tile end-to-end so nothing sold between tills is lost; a
+    # business-day report scopes by business_date, not the window, so it keeps the
+    # plain till open time.
+    window_opened_at = (
+        await _chained_window_open(
+            db,
+            branch_id=till.branch_id,
+            report_type=template.report_type,
+            till=till,
+        )
+        if template.cadence == InventoryReportCadenceEnum.PER_TILL.value
+        else till.opened_at
+    )
     report = ShiftInventoryReport(
         template_id=template.id,
         branch_id=till.branch_id,
@@ -813,7 +872,7 @@ async def _create_report(
             "approval_variance_percent": str(template.approval_variance_percent)
             if template.approval_variance_percent is not None
             else None,
-            "window_opened_at": till.opened_at.isoformat(),
+            "window_opened_at": window_opened_at.isoformat(),
             "window_closed_at": (till.closed_at or utcnow()).isoformat(),
             "warehouse_id": str(warehouse.id),
             "item_inputs": {
