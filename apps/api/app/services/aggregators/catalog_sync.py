@@ -2297,13 +2297,18 @@ async def run_catalog_sync_once(
     else:
         branches = await integrated_branches(db)
 
+    # Snapshot the branch ids up front: `await db.commit()` inside the loop expires
+    # every ORM object (expire_on_commit), so touching `branch.id` on a later
+    # iteration would fire a lazy-load with no active greenlet → MissingGreenlet
+    # (seen live with >1 integrated branch). Plain ids never expire.
+    branch_ids_to_sweep = [b.id for b in branches]
     out: dict[str, Any] = {"outbox": out_outbox, "branches": {}, "mappings": {}}
-    for branch in branches:
-        read = await refresh_all(db, branch_id=branch.id)
-        drift = await compute_drift_all(db, branch_id=branch.id)
+    for bid in branch_ids_to_sweep:
+        read = await refresh_all(db, branch_id=bid)
+        drift = await compute_drift_all(db, branch_id=bid)
         # compute_drift_all writes onto the snapshots; persist alongside the reads.
         await db.commit()
-        out["branches"][str(branch.id)] = {"read": read, "drift_targets": list(drift)}
+        out["branches"][str(bid)] = {"read": read, "drift_targets": list(drift)}
 
     if settings.CATALOG_SYNC_ENABLED:
         # Writes on ⇒ approve the confident mappings from the freshest snapshots.
