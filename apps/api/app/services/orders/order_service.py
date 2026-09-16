@@ -1185,6 +1185,25 @@ async def create_order(
         address=address.address_line_1 if address else None,
     )
 
+    # 4a. In a dynamic zone the fee just computed is a *fresh* courier quote,
+    #     which can differ from the one the checkout showed seconds ago. Honour
+    #     what the customer was shown when the quote on the basket is still the
+    #     same recent pin, and refuse (re-preview) otherwise, so the order is
+    #     never billed a delivery fee nobody agreed to (F-COU-16). A no-op for the
+    #     fixed-fee zones — every live zone today — which re-price deterministically.
+    if (
+        data.delivery_method == DeliveryMethodEnum.DELIVERY
+        and totals.delivery is not None
+        and totals.delivery.is_dynamic
+        and totals.serviceable
+    ):
+        totals = order_pricing.reconcile_dynamic_delivery_fee(
+            totals,
+            cart,
+            latitude=address.latitude if address else None,
+            longitude=address.longitude if address else None,
+        )
+
     # 5. Find the kitchen before writing anything. `orders.branch_id` is NOT
     #    NULL, so this is part of building the row rather than something done to
     #    it afterwards — and a shop with no branch that can take online orders

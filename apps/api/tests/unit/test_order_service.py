@@ -272,6 +272,16 @@ def _cart(items: list | None = None, session_id: str = "sess_test") -> MagicMock
     c.id = uuid.uuid4()
     c.session_id = session_id
     c.items = items if items is not None else []
+    # A recent delivery quote at the default delivery pin, costed at the default
+    # estimate (AED 40). In a dynamic zone order creation honours the fee the
+    # basket was quoted rather than a fresh re-quote (F-COU-16), so the tests
+    # that drive a dynamic zone need a quote to honour; a matching one keeps the
+    # fresh-price assertions true (honoured == re-quoted). A test that wants a
+    # different shown fee overrides `delivery_quote_cost`.
+    c.delivery_quote_cost = Decimal("40.00")
+    c.delivery_quote_at = datetime.datetime.now(datetime.timezone.utc)
+    c.delivery_quote_latitude = Decimal("25.204800")
+    c.delivery_quote_longitude = Decimal("55.270800")
     return c
 
 
@@ -945,7 +955,12 @@ class TestCreateOrderCalculations:
     async def test_dynamic_zone_charges_the_courier_price_rounded_up(
         self, delivery_pricing
     ):
-        """The order is written with the same rounded number the checkout showed."""
+        """The order is written with the same rounded number the checkout showed.
+
+        The basket carries the quote it was shown (courier cost 31.05 → AED 32),
+        and the fresh re-quote at creation lands on the same figure, so the order
+        is billed 32 (F-COU-16 honours the shown quote; here it matches).
+        """
         find_zone, estimate_for_point = delivery_pricing
         find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
         estimate_for_point.return_value = (
@@ -958,6 +973,7 @@ class TestCreateOrderCalculations:
             None,
         )
         cart = _cart(items=[_cart_item(_product("100.00"))])
+        cart.delivery_quote_cost = Decimal("31.05")  # what the checkout showed
         db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("32.00")))
 
         await create_order(db, _delivery_data(), user_id=None)
@@ -965,6 +981,58 @@ class TestCreateOrderCalculations:
         order_arg = db.add.call_args_list[0][0][0]
         assert order_arg.delivery_fee == Decimal("32.00")
         assert order_arg.total == Decimal("132.00")
+
+    async def test_a_dynamic_zone_honours_the_shown_quote_not_a_fresh_requote(
+        self, delivery_pricing
+    ):
+        """F-COU-16: the customer pays the fee they saw, not a re-quote that moved.
+
+        The basket was quoted AED 32 (cost 31.05) moments ago; a fresh courier
+        call at creation now says 51. The order must charge 32 — the number the
+        customer agreed to — not the drifted re-quote.
+        """
+        find_zone, estimate_for_point = delivery_pricing
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
+        estimate_for_point.return_value = (
+            lalamove_service.Estimate(
+                cost=Decimal("50.40"),  # re-quote drifted up to AED 51
+                currency="AED",
+                distance_m=30000,
+                quotation_id="q_drift",
+            ),
+            None,
+        )
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        cart.delivery_quote_cost = Decimal("31.05")  # the shown quote → AED 32
+        db = _db_for_create(cart, _order_mock(delivery_fee=Decimal("32.00")))
+
+        await create_order(db, _delivery_data(), user_id=None)
+
+        order_arg = db.add.call_args_list[0][0][0]
+        assert order_arg.delivery_fee == Decimal("32.00")
+        assert order_arg.total == Decimal("132.00")
+
+    async def test_a_dynamic_order_with_a_stale_quote_is_refused(
+        self, delivery_pricing
+    ):
+        """F-COU-16: no recent quote to honour → refuse and re-preview, write nothing.
+
+        The basket's quote aged out, so nothing proves the customer saw the fee
+        the fresh re-quote now produces. The order is refused rather than billed a
+        delivery fee nobody agreed to.
+        """
+        find_zone, _ = delivery_pricing
+        find_zone.return_value = _zone("0.00", pricing_mode="dynamic")
+        cart = _cart(items=[_cart_item(_product("100.00"))])
+        cart.delivery_quote_at = datetime.datetime.now(
+            datetime.timezone.utc
+        ) - datetime.timedelta(hours=2)
+        db = _db_for_create(cart, _order_mock())
+
+        with pytest.raises(BadRequestError):
+            await create_order(db, _delivery_data(), user_id=None)
+
+        assert db.add.call_args_list == [], "nothing was written"
 
     async def test_an_unquotable_dynamic_pin_refuses_the_order(self, delivery_pricing):
         """

@@ -62,6 +62,29 @@ class UnserviceableAreaError(BadRequestError):
         super().__init__(detail)
 
 
+class DeliveryPriceChangedError(BadRequestError):
+    """The dynamic-zone fee at order creation no longer matches the quote the
+    customer was shown, and nothing proves they agreed to the new one (F-COU-16).
+
+    Raised only in a dynamically-priced zone, where the fee *is* a live courier
+    quote and can move between the checkout showing one number and the order
+    being placed. The fixed-fee zones — every live zone today — price
+    deterministically off the pin, so re-pricing at creation returns the same
+    figure and this never fires there.
+
+    A `BadRequestError` so it reaches the shopper as a 400 carrying the new fee
+    in its own message rather than a 500, and the checkout re-previews at the
+    current price instead of charging one the customer never saw.
+    """
+
+    def __init__(self, new_fee: Decimal) -> None:
+        self.new_fee = new_fee
+        super().__init__(
+            f"The delivery fee for this address has changed to AED {new_fee:.2f}. "
+            "Please review your order and try again."
+        )
+
+
 def round_up_aed(amount: Decimal) -> Decimal:
     """
     Up to the whole dirham.

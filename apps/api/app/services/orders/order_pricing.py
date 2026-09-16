@@ -31,11 +31,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import rate as money_rate
+from app.models.cart import Cart
 from app.models.delivery_settings import DeliverySettings
 from app.models.order import DeliveryMethodEnum
 from app.services.delivery import delivery_service
@@ -45,16 +47,29 @@ from app.services.pos import pos_order_service, pos_pricing
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DYNAMIC_QUOTE_MAX_AGE",
     "VAT_RATE",
     "OrderTotals",
     "TaxBreakdown",
     "apply_non_registered",
     "compute_order_totals",
     "low_order_fee_for",
+    "reconcile_dynamic_delivery_fee",
     "tax_breakdown",
 ]
 
 ZERO = Decimal("0.00")
+
+#: How old the fee a customer was shown may be before order creation stops
+#: trusting it in a dynamically-priced zone (F-COU-16).
+#:
+#: Only dynamic zones consult this — their fee *is* a live courier quote that can
+#: move between the checkout showing one number and the customer pressing pay.
+#: Long enough that a shopper filling in the address form unhurried is not
+#: bounced to re-preview a fee that has not actually changed; short enough that a
+#: genuinely stale quote from a session left and resumed hours later is not
+#: honoured against a price that may now be wrong.
+DYNAMIC_QUOTE_MAX_AGE = timedelta(minutes=30)
 
 #: UAE standard rate, as a fraction.
 #:
@@ -411,6 +426,98 @@ async def compute_order_totals(
         delivery=priced,
         delivery_fee_known=delivery_fee_known,
         serviceable=serviceable,
+    )
+
+
+def _same_pin(
+    a_lat: Decimal | float | None,
+    a_lng: Decimal | float | None,
+    b_lat: Decimal | float | None,
+    b_lng: Decimal | float | None,
+) -> bool:
+    """Whether two pins are the same point to the precision the quote was stored
+    at — 6dp, which is what `record_cart_estimate` rounds to (~11 cm, finer than
+    any address the map resolves). A missing coordinate on either side is not a
+    match: there is no pin to have agreed a price for."""
+
+    def q(v: Decimal | float | None) -> Decimal | None:
+        return None if v is None else Decimal(str(round(float(v), 6)))
+
+    qa_lat, qa_lng = q(a_lat), q(a_lng)
+    if qa_lat is None or qa_lng is None:
+        return False
+    return qa_lat == q(b_lat) and qa_lng == q(b_lng)
+
+
+def reconcile_dynamic_delivery_fee(
+    totals: OrderTotals,
+    cart: Cart,
+    *,
+    latitude: Decimal | float | None,
+    longitude: Decimal | float | None,
+    now: datetime | None = None,
+) -> OrderTotals:
+    """Charge a dynamic zone the fee the customer was shown, not a fresh re-quote.
+
+    `compute_order_totals(strict=True)` prices delivery from the pin, and in a
+    dynamic zone that means a *live* courier quote — a different call, seconds
+    later, than the one the checkout showed. Left alone the order is billed a fee
+    the customer never saw (F-COU-16). This reconciles the two:
+
+    * The quote parked on the basket at checkout (`delivery_quote_*`) is honoured
+      when it is still the same question: the same pin, quoted within
+      `DYNAMIC_QUOTE_MAX_AGE`. The customer pays the base fee they were shown,
+      and free delivery is re-judged against the basket as it stands now — so
+      adding an item to cross the threshold still earns it.
+    * When there is no such quote — the pin moved, the quote aged out, or the
+      courier never priced it (no stored cost) — nothing proves the customer
+      agreed to the fee now on the order, so it is refused with
+      `DeliveryPriceChangedError` and the checkout re-previews at the real price.
+
+    A no-op for fixed-fee zones, which is every live zone today: their fee is
+    deterministic off the pin, so re-pricing returns the same number. The caller
+    gates on `totals.delivery.is_dynamic`, so this is only reached for a dynamic
+    pin that priced serviceable.
+    """
+    captured_cost = cart.delivery_quote_cost
+    quoted_at = cart.delivery_quote_at
+    if quoted_at is not None and quoted_at.tzinfo is None:
+        # Defensive: the column is `timezone=True`, so a row read from Postgres is
+        # aware — but a hand-built `Cart` in a test may not be.
+        quoted_at = quoted_at.replace(tzinfo=timezone.utc)
+
+    moment = now or datetime.now(timezone.utc)
+    fresh = quoted_at is not None and (moment - quoted_at) <= DYNAMIC_QUOTE_MAX_AGE
+    pin_ok = _same_pin(
+        latitude,
+        longitude,
+        cart.delivery_quote_latitude,
+        cart.delivery_quote_longitude,
+    )
+    if captured_cost is None or not fresh or not pin_ok:
+        raise delivery_service.DeliveryPriceChangedError(totals.delivery_fee)
+
+    # The base fee is rounded up to the dirham exactly as `delivery_service.price`
+    # rounded the fresh quote, so the two are comparable to the fils.
+    honoured_base = delivery_service.round_up_aed(captured_cost)
+    if totals.delivery is not None and honoured_base == totals.delivery.base_fee:
+        # The re-quote landed on the same number the customer saw; nothing to do.
+        return totals
+
+    # Free delivery is a property of the basket, not the quote, so keep whatever
+    # the fresh pricing decided for the order as it stands.
+    free_applied = totals.delivery.free_applied if totals.delivery else False
+    honoured_fee = ZERO if free_applied else honoured_base
+    discounted_subtotal = totals.subtotal - totals.discount_amount
+    return replace(
+        totals,
+        delivery_fee=honoured_fee,
+        total=discounted_subtotal + honoured_fee + totals.low_order_fee,
+        delivery=(
+            replace(totals.delivery, base_fee=honoured_base)
+            if totals.delivery is not None
+            else None
+        ),
     )
 
 
