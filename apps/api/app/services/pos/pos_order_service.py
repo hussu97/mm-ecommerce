@@ -860,6 +860,20 @@ async def void_item(
     item.voided_at = utcnow()
     item.void_reason_id = reason_id
     await db.flush()
+
+    # Voiding the last live line empties the check. Left as-is it would sit at
+    # `created`/`active` with a zero total — a check that owes nothing yet is
+    # still open, which is the limbo an all-void order used to show. So cascade
+    # to a check void, exactly as if the cashier had voided the whole check: the
+    # order becomes VOID + cancelled. Money-safe — only when nothing is held; a
+    # check carrying a payment keeps the line void and leaves the explicit void
+    # flow (which refunds first) to end it.
+    order = await get_order(db, order.id)
+    if (
+        all(line.status == OrderItemStatusEnum.VOID.value for line in order.items)
+        and _net_paid(order) == 0
+    ):
+        return await _void_open_check(db, order=order, user=user, reason_id=reason_id)
     return await recalculate(db, order)
 
 
@@ -1721,6 +1735,55 @@ async def _refund_all_payments(db: AsyncSession, *, order: Order, user: User) ->
         remaining = money(remaining - take)
 
 
+async def _finish_void(
+    db: AsyncSession, *, order: Order, user: User, reason_id: uuid.UUID | None
+) -> Order:
+    """The shared tail of every check void: stamp the void, mark every line void,
+    free the table and reprice to nothing. The caller has already moved the order
+    through the lifecycle (and, for a post-sale void, refunded and restocked)."""
+    order.voided_at = utcnow()
+    order.void_reason_id = reason_id
+    order.closer_id = user.id
+    for item in order.items:
+        item.status = OrderItemStatusEnum.VOID.value
+        item.voided_by_id = user.id
+        item.voided_at = utcnow()
+
+    await _release_table(db, order)
+    await db.flush()
+    # Re-price with every line now void: the check's `balance_due` used to stay
+    # at the full total after a void, which is a positive balance held against a
+    # cancelled sale. `recalculate` reprices from the (now empty) live lines, so
+    # the voided check owes nothing.
+    return await recalculate(db, order)
+
+
+async def _void_open_check(
+    db: AsyncSession, *, order: Order, user: User, reason_id: uuid.UUID | None
+) -> Order:
+    """Void an OPEN counter check: cancel it through the lifecycle, then finish.
+
+    The caller has already confirmed the check is open and holds no money — an
+    open check consumed no inventory and took no payment, so there is nothing to
+    restock or refund, unlike the post-sale void in ``void_order``.
+    """
+    # Register-side ending first, so `transition`'s own pairing finds it done.
+    order.pos_status = PosOrderStatusEnum.VOID.value
+    with acting_as(
+        StatusSourceEnum.POS.value,
+        actor_id=user.id,
+        actor_label=user.email,
+        note="check voided",
+    ):
+        await order_lifecycle.transition(
+            db,
+            order,
+            OrderStatusEnum.CANCELLED,
+            on_invalid="skip",
+        )
+    return await _finish_void(db, order=order, user=user, reason_id=reason_id)
+
+
 async def void_order(
     db: AsyncSession, *, order: Order, user: User, reason_id: uuid.UUID | None = None
 ) -> Order:
@@ -1788,22 +1851,9 @@ async def void_order(
     if post_sale:
         await inventory_service.restock_for_void(db, order=order, user=user)
 
-    order.voided_at = utcnow()
-    order.void_reason_id = reason_id
-    order.closer_id = user.id
-    for item in order.items:
-        item.status = OrderItemStatusEnum.VOID.value
-        item.voided_by_id = user.id
-        item.voided_at = utcnow()
-
-    await _release_table(db, order)
-    await db.flush()
-    # Re-price with every line now void: the check's `balance_due` used to stay
-    # at the full total after a void, which is a positive balance held against a
-    # cancelled sale. `recalculate` reprices from the (now empty) live lines, so
-    # the voided check owes nothing — belt to the `_assert_open` guard's braces
-    # on `record_payment`.
-    return await recalculate(db, order)
+    # Belt to the `_assert_open` guard's braces on `record_payment`: the shared
+    # tail reprices the now-empty check to a zero balance.
+    return await _finish_void(db, order=order, user=user, reason_id=reason_id)
 
 
 async def split_order(
