@@ -22,6 +22,8 @@ from app.core.deps import get_db
 from app.core.permissions import require
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
+from app.models.payment_method import PaymentMethod
+from app.models.pos_order import OrderPayment
 from app.models.user import User
 
 from ._shared import _ANALYTICS_TTL, _date_range
@@ -439,19 +441,58 @@ async def get_revenue_breakdown(
     # every card order written before methods and gateways were split holds
     # `stripe` in that column — leaving it raw would show a permanent phantom
     # third slice that shrinks as old orders age out of the window.
+    #
+    # A counter sale split across tenders stamps `payment_method = "mixed"`,
+    # which would otherwise be an opaque slice hiding real cash and card money.
+    # So mixed orders are excluded here and expanded below from their actual
+    # `order_payments` tenders; every other order (online/gateway included) keeps
+    # its scalar attribution on `Order.total`, unchanged.
     method_stmt = (
         select(
             Order.payment_method.label("label"),
             func.count(Order.id).label("orders"),
             func.coalesce(func.sum(Order.total), 0).label("revenue"),
         )
-        .where(*base_filter)
+        # NULL-safe: `!= "mixed"` is NULL for an order with no payment_method and
+        # would silently drop it; `is_distinct_from` keeps it (labelled unknown).
+        .where(*base_filter, Order.payment_method.is_distinct_from("mixed"))
         .group_by(Order.payment_method)
     )
     method_rows = (await db.execute(method_stmt)).all()
+
+    # The real split of the mixed orders, grouped by tender type from
+    # `order_payments`. Refund tenders are left out so a mixed order's cash + card
+    # equals its `Order.total`, matching the gross semantics of every other slice.
+    # A mixed order contributes to both its cash and its card slice, so it is
+    # counted once per type it used (distinct order ids), which is what "how many
+    # orders had a cash tender" means.
+    mixed_stmt = (
+        select(
+            PaymentMethod.type.label("label"),
+            func.count(func.distinct(OrderPayment.order_id)).label("orders"),
+            func.coalesce(func.sum(OrderPayment.amount), 0).label("revenue"),
+        )
+        .select_from(OrderPayment)
+        .join(Order, Order.id == OrderPayment.order_id)
+        .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
+        .where(
+            *base_filter,
+            Order.payment_method == "mixed",
+            OrderPayment.is_refund.is_(False),
+        )
+        .group_by(PaymentMethod.type)
+    )
+    mixed_rows = (await db.execute(mixed_stmt)).all()
+
     by_method = _merged(
-        (_payment_method_label(r.label), int(r.orders), float(r.revenue))
-        for r in method_rows
+        [
+            (_payment_method_label(r.label), int(r.orders), float(r.revenue))
+            for r in method_rows
+        ]
+        + [
+            (_payment_method_label(r.label), int(r.orders), float(r.revenue))
+            for r in mixed_rows
+        ]
     )
 
     # Who settled the card orders. Cash is excluded: it has no gateway, and a

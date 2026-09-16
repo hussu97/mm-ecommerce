@@ -55,6 +55,9 @@ export function SalesTab({ window }: { window: Window }) {
               // The fuller split: each marketplace apart, and the website divided
               // into delivery vs store pickup (which `source` folds together).
               { value: 'channel', label: 'Sales channel' },
+              // Cash vs card, read from the tenders — the only view that breaks a
+              // "part cash, part card" counter sale into its real portions.
+              { value: 'tender', label: 'Payment (cash/card)' },
               { value: 'legal_entity', label: 'Legal entity (trade license)' },
               { value: 'business_date', label: 'Day' },
               { value: 'hour', label: 'Hour of day' },

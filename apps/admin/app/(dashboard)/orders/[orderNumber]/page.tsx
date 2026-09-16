@@ -970,10 +970,29 @@ export default function OrderDetailPage() {
                 that is the one worth seeing when reconciling a payout or
                 chasing a payment that a failover moved. A cash order has no
                 gateway, so the second line stays off it. */}
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Payment</dt>
-              <dd className="text-gray-700 capitalize">{order.payment_method ?? '—'}</dd>
-            </div>
+            {/* When the counter split the balance across tenders (part cash,
+                part card), the scalar payment_method is just "mixed" — so show
+                each tender and what landed on it. A single-tender or gateway
+                order keeps the one-line method it always had. */}
+            {details && details.tenders.length > 1 ? (
+              <div className="flex justify-between gap-4">
+                <dt className="text-gray-500 shrink-0">Payment</dt>
+                <dd className="text-gray-700 text-right">
+                  {details.tenders.map((t, i: number) => (
+                    <span key={i} className="block">
+                      <span className="capitalize">{t.method_name}</span>{' '}
+                      {formatCurrency(Number(t.amount))}
+                      {t.is_refund && <span className="text-red-700"> (refund)</span>}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ) : (
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Payment</dt>
+                <dd className="text-gray-700 capitalize">{order.payment_method ?? '—'}</dd>
+              </div>
+            )}
             {order.payment_method !== 'cod' && (
               <div className="flex justify-between">
                 <dt className="text-gray-500">Gateway</dt>

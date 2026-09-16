@@ -39,7 +39,7 @@ from app.models.order import Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.order_driver import OrderDriver
 from app.models.order_status_event import OrderStatusEvent, StatusSourceEnum, acting_as
-from app.models.pos_order import OrderSourceEnum
+from app.models.pos_order import OrderPayment, OrderSourceEnum
 from app.models.user import User
 from app.schemas.courier import CourierBadge
 from app.schemas.fulfilment import FulfilmentResponse
@@ -53,6 +53,7 @@ from app.schemas.order import (
     OrderRefundResponse,
     OrderResponse,
     OrderStatusUpdate,
+    OrderTenderView,
     OrderTimelineEntry,
 )
 from app.schemas.order_preview import OrderPreviewRequest, OrderPreviewResponse
@@ -1503,9 +1504,36 @@ async def order_admin_details(
 
     entries.sort(key=lambda e: (e.at or _FAR_FUTURE, e.sequence or 0))
 
+    # The per-tender breakdown, resolved to each method's type and name. This is
+    # the split the scalar `order.payment_method` ("mixed") hides: a counter sale
+    # paid part cash, part card has two rows here. Online/aggregator orders settle
+    # through the gateway with no `order_payments` rows and come back empty.
+    # `OrderPayment.payment_method` is eager (selectin), so no extra round trip.
+    tenders = [
+        OrderTenderView(
+            method_type=(p.payment_method.type if p.payment_method else "other"),
+            method_name=(p.payment_method.name if p.payment_method else "Unknown"),
+            amount=p.amount,
+            tendered=p.tendered,
+            change_given=p.change_given,
+            is_refund=p.is_refund,
+            recorded_at=p.recorded_at,
+        )
+        for p in (
+            await db.execute(
+                select(OrderPayment)
+                .where(OrderPayment.order_id == order.id)
+                .order_by(OrderPayment.recorded_at)
+            )
+        )
+        .scalars()
+        .all()
+    ]
+
     return OrderAdminDetails(
         branch=OrderBranchSummary.model_validate(branch) if branch else None,
         aggregator_payment_type=order.aggregator_payment_type,
         admin_notes=order.admin_notes,
+        tenders=tenders,
         timeline=entries,
     )

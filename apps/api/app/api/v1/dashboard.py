@@ -49,6 +49,8 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.order_delivery import OrderDelivery
+from app.models.payment_method import PaymentMethod
+from app.models.pos_order import OrderPayment
 from app.schemas.dashboard import (
     BreakdownRow,
     CourierBreakdownRow,
@@ -156,6 +158,90 @@ async def _breakdown(
         out.append(
             BreakdownRow(label=label, orders=int(count), revenue=float(money(revenue)))
         )
+    return out
+
+
+#: Human labels for the payment breakdown, by lower-cased tender key. Unlisted
+#: values fall back to their title-cased raw string, so a new processor still
+#: shows rather than vanishing.
+_PAYMENT_LABELS = {
+    "card": "Card",
+    "cod": "Cash on delivery",
+    "cash": "Cash",
+    "online": "Online",
+    "other": "Other",
+}
+
+
+async def _payment_breakdown(
+    db: AsyncSession, *, start, end, statuses=None, couriers=None
+) -> list[BreakdownRow]:
+    """Orders and revenue by payment method, with split counter sales expanded.
+
+    A counter sale paid part cash, part card stamps `payment_method = "mixed"`; a
+    single "Mixed" slice hides the real money, so those orders are dropped from
+    the scalar grouping and re-added from their actual `order_payments` tenders
+    (grouped by tender type, refunds excluded so cash + card equals the order
+    total). Every other order — online and gateway included — keeps its scalar
+    attribution on `Order.total`, exactly as before.
+    """
+    scalar_rows = (
+        await db.execute(
+            select(
+                Order.payment_method,
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0),
+            )
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                # NULL-safe: a plain `!= "mixed"` is NULL for an order with no
+                # payment_method and would drop it; is_distinct_from keeps it.
+                Order.payment_method.is_distinct_from("mixed"),
+                *_filters(statuses, couriers),
+            )
+            .group_by(Order.payment_method)
+        )
+    ).all()
+
+    mixed_rows = (
+        await db.execute(
+            select(
+                PaymentMethod.type,
+                func.count(func.distinct(OrderPayment.order_id)),
+                func.coalesce(func.sum(OrderPayment.amount), 0),
+            )
+            .select_from(OrderPayment)
+            .join(Order, Order.id == OrderPayment.order_id)
+            .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                Order.payment_method == "mixed",
+                OrderPayment.is_refund.is_(False),
+                *_filters(statuses, couriers),
+            )
+            .group_by(PaymentMethod.type)
+        )
+    ).all()
+
+    totals: dict[str, list] = {}
+    for value, count, revenue in list(scalar_rows) + list(mixed_rows):
+        raw = getattr(value, "value", value)
+        key = str(raw).lower() if raw else "unknown"
+        bucket = totals.setdefault(key, [0, 0.0])
+        bucket[0] += int(count)
+        bucket[1] += float(money(revenue))
+
+    out = [
+        BreakdownRow(
+            label=_PAYMENT_LABELS.get(key, key.replace("_", " ").title()),
+            orders=orders,
+            revenue=revenue,
+        )
+        for key, (orders, revenue) in totals.items()
+    ]
+    out.sort(key=lambda b: b.orders, reverse=True)
     return out
 
 
@@ -553,12 +639,10 @@ async def dashboard_today(
         statuses=picked,
         couriers=carriers,
     )
-    by_payment = await _breakdown(
+    by_payment = await _payment_breakdown(
         db,
-        Order.payment_method,
         start=start,
         end=end,
-        labels={"card": "Card", "cod": "Cash on delivery"},
         statuses=picked,
         couriers=carriers,
     )

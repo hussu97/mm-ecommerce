@@ -203,11 +203,21 @@ _DISCOUNT_SOURCES = {
 _TABLE_DIMENSIONS = {"section"}
 
 
+#: Dimensions reached through the tenders recorded against an order — the
+#: cash-vs-card split, read from `order_payments` rather than the order total.
+#: Only counter sales carry tenders (online and aggregator orders settle through
+#: the gateway with no `order_payments` rows), so this is the counter's tender
+#: mix — and the one place the console can see a split ("part cash, part card")
+#: sale broken into its real portions instead of an opaque "mixed".
+_TENDER_DIMENSIONS = {"tender"}
+
+
 SUPPORTED_DIMENSIONS = (
     set(_ORDER_DIMENSIONS)
     | _LINE_DIMENSIONS
     | set(_DISCOUNT_SOURCES)
     | _TABLE_DIMENSIONS
+    | _TENDER_DIMENSIONS
     | {"product", "category", "modifier_option", "delivery_zone"}
 )
 

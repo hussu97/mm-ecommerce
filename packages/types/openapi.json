@@ -16217,7 +16217,7 @@
         "type": "object"
       },
       "OrderAdminDetails": {
-        "description": "The admin-only enrichment for the order-details page: the branch, the\nmarketplace payment type, the internal note, and the unified status timeline.\nKept off the customer-facing `OrderResponse` so widening it never leaks admin\ncontext.",
+        "description": "The admin-only enrichment for the order-details page: the branch, the\nmarketplace payment type, the internal note, the per-tender payment\nbreakdown, and the unified status timeline. Kept off the customer-facing\n`OrderResponse` so widening it never leaks admin context.",
         "properties": {
           "admin_notes": {
             "anyOf": [
@@ -16250,6 +16250,14 @@
                 "type": "null"
               }
             ]
+          },
+          "tenders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OrderTenderView"
+            },
+            "title": "Tenders",
+            "type": "array"
           },
           "timeline": {
             "items": {
@@ -18623,6 +18631,60 @@
           "amount"
         ],
         "title": "OrderTaxResponse",
+        "type": "object"
+      },
+      "OrderTenderView": {
+        "description": "One tender recorded against an order (a row of `order_payments`), resolved\nto its method's type and name for display.\n\nAn order paid part cash, part card has two of these \u2014 the split the scalar\n`Order.payment_method` (\"mixed\") collapses. Admin-only, so the per-tender\nledger stays off the customer-facing `OrderResponse`.",
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "change_given": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Change Given",
+            "type": "string"
+          },
+          "is_refund": {
+            "default": false,
+            "title": "Is Refund",
+            "type": "boolean"
+          },
+          "method_name": {
+            "title": "Method Name",
+            "type": "string"
+          },
+          "method_type": {
+            "title": "Method Type",
+            "type": "string"
+          },
+          "recorded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded At"
+          },
+          "tendered": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Tendered",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method_type",
+          "method_name",
+          "amount",
+          "tendered",
+          "change_given"
+        ],
+        "title": "OrderTenderView",
         "type": "object"
       },
       "OrderTimelineEntry": {

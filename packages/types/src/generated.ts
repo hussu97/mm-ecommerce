@@ -14107,9 +14107,9 @@ export interface components {
         /**
          * OrderAdminDetails
          * @description The admin-only enrichment for the order-details page: the branch, the
-         *     marketplace payment type, the internal note, and the unified status timeline.
-         *     Kept off the customer-facing `OrderResponse` so widening it never leaks admin
-         *     context.
+         *     marketplace payment type, the internal note, the per-tender payment
+         *     breakdown, and the unified status timeline. Kept off the customer-facing
+         *     `OrderResponse` so widening it never leaks admin context.
          */
         OrderAdminDetails: {
             /** Admin Notes */
@@ -14117,6 +14117,11 @@ export interface components {
             /** Aggregator Payment Type */
             aggregator_payment_type?: string | null;
             branch?: components["schemas"]["OrderBranchSummary"] | null;
+            /**
+             * Tenders
+             * @default []
+             */
+            tenders: components["schemas"]["OrderTenderView"][];
             /** Timeline */
             timeline: components["schemas"]["OrderTimelineEntry"][];
         };
@@ -14868,6 +14873,34 @@ export interface components {
             tax_id: string | null;
             /** Taxable Amount */
             taxable_amount: string;
+        };
+        /**
+         * OrderTenderView
+         * @description One tender recorded against an order (a row of `order_payments`), resolved
+         *     to its method's type and name for display.
+         *
+         *     An order paid part cash, part card has two of these — the split the scalar
+         *     `Order.payment_method` ("mixed") collapses. Admin-only, so the per-tender
+         *     ledger stays off the customer-facing `OrderResponse`.
+         */
+        OrderTenderView: {
+            /** Amount */
+            amount: string;
+            /** Change Given */
+            change_given: string;
+            /**
+             * Is Refund
+             * @default false
+             */
+            is_refund: boolean;
+            /** Method Name */
+            method_name: string;
+            /** Method Type */
+            method_type: string;
+            /** Recorded At */
+            recorded_at?: string | null;
+            /** Tendered */
+            tendered: string;
         };
         /**
          * OrderTimelineEntry

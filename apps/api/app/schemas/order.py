@@ -635,13 +635,35 @@ class OrderTimelineEntry(BaseModel):
     sequence: int | None = None
 
 
+class OrderTenderView(BaseModel):
+    """One tender recorded against an order (a row of `order_payments`), resolved
+    to its method's type and name for display.
+
+    An order paid part cash, part card has two of these — the split the scalar
+    `Order.payment_method` ("mixed") collapses. Admin-only, so the per-tender
+    ledger stays off the customer-facing `OrderResponse`."""
+
+    method_type: str
+    method_name: str
+    amount: Decimal
+    tendered: Decimal
+    change_given: Decimal
+    is_refund: bool = False
+    recorded_at: datetime | None = None
+
+
 class OrderAdminDetails(BaseModel):
     """The admin-only enrichment for the order-details page: the branch, the
-    marketplace payment type, the internal note, and the unified status timeline.
-    Kept off the customer-facing `OrderResponse` so widening it never leaks admin
-    context."""
+    marketplace payment type, the internal note, the per-tender payment
+    breakdown, and the unified status timeline. Kept off the customer-facing
+    `OrderResponse` so widening it never leaks admin context."""
 
     branch: OrderBranchSummary | None = None
     aggregator_payment_type: str | None = None
     admin_notes: str | None = None
+    #: Every tender on the order, resolved to method type + name. Empty for an
+    #: online/aggregator order settled through the gateway (those have no
+    #: `order_payments` rows); one or more for a counter sale, and two when the
+    #: cashier split it across cash and card.
+    tenders: list[OrderTenderView] = []
     timeline: list[OrderTimelineEntry]

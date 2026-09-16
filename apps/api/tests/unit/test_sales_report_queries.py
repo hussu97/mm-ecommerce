@@ -142,6 +142,23 @@ async def test_by_item_keeps_null_status_lines(dimension):
     assert "status != 'void'" not in literal and "status <> 'void'" not in literal
 
 
+@pytest.mark.asyncio
+async def test_tender_dimension_reads_order_payments_by_type():
+    """The tender (cash/card) breakdown must come from `order_payments` joined to
+    `payment_methods` and grouped by tender type — not from the order's scalar
+    `payment_method`, which collapses a split sale to "mixed"."""
+    literal = str(
+        (await _one_statement("tender")).compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    ).lower()
+    assert "order_payments" in literal
+    assert "payment_methods" in literal
+    assert "group by payment_methods.type" in literal
+    # Refunds net against takings via a signed amount.
+    assert "is_refund" in literal
+
+
 async def _one_statement(dimension: str):
     """Return the (single) statement `sales_by_dimension` builds for a dimension,
     by capturing it rather than executing."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Numeric, func, select
+from sqlalchemy import Numeric, case, func, select
 from sqlalchemy import null as sa_null
 from sqlalchemy import true as sa_true
 from sqlalchemy.dialects.postgresql import JSONB
@@ -14,9 +14,11 @@ from app.core.money import money
 from app.models.category import Category
 from app.models.order import Order, OrderItem
 from app.models.order_delivery import OrderDelivery
+from app.models.payment_method import PaymentMethod
 from app.models.pos_order import (
     OrderCharge,
     OrderDiscount,
+    OrderPayment,
     OrderTax,
 )
 from app.models.pos_table import PosTable, Section
@@ -29,6 +31,7 @@ from ._base import (
     _LINE_DIMENSIONS,
     _ORDER_DIMENSIONS,
     _TABLE_DIMENSIONS,
+    _TENDER_DIMENSIONS,
     SUPPORTED_DIMENSIONS,
     VOID,
     ZERO,
@@ -206,6 +209,11 @@ async def sales_by_dimension(
             db, branch_id=branch_id, date_from=date_from, date_to=date_to, limit=limit
         )
 
+    if dimension in _TENDER_DIMENSIONS:
+        return await _sales_by_tender(
+            db, branch_id=branch_id, date_from=date_from, date_to=date_to, limit=limit
+        )
+
     if dimension in _DISCOUNT_SOURCES or dimension in _LINE_DIMENSIONS:
         return await _sales_by_related(
             db,
@@ -374,6 +382,67 @@ async def _sales_by_related(
             "discounts": money(total) if dimension == "discount" else money(0),
         }
         for name, count, total in rows
+    ]
+
+
+#: Tender types in the words the report shows, keyed by `payment_methods.type`.
+_TENDER_LABELS = {"cash": "Cash", "card": "Card", "online": "Online", "other": "Other"}
+
+
+async def _sales_by_tender(
+    db: AsyncSession,
+    *,
+    branch_id: uuid.UUID | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+) -> list[dict]:
+    """
+    The money taken by tender type — the cash-vs-card split, read from
+    `order_payments` rather than the order total.
+
+    Only counter sales carry tenders (online and aggregator orders settle through
+    the gateway and write no `order_payments` rows), so this is the counter's
+    tender mix — and the only place the console sees a split "part cash, part
+    card" sale broken into its real portions instead of the opaque `mixed` that
+    `Order.payment_method` collapses it to. A refund tender nets against takings
+    via its signed amount, matching how the till report totals a drawer.
+    """
+    signed = case(
+        (OrderPayment.is_refund.is_(True), -OrderPayment.amount),
+        else_=OrderPayment.amount,
+    )
+    stmt = (
+        _scope(
+            select(
+                PaymentMethod.type.label("key"),
+                func.count(func.distinct(OrderPayment.order_id)),
+                func.coalesce(func.sum(signed), 0),
+            ),
+            branch_id=branch_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        .select_from(Order)
+        .join(OrderPayment, OrderPayment.order_id == Order.id)
+        .join(PaymentMethod, PaymentMethod.id == OrderPayment.payment_method_id)
+        .where(_COMPLETED_SALE)
+        .group_by(PaymentMethod.type)
+        .order_by(func.coalesce(func.sum(signed), 0).desc())
+        .limit(limit)
+    )
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        {
+            "key": str(key) if key is not None else "unknown",
+            "label": _TENDER_LABELS.get(
+                str(key), str(key).title() if key else "Unknown"
+            ),
+            "orders": int(count or 0),
+            "net_sales": money(total),
+        }
+        for key, count, total in rows
     ]
 
 
