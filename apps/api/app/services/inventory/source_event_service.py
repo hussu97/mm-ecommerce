@@ -396,9 +396,15 @@ async def retry_event(
     event.processed_at = None
     await db.flush()
 
-    if not plan.get("lines"):
-        # A recipe is still missing everywhere; keep it recoverable.
+    if not plan.get("lines") and warnings:
+        # A recipe is still genuinely missing (the plan is empty because expansion
+        # WARNED): keep it PENDING so a recipe activated later re-snapshots and posts.
         return None
+    # Either lines expanded, OR the order draws nothing with nothing missing (every
+    # line is a `consumes_stock=False` product, or is covered by its modifiers) —
+    # post to CLOSE the event as a clean no-movement rather than leave it PENDING and
+    # re-snapshot it every sweep forever. Mirrors accept_order's
+    # `plan.get("lines") or not warnings` gate.
     return await _post_or_record_exception(
         db, event=event, order=order, user=user, already_locked=True
     )

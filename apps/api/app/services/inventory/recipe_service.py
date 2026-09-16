@@ -629,6 +629,29 @@ async def snapshot_order(
         .all()
     )
 
+    # Products that draw NO tracked inventory (`consumes_stock=False`): their recipe
+    # is not expected and not expanded, so a line for one raises no `missing_recipe`
+    # warning and the order can close as a clean no-movement. Modifier options on
+    # such a line still expand — a non-consuming base ("Fudge Brownies") whose
+    # consumption lives on its quantity option is exactly why the two are separate.
+    line_product_ids = {
+        line.product_id for line in items if line.product_id is not None
+    }
+    non_consuming: set[uuid.UUID] = set()
+    if line_product_ids:
+        non_consuming = set(
+            (
+                await db.execute(
+                    select(Product.id).where(
+                        Product.id.in_(line_product_ids),
+                        Product.consumes_stock.is_(False),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     catalog = await load_active_catalog(db)
 
     async def merge(
@@ -662,12 +685,13 @@ async def snapshot_order(
         billable = Decimal(str(max(line.quantity - (line.returned_quantity or 0), 0)))
         if billable <= 0:
             continue
-        await merge(
-            RecipeOwnerKindEnum.PRODUCT.value,
-            line.product_id,
-            billable,
-            f"product {line.product_id}",
-        )
+        if line.product_id not in non_consuming:
+            await merge(
+                RecipeOwnerKindEnum.PRODUCT.value,
+                line.product_id,
+                billable,
+                f"product {line.product_id}",
+            )
         for option in line.selected_options_snapshot or []:
             raw_id = option.get("modifier_option_id")
             if not raw_id:
