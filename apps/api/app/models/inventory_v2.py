@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     BigInteger,
@@ -27,9 +27,13 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from .inventory import InventoryItem
 
 
 class InventoryItemKindEnum(str, enum.Enum):
@@ -316,7 +320,6 @@ class RecipeLine(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     quantity: Mapped[Any] = mapped_column(Numeric(20, 8), nullable=False)
-    ingredient_unit: Mapped[str] = mapped_column(String(30), nullable=False)
     yield_percentage: Mapped[Any] = mapped_column(
         Numeric(8, 6), nullable=False, server_default="1"
     )
@@ -331,6 +334,18 @@ class RecipeLine(Base, UUIDMixin, TimestampMixin):
     )
     version: Mapped[RecipeVersion] = relationship(
         "RecipeVersion", back_populates="lines"
+    )
+    #: The inventory item this line consumes. Eager-loaded so the derived
+    #: ``ingredient_unit`` below resolves without a lazy load under async.
+    item: Mapped["InventoryItem"] = relationship(
+        "InventoryItem", lazy="selectin", viewonly=True
+    )
+    #: The recipe is authored in the item's *ingredient* unit, but that unit is
+    #: not frozen onto the line — it is read live from the item so that changing
+    #: an item's ingredient unit (and its storage→ingredient factor, which cost
+    #: and consumption already read live) is reflected by every recipe at once.
+    ingredient_unit: AssociationProxy[str] = association_proxy(
+        "item", "ingredient_unit"
     )
 
 

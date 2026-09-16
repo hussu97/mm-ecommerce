@@ -223,7 +223,7 @@ async def list_recipe_owners(
                     RecipeVersion.status,
                     InventoryItem.name,
                     RecipeLine.quantity,
-                    RecipeLine.ingredient_unit,
+                    InventoryItem.ingredient_unit,
                 )
                 .select_from(RecipeVersion)
                 .join(RecipeLine, RecipeLine.recipe_version_id == RecipeVersion.id)
@@ -397,7 +397,7 @@ async def list_active_inventory_recipes(db: AsyncSession) -> list[dict]:
                     RecipeLine.recipe_version_id,
                     InventoryItem.name,
                     RecipeLine.quantity,
-                    RecipeLine.ingredient_unit,
+                    InventoryItem.ingredient_unit,
                     RecipeLine.yield_percentage,
                 )
                 .select_from(RecipeLine)

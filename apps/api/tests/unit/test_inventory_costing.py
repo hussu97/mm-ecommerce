@@ -217,7 +217,6 @@ async def test_recursive_yield_loss_reaches_the_stocked_raw_material():
         RecipeLine(
             item_id=prep_id,
             quantity=D("1"),
-            ingredient_unit="unit",
             yield_percentage=D("0.5"),
         )
     ]
@@ -226,7 +225,6 @@ async def test_recursive_yield_loss_reaches_the_stocked_raw_material():
         RecipeLine(
             item_id=flour_id,
             quantity=D("10"),
-            ingredient_unit="gram",
             yield_percentage=D("0.8"),
         )
     ]

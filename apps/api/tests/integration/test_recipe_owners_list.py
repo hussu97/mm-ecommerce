@@ -79,7 +79,6 @@ async def _recipe(db, *, owner_kind, owner_id, status, ingredient_id):
             recipe_version_id=version.id,
             item_id=ingredient_id,
             quantity=Decimal("2"),
-            ingredient_unit="g",
             yield_percentage=Decimal("1"),
         )
     )

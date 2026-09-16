@@ -143,7 +143,14 @@ async def get_recipe(db: AsyncSession, kind: str, owner_id: uuid.UUID) -> Recipe
     stmt = (
         select(Recipe)
         .where(Recipe.owner_kind == kind, column == owner_id)
-        .options(selectinload(Recipe.versions).selectinload(RecipeVersion.lines))
+        .options(
+            selectinload(Recipe.versions)
+            .selectinload(RecipeVersion.lines)
+            .selectinload(RecipeLine.item)
+        )
+        # See _load_version: guarantee the item eager load runs for in-session
+        # objects so the live ingredient_unit serialises without a lazy load.
+        .execution_options(populate_existing=True)
     )
     return (await db.execute(stmt)).scalars().unique().one_or_none()
 
@@ -160,7 +167,7 @@ async def active_version(
             column == owner_id,
             RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
         )
-        .options(selectinload(RecipeVersion.lines))
+        .options(selectinload(RecipeVersion.lines).selectinload(RecipeLine.item))
     )
     return (await db.execute(stmt)).scalars().unique().one_or_none()
 
@@ -299,7 +306,6 @@ async def create_draft(
                 recipe_version_id=existing_draft.id,
                 item_id=item.id,
                 quantity=quantity,
-                ingredient_unit=item.ingredient_unit,
                 yield_percentage=yield_percentage,
                 inactive_in_order_types=input_line.inactive_in_order_types,
                 display_order=input_line.display_order or position,
@@ -315,7 +321,13 @@ async def _load_version(db: AsyncSession, version_id: uuid.UUID) -> RecipeVersio
     stmt = (
         select(RecipeVersion)
         .where(RecipeVersion.id == version_id)
-        .options(selectinload(RecipeVersion.lines))
+        .options(selectinload(RecipeVersion.lines).selectinload(RecipeLine.item))
+        # ``populate_existing`` forces the eager loads to run even when the
+        # version and its lines were just created in this session — otherwise
+        # the identity map hands back the pending line with its ``item`` (whose
+        # ingredient_unit the response reads) unloaded, and serialising it under
+        # async raises MissingGreenlet.
+        .execution_options(populate_existing=True)
     )
     version = (await db.execute(stmt)).scalars().unique().one_or_none()
     if version is None:
@@ -334,7 +346,7 @@ async def _inventory_graph(
             Recipe.owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value,
             RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
         )
-        .options(selectinload(RecipeVersion.lines))
+        .options(selectinload(RecipeVersion.lines).selectinload(RecipeLine.item))
     )
     graph: dict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
     for recipe, version in (await db.execute(stmt)).unique().all():
@@ -424,10 +436,6 @@ async def _validate_candidate(db: AsyncSession, candidate: RecipeVersion) -> Rec
         item = await db.get(InventoryItem, line.item_id)
         if item is None:
             raise BadRequestError(f"Inventory item {line.item_id} not found")
-        if item.ingredient_unit != line.ingredient_unit:
-            raise ConflictError(
-                f"{item.name} now uses {item.ingredient_unit}; recreate the draft with current units"
-            )
         if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value:
             nested = await active_version(
                 db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item.id
@@ -580,7 +588,7 @@ async def load_active_catalog(db: AsyncSession) -> ActiveRecipeCatalog:
         select(Recipe, RecipeVersion)
         .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
         .where(RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value)
-        .options(selectinload(RecipeVersion.lines))
+        .options(selectinload(RecipeVersion.lines).selectinload(RecipeLine.item))
     )
     rows = (await db.execute(stmt)).unique().all()
     versions: dict[tuple[str, uuid.UUID], RecipeVersion] = {}

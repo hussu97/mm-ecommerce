@@ -89,7 +89,6 @@ async def _recipe(
             recipe_version_id=version.id,
             item_id=ingredient_id,
             quantity=Decimal("2"),
-            ingredient_unit="g",
             yield_percentage=Decimal("0.5"),
         )
     )

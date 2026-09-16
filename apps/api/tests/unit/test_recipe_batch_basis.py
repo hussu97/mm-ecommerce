@@ -43,7 +43,6 @@ def _line(item_id: uuid.UUID, quantity: str) -> RecipeLine:
     return RecipeLine(
         item_id=item_id,
         quantity=Decimal(quantity),
-        ingredient_unit="g",
         yield_percentage=Decimal("1"),
         display_order=0,
         inactive_in_order_types=[],
