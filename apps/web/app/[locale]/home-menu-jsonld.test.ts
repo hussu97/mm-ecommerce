@@ -33,6 +33,7 @@ function category(id: string, slug: string): Category {
     display_order: 0,
     is_active: true,
     product_count: 1,
+    updated_at: '2026-01-01T00:00:00Z',
   };
 }
 

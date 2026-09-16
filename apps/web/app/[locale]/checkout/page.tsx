@@ -17,6 +17,7 @@ import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import { useTranslation } from '@/lib/i18n/TranslationProvider';
+import { formatPrice } from '@/lib/utils';
 import { analytics, failureReason } from '@/lib/analytics';
 import { DEFAULT_ADDRESS_LABEL } from '@/lib/guest-addresses';
 import { withFallback } from '@/lib/i18n/fallback';
@@ -130,7 +131,7 @@ function isPromoRefusal(err: unknown, hasPromo: boolean): boolean {
 const SHOP_TZ = 'Asia/Dubai';
 
 function formatEstimate(
-  estimate: { at: string; precision: 'time' | 'day' },
+  estimate: { at: string; precision: 'time' | 'day' | 'day_by' | 'exact' },
   locale: string,
   t: (k: string, p?: Record<string, string | number>) => string,
 ): string {
@@ -162,6 +163,15 @@ function formatEstimate(
     minute: '2-digit',
     timeZone: SHOP_TZ,
   }).format(at);
+  // `day_by` is a partner van's UPPER BOUND ("before 10 PM"), not an appointment.
+  // Handed to the time branch it rendered "Wed 12 Aug, 10:00 PM" — a promise of
+  // an exact slot the shop never made (the documented past bug). Reuse the
+  // seeded `order.estimate_by_time` ("{day} before {time}") the order/track
+  // panels already use for this precision, so no new i18n key is owed. `exact`
+  // is a real appointment and stays on the time phrasing.
+  if (estimate.precision === 'day_by') {
+    return t('order.estimate_by_time', { day, time });
+  }
   return t('checkout.delivery_by_time', { day, time });
 }
 
@@ -1245,13 +1255,13 @@ function CheckoutContent() {
               ) : freeApplied && (baseFee ?? 0) > 0 ? (
                 // The saving is the point, so show what was avoided.
                 <span className="flex items-center gap-2">
-                  <span className="text-gray-400 line-through">{(baseFee ?? 0).toFixed(2)} AED</span>
+                  <span className="text-gray-400 line-through">{formatPrice(baseFee ?? 0, locale)}</span>
                   <span className="text-green-600 font-medium">{t('common.free')}</span>
                 </span>
               ) : homeDeliveryFee === 0 ? (
                 <span className="text-green-600">{t('common.free')}</span>
               ) : (
-                <span className="text-gray-700">{homeDeliveryFee.toFixed(2)} AED</span>
+                <span className="text-gray-700">{formatPrice(homeDeliveryFee, locale)}</span>
               )
             }
           />
@@ -1728,7 +1738,12 @@ function CheckoutContent() {
         // customers who have no coupon on the basket and nothing to prove.
         askToVerify={isDelivery && form.promoDiscount > 0 && form.promoNeedsVerify}
         verifiedPhone={verifiedPhone}
-        onVerified={setVerifiedPhone}
+        // Stamp the TYPED number, not the server-normalised one PhoneVerify hands
+        // back. The gate below is `verifiedPhone !== form.phone.trim()`, and the
+        // background `usePhoneVerification` also stores the typed value — writing
+        // the server's `+971…` form here instead left the two disagreeing and the
+        // gate stuck open on a number that was in fact verified (F-WEB-10).
+        onVerified={() => setVerifiedPhone(form.phone.trim())}
         intent={addressIntent}
       />
     </div>

@@ -58,6 +58,10 @@ export interface Category {
   display_order: number;
   is_active: boolean;
   product_count: number;
+  /** ISO timestamp the API's CategoryResponse always sends; the sitemap reads it
+   *  for `lastModified` (it used to carry its own inline category type just for
+   *  this field — F-WEB-16). */
+  updated_at: string;
 }
 
 export interface Product {
@@ -710,7 +714,14 @@ export interface DeliveryQuote {
    * run whose departure we set — and `"day"` where the van belongs to a partner
    * and an hour would be a promise we cannot keep.
    */
-  delivery_estimate: { at: string; precision: 'time' | 'day' } | null;
+  // `day_by` (a partner van's "before X" upper bound) and `exact` are real
+  // precisions the API sends here, not just on the order Fulfilment — omitting
+  // them let the checkout render a `day_by` estimate as a fixed appointment
+  // (F-WEB-15). Kept in step with `Fulfilment.precision`.
+  delivery_estimate: {
+    at: string;
+    precision: 'time' | 'day' | 'day_by' | 'exact';
+  } | null;
   /**
    * False when we cannot deliver to this pin at all. The order endpoint refuses
    * it too, so blocking the button here is a courtesy rather than the guard.

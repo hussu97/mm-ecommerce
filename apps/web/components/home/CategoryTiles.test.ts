@@ -13,6 +13,7 @@ const category: Category = {
   display_order: 1,
   is_active: true,
   product_count: 2,
+  updated_at: '2026-01-01T00:00:00Z',
 };
 
 describe('resolveCategoryTiles', () => {

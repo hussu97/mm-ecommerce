@@ -211,7 +211,6 @@ export function useCheckoutForm(user: User | null) {
 
   return {
     form,
-    setForm,
     onChange,
     savedAddresses,
     setSavedAddresses,

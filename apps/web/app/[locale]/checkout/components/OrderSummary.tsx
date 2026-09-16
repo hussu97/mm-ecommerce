@@ -2,6 +2,7 @@ import Image from 'next/image';
 
 import { InfoTip } from '@/components/ui/InfoTip';
 import { localizedField } from '@/lib/i18n/entity';
+import { formatPrice } from '@/lib/utils';
 import type { Cart, CartItem, Order, OrderPreview } from '@/lib/types';
 
 /**
@@ -130,7 +131,7 @@ export function OrderSummary({
               <p className="font-body text-sm text-gray-800 truncate">{r.name}</p>
               {r.options && <p className="font-body text-xs text-gray-400 truncate">{r.options}</p>}
             </div>
-            <p className="font-body text-sm text-gray-700 shrink-0">{r.amount.toFixed(2)} AED</p>
+            <p className="font-body text-sm text-gray-700 shrink-0">{formatPrice(r.amount, locale)}</p>
           </li>
         ))}
       </ul>
@@ -138,12 +139,12 @@ export function OrderSummary({
       <div className="pt-3 border-t border-gray-100 space-y-1.5 font-body text-sm">
         <div className="flex justify-between text-gray-500">
           <span>{t('common.subtotal')}</span>
-          <span className="text-gray-700">{subtotal.toFixed(2)} AED</span>
+          <span className="text-gray-700">{formatPrice(subtotal, locale)}</span>
         </div>
         {discount > 0 && (
           <div className="flex justify-between text-green-700">
             <span>{t('common.discount')}{promoCode ? ` (${promoCode})` : ''}</span>
-            <span>-{discount.toFixed(2)} AED</span>
+            <span>-{formatPrice(discount, locale)}</span>
           </div>
         )}
         <div>
@@ -158,12 +159,12 @@ export function OrderSummary({
               <span className="text-gray-400">{t('checkout.fee_from_address')}</span>
             ) : deliveryMethod === 'delivery' && freeApplied && baseFee > 0 ? (
               <span className="flex items-center gap-2">
-                <span className="text-gray-400 line-through">{baseFee.toFixed(2)} AED</span>
+                <span className="text-gray-400 line-through">{formatPrice(baseFee, locale)}</span>
                 <span className="text-green-600 font-medium">{t('common.free')}</span>
               </span>
             ) : (
               <span className={knownFee === 0 ? 'text-green-600' : 'text-gray-700'}>
-                {knownFee === 0 ? t('common.free') : `${knownFee.toFixed(2)} AED`}
+                {knownFee === 0 ? t('common.free') : formatPrice(knownFee, locale)}
               </span>
             )}
           </div>
@@ -210,7 +211,7 @@ export function OrderSummary({
                   })}
                 </InfoTip>
               </span>
-              <span className="text-gray-700">{lowOrderFee.toFixed(2)} AED</span>
+              <span className="text-gray-700">{formatPrice(lowOrderFee, locale)}</span>
             </div>
             {/* The way out, next to the charge. Not offered on an order that is
                 already written — there is nothing left to add to it. */}
@@ -230,7 +231,7 @@ export function OrderSummary({
           {deliveryMethod === 'delivery' && unserviceable ? (
             <span className="text-gray-400">&mdash;</span>
           ) : (
-            <span className="text-primary">{total.toFixed(2)} AED</span>
+            <span className="text-primary">{formatPrice(total, locale)}</span>
           )}
         </div>
         {/* The rate and the amount both come from the server, which reads each
@@ -245,7 +246,7 @@ export function OrderSummary({
             included" against a zero would misstate it. */}
         {vatAmount > 0 && (
           <p className="text-[11px] text-gray-400 text-end">
-            VAT included ({(vatRate * 100).toFixed(0)}%) · {vatAmount.toFixed(2)} AED
+            VAT included ({(vatRate * 100).toFixed(0)}%) · {formatPrice(vatAmount, locale)}
           </p>
         )}
       </div>

@@ -32,7 +32,6 @@ interface CartContextType {
    */
   updateNote: (itemId: string, note: string) => Promise<void>;
   removeItem: (itemId: string) => Promise<void>;
-  clearCart: () => Promise<void>;
   mergeCart: (sessionId: string) => Promise<void>;
   refreshCart: () => Promise<void>;
 }
@@ -123,16 +122,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refreshCart]);
 
-  const clearCart = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const updated = await cartApi.clear();
-      setCart(updated);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   /**
    * Fold the device's guest cart into the signed-in customer's cart.
    *
@@ -209,7 +198,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const itemCount = cart?.item_count ?? 0;
 
   return (
-    <CartContext.Provider value={{ cart, itemCount, isLoading, cartLoaded, cartError, addItem, updateItem, updateNote, removeItem, clearCart, mergeCart, refreshCart }}>
+    <CartContext.Provider value={{ cart, itemCount, isLoading, cartLoaded, cartError, addItem, updateItem, updateNote, removeItem, mergeCart, refreshCart }}>
       {children}
     </CartContext.Provider>
   );

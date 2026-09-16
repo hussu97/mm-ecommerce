@@ -249,9 +249,15 @@ async function CategoryProducts({
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   const data = await getCategoryData(slug, page, sort, branchId);
-  // The category existed a moment ago — the page checked before rendering this.
-  // A null here means the listing query failed, not that the page is missing.
-  if (!data) notFound();
+  // The category existed a moment ago — the page checked before rendering this
+  // (`if (!category) notFound()` above, in front of the Suspense boundary). A
+  // null here means the *listing* query failed, not that the page is missing —
+  // and `notFound()` would be doubly wrong: it renders a 404 body for a
+  // transient blip, and it cannot set a 404 status anyway because the 200 shell
+  // already streamed past this boundary. Throw so it reaches the segment
+  // `error.tsx` (a retryable error) instead of masquerading as a missing page
+  // (F-WEB-5).
+  if (!data) throw new Error(`category listing unavailable for ${slug}`);
 
   const { products, pages } = data;
 

@@ -34,9 +34,20 @@ async function searchProducts(
     ...(branchId && { branch_id: branchId }),
   });
 
-  const res = await fetch(`${RSC_API_BASE}/products?${qs.toString()}`, { cache: 'no-store' });
-  if (!res.ok) return null;
-  return res.json();
+  // A bounded wait, and any failure (non-2xx or timeout) resolves to null — the
+  // caller treats null as "the search did not run", distinct from "the search
+  // ran and found nothing". Without the timeout a hung API blocked the whole
+  // render; without catching the abort a timeout crashed the page (F-WEB-7).
+  try {
+    const res = await fetch(`${RSC_API_BASE}/products?${qs.toString()}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
 export async function generateMetadata({
@@ -110,7 +121,13 @@ export default async function SearchPage({
         </div>
       )}
 
-      {q && <SearchTracker query={q} resultCount={data?.total ?? 0} category={sp.category} />}
+      {/* Only when the search actually ran. A null `data` is a server error, not
+          an empty result — firing `search_no_results` for it poisoned the
+          actionable "words the index couldn't answer" list with outages
+          (F-WEB-7). */}
+      {q && data && (
+        <SearchTracker query={q} resultCount={data.total} category={sp.category} />
+      )}
 
       {q && data && data.items.length > 0 && (
         <>

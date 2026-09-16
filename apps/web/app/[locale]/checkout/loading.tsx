@@ -1,22 +1,20 @@
 export default function CheckoutLoading() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-10">
-      {/* Breadcrumb skeleton */}
+      {/* Breadcrumb skeleton. Static width classes on purpose: `w-${n}` is an
+          interpolated Tailwind class the JIT never sees, so those bars compiled
+          to nothing and the skeleton was invisible (F-WEB-4). */}
       <div className="flex gap-2 mb-6">
-        {[10, 2, 10, 2, 20].map((w, i) => (
-          <div key={i} className={`h-3 w-${w} bg-gray-200 animate-pulse rounded-sm`} />
+        {['w-10', 'w-2', 'w-10', 'w-2', 'w-20'].map((w, i) => (
+          <div key={i} className={`h-3 ${w} bg-gray-200 animate-pulse rounded-sm`} />
         ))}
       </div>
 
       {/* Title skeleton */}
-      <div className="h-9 w-48 bg-gray-200 animate-pulse mb-6" />
+      <div className="h-9 w-48 bg-gray-200 animate-pulse mb-8" />
 
-      {/* Step indicator skeleton */}
-      <div className="flex gap-4 mb-8">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-3 w-20 bg-gray-200 animate-pulse" />
-        ))}
-      </div>
+      {/* No step-indicator skeleton: checkout is a single scrolling form now, not
+          the retired three-step wizard this used to shim. */}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
         {/* Form area */}

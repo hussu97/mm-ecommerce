@@ -183,10 +183,16 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderNum
           <span>{t('common.total')}</span>
           <span>{formatPrice(order.total, locale)}</span>
         </div>
-        <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
-          <span>VAT included (5%)</span>
-          <span>{formatPrice(order.vat_amount, locale)}</span>
-        </div>
+        {/* The rate comes off the order, which froze each product's own tax
+            group at purchase — not a hardcoded "5%" that misstates a zero-rated
+            item or a non-VAT-registered branch. Hidden entirely when nothing was
+            charged, as the checkout summary and confirmation both do (F-WEB-1d). */}
+        {order.vat_amount > 0 && (
+          <div className="flex justify-between text-xs font-body text-gray-400 mt-1">
+            <span>VAT included ({Math.round(order.vat_rate * 100)}%)</span>
+            <span>{formatPrice(order.vat_amount, locale)}</span>
+          </div>
+        )}
       </div>
 
       {/* Where it is going, and how it was paid for. A collection order's
