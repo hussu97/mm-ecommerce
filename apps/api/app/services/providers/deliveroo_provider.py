@@ -540,12 +540,91 @@ class DeliverooClient(BaseAggregatorClient):
         )
 
     async def selfserve_publish_draft(
-        self, session: LoadedSession, draft_id: str
+        self,
+        session: LoadedSession,
+        draft_id: str,
+        *,
+        branch_drn_ids: list[str] | None = None,
+        last_updated_at: str | None = None,
     ) -> Any:
-        """Publish a draft live — `POST /drafts/{id}/publish` (empty body)."""
+        """Publish a draft live — `POST /drafts/{id}/publish`.
+
+        Body **must** carry `branch_drn_ids` (the outlets to publish to — an empty
+        body → 400 "a menu should be published to at least one branch") and
+        `last_updated_at` (the draft's current `updated_at`; without it → 400 "draft
+        is out of date"). Verified live 2026-09-16 (200 → `{published_menu_drn_id,
+        last_published_at}`). When either is omitted here it is read from the draft.
+        The endpoint is rate-limited to 1 call / minute per draft (429 otherwise).
+        """
+        if branch_drn_ids is None or last_updated_at is None:
+            draft = await self.selfserve_get_draft(session, draft_id)
+            branch_drn_ids = branch_drn_ids or (draft.get("branch_drn_ids") or [])
+            last_updated_at = last_updated_at or draft.get("updated_at")
+        import json as _json
+
         return await self.request_raw(
-            session, "POST", f"{_SELFSERVE}/drafts/{draft_id}/publish"
+            session,
+            "POST",
+            f"{_SELFSERVE}/drafts/{draft_id}/publish",
+            headers={"Content-Type": "application/json"},
+            data=_json.dumps(
+                {"branch_drn_ids": branch_drn_ids, "last_updated_at": last_updated_at}
+            ),
         )
+
+    async def selfserve_enhance_image(
+        self,
+        session: LoadedSession,
+        *,
+        draft_id: str,
+        image_s3_key: str,
+        entry_point: str = "bulk_upload",
+        platform: str = "desktop",
+    ) -> dict[str, Any]:
+        """Run Deliveroo's AI photo enhancement on an uploaded image and return the
+        enhanced `{cdn_url, s3key, status}`.
+
+        Deliveroo's upload QA rejects some genuinely good photos (e.g. a busy/︁non-white
+        background → `reject_reasons: ["background"]`); the Menu Manager's "Enhance
+        photo" fixes them. Captured live 2026-09-16: `POST /organizations/{org}/
+        enhance_image` (JSON, header `featureFlag: true`) body
+        `{image_s3_key, entry_point, platform, draft_drn_id}` → `{enhanced_image_url,
+        image_s3_key, status}` (status "approved" on success). Pass the `image_s3_key`
+        the upload returned (present even when the upload was rejected).
+        """
+        org = self._org_drn(session)
+        import json as _json
+
+        resp = await self.request_raw(
+            session,
+            "POST",
+            f"{_SELFSERVE}/organizations/{org}/enhance_image",
+            headers={
+                "X-Hub-Api-Caller": "https://menus.deliveroo.com",
+                "featureFlag": "true",
+                "Content-Type": "application/json",
+            },
+            data=_json.dumps(
+                {
+                    "image_s3_key": image_s3_key,
+                    "entry_point": entry_point,
+                    "platform": platform,
+                    "draft_drn_id": draft_id,
+                }
+            ),
+        )
+        status = getattr(resp, "status_code", 0)
+        if status >= 400:
+            raise AggregatorUnavailableError(
+                f"deliveroo enhance_image failed {status}: "
+                f"{getattr(resp, 'text', '')[:200]}"
+            )
+        body = resp.json()
+        return {
+            "cdn_url": body.get("enhanced_image_url"),
+            "s3key": body.get("image_s3_key"),
+            "status": body.get("status"),
+        }
 
     async def selfserve_upload_image(
         self,
@@ -556,20 +635,21 @@ class DeliverooClient(BaseAggregatorClient):
         filename: str,
         content_type: str = "image/jpeg",
     ) -> dict[str, Any]:
-        """Upload one product photo to a self-serve draft; return `{cdn_url, s3key}`
-        to set as an item's ``image``.
+        """Upload one product photo to a self-serve draft; return `{cdn_url, s3key,
+        status}`.
 
         Captured live 2026-09-15 from the Menu Manager bulk-photo Save:
         ``POST /organizations/{org_drn}/upload_image`` as **multipart/form-data** with
         fields ``file`` (the image), ``source="ai_media_moderation"``,
         ``entry_point="bulk_upload"``, ``platform="desktop"`` and ``draft_drn_id``.
-        Returns ``{cdn_url, s3key, status}``.
+        Returns ``{image_s3_key, cdn_url, status, reject_reasons?}``.
 
-        **Deliveroo runs automated photo QA on upload** — a low-quality or synthetic
-        image is rejected (``status`` not approved, or an error), so only a real
-        product photo goes through. The caller then puts the returned ``cdn_url`` +
-        ``s3key`` on the item and PATCHes the draft. Only reached behind
-        ``CATALOG_SYNC_ENABLED``.
+        **Deliveroo runs automated photo QA on upload** and returns a `status` of
+        ``approved`` or ``rejected`` (with ``reject_reasons``) — but ALWAYS an
+        ``image_s3_key`` and a preview ``cdn_url``, even for a reject. So the caller
+        MUST check ``status``: a rejected image cannot be attached, but its
+        ``s3key`` can be fed to `selfserve_enhance_image` to get an approved one.
+        Only reached behind ``CATALOG_SYNC_ENABLED``.
         """
         org = self._org_drn(session)
         # curl_cffi (impersonation path) wants a CurlMime; httpx wants `files=`. The
@@ -590,10 +670,10 @@ class DeliverooClient(BaseAggregatorClient):
             data=data,
             files=files,
         )
-        status = getattr(resp, "status_code", 0)
-        if status >= 400:
+        status_code = getattr(resp, "status_code", 0)
+        if status_code >= 400:
             raise AggregatorUnavailableError(
-                f"deliveroo upload_image failed {status}: "
+                f"deliveroo upload_image failed {status_code}: "
                 f"{getattr(resp, 'text', '')[:200]}"
             )
         try:
@@ -605,13 +685,20 @@ class DeliverooClient(BaseAggregatorClient):
         data_obj = body.get("data") if isinstance(body, dict) else None
         img = data_obj if isinstance(data_obj, dict) else (body or {})
         cdn = img.get("cdn_url") or img.get("cdnUrl")
-        s3key = img.get("s3key") or img.get("s3_key")
-        if not cdn:
-            raise AggregatorUnavailableError(
-                f"deliveroo upload_image returned no cdn_url (rejected by photo QA?): "
-                f"{str(body)[:200]}"
-            )
-        return {"cdn_url": cdn, "s3key": s3key, "status": img.get("status")}
+        # The canonical field is `image_s3_key` (present on both approved and rejected
+        # uploads); the others are defensive.
+        s3key = (
+            img.get("image_s3_key")
+            or img.get("s3_key")
+            or img.get("s3key")
+            or img.get("key")
+        )
+        return {
+            "cdn_url": cdn,
+            "s3key": s3key,
+            "status": img.get("status"),
+            "reject_reasons": img.get("reject_reasons"),
+        }
 
     async def selfserve_draft_for_branch(
         self, session: LoadedSession, branch_drn: str | None = None
