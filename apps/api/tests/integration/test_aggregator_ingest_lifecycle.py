@@ -35,8 +35,10 @@ from app.models.aggregator import (
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.grubops import GrubOpsLocationMap
+from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order
 from app.models.pos_order import OrderSourceEnum
+from app.models.product import Product
 from app.services.aggregators import ingest, promote, reconcile
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
@@ -352,3 +354,58 @@ def _as_async(value):
         return value
 
     return _fn
+
+
+# ── F-AGG-12: an aggregator modifier resolves against the product's own options ─
+async def test_modifier_snapshot_resolves_scoped_product_option(db):
+    """A scraped quantity modifier ("3 Pieces") with no external_ref and no global
+    option map must still link to the option on THIS product that carries the recipe
+    — the fix for aggregator lines like "Fudge Brownies" + "3 Pieces" landing
+    modifier_option_id=null and drawing no stock."""
+    from app.services.aggregators.normalized import StandardModifier
+
+    product = Product(
+        name=f"{MARKER} Fudge Brownies",
+        slug=f"{MARKER}-{uuid.uuid4().hex[:12]}",
+        is_active=True,
+    )
+    db.add(product)
+    await db.flush()
+    modifier = Modifier(
+        reference=f"{MARKER}-{uuid.uuid4().hex[:10]}", name="Your Choice of Quantity"
+    )
+    db.add(modifier)
+    await db.flush()
+    opt = ModifierOption(
+        modifier_id=modifier.id,
+        name="3 Pieces",
+        sku=f"{MARKER[:6]}-{uuid.uuid4().hex[:8]}",
+        price=Decimal("50"),
+    )
+    db.add(opt)
+    db.add(ProductModifier(product_id=product.id, modifier_id=modifier.id))
+    await db.flush()
+
+    mods = [
+        StandardModifier(
+            name="3 Pieces", quantity=Decimal("1"), unit_price=Decimal("50")
+        )
+    ]
+    snap, _ = await promote._build_modifier_snapshot(
+        db, "careem", mods, product_id=product.id
+    )
+    assert snap[0]["modifier_option_id"] == str(opt.id)
+    assert snap[0]["option_id"] == str(opt.id)
+
+    # Without the product scope, a bare name has nothing to resolve against.
+    snap_none, _ = await promote._build_modifier_snapshot(
+        db, "careem", mods, product_id=None
+    )
+    assert snap_none[0]["modifier_option_id"] is None
+
+    # A modifier name the product does not offer stays unresolved (not a wrong guess).
+    other = [StandardModifier(name="9 Pieces", quantity=Decimal("1"))]
+    snap_miss, _ = await promote._build_modifier_snapshot(
+        db, "careem", other, product_id=product.id
+    )
+    assert snap_miss[0]["modifier_option_id"] is None

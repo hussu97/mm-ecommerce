@@ -63,6 +63,7 @@ from app.models.aggregator import (
     AggregatorStatementLine,
 )
 from app.models.base import utcnow
+from app.models.modifier import ModifierOption, ProductModifier
 from app.models.order import Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.pos_order import OrderSourceEnum, OrderTax
@@ -487,10 +488,48 @@ def _rung_at(agg: AggregatorOrder, rung: OrderStatusEnum) -> datetime | None:
     return agg.accepted_at or agg.placed_at
 
 
+async def _match_product_option(
+    db: AsyncSession, product_id: Any, name: str | None
+) -> Any:
+    """The modifier_option_id on THIS product whose name matches `name`, or None.
+
+    A quantity/choice modifier name ("3 Pieces") repeats across many products, each
+    with its OWN option row carrying its OWN recipe — so a global name→option map is
+    ambiguous by construction (`resolve_option` keys on the bare name). Scoping the
+    match to the product's own option tree disambiguates it deterministically, with
+    no per-product map row to curate: the same normalised-name key `resolve_option`
+    uses, but resolved among the options this product actually offers. Ambiguity is
+    refused, not guessed — if two of the product's options normalise to the same
+    name, return None (a curated map row is the escape hatch there).
+    """
+    key = external_item_map_service.normalize_ref(name)
+    if key is None or product_id is None:
+        return None
+    rows = (
+        await db.execute(
+            select(ModifierOption.id, ModifierOption.name)
+            .join(
+                ProductModifier,
+                ProductModifier.modifier_id == ModifierOption.modifier_id,
+            )
+            .where(
+                ProductModifier.product_id == product_id,
+                ModifierOption.is_active.is_(True),
+            )
+        )
+    ).all()
+    matches = {
+        row[0] for row in rows if external_item_map_service.normalize_ref(row[1]) == key
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
 async def _build_modifier_snapshot(
     db: AsyncSession,
     channel: str,
     mods: list,
+    *,
+    product_id: Any = None,
 ) -> tuple[list[dict], Decimal]:
     """Resolve a StandardModifier list to catalog options and build the snapshot.
 
@@ -501,6 +540,12 @@ async def _build_modifier_snapshot(
 
     The snapshot shape mirrors the GrubOps ingest (option_name / option_price
     dialect) so the admin item table and the register decode it identically.
+
+    `product_id` is the line's resolved product: when the global option map misses,
+    the modifier name is matched against that product's OWN options (see
+    `_match_product_option`). This is what lets an aggregator quantity modifier
+    ("Fudge Brownies" + "3 Pieces") reach the option that carries the recipe, rather
+    than landing `modifier_option_id=None` and drawing no stock.
     """
     snapshot: list[dict] = []
     options_price = Decimal("0")
@@ -508,6 +553,8 @@ async def _build_modifier_snapshot(
         opt_id, _, _ = await external_item_map_service.resolve_option(
             db, channel, mod.name, ref=mod.external_ref
         )
+        if opt_id is None:
+            opt_id = await _match_product_option(db, product_id, mod.name)
         if opt_id is None:
             await external_item_map_service.record_option_proposal(
                 db, channel, mod.name, ref=mod.external_ref
@@ -548,8 +595,16 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
     for it in items:
         qty = int(it.quantity) if it.quantity is not None else 1
         base_price = money(it.unit_price or Decimal("0"))
+        # Resolve the product first so the modifier snapshot can fall back to this
+        # product's own option tree when the global option map misses (scoped
+        # quantity modifiers like "3 Pieces" carry the recipe).
+        product_id, sku = await _match_product(db, agg.channel, it.item_name)
+        if product_id is None:
+            unmapped += 1
         mods = modifiers_from_json(it.modifiers)
-        snapshot, opt_price = await _build_modifier_snapshot(db, agg.channel, mods)
+        snapshot, opt_price = await _build_modifier_snapshot(
+            db, agg.channel, mods, product_id=product_id
+        )
         opt_price = money(opt_price)
         unit_price = money(base_price + opt_price)
         total = (
@@ -557,9 +612,6 @@ async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> in
             if it.gross_sales is not None
             else money(unit_price * qty)
         )
-        product_id, sku = await _match_product(db, agg.channel, it.item_name)
-        if product_id is None:
-            unmapped += 1
         db.add(
             OrderItem(
                 order_id=order.id,
