@@ -55,6 +55,10 @@ K_ITEM_DESC_AR = "item_description_ar_drift"
 K_ITEM_IMAGE = "item_image_missing_on_channel"
 K_ITEM_PRICE = "item_price_mismatch"
 K_ITEM_UNAVAILABLE = "item_unavailable_on_channel"
+#: Two MM items whose names normalise to the same key (e.g. "Box" and "Boxes").
+#: Reported for a human to disambiguate, never acted on — and their channel twin
+#: is kept out of the delete proposal (F-AGG-21).
+K_MM_NAME_COLLISION = "mm_name_collision"
 K_OPTION_PRICE = "option_price_mismatch"
 K_OPTION_NAME_AR = "option_name_ar_drift"
 K_OPTION_MISSING = "option_missing_on_channel"
@@ -148,18 +152,26 @@ def _tokens(name: str) -> set[str]:
 
 
 def _fuzzy_match(target: str, candidates: list[str]) -> str | None:
-    """A candidate whose tokens are a subset of `target`'s (or vice versa).
+    """A candidate whose tokens are a subset of `target`'s (or vice versa),
+    confident enough to auto-pair as a rename.
 
-    Pairs "Boxes" with "Mix Boxes" (one token set ⊆ the other) so a rename reads
-    as a rename. Returns the best (largest-overlap) candidate, or None.
+    **Both names must carry at least two tokens (F-AGG-22).** The old rule matched
+    any subset, so a single-token MM item paired with the first channel item that
+    contained it — "Cake" ⊆ "Chocolate Cake", "Carrot Cake", "Red Velvet Cake" —
+    and, once paired, `_diff_one_item` compared their prices and a live push
+    rewrote the channel price to an unrelated item's. Requiring two shared tokens
+    on both sides keeps the genuine multi-word rename ("Mix Boxes" ↔ "Mixed
+    Boxes") while refusing the ambiguous single-word overlap; a single-token
+    rename now surfaces as a missing+extra pair for a human, which is the safe
+    failure. Returns the best (largest-overlap) candidate, or None.
     """
     t = _tokens(target)
-    if not t:
+    if len(t) < 2:
         return None
     best: tuple[int, str] | None = None
     for c in candidates:
         ct = _tokens(c)
-        if not ct:
+        if len(ct) < 2:
             continue
         if t <= ct or ct <= t:
             overlap = len(t & ct)
@@ -208,19 +220,32 @@ def _item_effective_prices(item: NormalizedItem) -> list[tuple[str, Decimal | No
 # ── Menu diff ─────────────────────────────────────────────────────────────────
 
 
-def _index_items(menu: NormalizedMenu) -> dict[str, tuple[NormalizedItem, str]]:
-    """normalised item name → (item, its category name), flattened across the menu.
+def _index_items(
+    menu: NormalizedMenu,
+) -> tuple[dict[str, tuple[NormalizedItem, str]], dict[str, list[str]]]:
+    """(normalised name → (item, category)), and the collisions found building it.
 
     Item identity is the name, not the (category, name) pair: channels regroup
     categories constantly ("Boxes" vs "Mix Boxes", a "New In" shelf, Foodics'
     flat price tag), so an item that moved category has NOT gone missing. Match
     globally; report the category move as metadata.
+
+    When two items on one side normalise to the same key — "Box" and "Boxes", a
+    duplicate on a portal — only the first can hold the slot. The old code
+    `setdefault`-dropped the rest silently, and on the desired side that made the
+    dropped item's channel twin look unmatched and land in the delete proposal
+    (F-AGG-21). The collisions are returned so the caller can report them and keep
+    those keys out of the deletes rather than losing them without a trace.
     """
     out: dict[str, tuple[NormalizedItem, str]] = {}
+    names: dict[str, list[str]] = {}
     for cat in menu.categories:
         for item in cat.items:
-            out.setdefault(normalize_name(item.name), (item, cat.name))
-    return out
+            key = normalize_name(item.name)
+            names.setdefault(key, []).append(item.name)
+            out.setdefault(key, (item, cat.name))
+    collisions = {k: v for k, v in names.items() if len(v) > 1}
+    return out, collisions
 
 
 def diff_menu(
@@ -237,9 +262,23 @@ def diff_menu(
     with nothing matched).
     """
     out = MenuDiff(target=target)
-    d_index = _index_items(desired)
-    a_index = _index_items(actual)
+    d_index, d_collisions = _index_items(desired)
+    a_index, _a_collisions = _index_items(actual)
     matched: set[str] = set()
+
+    # Two MM items that normalise alike ("Box"/"Boxes"): only one held the index
+    # slot, so the other's channel counterpart would look unmatched and be
+    # proposed for deletion. Report each collision for a human to disambiguate,
+    # and keep its key out of the delete pass below (F-AGG-21).
+    for key, mm_names in d_collisions.items():
+        out.deltas.append(
+            Delta(
+                kind=K_MM_NAME_COLLISION,
+                action=ACTION_INFO,
+                entity=mm_names[0],
+                detail="MM items share a normalised name: " + ", ".join(mm_names),
+            )
+        )
     # For category-level reporting: which channel category each MM category's
     # items landed in, and whether a category had any match at all.
     cat_landing: dict[str, dict[str, int]] = {}
@@ -262,7 +301,11 @@ def diff_menu(
                         detail=f"MM category {dcat}",
                     )
                 )
-                _diff_one_item(out, ditem, aitem, dcat, enforce_price_parity)
+                # A fuzzy (rename) match is a lower-confidence pairing, so its
+                # prices are never auto-pushed — that is the path that rewrote an
+                # unrelated item's price (F-AGG-22). The rename delta above already
+                # asks a human to look; parity is left for the exact matches.
+                _diff_one_item(out, ditem, aitem, dcat, enforce_price_parity=False)
                 cat_landing.setdefault(dcat, {})[acat] = (
                     cat_landing.setdefault(dcat, {}).get(acat, 0) + 1
                 )
@@ -284,9 +327,11 @@ def diff_menu(
             cat_landing.setdefault(dcat, {}).get(acat, 0) + 1
         )
 
-    # Leftover channel items — on the portal, not in MM. Deletion is allowed.
+    # Leftover channel items — on the portal, not in MM. Deletion is allowed,
+    # EXCEPT where the name collided in MM: the twin that lost the index slot is
+    # still in MM, so deleting its channel counterpart would be wrong (F-AGG-21).
     for key, (aitem, acat) in a_index.items():
-        if key in matched:
+        if key in matched or key in d_collisions:
             continue
         out.deltas.append(
             Delta(

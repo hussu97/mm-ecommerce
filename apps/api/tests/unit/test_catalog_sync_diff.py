@@ -22,10 +22,14 @@ from app.services.aggregators.catalog_diff import (
     K_HOURS_DAY_CLOSED_CHANNEL,
     K_HOURS_SHIFT,
     K_ITEM_DESC_AR,
+    K_ITEM_EXTRA,
     K_ITEM_IMAGE,
+    K_ITEM_MISSING,
     K_ITEM_NAME_AR,
     K_ITEM_PRICE,
+    K_ITEM_RENAME,
     K_ITEM_UNAVAILABLE,
+    K_MM_NAME_COLLISION,
     K_OPTION_NAME_AR,
     K_OPTION_PRICE,
     diff_hours,
@@ -1457,3 +1461,82 @@ async def test_apply_live_sets_price_but_only_removes_with_flag(mock_db, monkeyp
     )
     assert del_calls == [(fp.FOODICS_GRUBTECH_PRICE_TAG_ID, "FP2")]
     assert out["removals"][0]["applied"] is True
+
+
+# ── F-AGG-22: fuzzy matching never rewrites an unrelated item's price ──────────
+
+
+def _one_item_menu(source: str, category: str, item: NormalizedItem) -> NormalizedMenu:
+    return NormalizedMenu(
+        source=source,
+        categories=[NormalizedCategory(category, items=[item])],
+    )
+
+
+def test_a_single_token_name_is_never_fuzzy_matched():
+    # "Cake" ⊆ "Chocolate Cake" used to auto-pair, then compare prices and push
+    # AED 20 onto an unrelated channel item priced 30 (F-AGG-22). It must now read
+    # as a missing item and an extra item, not a rename with a price rewrite.
+    mm = _one_item_menu("mm", "Cakes", NormalizedItem("Cake", price=Decimal("20")))
+    ch = _one_item_menu(
+        "careem", "Cakes", NormalizedItem("Chocolate Cake", price=Decimal("30"))
+    )
+    d = diff_menu(mm, ch, target="careem")
+    kinds = d.summary
+    assert kinds.get(K_ITEM_RENAME) is None
+    assert kinds.get(K_ITEM_PRICE) is None
+    assert kinds.get(K_ITEM_MISSING) == 1
+    assert kinds.get(K_ITEM_EXTRA) == 1
+
+
+def test_a_genuine_multiword_rename_matches_but_does_not_push_its_price():
+    # "Large Gift Boxes" ⊇ "Gift Boxes": both carry two tokens, so it is a
+    # confident rename — but a fuzzy pairing is never trusted enough to push a
+    # price, so the 20 vs 30 gap is not raised as a mismatch (F-AGG-22).
+    mm = _one_item_menu(
+        "mm", "Boxes", NormalizedItem("Large Gift Boxes", price=Decimal("20"))
+    )
+    ch = _one_item_menu(
+        "careem", "Boxes", NormalizedItem("Gift Boxes", price=Decimal("30"))
+    )
+    d = diff_menu(mm, ch, target="careem")
+    kinds = d.summary
+    assert kinds.get(K_ITEM_RENAME) == 1
+    assert kinds.get(K_ITEM_PRICE) is None
+    # Not a missing/extra pair — it was recognised as the same item renamed.
+    assert kinds.get(K_ITEM_MISSING) is None
+    assert kinds.get(K_ITEM_EXTRA) is None
+
+
+# ── F-AGG-21: two MM names that normalise alike are reported, never deleted ────
+
+
+def test_colliding_mm_names_are_reported_and_never_proposed_for_deletion():
+    # "Cookies" and "Cookie" both normalise to "cookie": one lost the index slot
+    # and used to vanish silently, its channel twin drifting into the delete
+    # proposal (F-AGG-21). It is now surfaced as a collision and kept out of the
+    # deletes.
+    mm = NormalizedMenu(
+        source="mm",
+        categories=[
+            NormalizedCategory(
+                "Cookies",
+                items=[
+                    NormalizedItem("Cookies", price=Decimal("10")),
+                    NormalizedItem("Cookie", price=Decimal("12")),
+                ],
+            )
+        ],
+    )
+    ch = _one_item_menu(
+        "careem", "Cookies", NormalizedItem("Cookies", price=Decimal("10"))
+    )
+    d = diff_menu(mm, ch, target="careem")
+    kinds = d.summary
+    assert kinds.get(K_MM_NAME_COLLISION) == 1
+    collision = next(x for x in d.deltas if x.kind == K_MM_NAME_COLLISION)
+    assert "Cookies" in (collision.detail or "") and "Cookie" in (
+        collision.detail or ""
+    )
+    # The channel item that shares the collided key is never proposed for delete.
+    assert kinds.get(K_ITEM_EXTRA) is None
