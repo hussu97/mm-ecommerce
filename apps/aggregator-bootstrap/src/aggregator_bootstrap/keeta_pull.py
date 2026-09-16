@@ -691,9 +691,16 @@ async ({ bucketPath, signPath, updatePath, shopId, spuId, imageB64, contentType 
   } catch (e) { out.uploadError = String(e); }
   const picUrl = ((out.upload && out.upload.data) || {}).originalLink;
   out.picUrl = picUrl;
-  // 4. attach the stored picUrl to the SPU (mtgsig-signed)
+  // 4. attach the stored picUrl to the SPU (mtgsig-signed). The body is a
+  //    `pictureList` of `{picUrl, isMaster, multiPictureList}` — a bare `picUrl`
+  //    returns 107000100 "Parameter Error"; shopId must be in the body too.
+  //    Verified live 2026-09-16 (code 0).
   if (picUrl) {
-    out.update = await post(updatePath, { shopId: Number(shopId), spuId: Number(spuId), picUrl });
+    out.update = await post(updatePath, {
+      shopId: Number(shopId),
+      spuId: Number(spuId),
+      pictureList: [{ picUrl, isMaster: 0, multiPictureList: [] }],
+    });
   }
   return out;
 }
