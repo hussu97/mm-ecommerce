@@ -105,9 +105,9 @@ async def sweep_once() -> bool:
             # A booking has to exist before anybody can be driving towards it.
             # Lalamove reports a driver's position exactly once and never
             # mentions a rider swap, so this is the only thing that keeps
-            # either current — see `driver_tracking`.
+            # either current — see `driver_tracking`. It commits per booking
+            # itself (F-COU-22), so one reconciled ending can't roll back another.
             tracked = await driver_tracking.refresh_live_drivers(session)
-            await session.commit()
             if tracked:
                 logger.info("Refreshed %s live driver(s)", tracked)
         except Exception:  # noqa: BLE001

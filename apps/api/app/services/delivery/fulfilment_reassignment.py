@@ -43,6 +43,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ServiceUnavailableError
@@ -94,6 +95,11 @@ THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 #: `allowed_targets` can offer. (The legacy bare `slider` was retired in
 #: `241_drop_legacy_slider`; its rows are now `slider_car`.)
 SLIDER_PROVIDERS = frozenset({SLIDER_BIKE, SLIDER_CAR})
+
+#: Postgres SQLSTATE for a `NOWAIT` lock that could not be taken at once
+#: (`lock_not_available`). asyncpg surfaces it on the wrapped DBAPI error's
+#: `.sqlstate`; `_locked` turns it into a `ConflictError` (F-COU-14).
+_LOCK_NOT_AVAILABLE = "55P03"
 
 #: Where an order may be standing and still be moved.
 #:
@@ -521,9 +527,19 @@ async def _locked(
     This order's delivery row, optionally held against a second admin.
 
     `FOR UPDATE` is what makes two people pressing "change fulfilment" at the
-    same moment safe. The second one waits, re-reads, and finds the provider
-    already changed — so it is refused by the ordinary gates rather than booking
-    a second courier for a cake that now has one.
+    same moment safe. The second one is refused rather than booking a second
+    courier for a cake that now has one.
+
+    **`NOWAIT`, not a plain wait (F-COU-14).** The move this lock guards holds it
+    across up to four courier round-trips before it commits — calling off the old
+    rider, quoting the new courier, engaging it — which is tens of seconds. A
+    plain `FOR UPDATE` would make the second caller (another admin, or the
+    dispatch retry sweep) *block* on a request-pool connection for that whole
+    stretch, waiting on somebody else's network calls; and there is nothing
+    useful for it to do at the end of the wait but turn back, because the first
+    move has already changed the very thing the gates check. So it fails fast and
+    honestly instead of pinning a connection: a lock it cannot take at once is a
+    move already in progress.
 
     The lock lasts until the transaction commits, and the booking calls commit
     themselves for reasons of their own. That is the correct boundary: once a
@@ -531,8 +547,18 @@ async def _locked(
     """
     statement = select(OrderDelivery).where(OrderDelivery.order_id == order.id)
     if lock:
-        statement = statement.with_for_update()
-    delivery = (await db.execute(statement)).scalars().first()
+        statement = statement.with_for_update(nowait=True)
+        try:
+            delivery = (await db.execute(statement)).scalars().first()
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == _LOCK_NOT_AVAILABLE:
+                raise ConflictError(
+                    "Another change to this order's courier is already in "
+                    "progress. Wait for it to finish, then try again."
+                ) from exc
+            raise
+    else:
+        delivery = (await db.execute(statement)).scalars().first()
     if delivery is None:
         raise ConflictError("This order has no delivery record to move.")
     return delivery

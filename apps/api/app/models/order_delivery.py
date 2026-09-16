@@ -383,8 +383,16 @@ class OrderDelivery(Base, UUIDMixin, TimestampMixin):
     courier_previous_status: Mapped[str | None] = mapped_column(
         String(30), nullable=True
     )
-    #: Lalamove's own tracking page. Internal for now — surfacing it would tell
-    #: the customer who is carrying the order, which we are not ready to say.
+    #: The courier's own live tracking page (Lalamove's `shareLink`; Slider's
+    #: browser tracking URL). Surfaced to the customer, but only through
+    #: `fulfilment_service._tracking_url`, which hands it over on exactly two
+    #: conditions (F-COU-20): the parcel is moving (`on_the_way`/`undelivered`,
+    #: never before pickup, when the map is empty and reads as broken) and the
+    #: booking is one we made (`_BOOKED_BY_US` — a third-party zone has no link).
+    #: It is deliberately NOT a field on the customer `OrderResponse`/
+    #: `TrackOrderResponse`; the guarded `tracking_url` is the one door out, which
+    #: is why `test_fulfilment_service` pins both conditions and the admin-only
+    #: `OrderDeliveryResponse.share_link` stays off the customer view.
     share_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: What the courier actually charged, once the order exists.
     cost_total: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)

@@ -178,13 +178,24 @@ async def refresh_live_drivers(
     refreshed = 0
     for delivery in rows:
         try:
-            if await _refresh_one(db, delivery, at=moment):
+            changed = await _refresh_one(db, delivery, at=moment)
+            # One commit per booking, like `reconcile_push_only_endings` (F-COU-22).
+            # `_refresh_one` may write a corrected status, a new driver, or — via
+            # `_reconcile_ending` → `apply_webhook` — a whole terminal transition
+            # with the email and refund path that rides on it. Batching a tick's
+            # worth of those into one commit at the end would let a failure on the
+            # last booking roll back the reconciled ending of the first; committing
+            # each in turn makes every booking's work durable on its own and keeps
+            # one bad row from taking a good one down with it.
+            await db.commit()
+            if changed:
                 refreshed += 1
         except Exception:  # noqa: BLE001 — one bad booking must not stop the rest
             logger.exception(
                 "Could not refresh the driver on booking %s",
                 delivery.courier_order_id,
             )
+            await db.rollback()
     return refreshed
 
 

@@ -321,6 +321,23 @@ async def test_a_third_party_order_never_gets_a_tracking_link():
 
 
 @pytest.mark.asyncio
+async def test_a_failed_handover_still_shows_the_map_so_the_rider_can_be_found():
+    """
+    `undelivered` is the second stage that keeps the link (F-COU-20): a rider
+    arrived and could not hand it over, so the parcel is still on the bike and
+    the live map still points at somebody worth watching. Withholding it here —
+    the very moment a customer is trying to work out where their order got to —
+    would be the wrong half of the guard.
+    """
+    undelivered = _delivery(
+        provider="lalamove", courier_status="undelivered", share_link="https://share/x"
+    )
+    assert (
+        await _fulfilment(_order(status=OrderStatusEnum.OUT_FOR_DELIVERY), undelivered)
+    ).tracking_url == "https://share/x"
+
+
+@pytest.mark.asyncio
 async def test_nothing_in_the_customer_view_names_the_courier():
     """
     The rule the whole module exists to keep. `OrderDeliveryResponse` carries
