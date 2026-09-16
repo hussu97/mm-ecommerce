@@ -139,6 +139,19 @@ class Product(Base, UUIDMixin, TimestampMixin):
     stock_quantity: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False, server_default="0"
     )
+    #: Whether a sale of this product draws down tracked (recipe-based) inventory.
+    #: The default — every product is expected to carry a recipe, and an order line
+    #: for one without an active recipe raises ``missing_recipe`` in
+    #: ``recipe_service.snapshot_order``. Set False for a product that legitimately
+    #: consumes NO tracked inventory (a made-to-order beverage MM does not cost at
+    #: the ingredient level, an item whose consumption is carried entirely by its
+    #: modifier options): its recipe is not expanded, no ``missing_recipe`` warning
+    #: is raised, and its inventory source event closes as a clean no-movement
+    #: instead of sitting PENDING forever. Distinct from ``is_stock_product``, which
+    #: only gates the legacy per-product ``stock_quantity`` counter.
+    consumes_stock: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # ─── Cart add-ons and personalisation ─────────────────────────────────────
