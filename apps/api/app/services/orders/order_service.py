@@ -12,6 +12,7 @@ from sqlalchemy import (
     case,
     cast,
     func,
+    or_,
     select,
 )
 from sqlalchemy import (
@@ -2001,7 +2002,22 @@ async def get_all_admin(
             status.value if isinstance(status, OrderStatusEnum) else status
         )
     if picked_statuses:
-        base_stmt = base_stmt.where(Order.status.in_(picked_statuses))
+        # `refunded` is asked of the money, not the status. A refund almost never
+        # leaves the order sitting in `REFUNDED`: an admin full refund moves a
+        # delivered order to `cancelled`, a partial one leaves it `delivered`, and
+        # an aggregator refund never touches the status at all — so `status =
+        # 'refunded'` matched none of the orders the dashboard's Refunds card
+        # counts (it counts `refunded_amount`). Match on `refunded_amount > 0` so
+        # the filter and the card agree.
+        other_statuses = [
+            s for s in picked_statuses if s != OrderStatusEnum.REFUNDED.value
+        ]
+        clauses = []
+        if other_statuses:
+            clauses.append(Order.status.in_(other_statuses))
+        if OrderStatusEnum.REFUNDED.value in picked_statuses:
+            clauses.append(func.coalesce(Order.refunded_amount, 0) > 0)
+        base_stmt = base_stmt.where(or_(*clauses))
     if search:
         base_stmt = base_stmt.where(
             search_text.contains(Order.order_number, search)
