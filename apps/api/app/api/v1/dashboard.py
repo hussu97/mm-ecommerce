@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Text, and_, case, cast, func, select
+from sqlalchemy import Integer, Text, and_, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -55,6 +55,7 @@ from app.schemas.dashboard import (
     DashboardOps,
     DashboardSummary,
     DashboardTodayResponse,
+    HeatmapCell,
     SeriesPoint,
 )
 from app.services.couriers import courier_catalog
@@ -237,6 +238,51 @@ async def _series(
         )
         cur += step
     return points
+
+
+async def _heatmap(
+    db: AsyncSession,
+    *,
+    start: datetime,
+    end: datetime,
+    tz_name: str,
+    statuses=None,
+    couriers=None,
+) -> list[HeatmapCell]:
+    """Orders and revenue by shop-local day-of-week × hour-of-day over the window.
+
+    Answers "which day and hour do we sell the most" by collapsing every matching
+    order in the window onto a 7×24 grid. `created_at` is UTC, so it is shifted
+    into the shop timezone before the day-of-week and hour are extracted — the
+    same local-clock treatment `_series` uses, so the grid and the trend line are
+    the same orders counted two ways. Follows the page's status/courier selection.
+    Sparse: only cells with at least one order are returned; the client zero-fills
+    the rest. `extract()` yields double precision, cast to int for clean params.
+    """
+    local = func.timezone(cast(tz_name, Text), Order.created_at)
+    dow = cast(func.extract("dow", local), Integer)
+    hour = cast(func.extract("hour", local), Integer)
+    rows = (
+        await db.execute(
+            select(
+                dow.label("d"),
+                hour.label("h"),
+                func.count(Order.id),
+                func.coalesce(func.sum(Order.total), 0),
+            )
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                *_filters(statuses, couriers),
+            )
+            .group_by("d", "h")
+            .order_by("d", "h")
+        )
+    ).all()
+    return [
+        HeatmapCell(dow=int(d), hour=int(h), orders=int(c), revenue=float(money(r)))
+        for d, h, c, r in rows
+    ]
 
 
 async def _by_branch(
@@ -529,6 +575,15 @@ async def dashboard_today(
         couriers=carriers,
     )
 
+    heatmap = await _heatmap(
+        db,
+        start=start,
+        end=end,
+        tz_name=tz_name,
+        statuses=picked,
+        couriers=carriers,
+    )
+
     ops = await _operational_snapshot(db, start=start, end=end, today=from_date)
 
     return DashboardTodayResponse(
@@ -545,6 +600,7 @@ async def dashboard_today(
         by_payment=by_payment,
         series=series,
         series_granularity=granularity,
+        heatmap=heatmap,
         ops=ops,
     )
 

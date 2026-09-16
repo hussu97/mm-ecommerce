@@ -631,6 +631,15 @@ export interface DashboardSeriesPoint {
   revenue: number;
 }
 
+export interface DashboardHeatmapCell {
+  /** Shop-local day of week, PostgreSQL `extract(dow)`: 0 = Sunday … 6 = Saturday. */
+  dow: number;
+  /** Shop-local hour of day, 0–23. */
+  hour: number;
+  orders: number;
+  revenue: number;
+}
+
 export interface DashboardToday {
   business_date: string;
   /** The range end (ISO date), or null for the live single-day view. */
@@ -649,6 +658,9 @@ export interface DashboardToday {
   series: DashboardSeriesPoint[];
   /** Interval of each `series` point: `hour` (single day) or `day` (range). */
   series_granularity: 'hour' | 'day';
+  /** Orders + revenue by shop-local day-of-week × hour-of-day over the window.
+   *  Sparse — only cells with orders are present; zero-fill the 7×24 grid. */
+  heatmap: DashboardHeatmapCell[];
   ops: DashboardOps;
 }
 

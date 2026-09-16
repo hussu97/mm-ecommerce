@@ -11490,6 +11490,8 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /** Heatmap */
+            heatmap: components["schemas"]["HeatmapCell"][];
             ops: components["schemas"]["DashboardOps"];
             /** Series */
             series: components["schemas"]["SeriesPoint"][];
@@ -12326,6 +12328,27 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HeatmapCell
+         * @description One day-of-week × hour-of-day cell of the sales heatmap.
+         *
+         *     `dow` is the shop-local day of week as PostgreSQL `extract(dow …)` numbers it
+         *     — 0 = Sunday through 6 = Saturday — and `hour` is the shop-local hour 0–23.
+         *     Both are on the shop's own clock (`created_at` is UTC, shifted into the shop
+         *     timezone before extraction), so "hour of day" reads in Gulf time. Only cells
+         *     with at least one order are emitted; the grid is zero-filled on the client.
+         *     The window and status/courier selection match every other figure.
+         */
+        HeatmapCell: {
+            /** Dow */
+            dow: number;
+            /** Hour */
+            hour: number;
+            /** Orders */
+            orders: number;
+            /** Revenue */
+            revenue: number;
         };
         /** ImportError */
         ImportError: {

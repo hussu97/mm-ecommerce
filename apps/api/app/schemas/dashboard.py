@@ -35,6 +35,23 @@ class SeriesPoint(BaseModel):
     revenue: float
 
 
+class HeatmapCell(BaseModel):
+    """One day-of-week × hour-of-day cell of the sales heatmap.
+
+    `dow` is the shop-local day of week as PostgreSQL `extract(dow …)` numbers it
+    — 0 = Sunday through 6 = Saturday — and `hour` is the shop-local hour 0–23.
+    Both are on the shop's own clock (`created_at` is UTC, shifted into the shop
+    timezone before extraction), so "hour of day" reads in Gulf time. Only cells
+    with at least one order are emitted; the grid is zero-filled on the client.
+    The window and status/courier selection match every other figure.
+    """
+
+    dow: int
+    hour: int
+    orders: int
+    revenue: float
+
+
 class CourierBreakdownRow(BaseModel):
     """One carrier's delivered orders and revenue — a courier scorecard.
 
@@ -122,4 +139,8 @@ class DashboardTodayResponse(BaseModel):
     #: The interval each `series` point spans: `hour` (live day / single day) or
     #: `day` (multi-day range). Drives the axis and tooltip formatting.
     series_granularity: str
+    #: Orders and revenue aggregated by shop-local day-of-week × hour-of-day over
+    #: the whole window — the heatmap under each trend chart. Sparse: only cells
+    #: with orders are present.
+    heatmap: list[HeatmapCell]
     ops: DashboardOps

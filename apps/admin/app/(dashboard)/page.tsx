@@ -8,6 +8,7 @@ import type {
   DashboardToday,
   DashboardBreakdownRow,
   DashboardSeriesPoint,
+  DashboardHeatmapCell,
   Order,
 } from '@/lib/types';
 import { Badge, LoadError } from '@/components/ui';
@@ -275,6 +276,117 @@ function TrendChart({
   );
 }
 
+// Day-of-week labels in PostgreSQL `extract(dow)` order (0 = Sunday), matching
+// the `dow` the API sends, and every hour 0–23 for the columns.
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+
+/** '#8a5a64' → '138,90,100' so a cell can shade with rgba(). */
+function rgbTriplet(hex: string): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+
+/** Compact 12-hour label for an hour-of-day: 0 → 12a, 13 → 1p. */
+function hourLabel(h: number): string {
+  const suffix = h < 12 ? 'a' : 'p';
+  const twelve = h % 12 === 0 ? 12 : h % 12;
+  return `${twelve}${suffix}`;
+}
+
+/**
+ * A 7×24 day-of-week × hour-of-day grid, each cell shaded by how much of one
+ * metric — GMV or order count — landed in that slot, so the busiest days and
+ * hours read at a glance. The API sends only non-empty cells; the grid is
+ * zero-filled here and each cell's intensity is its share of the grid's own
+ * maximum. Hover a cell for its exact figure.
+ */
+function HeatmapTable({
+  title,
+  cells,
+  metric,
+  color,
+  format,
+}: {
+  title: string;
+  cells: DashboardHeatmapCell[];
+  metric: 'orders' | 'revenue';
+  color: string;
+  format: (v: number) => string;
+}) {
+  const byKey = new Map<number, number>();
+  let max = 0;
+  for (const c of cells) {
+    const v = metric === 'orders' ? c.orders : c.revenue;
+    byKey.set(c.dow * 24 + c.hour, v);
+    if (v > max) max = v;
+  }
+  const rgb = rgbTriplet(color);
+
+  return (
+    <div className="bg-white border border-gray-200 p-4">
+      <h3 className="text-[11px] font-body uppercase tracking-widest text-gray-400 mb-3">{title}</h3>
+      {max === 0 ? (
+        <p className="text-xs text-gray-400 font-body py-8 text-center">No orders in this window</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="border-separate" style={{ borderSpacing: 2 }}>
+            <thead>
+              <tr>
+                <th />
+                {HOURS.map((h) => (
+                  <th
+                    key={h}
+                    className="text-[8px] font-body font-normal text-gray-400 tabular-nums align-bottom pb-0.5"
+                    style={{ width: 15 }}
+                  >
+                    {h % 3 === 0 ? hourLabel(h) : ''}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {DOW_LABELS.map((day, dow) => (
+                <tr key={day}>
+                  <td className="text-[10px] font-body text-gray-500 pr-1.5 text-right whitespace-nowrap">{day}</td>
+                  {HOURS.map((h) => {
+                    const v = byKey.get(dow * 24 + h) ?? 0;
+                    const alpha = v === 0 ? 0 : 0.14 + 0.86 * (v / max);
+                    return (
+                      <td
+                        key={h}
+                        title={`${day} ${hourLabel(h)} · ${format(v)}`}
+                        className="border border-gray-100"
+                        style={{
+                          width: 15,
+                          height: 20,
+                          borderRadius: 2,
+                          backgroundColor: v === 0 ? '#fafafa' : `rgba(${rgb},${alpha})`,
+                        }}
+                      />
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="flex items-center gap-1.5 mt-3 justify-end">
+            <span className="text-[9px] font-body text-gray-400">Less</span>
+            {[0.14, 0.36, 0.58, 0.8, 1].map((a) => (
+              <span
+                key={a}
+                className="border border-gray-100"
+                style={{ width: 15, height: 12, borderRadius: 2, backgroundColor: `rgba(${rgb},${a})` }}
+              />
+            ))}
+            <span className="text-[9px] font-body text-gray-400">More</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { filters, patch, toggleStatus, toggleCourier, clearAll } = useOrderFilters();
 
@@ -516,24 +628,42 @@ export default function DashboardPage() {
       {!loading && data && (
         <Section title={isRange ? 'Sales & Orders Over the Range' : 'Sales & Orders Through the Day'}>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <TrendChart
-              title={isRange ? 'Revenue' : 'Revenue Today'}
-              series={data.series}
-              granularity={data.series_granularity}
-              dataKey="revenue"
-              color={BRAND.primary}
-              seriesName="Revenue"
-              format={formatCurrency}
-            />
-            <TrendChart
-              title={isRange ? 'Orders' : 'Orders Today'}
-              series={data.series}
-              granularity={data.series_granularity}
-              dataKey="orders"
-              color={BRAND.secondary}
-              seriesName="Orders"
-              format={(v) => String(v)}
-            />
+            <div className="flex flex-col gap-4">
+              <TrendChart
+                title={isRange ? 'Revenue' : 'Revenue Today'}
+                series={data.series}
+                granularity={data.series_granularity}
+                dataKey="revenue"
+                color={BRAND.primary}
+                seriesName="Revenue"
+                format={formatCurrency}
+              />
+              <HeatmapTable
+                title="Revenue by Day & Hour"
+                cells={data.heatmap}
+                metric="revenue"
+                color={BRAND.primary}
+                format={formatCurrency}
+              />
+            </div>
+            <div className="flex flex-col gap-4">
+              <TrendChart
+                title={isRange ? 'Orders' : 'Orders Today'}
+                series={data.series}
+                granularity={data.series_granularity}
+                dataKey="orders"
+                color={BRAND.secondary}
+                seriesName="Orders"
+                format={(v) => String(v)}
+              />
+              <HeatmapTable
+                title="Orders by Day & Hour"
+                cells={data.heatmap}
+                metric="orders"
+                color={BRAND.secondary}
+                format={(v) => String(v)}
+              />
+            </div>
           </div>
         </Section>
       )}

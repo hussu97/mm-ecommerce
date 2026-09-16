@@ -8519,6 +8519,13 @@
             "title": "Generated At",
             "type": "string"
           },
+          "heatmap": {
+            "items": {
+              "$ref": "#/components/schemas/HeatmapCell"
+            },
+            "title": "Heatmap",
+            "type": "array"
+          },
           "ops": {
             "$ref": "#/components/schemas/DashboardOps"
           },
@@ -8554,6 +8561,7 @@
           "by_payment",
           "series",
           "series_granularity",
+          "heatmap",
           "ops"
         ],
         "title": "DashboardTodayResponse",
@@ -10987,6 +10995,35 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeatmapCell": {
+        "description": "One day-of-week \u00d7 hour-of-day cell of the sales heatmap.\n\n`dow` is the shop-local day of week as PostgreSQL `extract(dow \u2026)` numbers it\n\u2014 0 = Sunday through 6 = Saturday \u2014 and `hour` is the shop-local hour 0\u201323.\nBoth are on the shop's own clock (`created_at` is UTC, shifted into the shop\ntimezone before extraction), so \"hour of day\" reads in Gulf time. Only cells\nwith at least one order are emitted; the grid is zero-filled on the client.\nThe window and status/courier selection match every other figure.",
+        "properties": {
+          "dow": {
+            "title": "Dow",
+            "type": "integer"
+          },
+          "hour": {
+            "title": "Hour",
+            "type": "integer"
+          },
+          "orders": {
+            "title": "Orders",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "dow",
+          "hour",
+          "orders",
+          "revenue"
+        ],
+        "title": "HeatmapCell",
         "type": "object"
       },
       "ImportError": {
