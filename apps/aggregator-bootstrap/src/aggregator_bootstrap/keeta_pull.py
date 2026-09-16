@@ -668,15 +668,23 @@ async ({ bucketPath, signPath, updatePath, shopId, spuId, imageB64, contentType 
   if (!bucket || !domain) return out;
   // 2. MWS upload signature
   out.sign = await post(signPath, { bucket, shopId: Number(shopId) });
-  const auth = ((out.sign && out.sign.data) || {}).authorization;
+  const sd = (out.sign && out.sign.data) || {};
+  const auth = sd.authorization, expiretime = sd.expiretime;
   if (!auth) return out;
-  // 3. upload the raw bytes to Venus (MWS-authed, cross-origin — no mtgsig, no cookies)
+  // 3. upload the bytes to Venus. MWS-authed (NOT mtgsig), cross-origin. Two things
+  //    the Meituan mssupload SDK does that are NOT obvious and are required:
+  //    (a) the `time` header is the sign's `expiretime` (the value the signature was
+  //        computed over) — NOT Date.now(); a mismatch → "auth failed: expire".
+  //    (b) the body is multipart FormData with the bytes in a "file" field — a raw
+  //        Blob body → "file empty". Both verified live 2026-09-16.
   const bin = atob(imageB64); const arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   const blob = new Blob([arr], { type: contentType });
+  const form = new FormData();
+  form.append("file", blob, "item." + ((contentType.split("/")[1] || "jpg")));
   try {
     const up = await fetch(domain + "extrastorage/" + bucket + "?isHttps=true",
-      { method: "POST", headers: { "Authorization": auth, "time": String(Date.now()) }, body: blob });
+      { method: "POST", headers: { "Authorization": auth, "time": String(expiretime) }, body: form });
     const ut = await up.text();
     out.uploadStatus = up.status;
     try { out.upload = JSON.parse(ut); } catch (e) { out.upload = { text: ut.slice(0, 300) }; }
