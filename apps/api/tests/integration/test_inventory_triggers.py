@@ -240,3 +240,91 @@ async def test_a_closed_transaction_cannot_be_edited(session_factory, branch_and
             )
             await db.commit()
     assert "closed inventory transactions are immutable" in str(excinfo.value)
+
+
+async def test_never_posted_source_event_may_be_resnapshotted(
+    session_factory, branch_and_item
+):
+    """A never-posted inventory source event (a `missing_recipe` PENDING awaiting
+    recipe activation) is re-snapshotted by the sweeper / `retry_event`, which
+    rewrites `frozen_plan`. The `inventory_source_snapshot_immutable` trigger must
+    allow that while no movement has posted — and freeze the plan only once posted
+    (regression for the sweep-poison loop, where the trigger blocked every
+    re-snapshot and the event re-poisoned its branch every tick)."""
+    branch_id, _ = branch_and_item
+    ev_id = uuid.uuid4()
+    async with session_factory() as db:
+        await db.execute(
+            text(
+                "INSERT INTO inventory_source_events "
+                "(id, branch_id, source_type, source_id, idempotency_key, status, "
+                " accepted_at, created_at, updated_at, frozen_plan, "
+                " recipe_version_ids) "
+                "VALUES (:id, :b, 'order', :sid, :idem, 'pending', now(), now(), "
+                " now(), '{\"lines\": []}'::jsonb, '[]'::jsonb)"
+            ),
+            {
+                "id": ev_id,
+                "b": branch_id,
+                "sid": str(uuid.uuid4()),
+                "idem": f"{MARKER}-{uuid.uuid4().hex}",
+            },
+        )
+        await db.commit()
+
+    # Never posted (transaction_id NULL, status 'pending') → the re-snapshot that
+    # rewrites frozen_plan / recipe_version_ids is allowed.
+    async with session_factory() as db:
+        await db.execute(
+            text(
+                "UPDATE inventory_source_events SET "
+                'frozen_plan = \'{"lines": [{"item": "flour"}]}\'::jsonb, '
+                "recipe_version_ids = '[1]'::jsonb WHERE id = :i"
+            ),
+            {"i": ev_id},
+        )
+        await db.commit()
+
+    # Once posted, the plan is frozen again.
+    async with session_factory() as db:
+        await db.execute(
+            text("UPDATE inventory_source_events SET status = 'posted' WHERE id = :i"),
+            {"i": ev_id},
+        )
+        await db.commit()
+    with pytest.raises(Exception) as excinfo:
+        async with session_factory() as db:
+            await db.execute(
+                text(
+                    "UPDATE inventory_source_events SET "
+                    'frozen_plan = \'{"lines": [{"item": "sugar"}]}\'::jsonb '
+                    "WHERE id = :i"
+                ),
+                {"i": ev_id},
+            )
+            await db.commit()
+    assert "accepted inventory source snapshots are immutable" in str(excinfo.value)
+
+    # Identity stays immutable in every state (the never-posted relaxation is only
+    # for the plan columns).
+    with pytest.raises(Exception) as excinfo:
+        async with session_factory() as db:
+            await db.execute(
+                text(
+                    "UPDATE inventory_source_events SET source_id = 'moved' "
+                    "WHERE id = :i"
+                ),
+                {"i": ev_id},
+            )
+            await db.commit()
+    assert "accepted inventory source snapshots are immutable" in str(excinfo.value)
+
+    # Cleanup: the append-only trigger blocks DELETE, so bypass it like the branch
+    # teardown does.
+    async with session_factory() as db:
+        await db.execute(text("SET session_replication_role = 'replica'"))
+        await db.execute(
+            text("DELETE FROM inventory_source_events WHERE id = :i"), {"i": ev_id}
+        )
+        await db.execute(text("SET session_replication_role = 'origin'"))
+        await db.commit()
