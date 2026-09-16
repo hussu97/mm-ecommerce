@@ -5,30 +5,38 @@ import { startRegistration } from '@simplewebauthn/browser';
 import { ApiError, authApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { AdminPasskey } from '@/lib/types';
-import { Button, Input, Spinner } from '@/components/ui';
+import { Button, Input, LoadError, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
+import { useConfirm } from '@/components/ui/feedback';
 import { formatDate } from '@/lib/utils';
-
-const SUPERADMIN_EMAIL = 'admin@meltingmomentscakes.com';
 
 export default function SecurityPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [passkeys, setPasskeys] = useState<AdminPasskey[]>([]);
   const [name, setName] = useState('Admin passkey');
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const passkeysEnabled = user?.email !== SUPERADMIN_EMAIL;
+  // The server's own verdict, not a guess from the address — the superadmin
+  // account cannot hold passkeys, and hardcoding one email here went stale the
+  // moment a second superadmin existed (F-ADM).
+  const passkeysEnabled = !user?.is_superadmin;
 
   const loadPasskeys = useCallback(async () => {
     setLoading(true);
     try {
       const rows = await authApi.passkeys();
       setPasskeys(rows);
+      setLoadFailed(false);
     } catch {
+      // A failed load is not "you have none" — that reading invites a second
+      // enrolment on an account that already has one it just could not show.
       setPasskeys([]);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -56,6 +64,17 @@ export default function SecurityPage() {
   }
 
   async function deletePasskey(id: string) {
+    if (
+      !(await confirm({
+        title: 'Remove this passkey?',
+        message:
+          'This device will no longer sign in with it. You can add it again later.',
+        confirmLabel: 'Remove',
+        danger: true,
+      }))
+    ) {
+      return;
+    }
     setError('');
     setSuccess('');
     try {
@@ -118,6 +137,11 @@ export default function SecurityPage() {
         <div className="flex justify-center py-10">
           <Spinner />
         </div>
+      ) : loadFailed ? (
+        <LoadError
+          message="Could not load your passkeys."
+          onRetry={() => void loadPasskeys()}
+        />
       ) : (
         <DataTable<AdminPasskey>
           columns={[

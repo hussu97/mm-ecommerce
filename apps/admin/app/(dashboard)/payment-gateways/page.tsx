@@ -24,6 +24,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { paymentGatewaysApi } from '@/lib/api';
 import type { PaymentGateway } from '@/lib/types';
 import { Badge, Button, Input, LoadError, Spinner } from '@/components/ui';
+import { formatCurrency } from '@/lib/utils';
 
 export default function PaymentGatewaysPage() {
   const [gateways, setGateways] = useState<PaymentGateway[] | null>(null);
@@ -170,8 +171,8 @@ function GatewayCard({
             {gateway.is_configured
               ? `Priority ${gateway.priority}`
               : 'No credentials on this server — cannot be switched on here'}
-            {gateway.min_amount !== null && ` · min AED ${gateway.min_amount}`}
-            {gateway.max_amount !== null && ` · max AED ${gateway.max_amount}`}
+            {gateway.min_amount !== null && ` · min ${formatCurrency(gateway.min_amount)}`}
+            {gateway.max_amount !== null && ` · max ${formatCurrency(gateway.max_amount)}`}
           </p>
         </div>
 

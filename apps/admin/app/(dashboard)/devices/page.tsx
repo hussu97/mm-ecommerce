@@ -171,9 +171,14 @@ function PairingActions({ device, onDone }: { device: Device; onDone: () => void
 
   async function unpair() {
     setBusy(true);
+    setError('');
     try {
       await devicesApi.unpair(device.id);
       onDone();
+    } catch (err) {
+      // Was swallowed: a failed unpair looked like it worked, leaving a device
+      // paired that the operator believed they had cut off (F-ADM).
+      setError(err instanceof ApiError ? err.message : 'Failed to unpair.');
     } finally {
       setBusy(false);
     }
@@ -199,7 +204,7 @@ function PairingActions({ device, onDone }: { device: Device; onDone: () => void
       )}
       {(code || error) && (
         <Modal
-          title={error ? 'Pairing failed' : 'Pairing code'}
+          title={error ? 'Something went wrong' : 'Pairing code'}
           onClose={() => {
             setCode(null);
             setError('');

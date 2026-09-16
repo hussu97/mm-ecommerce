@@ -255,3 +255,15 @@ describe('F-ADM pagination — every DataTable list carries the control', () => 
     }
   });
 });
+
+describe('F-ADM — superadmin is decided by the server, not a hardcoded email', () => {
+  it('no source hardcodes a superadmin console email', () => {
+    // A superadmin gate keyed off a literal address (security/page.tsx used
+    // `admin@meltingmomentscakes.com`) goes stale the moment a second superadmin
+    // exists; the server sends `is_superadmin` for exactly this.
+    const offenders = SOURCES.filter((f) =>
+      /['"]admin@meltingmomentscakes\.com['"]/.test(readFileSync(f, 'utf8')),
+    ).map((f) => f.slice(ADMIN.length + 1));
+    expect(offenders, 'gate on user.is_superadmin instead').toEqual([]);
+  });
+});
