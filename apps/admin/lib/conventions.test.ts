@@ -198,3 +198,60 @@ describe('the Refund button never offers what the server refuses', () => {
     expect(py).toContain('order.status != OrderStatusEnum.DELIVERED');
   });
 });
+
+describe('F-ADM pagination — every DataTable list carries the control', () => {
+  // Files that render a <DataTable> but deliberately do NOT paginate, each with
+  // the reason it is bounded. Shrink-only: a NEW unpaginated DataTable fails the
+  // test below, and an entry whose file has gained <Pagination> (or lost its
+  // DataTable) must be removed. Paths are relative to apps/admin, sep-normalised.
+  const ALLOWED_WITHOUT_PAGINATION = new Map<string, string>([
+    ['app/(dashboard)/admin-users/page.tsx', 'the admins/superadmins — a handful of rows'],
+    ['app/(dashboard)/security/page.tsx', "the current admin's own passkeys — a handful"],
+    ['app/(dashboard)/aggregators/fees/page.tsx', 'a per-channel fee summary, one row per channel'],
+    ['app/(dashboard)/aggregators/logins/page.tsx', 'worker sessions, one per channel'],
+    ['app/(dashboard)/aggregators/mappings/page.tsx', 'branch/channel maps, bounded by branch count'],
+    ['app/(dashboard)/inventory/integrity/page.tsx', 'a diagnostic result set meant to be read whole'],
+    ['app/(dashboard)/inventory/templates/page.tsx', 'report templates per branch — a few config rows'],
+    ['app/(dashboard)/inventory/transfers/page.tsx', 'transfer templates per branch — config rows'],
+    ['components/inventory/RecipeEditor.tsx', "an editor's ingredient rows, not a list screen"],
+  ].map(([p, why]) => [p.split('/').join(sep), why]));
+
+  it('a DataTable page renders <Pagination> or is a documented bounded list', () => {
+    const offenders: string[] = [];
+    for (const file of SOURCES) {
+      const body = readFileSync(file, 'utf8');
+      if (!body.includes('<DataTable')) continue;
+      // The control itself, and the shared list scaffold that always pairs the
+      // two, are not screens.
+      const rel = file.slice(ADMIN.length + 1);
+      if (
+        rel === join('components', 'ui', 'DataTable.tsx') ||
+        rel === join('components', 'ui', 'ListPage.tsx')
+      ) {
+        continue;
+      }
+      if (body.includes('<Pagination')) continue;
+      if (ALLOWED_WITHOUT_PAGINATION.has(rel)) continue;
+      offenders.push(rel);
+    }
+    expect(
+      offenders,
+      'These screens render a DataTable with no <Pagination> and are not in the ' +
+        'bounded-list allow-list. Add the shared <Pagination> control (see ' +
+        'languages/page.tsx or ResourcePage `paginated`), or, if the list is ' +
+        'genuinely bounded, add it to ALLOWED_WITHOUT_PAGINATION with a reason.',
+    ).toEqual([]);
+  });
+
+  it('the allow-list only shrinks — no stale entries', () => {
+    for (const [rel] of ALLOWED_WITHOUT_PAGINATION) {
+      const full = join(ADMIN, rel);
+      const body = readFileSync(full, 'utf8');
+      expect(body.includes('<DataTable'), `${rel} no longer renders a DataTable`).toBe(true);
+      expect(
+        body.includes('<Pagination'),
+        `${rel} now paginates — remove it from ALLOWED_WITHOUT_PAGINATION`,
+      ).toBe(false);
+    }
+  });
+});

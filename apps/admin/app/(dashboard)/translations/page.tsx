@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { languagesApi, translationsApi } from '@/lib/api';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import type { Language } from '@/lib/types';
-import { Button, Input, Select, Spinner } from '@/components/ui';
+import { Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/feedback';
 
 const NAMESPACES = [
@@ -29,6 +29,8 @@ export default function TranslationsPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 250);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(100);
 
   // Fetch languages once
   useEffect(() => {
@@ -87,6 +89,21 @@ export default function TranslationsPage() {
       return false;
     });
   }, [allKeys, q, allTranslations, edits]);
+
+  // Page the (already namespace- and search-scoped) key list so a large
+  // namespace does not render hundreds of rows — each with an input per locale —
+  // in one DOM (F-ADM). Clamp the page rather than reset so narrowing the search
+  // never strands the viewer past the new end; the effect below returns to page
+  // one whenever the filter or namespace changes.
+  const totalPages = Math.max(1, Math.ceil(filteredKeys.length / perPage));
+  const currentPage = Math.min(page, totalPages);
+  const pagedKeys = filteredKeys.slice(
+    (currentPage - 1) * perPage,
+    currentPage * perPage,
+  );
+  useEffect(() => {
+    setPage(1);
+  }, [q, namespace]);
 
   // Resolve displayed value (edit overrides original)
   function getValue(locale: string, key: string) {
@@ -199,7 +216,7 @@ export default function TranslationsPage() {
                 No translations found for this namespace.
               </li>
             ) : (
-              filteredKeys.map(key => (
+              pagedKeys.map(key => (
                 <li key={key} className="rounded border border-gray-200 bg-white px-3.5 py-3">
                   <p className="text-xs font-body text-gray-800 break-all">
                     {namespace ? key.replace(`${namespace}.`, '') : key}
@@ -260,7 +277,7 @@ export default function TranslationsPage() {
                   </td>
                 </tr>
               ) : (
-                filteredKeys.map(key => (
+                pagedKeys.map(key => (
                   <tr key={key} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-1.5 font-body text-xs text-gray-600 sticky left-0 bg-white align-top pt-3">
                       <span className="break-all">{namespace ? key.replace(`${namespace}.`, '') : key}</span>
@@ -283,6 +300,17 @@ export default function TranslationsPage() {
             </tbody>
           </table>
           </div>
+          {filteredKeys.length > 0 && (
+            <Pagination
+              page={currentPage}
+              pages={totalPages}
+              total={filteredKeys.length}
+              perPage={perPage}
+              onPageChange={setPage}
+              onPerPageChange={(p) => { setPerPage(p); setPage(1); }}
+              label="keys"
+            />
+          )}
         </>
       )}
 

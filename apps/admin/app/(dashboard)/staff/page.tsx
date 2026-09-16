@@ -29,6 +29,7 @@ export default function StaffTab() {
       update={(id, d) => staffApi.update(id, d)}
       remove={(id) => staffApi.deactivate(id)}
       searchKeys={['email', 'display_name', 'staff_number']}
+      paginated
       defaults={{ is_active: true, is_admin: false, is_driver: false }}
       emptyMessage="No staff yet. Add your first cashier."
       columns={[

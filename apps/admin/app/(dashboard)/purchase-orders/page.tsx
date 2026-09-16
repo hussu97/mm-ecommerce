@@ -10,7 +10,7 @@ import type {
   Supplier,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Select, Spinner } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
@@ -42,6 +42,10 @@ export default function PurchaseOrdersPage() {
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
   const [receiving, setReceiving] = useState<PurchaseOrder | null>(null);
+  // Client-side paging: the list is fetched whole (server cap 1,000) and sliced
+  // here, so a busy purchasing week does not render every row at once (F-ADM).
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,6 +83,12 @@ export default function PurchaseOrdersPage() {
     }
   }
 
+  const totalPages = Math.max(1, Math.ceil(orders.length / perPage));
+  // Clamp rather than reset, so an approve/decline that shrinks the list never
+  // strands the viewer on an empty page past the new end.
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = orders.slice((currentPage - 1) * perPage, currentPage * perPage);
+
   return (
     <div>
       <header className="mb-5 flex items-start justify-between gap-3">
@@ -106,8 +116,9 @@ export default function PurchaseOrdersPage() {
           No purchase orders yet.
         </p>
       ) : (
+        <>
         <DataTable<PurchaseOrder>
-          rows={orders}
+          rows={pageRows}
           rowKey={(po) => po.id}
           actions={(po) => (
             <>
@@ -160,6 +171,16 @@ export default function PurchaseOrdersPage() {
             },
           ]}
         />
+        <Pagination
+          page={currentPage}
+          pages={totalPages}
+          total={orders.length}
+          perPage={perPage}
+          onPageChange={setPage}
+          onPerPageChange={(p) => { setPerPage(p); setPage(1); }}
+          label="purchase orders"
+        />
+        </>
       )}
 
       {creating && (

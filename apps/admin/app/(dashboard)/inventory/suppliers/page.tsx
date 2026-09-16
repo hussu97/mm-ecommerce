@@ -15,6 +15,7 @@ export default function SuppliersPage() {
       update={(id, d) => inventoryApi.updateSupplier(id, d)}
       remove={(id) => inventoryApi.removeSupplier(id)}
       searchKeys={['name']}
+      paginated
       defaults={{ payment_terms_days: 0, is_active: true }}
       emptyMessage="No suppliers yet."
       columns={[
