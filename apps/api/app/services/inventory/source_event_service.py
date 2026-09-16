@@ -365,6 +365,7 @@ async def retry_event(
     order: Order,
     user: User | None,
     already_locked: bool = False,
+    catalog: "recipe_service.ActiveRecipeCatalog | None" = None,
 ) -> InventoryTransaction | None:
     """Re-snapshot a never-posted event so a recipe activated since acceptance lands.
 
@@ -384,7 +385,7 @@ async def retry_event(
     if not already_locked:
         await lock_branch_inventory(db, event.branch_id)
 
-    plan, warnings = await recipe_service.snapshot_order(db, order)
+    plan, warnings = await recipe_service.snapshot_order(db, order, catalog=catalog)
     if warnings:
         plan["warnings"] = warnings
     # The plan was never applied (guarded above), so re-freezing it is safe.
@@ -790,6 +791,15 @@ _SWEEPER_TICK_SECONDS = 30
 #: Hard budget on one sweep so a wedged branch cannot pin the leader connection.
 _SWEEPER_BUDGET_SECONDS = 30
 
+#: Most pending events a single branch is drained per tick. A branch commits its
+#: sweep all-or-nothing (one `pg_advisory_xact_lock`, released only at commit), so
+#: an unbounded backlog whose processing overruns `_SWEEPER_BUDGET_SECONDS` is
+#: cancelled mid-branch and rolled back — draining NOTHING, every tick, forever.
+#: Capping the batch keeps each tick's work inside the budget so it commits; the
+#: incremental cursor re-selects the remainder next tick, so a large backlog drains
+#: over several ticks instead of never.
+_SWEEP_BRANCH_BATCH = 200
+
 
 async def _try_lock_branch_inventory(db: AsyncSession, branch_id: uuid.UUID) -> bool:
     """Non-blocking `lock_branch_inventory` for the sweeper.
@@ -849,11 +859,20 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
                 )
                 .order_by(InventorySourceEvent.accepted_sequence)
                 .with_for_update(skip_locked=True)
+                .limit(_SWEEP_BRANCH_BATCH)
             )
         )
         .scalars()
         .all()
     )
+    # Load the active recipe graph ONCE for the whole batch. `retry_event` (the
+    # missing_recipe path) re-snapshots each event, and snapshot_order used to reload
+    # the full catalog per event — the reload, not the expansion, is what pushed a
+    # backlog past the budget. Reused across the batch it is a single query; a recipe
+    # activated mid-tick simply lands on the next tick, which reloads.
+    catalog = None
+    if events:
+        catalog = await recipe_service.load_active_catalog(db)
     processed = 0
     for event in events:
         if event.source_type != "order":
@@ -879,7 +898,12 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
                     # order was accepted, and the frozen plan does not grow on
                     # its own.
                     await retry_event(
-                        db, event=event, order=order, user=None, already_locked=True
+                        db,
+                        event=event,
+                        order=order,
+                        user=None,
+                        already_locked=True,
+                        catalog=catalog,
                     )
                 else:
                     await _post_or_record_exception(
