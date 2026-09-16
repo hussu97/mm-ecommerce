@@ -1540,3 +1540,59 @@ def test_colliding_mm_names_are_reported_and_never_proposed_for_deletion():
     )
     # The channel item that shares the collided key is never proposed for delete.
     assert kinds.get(K_ITEM_EXTRA) is None
+
+
+# ── drain-only scheduler (Option 1) ────────────────────────────────────────────
+# The autonomous path is a cheap, sequential outbox drain: a COUNT-guarded tick that
+# does nothing slow when idle and only calls process_outbox when a product changed.
+
+
+class _FakeSession:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_drain_skips_when_no_pending(monkeypatch):
+    """An idle tick runs one COUNT and never touches process_outbox (no integrator
+    work, connection freed immediately)."""
+    monkeypatch.setattr(catalog_sync, "AsyncSessionFactory", _FakeSession)
+    monkeypatch.setattr(
+        catalog_sync, "_pending_outbox_count", _mock_async(return_value=0)
+    )
+    called = {"n": 0}
+
+    async def _boom(*a, **k):
+        called["n"] += 1
+        return {}
+
+    monkeypatch.setattr(catalog_sync, "process_outbox", _boom)
+    out = await catalog_sync.drain_catalog_sync_outbox_once()
+    assert out == {"pending": 0}
+    assert called["n"] == 0  # process_outbox never called on an idle tick
+
+
+@pytest.mark.asyncio
+async def test_drain_processes_when_pending(monkeypatch):
+    """When rows are pending the tick drains them and merges the result."""
+    monkeypatch.setattr(catalog_sync, "AsyncSessionFactory", _FakeSession)
+    monkeypatch.setattr(
+        catalog_sync, "_pending_outbox_count", _mock_async(return_value=2)
+    )
+
+    async def _drain(db):
+        return {"processed": 2, "errors": 0}
+
+    monkeypatch.setattr(catalog_sync, "process_outbox", _drain)
+    out = await catalog_sync.drain_catalog_sync_outbox_once()
+    assert out == {"pending": 2, "processed": 2, "errors": 0}
+
+
+def _mock_async(*, return_value):
+    async def _fn(*a, **k):
+        return return_value
+
+    return _fn

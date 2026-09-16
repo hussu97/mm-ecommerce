@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -2327,58 +2327,74 @@ async def run_catalog_sync_once(
     return out
 
 
-async def _last_sweep_at(db: AsyncSession) -> datetime | None:
-    """The freshest snapshot's `fetched_at` — the durable trail for boot catch-up.
+async def _pending_outbox_count(db: AsyncSession) -> int:
+    """How many product-change jobs are waiting. A single cheap COUNT so an idle tick
+    (the common case — product edits are rare) does almost no work and frees its
+    connection immediately."""
+    from app.models.catalog_sync import OUTBOX_PENDING, CatalogSyncOutbox
 
-    Catalog sync has no `aggregator_sync_run` row of its own; the snapshots ARE its
-    trail. Reading the max fetched_at from the DB (not an in-memory timer) is what
-    lets the sweep's boot catch-up survive a redeploy — an in-memory timer resets to
-    a full interval on every restart, starving a sleep-first loop."""
-    return await db.scalar(select(func.max(AggregatorMenuSnapshot.fetched_at)))
+    return (
+        await db.scalar(
+            select(func.count())
+            .select_from(CatalogSyncOutbox)
+            .where(CatalogSyncOutbox.status == OUTBOX_PENDING)
+        )
+    ) or 0
+
+
+async def drain_catalog_sync_outbox_once() -> dict[str, Any]:
+    """One connection-disciplined drain pass — the autonomous unit.
+
+    Idle path holds nothing slow: a short-lived session runs one COUNT and is
+    released before any integrator call; only when there is actually a pending change
+    does a second session open to drain it. The drain itself is strictly sequential
+    (`process_outbox` → one product, one integrator at a time, committing each job's
+    result as it goes). Deliberately drain-ONLY: the heavy menu-read/drift sweep is
+    NOT here — it held a scheduler connection across per-branch integrator HTTP and
+    starved the small scheduler pool when run every tick (2026-09-16); run it
+    deliberately via `run_catalog_sync_once` / the operator script instead.
+    """
+    async with AsyncSessionFactory() as db:
+        pending = await _pending_outbox_count(db)
+    if not pending:
+        return {"pending": 0}
+    logger.info("catalog-sync drain: %d pending product change(s)", pending)
+    async with AsyncSessionFactory() as db:
+        result = await process_outbox(db)
+    logger.info("catalog-sync drain result: %s", result)
+    return {"pending": pending, **result}
 
 
 async def run_catalog_sync_scheduler_forever() -> None:
-    """The autonomous catalog-sync sweep, every `CATALOG_SYNC_SWEEP_MINUTES`.
+    """The autonomous catalog-sync DRAIN, every `CATALOG_SYNC_SWEEP_MINUTES`.
 
-    A carbon copy of the rolling-sales scheduler's shape (wall-clock honest, with a
-    DB-backed boot catch-up so a redeploy cannot push the next run a full interval
-    into the future), pointed at `run_catalog_sync_once`. `<= 0` disables it.
-    Registered under the aggregator scheduler leader, so exactly one API slot ticks
-    and a blue/green cutover hands it over for free. Cancellation-safe; one bad tick
-    is logged and the loop lives on.
+    Drain-only and cheap by design (see `drain_catalog_sync_outbox_once`): each tick
+    is a single COUNT unless a product actually changed, and any work is sequential —
+    so it coexists with the other loops on the small scheduler pool instead of
+    starving it. The interval no longer needs to be short: it is the max latency for
+    a product edit to reach the integrators, not a polling cost. `<= 0` disables it;
+    also a no-op when writes are off. Registered under the aggregator scheduler
+    leader (one API slot ticks; a blue/green cutover hands it over for free).
+    Cancellation-safe; one bad tick is logged and the loop lives on.
     """
     interval = settings.CATALOG_SYNC_SWEEP_MINUTES
     if interval <= 0:
-        logger.info("catalog-sync sweep disabled (CATALOG_SYNC_SWEEP_MINUTES <= 0)")
+        logger.info("catalog-sync drain disabled (CATALOG_SYNC_SWEEP_MINUTES <= 0)")
         return
-    logger.info("catalog-sync sweep started (every %dm)", interval)
-    try:
-        if settings.CATALOG_SYNC_READ_ENABLED:
-            async with AsyncSessionFactory() as db:
-                last = await _last_sweep_at(db)
-            if last is None or _utcnow() - last >= timedelta(minutes=interval):
-                logger.info(
-                    "catalog-sync sweep: last run older than interval — catching up"
-                )
-                async with AsyncSessionFactory() as db:
-                    await run_catalog_sync_once(db)
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001 — a failed catch-up must not kill the loop
-        logger.exception("catalog-sync sweep catch-up failed")
-
+    if not settings.CATALOG_SYNC_ENABLED:
+        logger.info("catalog-sync drain: writes disabled (CATALOG_SYNC_ENABLED)")
+        return
+    logger.info(
+        "catalog-sync drain started (every %dm, drain-only, sequential)", interval
+    )
     while True:
         try:
             await asyncio.sleep(interval * 60)
-            # Tick when reads OR writes are on: run_catalog_sync_once drains the
-            # product-change outbox (write-gated) even when menu reads are off.
-            if settings.CATALOG_SYNC_READ_ENABLED or settings.CATALOG_SYNC_ENABLED:
-                async with AsyncSessionFactory() as db:
-                    await run_catalog_sync_once(db)
+            await drain_catalog_sync_outbox_once()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — one bad tick must not stop them all
-            logger.exception("catalog-sync sweep tick failed")
+            logger.exception("catalog-sync drain tick failed")
 
 
 __all__ = [
@@ -2397,6 +2413,7 @@ __all__ = [
     "process_outbox",
     "resolve_and_approve_mappings",
     "run_catalog_sync_once",
+    "drain_catalog_sync_outbox_once",
     "run_catalog_sync_scheduler_forever",
     "integrated_branches",
     "AGGREGATOR_CHANNELS",
