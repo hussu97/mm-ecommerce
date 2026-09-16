@@ -1402,17 +1402,34 @@ async def enrich_existing_item(
             else:
                 image_bytes, ctype = fetched
                 ext = (ctype.split("/", 1)[-1] or "jpeg").split(";")[0]
+                draft_id = str(draft.get("drn_id"))
                 try:
                     up = await dp.provider.selfserve_upload_image(
                         session,
-                        draft_id=str(draft.get("drn_id")),
+                        draft_id=draft_id,
                         image_bytes=image_bytes,
                         filename=f"{product.sku or _norm(product.name)}.{ext}",
                         content_type=ctype,
                     )
-                    image_cdn_url = up.get("cdn_url")
-                    image_s3key = up.get("s3key")
-                    image_status = "uploaded"
+                    # Deliveroo's photo QA rejects some good photos (e.g. a non-white
+                    # background). When it does, run its own "Enhance photo" AI on the
+                    # uploaded s3 key to get an approved image — an image is only
+                    # attachable once its status is approved.
+                    if up.get("status") != "approved" and up.get("s3key"):
+                        logger.info(
+                            "deliveroo image rejected (%s) for %s; enhancing",
+                            up.get("reject_reasons"),
+                            product.id,
+                        )
+                        up = await dp.provider.selfserve_enhance_image(
+                            session, draft_id=draft_id, image_s3_key=up["s3key"]
+                        )
+                    if up.get("status") == "approved" and up.get("cdn_url"):
+                        image_cdn_url = up.get("cdn_url")
+                        image_s3key = up.get("s3key")
+                        image_status = "uploaded"
+                    else:
+                        image_status = f"skipped (not approved: {up.get('status')})"
                 except Exception as exc:  # noqa: BLE001 — image is best-effort
                     logger.warning(
                         "deliveroo image upload failed for %s: %s", product.id, exc
