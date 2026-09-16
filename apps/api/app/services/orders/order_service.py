@@ -37,7 +37,13 @@ from app.core.phone import describe_phone
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
-from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
+from app.models.order import (
+    DeliveryMethodEnum,
+    Order,
+    OrderItem,
+    OrderItemStatusEnum,
+    OrderStatusEnum,
+)
 from app.models.order_delivery import OrderDelivery
 from app.models.order_receiver import OrderReceiver
 from app.models.order_status_event import StatusSourceEnum, acting_as
@@ -1681,10 +1687,20 @@ def _item_count_subquery():
     Python, so a 2000-row page — which the console offers, and which its
     pagination standard requires — hydrated tens of thousands of OrderItem
     objects only to add up a single column and discard them.
+
+    Voided counter lines are left out — they never sold, and the money columns
+    already exclude them, so counting them made a mostly-voided ticket read as
+    100+ items against a AED 35 total (POS-B001-2026-09-15-0035: 101 voids and
+    one closed slice). `IS DISTINCT FROM`, not `!= 'void'`: an off-counter line
+    carries a NULL status and `NULL != 'void'` is NULL, not TRUE, so a plain `!=`
+    would silently drop every website and aggregator line from the count.
     """
     return (
         select(func.coalesce(func.sum(OrderItem.quantity), 0))
-        .where(OrderItem.order_id == Order.id)
+        .where(
+            OrderItem.order_id == Order.id,
+            OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+        )
         .correlate(Order)
         .scalar_subquery()
     )
