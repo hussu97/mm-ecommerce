@@ -198,6 +198,36 @@ async def test_promote_since_reaches_orders_the_default_clip_skips(db, monkeypat
     assert agg.mm_order_id is not None
 
 
+# ── F-AGG-11: promotion is incremental — a re-promote does not re-select ───────
+async def test_promotion_does_not_re_select_the_same_order_next_sweep(db, monkeypatch):
+    """The incremental promote cursor (`updated_at > promoted_at`) must go quiet once
+    an order is promoted. Promotion writes `promoted_at`/`mm_order_id`, and the ORM's
+    `onupdate=utcnow` on `updated_at` used to bump it to a hair AFTER `promoted_at` on
+    that same flush — so every order re-selected on the very next sweep and the whole
+    lookback window re-promoted continuously, pinning CPU. Promotion must advance
+    `promoted_at` without touching `updated_at`."""
+    branch_id = await _branch(db)
+    today = datetime.now(timezone.utc).date().isoformat()
+    agg = await _agg_order(
+        db, channel="keeta", branch_id=branch_id, business_date=today
+    )
+
+    touched_first = await promote.promote_channel(db, "keeta")
+    await db.refresh(agg)
+    assert touched_first == 1
+    assert agg.promoted_at is not None
+    assert agg.mm_order_id is not None
+    updated_after_promote = agg.updated_at
+    # The promotion must NOT have advanced updated_at past promoted_at.
+    assert agg.updated_at <= agg.promoted_at
+
+    # A second sweep must not re-select it (nothing scraped it since).
+    touched_second = await promote.promote_channel(db, "keeta")
+    await db.refresh(agg)
+    assert touched_second == 0
+    assert agg.updated_at == updated_after_promote
+
+
 # ── F-AGG-8: the unpromotable backlog is counted ──────────────────────────────
 async def test_unpromotable_backlog_counts_orders_below_the_clip(db, monkeypatch):
     monkeypatch.setattr(
