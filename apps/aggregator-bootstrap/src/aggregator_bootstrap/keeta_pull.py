@@ -625,26 +625,26 @@ async def create_keeta_spu(
 # ── item image (Meituan "Venus" upload) ──────────────────────────────────────
 # Keeta rejects a foreign picUrl (`107000224 "Incorrect picture URL"`), so a photo
 # must be uploaded to keeta's own Venus store first, then attached to the SPU. The
-# whole flow is mtgsig-signed, so — like saveSpu — it runs in the page's MAIN world
-# via `page.evaluate`, where the site's own request signing applies. Decoded from
-# the PC portal bundle 2026-09-15 (`img-up-eu.mykeeta.com`, `/api/operate/venus/
-# getUploadSign` → S3/OSS POST-policy `{policy,signature,callback,url,…}` →
-# `/api/sailorProduct/spu/w/updateSpuPicture`).
-KEETA_VENUS_CONFIG_PATH = "/api/operate/venus/getUploadConfig"
-KEETA_VENUS_SIGN_PATH = "/api/operate/venus/getUploadSign"
+# sailorProduct calls are mtgsig-signed, so — like saveSpu — the whole thing runs in
+# the page's MAIN world via `page.evaluate`, where the site's own request signing
+# applies. Flow CAPTURED LIVE 2026-09-16 from the Menu Manager's image upload (with
+# request + response bodies), four steps:
+#   1. POST /api/sailorProduct/common/r/bucket {shopId}
+#        -> data.{venusBucket, venusUploadDomain}
+#   2. POST /api/sailorProduct/customer/venus/r/signV2 {bucket, shopId}
+#        -> data.{authorization: "MWS <key>:<sig>", expiretime}
+#   3. POST {venusUploadDomain}extrastorage/{venusBucket}?isHttps=true
+#        headers {Authorization: <mws>, time: <ms>}, body = raw image bytes
+#        -> data.{originalLink: "https://img-eu.mykeeta.net/<bucket>/<md5+size>.jpg", …}
+#   4. POST /api/sailorProduct/spu/w/updateSpuPicture {shopId, spuId, picUrl}
+# Step 3 is MWS-authed (not mtgsig) and cross-origin to img-up-eu.mykeeta.com, which
+# allows the merchant origin (CORS verified live). There is NO upload-time photo QA.
+KEETA_VENUS_BUCKET_PATH = "/api/sailorProduct/common/r/bucket"
+KEETA_VENUS_SIGN_PATH = "/api/sailorProduct/customer/venus/r/signV2"
 KEETA_SPU_UPDATE_PICTURE_ENDPOINT = "/api/sailorProduct/spu/w/updateSpuPicture"
-#: Prod Venus upload host (the sign response's own `host`/`url` is preferred when
-#: present; this is the documented fallback for the EU region).
-KEETA_VENUS_UPLOAD_HOST = "https://img-up-eu.mykeeta.com"
 
-# One in-page pass: sign → OSS form-POST the bytes → attach to the SPU. Written to
-# be adaptive because the Venus SDK's exact request/field names are only observable
-# under mtgsig (which is live only here, in the page): it spreads EVERY scalar field
-# the sign returns into the upload form (so whatever OSS policy fields Venus uses ride
-# along), tries the known picUrl shapes, and returns every intermediate response so
-# the first VM run confirms — or corrects — the shape. `imageB64` is the raw image.
 _UPLOAD_SPU_IMAGE_JS = """
-async ({ configPath, signPath, updatePath, uploadHost, shopId, spuId, imageB64, filename, contentType }) => {
+async ({ bucketPath, signPath, updatePath, shopId, spuId, imageB64, contentType }) => {
   const headers = {
     "accept": "application/json, text/plain, */*",
     "content-type": "application/json",
@@ -661,40 +661,29 @@ async ({ configPath, signPath, updatePath, uploadHost, shopId, spuId, imageB64, 
     try { return JSON.parse(t); } catch (e) { return { status: r.status, text: t }; }
   };
   const out = {};
-  // 1. Venus config (scene/bizId/token the sign call may need) — best-effort.
-  out.config = await post(configPath, { shopId: Number(shopId) });
-  const cfg = (out.config && out.config.data) || {};
-  // 2. Sign: pass a superset; Venus ignores what it does not use.
-  out.sign = await post(signPath, {
-    shopId: Number(shopId), fileName: filename, name: filename,
-    contentType, mimeType: contentType, count: 1, ...cfg
-  });
-  const sd = (out.sign && out.sign.data) || {};
-  const s = Array.isArray(sd) ? (sd[0] || {}) : (sd.list && sd.list[0]) || sd;
-  // 3. OSS/S3 form-POST the bytes. Spread every scalar field the sign returned
-  //    (policy, signature, OSSAccessKeyId/accessid, key, callback, …) into the form.
+  // 1. bucket + upload domain
+  out.bucket = await post(bucketPath, { shopId: Number(shopId) });
+  const bd = (out.bucket && out.bucket.data) || {};
+  const bucket = bd.venusBucket, domain = bd.venusUploadDomain;
+  if (!bucket || !domain) return out;
+  // 2. MWS upload signature
+  out.sign = await post(signPath, { bucket, shopId: Number(shopId) });
+  const auth = ((out.sign && out.sign.data) || {}).authorization;
+  if (!auth) return out;
+  // 3. upload the raw bytes to Venus (MWS-authed, cross-origin — no mtgsig, no cookies)
   const bin = atob(imageB64); const arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   const blob = new Blob([arr], { type: contentType });
-  const form = new FormData();
-  for (const [k, v] of Object.entries(s)) {
-    if (v != null && typeof v !== "object") form.append(k, String(v));
-  }
-  form.append("file", blob, filename);
-  const uploadUrl = s.host || s.url || s.uploadUrl || s.endpoint || uploadHost;
   try {
-    const up = await fetch(uploadUrl, { method: "POST", body: form });
+    const up = await fetch(domain + "extrastorage/" + bucket + "?isHttps=true",
+      { method: "POST", headers: { "Authorization": auth, "time": String(Date.now()) }, body: blob });
     const ut = await up.text();
     out.uploadStatus = up.status;
     try { out.upload = JSON.parse(ut); } catch (e) { out.upload = { text: ut.slice(0, 300) }; }
   } catch (e) { out.uploadError = String(e); }
-  // 4. Derive the stored picUrl from the sign/upload response (adaptive).
-  const ud = (out.upload && (out.upload.data || out.upload)) || {};
-  const picUrl = ud.url || ud.downloadUrl || ud.originUrl || ud.picUrl
-    || s.downloadUrl || s.originUrl || s.picUrl || s.resUrl
-    || (s.key ? (uploadHost.replace(/-up\\./, ".") + "/" + s.key) : null);
+  const picUrl = ((out.upload && out.upload.data) || {}).originalLink;
   out.picUrl = picUrl;
-  // 5. Attach to the SPU (mtgsig-signed). Body shape mirrors updateSpu* siblings.
+  // 4. attach the stored picUrl to the SPU (mtgsig-signed)
   if (picUrl) {
     out.update = await post(updatePath, { shopId: Number(shopId), spuId: Number(spuId), picUrl });
   }
@@ -712,17 +701,14 @@ async def set_keeta_spu_image(
     filename: str = "item.jpg",
     content_type: str = "image/jpeg",
 ) -> dict:
-    """Upload a photo to Keeta's Venus store and attach it to one SPU (mtgsig-signed,
-    in-page). Returns every intermediate response (`config`/`sign`/`upload`/`picUrl`/
-    `update`) so a run can be inspected; `update.code == 0` means the picture is set.
+    """Upload a photo to Keeta's Venus store and attach it to one SPU (in-page).
+    Returns every intermediate response (`bucket`/`sign`/`upload`/`picUrl`/`update`)
+    so a run can be inspected; `update.code == 0` means the picture is set on the item.
 
     Only invoked behind CATALOG_SYNC_ENABLED. Primes on the order-LIST route for the
-    same "restaurant" context saveSpu needs. **First-run note:** the Venus SDK's exact
-    sign request/response field names are only observable under mtgsig (live only in
-    the page), so this pass is deliberately adaptive — it spreads whatever fields the
-    sign returns into the OSS upload and tries the known picUrl shapes. If a first VM
-    run's returned `sign`/`upload` shows different keys, tighten `_UPLOAD_SPU_IMAGE_JS`
-    accordingly; the structure (sign → OSS POST → updateSpuPicture) is fixed."""
+    same "restaurant" context saveSpu needs. The four-step flow (bucket → signV2 →
+    Venus upload → updateSpuPicture) was captured live 2026-09-16 with exact request +
+    response bodies — see `_UPLOAD_SPU_IMAGE_JS`."""
     import base64
 
     page = await context.new_page()
@@ -744,14 +730,12 @@ async def set_keeta_spu_image(
         return await page.evaluate(
             _UPLOAD_SPU_IMAGE_JS,
             {
-                "configPath": KEETA_VENUS_CONFIG_PATH + KEETA_QUERY_SUFFIX,
+                "bucketPath": KEETA_VENUS_BUCKET_PATH + KEETA_QUERY_SUFFIX,
                 "signPath": KEETA_VENUS_SIGN_PATH + KEETA_QUERY_SUFFIX,
                 "updatePath": KEETA_SPU_UPDATE_PICTURE_ENDPOINT + KEETA_QUERY_SUFFIX,
-                "uploadHost": KEETA_VENUS_UPLOAD_HOST,
                 "shopId": int(shop_id),
                 "spuId": int(spu_id),
                 "imageB64": base64.b64encode(image_bytes).decode(),
-                "filename": filename,
                 "contentType": content_type,
             },
         )
