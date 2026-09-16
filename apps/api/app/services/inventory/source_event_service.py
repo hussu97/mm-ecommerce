@@ -885,12 +885,18 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
                 event.id,
                 branch_id,
             )
-            # The savepoint rolled back this event's mutations and recovered the
-            # connection; record the quarantine in a fresh savepoint so it sticks
-            # and the event stops re-poisoning the branch on the next tick. It
-            # stays recoverable by hand via the retry endpoint.
+            # The SAVEPOINT rolled back the failed statement, but the ORM object is
+            # still dirty with whatever `retry_event` assigned (a new `frozen_plan`,
+            # `recipe_version_ids`) — a savepoint rollback recovers the connection,
+            # not the identity-map's pending attribute changes. Left dirty, the very
+            # next flush re-emits those columns and the quarantine UPDATE re-trips the
+            # immutability trigger, so the event never quarantines and re-poisons the
+            # branch every tick. Expire it to drop the dirty state and reload the
+            # committed row, then record the quarantine in a fresh savepoint so it
+            # sticks. It stays recoverable by hand via the retry endpoint.
             try:
                 async with db.begin_nested():
+                    db.expire(event)
                     event.status = InventorySourceEventStatusEnum.EXCEPTION.value
                     event.error_code = "sweep_failed"
                     event.error_detail = str(exc)[:500]
