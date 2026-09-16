@@ -618,8 +618,13 @@ async def load_active_catalog(db: AsyncSession) -> ActiveRecipeCatalog:
 
 
 async def snapshot_order(
-    db: AsyncSession, order: Order
+    db: AsyncSession, order: Order, *, catalog: ActiveRecipeCatalog | None = None
 ) -> tuple[dict[str, Any], list[str]]:
+    """`catalog` lets a caller that snapshots MANY orders in one pass (the pending
+    sweeper) load the active recipe graph ONCE and reuse it, instead of paying a
+    full `load_active_catalog` per order — the per-event reload is what pushed a
+    branch's backlog past the sweep budget and rolled the whole branch back every
+    tick. A per-request caller (accept/reconsume) omits it and loads fresh."""
     totals: dict[uuid.UUID, ExpandedLine] = {}
     version_ids: set[uuid.UUID] = set()
     warnings: list[str] = []
@@ -652,7 +657,7 @@ async def snapshot_order(
             .all()
         )
 
-    catalog = await load_active_catalog(db)
+    catalog = catalog or await load_active_catalog(db)
 
     async def merge(
         kind: str, owner_id: uuid.UUID, multiplier: Decimal, label: str
