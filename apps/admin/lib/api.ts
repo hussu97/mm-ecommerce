@@ -21,6 +21,7 @@ import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
+import { loginPathFor } from './auth-redirect';
 
 // Aggregator reconciliation + branch-map shapes come straight from the generated
 // contract (rule 8); these aliases keep the friendly names the code below uses.
@@ -131,6 +132,20 @@ export async function request<T>(path: string, options: RequestInit = {}, _retry
     const refreshed = await refreshAccessToken();
     if (refreshed) {
       return request<T>(path, options, false);
+    }
+    // The session is truly gone (refresh failed). Send the operator to login
+    // centrally — carrying where they were so they land back after signing in —
+    // rather than leaving each panel to render a dead-end "Session expired" that
+    // never recovers (F-ADM). Guarded against SSR and against bouncing the login
+    // page off itself; `refreshAccessToken` uses `fetch` directly, so this does
+    // not recurse.
+    if (
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/login')
+    ) {
+      window.location.assign(
+        loginPathFor(window.location.pathname, window.location.search),
+      );
     }
     throw new ApiError(401, 'Session expired. Please log in again.');
   }

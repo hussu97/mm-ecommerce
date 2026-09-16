@@ -60,6 +60,54 @@ export function formatQuantity(value: number | string | null | undefined): strin
  */
 const SHOP_TZ = 'Asia/Dubai';
 
+/* ------------------------------------------------------------------ *
+ * Shop-time calendar dates.
+ *
+ * Every date range the console asks the API for is a calendar date in
+ * Asia/Dubai, not in whoever's browser is open. Computing "today" from a plain
+ * `new Date()` and `toISOString().slice(0,10)` reads the *browser's* UTC day, so
+ * a laptop opened between 00:00 and 04:00 Dubai (still "yesterday" in UTC) sends
+ * a range a whole day off — the reporting bug this exists to stop. We take the
+ * shop's current Y-M-D, anchor it at UTC midnight, do the day arithmetic there
+ * (DST-immune; Dubai has none, but the anchor keeps it honest), and serialise
+ * back to the `YYYY-MM-DD` the API expects.
+ * ------------------------------------------------------------------ */
+
+/** A `Date` anchored at UTC midnight of the shop's *current* calendar day. */
+export function shopTodayAnchor(): Date {
+  // en-CA renders as YYYY-MM-DD, which splits without locale surprises.
+  const ymd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SHOP_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+/** `YYYY-MM-DD` for a UTC-anchored date. */
+export function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** `d` shifted by whole days on its UTC anchor. */
+export function addUtcDays(d: Date, days: number): Date {
+  const next = new Date(d);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+/** The shop's current calendar date as `YYYY-MM-DD` (Asia/Dubai). */
+export function todayInShopTz(): string {
+  return isoDay(shopTodayAnchor());
+}
+
+/** `YYYY-MM-DD`, `days` before the shop's today (Asia/Dubai). */
+export function shopDaysAgo(days: number): string {
+  return isoDay(addUtcDays(shopTodayAnchor(), -days));
+}
+
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-AE', {
     day: 'numeric', month: 'short', year: 'numeric', timeZone: SHOP_TZ,

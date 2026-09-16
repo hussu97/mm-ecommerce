@@ -6,7 +6,7 @@ import { Input, LoadError, Select, Spinner } from '@/components/ui';
 import { Badge } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { aggregatorFeesApi } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, shopDaysAgo, todayInShopTz } from '@/lib/utils';
 import type { Schemas } from '@mm/types';
 
 import { AggregatorTabs } from '../AggregatorTabs';
@@ -60,18 +60,13 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
   );
 }
 
-// Default the range to the last 30 days (Dubai-agnostic — these are calendar
-// dates the API compares lexicographically against the stored business dates).
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
-
 export default function AggregatorFeesPage() {
   const [channel, setChannel] = useState('');
-  const [fromDate, setFromDate] = useState(isoDaysAgo(30));
-  const [toDate, setToDate] = useState(isoDaysAgo(0));
+  // Default the range on the shop's Asia/Dubai calendar day, not the browser's
+  // UTC one — a laptop opened before 04:00 Dubai would otherwise default the
+  // window a day short against the stored business dates (F-ADM date-preset TZ).
+  const [fromDate, setFromDate] = useState(() => shopDaysAgo(30));
+  const [toDate, setToDate] = useState(() => todayInShopTz());
 
   const [summary, setSummary] = useState<FeesSummary | null>(null);
   const [error, setError] = useState('');

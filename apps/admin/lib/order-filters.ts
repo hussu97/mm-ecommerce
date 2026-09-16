@@ -16,6 +16,7 @@
 
 import { useCallback, useMemo } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { addUtcDays, isoDay, shopTodayAnchor } from './utils';
 
 export interface OrderFilters {
   /** ISO dates; both empty ⇒ the live current day (dashboard) / all time (list). */
@@ -109,31 +110,10 @@ export function ordersHref(f: OrderFilters, overrides?: Partial<OrderFilters>): 
  * way), then serialise back to the `YYYY-MM-DD` the API expects.
  * ------------------------------------------------------------------ */
 
-const SHOP_TZ = 'Asia/Dubai';
-
-/** A `Date` anchored at UTC midnight of the shop's *current* calendar day. */
-function shopTodayAnchor(): Date {
-  // en-CA renders as YYYY-MM-DD, which we can split without locale surprises.
-  const ymd = new Intl.DateTimeFormat('en-CA', {
-    timeZone: SHOP_TZ,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-  const [y, m, d] = ymd.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
-}
-
-/** `YYYY-MM-DD` for a UTC-anchored date. */
-function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function addDays(d: Date, days: number): Date {
-  const next = new Date(d);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
+// The shop-time date helpers live in lib/utils.ts now, so analytics, fees and
+// the log screens compute "today" against the same Asia/Dubai clock these
+// presets do rather than each rolling their own UTC arithmetic (the day-off bug).
+const addDays = addUtcDays;
 
 export interface DatePreset {
   key: string;

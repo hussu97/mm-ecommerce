@@ -27,6 +27,9 @@ export const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'cancelled', label: 'Cancelled' },
   { value: 'payment_failed', label: 'Payment failed' },
   { value: 'refunded', label: 'Refunded' },
+  // A disputed order renders its own status badge everywhere but could not be
+  // filtered to — the one settled state missing from the chips (F-ADM-19).
+  { value: 'disputed', label: 'Disputed' },
 ];
 
 function Chip({

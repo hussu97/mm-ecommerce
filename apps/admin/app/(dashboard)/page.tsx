@@ -394,6 +394,10 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  // Tracked apart from `failed` (the figures) so the orders panel can tell a
+  // genuinely empty window from a failed fetch, instead of rendering "No orders
+  // yet" over a 500 (F-ADM).
+  const [ordersFailed, setOrdersFailed] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
 
   // The search box is responsive while typing; the committed value lives in the
@@ -429,7 +433,12 @@ export default function DashboardPage() {
     } else {
       setFailed(true);
     }
-    if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value.items);
+    if (ordersRes.status === 'fulfilled') {
+      setOrders(ordersRes.value.items);
+      setOrdersFailed(false);
+    } else {
+      setOrdersFailed(true);
+    }
 
     setRefreshedAt(new Date().toISOString());
     setLoading(false);
@@ -808,6 +817,10 @@ export default function DashboardPage() {
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-12 bg-gray-100 animate-pulse" />
             ))}
+          </div>
+        ) : ordersFailed ? (
+          <div className="bg-white border border-gray-200">
+            <LoadError message="Could not load orders." onRetry={() => void load()} />
           </div>
         ) : orders.length === 0 ? (
           <div className="text-center py-10 bg-white border border-gray-200">

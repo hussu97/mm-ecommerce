@@ -8,7 +8,7 @@ import type {
   OrdersPoint, PromoPerformance, RevenueBreakdown, RevenuePoint,
   TopProduct, TrafficData,
 } from '@/lib/types';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, shopDaysAgo, todayInShopTz } from '@/lib/utils';
 import { AnalyticsTabs } from './AnalyticsTabs';
 import { BRAND } from '@/lib/brand';
 
@@ -37,17 +37,15 @@ const TERTIARY = BRAND.tertiary;
 const PIE_COLORS = [PRIMARY, SECONDARY, '#c4958f', '#e8c9c7'];
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
-function toIso(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
-
+// Anchored on the shop's Asia/Dubai calendar day, not the browser's UTC one —
+// otherwise a laptop opened before 04:00 Dubai asks for a window a day off
+// (F-ADM date-preset TZ). `shopDaysAgo`/`todayInShopTz` are the same helpers the
+// orders-list presets use, so every date range in the console agrees.
 function rangeForPreset(preset: string): { start: string; end: string } {
-  const end = new Date();
-  const start = new Date();
-  if (preset === '7d') start.setDate(end.getDate() - 6);
-  else if (preset === '90d') start.setDate(end.getDate() - 89);
-  else start.setDate(end.getDate() - 29);
-  return { start: toIso(start), end: toIso(end) };
+  const end = todayInShopTz();
+  if (preset === '7d') return { start: shopDaysAgo(6), end };
+  if (preset === '90d') return { start: shopDaysAgo(89), end };
+  return { start: shopDaysAgo(29), end };
 }
 
 // ─── Metric card ─────────────────────────────────────────────────────────────
