@@ -39,6 +39,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, alerting, heartbeat
+from app.core.background import report_result
 from app.core.config import settings
 from app.core.database import (
     AsyncSessionFactory as RequestSessionFactory,  # the request-path pool (5+5)
@@ -2454,6 +2455,10 @@ def _launch_tracked(coro) -> bool:
         return False
     _manual_runs.add(task)
     task.add_done_callback(_manual_runs.discard)
+    # Report an exception that escapes the run to Sentry rather than letting it
+    # vanish with the task's last reference — the same escape-hatch the image and
+    # IndexNow background tasks attach (F-OPS-27).
+    task.add_done_callback(report_result)
     return True
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from urllib.parse import urlparse
 
@@ -26,6 +27,25 @@ router = APIRouter()
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+#: The exact shape `upload_image` mints: one-or-more `[A-Za-z0-9_-]` folder
+#: segments, then a UUID4 stem and one of the three extensions we ever store
+#: under (`.jpg`/`.png`/`.webp`, from `extension_for`). Every key this API has
+#: ever created matches it, so validating against it is behaviour-safe for real
+#: deletes. Its point is the terminal `<uuid4>.<ext>`: `delete_image` used to
+#: pass ANY caller-supplied string straight to `object_storage.delete_object`,
+#: so a `catalogue.manage` admin (or anything with a leaked token for that
+#: scope) could delete an arbitrary object in the shared image bucket — a config
+#: blob, another product's asset, a path traversed out of the image namespace.
+#: Requiring the last segment to be a UUID we ourselves generated means a delete
+#: can only ever target something this uploader named, never an arbitrary key.
+_OBJECT_KEY_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_-]*"  # first folder segment (no leading slash/dot)
+    r"(?:/[A-Za-z0-9][A-Za-z0-9_-]*)*"  # any further folder segments
+    r"/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"  # UUID4 stem …
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    r"\.(?:jpg|png|webp)$"  # only the extensions we re-encode to
+)
 
 
 class UploadResponse(BaseModel):
@@ -116,6 +136,16 @@ async def delete_image(
             object_key = object_key[len(prefix) :]
     else:
         object_key = key
+
+    # Reject anything that is not a well-formed key in our own upload namespace
+    # BEFORE it reaches the bucket — see `_OBJECT_KEY_RE`. A malformed or
+    # arbitrary key is a client error, not a bucket failure, so it is a 400 and
+    # never becomes a `delete_object` call.
+    if not _OBJECT_KEY_RE.fullmatch(object_key):
+        raise BadRequestError(
+            "Not a valid image key. Expected an uploaded object key of the form "
+            "'<folder>/<uuid>.<jpg|png|webp>' (or its full public URL)."
+        )
 
     try:
         # Blocking GCS call — see the note in `upload_image`.

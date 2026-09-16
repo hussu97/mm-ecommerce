@@ -22,6 +22,24 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _scrub_url(request: Request) -> str:
+    """The request URL with its query string redacted for logging.
+
+    A logged `requestUrl` lands in GCP Cloud Logging, which is broadly
+    readable and long-retained, so it must not carry a query string: our own
+    URLs put an email in `?client_request_id=`/`?email=` lookups and a
+    single-use token in the `/track` and password-reset links, and any of those
+    in a log line is a plaintext leak of exactly the data we redact everywhere
+    else. The path is always safe, so keep it verbatim and replace only the
+    query with a fixed marker when one is present — enough to see that the
+    request carried parameters without recording what they were.
+    """
+    url = request.url
+    if not url.query:
+        return str(url.replace(query=""))
+    return str(url.replace(query="")) + "?<redacted>"
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
     """Logs every request as a structured line GCP Cloud Logging understands.
 
@@ -43,7 +61,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             else logging.INFO
         )
 
-        url = str(request.url)
+        url = _scrub_url(request)
         logger.log(
             level,
             "%s %s %s",

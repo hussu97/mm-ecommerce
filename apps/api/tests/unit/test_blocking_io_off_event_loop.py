@@ -148,11 +148,20 @@ async def test_delete_image_deletes_via_to_thread(monkeypatch, recording_to_thre
 
     monkeypatch.setattr(uploads.object_storage, "delete_object", fake_delete_object)
 
-    await uploads.delete_image(key="products/abc.jpg", _admin=SimpleNamespace())
+    # A well-formed uploaded key (a UUID4 stem) — `delete_image` now validates
+    # the key shape before touching the bucket (F-OPS-35), so a placeholder like
+    # "products/abc.jpg" would be refused before the to_thread dispatch under test.
+    await uploads.delete_image(
+        key="products/12345678-1234-4123-8123-123456789012.jpg",
+        _admin=SimpleNamespace(),
+    )
 
     assert fake_delete_object in recording_to_thread.dispatched_funcs
     assert delete_calls == [
-        {"bucket": uploads.settings.GCS_IMAGE_BUCKET, "key": "products/abc.jpg"}
+        {
+            "bucket": uploads.settings.GCS_IMAGE_BUCKET,
+            "key": "products/12345678-1234-4123-8123-123456789012.jpg",
+        }
     ]
 
 
