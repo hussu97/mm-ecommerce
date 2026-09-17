@@ -67,8 +67,11 @@ class TestCategoriesEndpoints:
             "include_inactive": False,
             "channel": "web",
             # No cookie, no pin: the widest honest answer, which is every
-            # category some branch can still sell out of.
+            # category some branch can still sell out of. Both branch scopings
+            # are None — no single browsing branch and no polygon priority set —
+            # so the count falls back to the website-delivery union.
             "branch_id": None,
+            "branch_ids": None,
         }
 
     async def test_get_category_by_slug_not_found_returns_404(self, client):
