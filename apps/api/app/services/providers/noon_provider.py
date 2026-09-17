@@ -1319,29 +1319,40 @@ class NoonClient(BaseAggregatorClient):
             return Decimal(0)
         return _money(value * (Decimal(1) + _COMMISSION_VAT_RATE))
 
-    #: STATEMENT-level fees on noon's Tax Invoice that are NOT attributed to any
-    #: order — the periodic cost of being on the platform. `feeName` → the
-    #: `fee_category` we book it under. The per-order fees (Order Value, Lead
-    #: generation = commission, Payment fee, Cancellation fee, Long Distance) come
-    #: from the order feed and are deliberately excluded here so they are never
-    #: double-counted.
+    #: Merchant-charged lines on noon's Tax Invoice that the PER-ORDER settlement
+    #: feed never carries — `_statement_lines_from_order_row` emits only gross,
+    #: commission, net and the sale VAT, so these fees were missing from the fee
+    #: roll-up entirely, understating noon's take. `feeName` → the `fee_category` we
+    #: book each under (as a summary-grain line, VAT-inclusive `priceInclVat`).
+    #:
+    #: Deliberately EXCLUDED: "Order Value" (gross) and "Lead generation fee" (the
+    #: commission, already captured per order — booking it here too would double-
+    #: count), and "Delivery fee" — noon does NOT bill the merchant for delivery
+    #: (it is `0` on the order feed and has no line on the tax invoice; the customer
+    #: pays it), so it is not a merchant cost.
     _OVERVIEW_SUMMARY_FEES: dict[str, str] = {
         "Platform fee": "platform_fee",
+        "Payment fee": "payment_fee",
+        "Long Distance Fee": "long_distance_fee",
+        "Cancellation fee": "cancellation_fee",
         "Manual fee": "manual_fee",
     }
 
     async def _overview_summary_lines(
         self, session: LoadedSession, statement_id: str
     ) -> list[StandardStatementLine]:
-        """Non-order (period-level) fee lines from a statement's Tax Invoice
-        overview — noon's monthly platform fee (and the odd manual fee), which the
-        per-order settlement feed never carries.
+        """The merchant-charged fees from a statement's Tax Invoice overview that
+        the per-order settlement feed never carries — the platform fee, payment
+        fee, long-distance fee, cancellation fee and any manual fee
+        (`_OVERVIEW_SUMMARY_FEES`). Delivery is not among them: noon does not bill
+        the merchant for it.
 
         The overview reports each fee VAT-exclusive plus its VAT; we book the
         VAT-inclusive amount (`priceInclVat` — what the merchant actually pays) as
-        a single summary-grain line with no order id, matching how noon's
+        one summary-grain line per fee, with no order id, matching how noon's
         commission is stored VAT-inclusive. Signed as booked (a fee is negative).
-        Keyed on the statement so a re-fetch upserts rather than duplicates.
+        Keyed on the statement + category so a re-fetch upserts rather than
+        duplicates.
         """
         url = f"{_STATEMENT_OVERVIEW_URL}/{statement_id}"
         payload = await self.request_json(

@@ -137,10 +137,12 @@ _OVERVIEW = {
 
 
 @pytest.mark.asyncio
-async def test_overview_summary_lines_extracts_platform_fee_only(monkeypatch):
-    """Only the STATEMENT-level platform fee becomes a summary line — the per-order
-    fees (commission, payment) come from the order feed and must not be duplicated.
-    The amount is VAT-INCLUSIVE (what the merchant pays) and carries no order id."""
+async def test_overview_summary_lines_extracts_merchant_fees_not_commission(
+    monkeypatch,
+):
+    """The merchant-charged invoice lines (payment fee, platform fee, …) become
+    summary lines; the commission ("Lead generation fee", captured per order) and
+    gross ("Order Value") do NOT. Amounts are VAT-INCLUSIVE, with no order id."""
 
     async def fake_request_json(session, method, url, **kwargs):
         assert method == "GET"
@@ -152,14 +154,21 @@ async def test_overview_summary_lines_extracts_platform_fee_only(monkeypatch):
 
     lines = await provider._overview_summary_lines(object(), "NOON_R_R1_AED_20260915")
 
-    assert [ln.fee_category for ln in lines] == ["platform_fee"]
-    fee = lines[0]
-    assert fee.line_type == "fee"
-    assert fee.external_order_id is None
-    assert fee.grain == STATEMENT_GRAIN_SUMMARY
-    assert fee.amount == Decimal("-156.45")  # priceInclVat, signed as booked
-    assert fee.line_date == "2026-09-15"
-    assert fee.source_key == "noon:NOON_R_R1_AED_20260915:platform_fee"
+    # Payment fee is captured (a real merchant charge); commission/gross are not.
+    by_cat = {ln.fee_category: ln for ln in lines}
+    assert set(by_cat) == {"payment_fee", "platform_fee"}
+    assert "commission" not in by_cat and "gross_sales" not in by_cat
+
+    pay = by_cat["payment_fee"]
+    assert pay.line_type == "fee"
+    assert pay.external_order_id is None
+    assert pay.grain == STATEMENT_GRAIN_SUMMARY
+    assert pay.amount == Decimal("-164.01")  # priceInclVat, signed as booked
+    assert pay.source_key == "noon:NOON_R_R1_AED_20260915:payment_fee"
+
+    plat = by_cat["platform_fee"]
+    assert plat.amount == Decimal("-156.45")
+    assert plat.line_date == "2026-09-15"
 
 
 @pytest.mark.asyncio
