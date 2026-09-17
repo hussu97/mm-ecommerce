@@ -65,7 +65,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.money import money as _money
-from app.models.aggregator import CHANNEL_NOON
+from app.models.aggregator import CHANNEL_NOON, STATEMENT_GRAIN_SUMMARY
 from app.services.aggregators.modifiers import expand_modifiers
 from app.services.aggregators.normalized import (
     PayoutsResult,
@@ -98,6 +98,10 @@ _COMMISSION_VAT_RATE = Decimal("0.05")
 _RMS = "https://restaurant.noon.partners"
 _ORDER_STATEMENT_URL = f"{_RMS}/_food-restaurant/finance/statement/orders"
 _WALLET_URL = f"{_RMS}/_food-restaurant/finance/wallet"
+#: Per-statement Tax Invoice breakdown (feeName / priceExclVat / vatAmount /
+#: priceInclVat per fee). Carries the STATEMENT-LEVEL fees — the platform fee —
+#: that the per-order settlement feed never attributes to an order.
+_STATEMENT_OVERVIEW_URL = f"{_RMS}/_food-restaurant/finance/statement/overview"
 _DEFAULT_LOCALE = "en-ae"
 
 _OMS = "https://restaurant-orders.noon.partners"
@@ -1315,6 +1319,65 @@ class NoonClient(BaseAggregatorClient):
             return Decimal(0)
         return _money(value * (Decimal(1) + _COMMISSION_VAT_RATE))
 
+    #: STATEMENT-level fees on noon's Tax Invoice that are NOT attributed to any
+    #: order — the periodic cost of being on the platform. `feeName` → the
+    #: `fee_category` we book it under. The per-order fees (Order Value, Lead
+    #: generation = commission, Payment fee, Cancellation fee, Long Distance) come
+    #: from the order feed and are deliberately excluded here so they are never
+    #: double-counted.
+    _OVERVIEW_SUMMARY_FEES: dict[str, str] = {
+        "Platform fee": "platform_fee",
+        "Manual fee": "manual_fee",
+    }
+
+    async def _overview_summary_lines(
+        self, session: LoadedSession, statement_id: str
+    ) -> list[StandardStatementLine]:
+        """Non-order (period-level) fee lines from a statement's Tax Invoice
+        overview — noon's monthly platform fee (and the odd manual fee), which the
+        per-order settlement feed never carries.
+
+        The overview reports each fee VAT-exclusive plus its VAT; we book the
+        VAT-inclusive amount (`priceInclVat` — what the merchant actually pays) as
+        a single summary-grain line with no order id, matching how noon's
+        commission is stored VAT-inclusive. Signed as booked (a fee is negative).
+        Keyed on the statement so a re-fetch upserts rather than duplicates.
+        """
+        url = f"{_STATEMENT_OVERVIEW_URL}/{statement_id}"
+        payload = await self.request_json(
+            session, "GET", url, headers=self._rms_headers(session)
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return []
+        period_end = _str_or_none(data.get("periodEnd"))
+        currency = _str_or_none(data.get("currencyCode")) or "AED"
+        lines: list[StandardStatementLine] = []
+        for entry in data.get("lines") or []:
+            if not isinstance(entry, dict):
+                continue
+            category = self._OVERVIEW_SUMMARY_FEES.get(str(entry.get("feeName")))
+            if category is None:
+                continue
+            amount = _num(entry.get("priceInclVat"))
+            if amount is None or amount == 0:
+                continue
+            lines.append(
+                StandardStatementLine(
+                    source_key=f"noon:{statement_id}:{category}",
+                    statement_id=statement_id,
+                    external_order_id=None,
+                    line_date=period_end,
+                    line_type="fee",
+                    fee_category=category,
+                    description=_str_or_none(entry.get("feeName")),
+                    amount=amount,
+                    currency=currency,
+                    grain=STATEMENT_GRAIN_SUMMARY,
+                )
+            )
+        return lines
+
     # ── finance (statements + payouts as distinct wallet tabs) ──────────────
     async def fetch_statements(
         self, session: LoadedSession, *, since: datetime, until: datetime
@@ -1407,6 +1470,26 @@ class NoonClient(BaseAggregatorClient):
                     "summaries stored without per-order lines"
                 )
                 logger.warning("noon statement-line fetch failed: %s", exc)
+
+        # noon bills a periodic PLATFORM fee at the STATEMENT level, not per order —
+        # it appears only on the statement's Tax Invoice overview, never in the
+        # per-order settlement feed, so the per-order lines above and per-order
+        # reconciliation both miss it. Pull the overview for each in-window
+        # statement and attach any non-order fee as a summary-grain line. The index
+        # is by statement id (positions are stable across the `replace`s above), and
+        # each fetch is isolated so one bad overview never drops the rest.
+        idx_by_ref = {s.statement_id: i for i, s in enumerate(statements)}
+        for stmt_ref in by_id:
+            try:
+                summary_lines = await self._overview_summary_lines(session, stmt_ref)
+            except (AggregatorAuthError, AggregatorUnavailableError) as exc:
+                logger.warning("noon overview fetch failed for %s: %s", stmt_ref, exc)
+                continue
+            if not summary_lines:
+                continue
+            idx = idx_by_ref[stmt_ref]
+            existing = list(statements[idx].lines or [])
+            statements[idx] = replace(statements[idx], lines=existing + summary_lines)
 
         notes = [
             n
