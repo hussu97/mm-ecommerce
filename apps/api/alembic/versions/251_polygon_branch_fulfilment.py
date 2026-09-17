@@ -20,7 +20,7 @@ skipped entirely when it does not — the same "if K001 is missing, do nothing a
 fall back to the configured pickup branch" guard `064` uses.
 
 Revision ID: 251_polygon_branch_fulfilment
-Revises: 250_product_consumes_stock
+Revises: 251_noon_commission_incl
 Create Date: 2026-09-17
 """
 
@@ -34,7 +34,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "251_polygon_branch_fulfilment"
-down_revision: Union[str, None] = "250_product_consumes_stock"
+down_revision: Union[str, None] = "251_noon_commission_incl"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
