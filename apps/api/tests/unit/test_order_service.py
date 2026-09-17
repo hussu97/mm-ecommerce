@@ -318,6 +318,9 @@ def _order_mock(
     o.id = uuid.uuid4()
     o.order_number = order_number
     o.user_id = None
+    # The fulfilling kitchen — a real value (None), or a bare MagicMock fails the
+    # `UUID | None` `branch_id` that OrderResponse now carries for the owner email.
+    o.branch_id = None
     o.email = "test@example.com"
     o.delivery_method = delivery_method
     o.delivery_fee = delivery_fee

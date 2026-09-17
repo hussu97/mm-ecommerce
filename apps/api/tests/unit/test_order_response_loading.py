@@ -49,6 +49,7 @@ def _order(**overrides) -> Order:
         "id": uuid.uuid4(),
         "order_number": "MM-20260805-007",
         "user_id": None,
+        "branch_id": None,
         "email": "customer@example.com",
         "delivery_method": DeliveryMethodEnum.DELIVERY,
         "subtotal": Decimal("3.50"),

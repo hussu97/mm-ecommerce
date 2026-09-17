@@ -18333,6 +18333,18 @@
             ],
             "title": "Aggregator Driver Status"
           },
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
           "cancellation_reason": {
             "anyOf": [
               {
