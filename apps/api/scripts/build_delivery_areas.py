@@ -61,18 +61,36 @@ Run from apps/api:
 
     python -m scripts.build_delivery_areas
 
+**Per-branch priority.** The single-Sharjah answer above is still emitted
+unchanged (`_assign_provider` + the v4 assignments file). On top of it this now
+also ranks the fulfilling branches per area: each area gets an ordered list of
+the branches that can self-serve it, cheapest own-courier first, Sharjah winning
+ties. "Own courier" is the branch's own fleet — Slider (bike where the branch can
+reach without leaving its land, else car) or noon Send inside the branch's
+emirate; **Lalamove is excluded**, because Lalamove is a fallback a person or the
+dispatcher reaches for, not a branch's own courier. Far, third-party ground
+(fee >= THIRD_PARTY_FEE) is a single rank-1 row = Sharjah / third_party whatever
+the proximity. Each branch reads its own cost file
+(`app/data/courier_costs.{K001,B001}.json`), which also carries the pin the probe
+priced from, so the bike-reachability and same-emirate rules are re-derived per
+branch. Geometry is untouched — it stays in the v7 geojson and the priority file
+carries only routing, keyed by the same polygon name.
+
 Writes:
   * app/data/uae_delivery_zones.v7.geojson.json — name -> geometry.
   * app/data/uae_delivery_areas_assignments.v4.json — name -> fee, threshold,
     provider; the map migration reads it for everything but shape.
+  * app/data/uae_delivery_areas_branch_priority.v1.json — name -> third_party +
+    ordered branch_priority (rank, branch_ref, courier, alternates). A later
+    migration carries this simulation output as the per-zone branch list.
 Earlier vX files that shipped migrations froze are left untouched.
 
-Regenerate and commit both. Nothing computes this at runtime. Slider's fares in
-`courier_costs.json` are a production probe from the whitelisted VM egress; the
-Lalamove figures beside them are the market survey and noon Send's are its rate
-card. Areas with no cost entry (far inland/desert points) fall to `third_party`
-on their outer-tier fee, which needs no fare. Re-probe and rebuild when fares
-move (`scripts/probe_courier_fares.py`).
+Regenerate and commit all three. Nothing computes this at runtime. Slider's fares
+in each `courier_costs.<REF>.json` are a production probe from the whitelisted VM
+egress; the Lalamove figures beside them are the market survey and noon Send's
+are its rate card. Areas with no cost entry (far inland/desert points) fall to
+`third_party` on their outer-tier fee, which needs no fare. Re-probe and rebuild
+when fares move (`scripts/probe_courier_fares.py`, once per branch on the VM).
 """
 
 from __future__ import annotations
@@ -88,13 +106,23 @@ EMIRATES = DATA / "uae_emirates.geojson.json"
 V2_GEOMETRY = DATA / "uae_delivery_zones.geojson.json"
 OUT_GEOMETRY = DATA / "uae_delivery_zones.v7.geojson.json"
 OUT_ASSIGN = DATA / "uae_delivery_areas_assignments.v4.json"
+OUT_BRANCH_PRIORITY = DATA / "uae_delivery_areas_branch_priority.v1.json"
 
 #: The kitchen's emirate and its pin. A Slider bike only rides where it can reach
 #: the kitchen without crossing another emirate — the kitchen's own contiguous
-#: Sharjah landmass, computed in `_bike_reachable`.
+#: Sharjah landmass, computed in `_bike_reachable`. These are the K001 defaults;
+#: `_bike_reachable` takes an origin so a second branch (B001) can be ranked from
+#: its own pin, read from that branch's cost file.
 KITCHEN_EMIRATE = "Sharjah"
 KITCHEN_LAT = 25.3304139
 KITCHEN_LNG = 55.3710382
+
+#: The branches that fulfil, Sharjah first — the order is the deterministic
+#: tie-break in `_rank_branches` (equal own-courier cost -> Sharjah wins). Each
+#: reads `courier_costs.<REF>.json`, probed from that branch's pin.
+BRANCH_REFS: tuple[str, ...] = ("K001", "B001")
+#: The branch third-party ground is always pinned to — the Sharjah kitchen.
+THIRD_PARTY_BRANCH = BRANCH_REFS[0]
 
 #: No cell may reach further than this (km) from its own point. Around the
 #: kitchen the points are dense and it never bites; in the far desert it stops a
@@ -168,6 +196,19 @@ ALTERNATES = {
     "slider": ["lalamove", "third_party"],
     "slider_bike": ["slider_car", "lalamove", "third_party"],
     "slider_car": ["lalamove", "third_party"],
+}
+
+
+#: preferred own-courier -> the couriers the **automatic** dispatcher may hand a
+#: run to instead, in order. A copy of `courier_service.FALLBACKS` (the build has
+#: no app services imported; the same reasoning keeps the two in step). This is
+#: the ladder the branch-priority alternates are built from: Lalamove always
+#: closes it, and noon Send only stays where the branch's noon model can serve
+#: (see `_branch_alternates`).
+FALLBACKS: dict[str, tuple[str, ...]] = {
+    "slider_bike": ("noon_send", "lalamove"),
+    "slider_car": ("noon_send", "lalamove"),
+    "noon_send": ("lalamove",),
 }
 
 
@@ -249,28 +290,42 @@ def _keep_component(geom, point, make_valid):
 BIKE_CROSSING_TOLERANCE_KM = 1.5
 
 
-def _bike_reachable(areas, outline_shapes, canonical, Point) -> set[str]:
-    """The area labels a bike can reach from the kitchen without crossing another
+def _bike_reachable(
+    areas,
+    outline_shapes,
+    canonical,
+    Point,
+    *,
+    origin_lat: float = KITCHEN_LAT,
+    origin_lng: float = KITCHEN_LNG,
+    origin_emirate: str = KITCHEN_EMIRATE,
+) -> set[str]:
+    """The area labels a bike can reach from a branch without crossing another
     emirate.
 
     Stricter than "same emirate" and than "same landmass": Sharjah wraps around
     Ajman, so the strip north of Ajman (Al Hamriyah) is topologically connected
-    to the kitchen — but the road to it runs *through* Ajman, and a bike cannot.
-    So the test is the practical one: the straight kitchen->area line must not
-    pass through another emirate. That also rules out the east-coast enclaves,
-    whose line crosses Ajman/Fujairah to get there.
+    to the Sharjah kitchen — but the road to it runs *through* Ajman, and a bike
+    cannot. So the test is the practical one: the straight branch->area line must
+    not pass through another emirate. That also rules out the east-coast
+    enclaves, whose line crosses Ajman/Fujairah to get there.
+
+    The origin defaults to the Sharjah kitchen (K001); pass a branch's own pin
+    and emirate to re-derive reachability for that branch (B001 from Barsha, in
+    Dubai). Only areas in the branch's own emirate are candidates — a bike cannot
+    cross a boundary — so a Dubai branch is tested against Dubai areas.
     """
     from shapely.geometry import LineString  # noqa: PLC0415
     from shapely.ops import unary_union  # noqa: PLC0415
 
     others = unary_union(
-        [g for name, g in outline_shapes.items() if name != KITCHEN_EMIRATE]
+        [g for name, g in outline_shapes.items() if name != origin_emirate]
     )
     reachable = set()
     for a in areas:
-        if canonical[a["emirate"]] != KITCHEN_EMIRATE:
+        if canonical[a["emirate"]] != origin_emirate:
             continue
-        line = LineString([(KITCHEN_LNG, KITCHEN_LAT), (a["lng"], a["lat"])])
+        line = LineString([(origin_lng, origin_lat), (a["lng"], a["lat"])])
         crossing = line.intersection(others)
         if crossing.length * KM_PER_DEG <= BIKE_CROSSING_TOLERANCE_KM:
             reachable.add(a["label"])
@@ -331,7 +386,138 @@ def _assign_provider(fee: Decimal, cost: dict, *, bike_reachable: bool) -> str:
     return fast
 
 
-def build() -> tuple[list[dict], list[dict]]:
+def _cheapest_serviceable_own_courier(
+    cost: dict, *, bike_reachable: bool
+) -> tuple[str, Decimal] | None:
+    """The cheapest courier ONE branch can carry this area on itself, or None.
+
+    "Own courier" is the branch's own fleet — a Slider bike (only where the
+    branch can reach without leaving its land), a Slider car, or noon Send inside
+    the branch's emirate. **Lalamove is excluded**: it is a fallback the
+    dispatcher or a person reaches for, never a branch's own courier, so it never
+    ranks a branch. Returns `(courier, cost)` for the cheapest serviceable one,
+    noon Send winning a tie (as in `_assign_provider`), or None when the branch
+    cannot self-serve this area at all.
+    """
+    probe_tier = (cost.get("slider_tier") or "").strip().lower()
+    use_bike = (
+        bike_reachable and probe_tier == "bike" and cost.get("slider_bike") is not None
+    )
+    if use_bike:
+        slider_courier, slider_cost = "slider_bike", cost.get("slider_bike")
+    else:
+        slider_courier, slider_cost = "slider_car", cost.get("slider_car")
+
+    # (cost, tie-rank, courier); noon's lower tie-rank makes it win an equal price.
+    candidates: list[tuple[Decimal, int, str]] = []
+    if slider_cost is not None:
+        candidates.append((Decimal(str(slider_cost)), 1, slider_courier))
+    if cost.get("noon_send") is not None:
+        candidates.append((Decimal(str(cost["noon_send"])), 0, "noon_send"))
+    if not candidates:
+        return None
+    price, _tie, courier = min(candidates, key=lambda c: (c[0], c[1]))
+    return courier, price
+
+
+def _branch_alternates(courier: str, *, noon_serviceable: bool) -> list[str]:
+    """The manual/automatic move targets for one branch's chosen own courier.
+
+    `FALLBACKS[courier]` with the courier itself removed, always closing on
+    Lalamove, and noon Send dropped where this branch's noon model cannot serve
+    the area (it crosses the branch's emirate, or is over 20 km).
+    """
+    alts = [a for a in FALLBACKS.get(courier, ()) if a != courier]
+    if not noon_serviceable:
+        alts = [a for a in alts if a != "noon_send"]
+    alts = [a for a in alts if a != "lalamove"]
+    alts.append("lalamove")
+    return alts
+
+
+def _rank_branches(label: str, fee: Decimal, branches: list[dict]) -> list[dict]:
+    """The ordered branch list for one area: serviceable-first, cheapest own
+    courier first, Sharjah winning ties.
+
+    `branches` is in `BRANCH_REFS` order (Sharjah first), each carrying its own
+    `costs` and `bike_labels`. Third-party ground is a single rank-1 row pinned to
+    Sharjah / third_party, whatever the proximity — no courier is booked there.
+    A branch that cannot self-serve the area drops out of the list.
+    """
+    if fee >= THIRD_PARTY_FEE:
+        return [
+            {
+                "rank": 1,
+                "branch_ref": THIRD_PARTY_BRANCH,
+                "courier": "third_party",
+                "alternates": ["lalamove"],
+            }
+        ]
+
+    ranked: list[tuple[Decimal, int, str, str, list[str]]] = []
+    for order, branch in enumerate(branches):
+        cost_entry = branch["costs"].get(label, {})
+        own = _cheapest_serviceable_own_courier(
+            cost_entry, bike_reachable=label in branch["bike_labels"]
+        )
+        if own is None:
+            continue
+        courier, cost = own
+        alts = _branch_alternates(
+            courier, noon_serviceable=cost_entry.get("noon_send") is not None
+        )
+        # `order` is the deterministic tie-break: equal cost -> Sharjah (order 0).
+        ranked.append((cost, order, branch["ref"], courier, alts))
+
+    ranked.sort(key=lambda r: (r[0], r[1]))
+    return [
+        {"rank": i + 1, "branch_ref": ref, "courier": courier, "alternates": alts}
+        for i, (_cost, _order, ref, courier, alts) in enumerate(ranked)
+    ]
+
+
+def _load_branch_cost(reference: str) -> tuple[dict, dict]:
+    """(origin, costs) from one branch's committed cost file.
+
+    `origin` is the `branch` block the probe stamps in — the pin and emirate it
+    priced from — defaulting to the Sharjah kitchen for an older file that has
+    none. `costs` is the per-area fare table.
+    """
+    doc = json.loads((DATA / f"courier_costs.{reference}.json").read_text())
+    return doc.get("branch", {}), doc.get("costs", {})
+
+
+def _branches(areas, outline_shapes, Point) -> list[dict]:
+    """Each fulfilling branch with its origin, cost table and bike reachability."""
+    branches: list[dict] = []
+    for ref in BRANCH_REFS:
+        origin, costs = _load_branch_cost(ref)
+        olat = float(origin.get("lat", KITCHEN_LAT))
+        olng = float(origin.get("lng", KITCHEN_LNG))
+        oemirate = origin.get("emirate", KITCHEN_EMIRATE)
+        bike_labels = _bike_reachable(
+            areas,
+            outline_shapes,
+            CANONICAL,
+            Point,
+            origin_lat=olat,
+            origin_lng=olng,
+            origin_emirate=oemirate,
+        )
+        branches.append(
+            {
+                "ref": ref,
+                "emirate": oemirate,
+                "lat": olat,
+                "lng": olng,
+                "costs": costs,
+                "bike_labels": bike_labels,
+            }
+        )
+    return branches
+
+
+def build() -> tuple[list[dict], list[dict], list[dict]]:
     make_valid, MultiPoint, Point, mapping, shape, unary_union, voronoi_diagram = (
         _shapely()
     )
@@ -369,6 +555,7 @@ def build() -> tuple[list[dict], list[dict]]:
         by_emirate.setdefault(canonical, []).append(area)
 
     bike_labels = _bike_reachable(areas, outline_shapes, CANONICAL, Point)
+    branches = _branches(areas, outline_shapes, Point)
     radius = RADIUS_KM / KM_PER_DEG
 
     # 1. Raw Voronoi cells per emirate, then made single-piece and reach-capped.
@@ -433,6 +620,7 @@ def build() -> tuple[list[dict], list[dict]]:
     # 4. Emit, in the areas file's order.
     geometry: list[dict] = []
     assignments: list[dict] = []
+    branch_priority: list[dict] = []
     for area in areas:
         emirate, label = CANONICAL[area["emirate"]], area["label"]
         name = f"{emirate} · {label}"
@@ -441,8 +629,9 @@ def build() -> tuple[list[dict], list[dict]]:
             raise ValueError(f"{name} clipped to nothing")
         point = point_of[name]
         fee_s, threshold_s, free = _inherit_fee(point, v2_shapes)
+        fee = Decimal(fee_s)
         provider = _assign_provider(
-            Decimal(fee_s), costs.get(label, {}), bike_reachable=(label in bike_labels)
+            fee, costs.get(label, {}), bike_reachable=(label in bike_labels)
         )
         geometry.append({"name": name, "geometry": _to_multipolygon(cell, mapping)})
         assignments.append(
@@ -461,14 +650,22 @@ def build() -> tuple[list[dict], list[dict]]:
                 ),
             }
         )
+        branch_priority.append(
+            {
+                "name": name,
+                "third_party": fee >= THIRD_PARTY_FEE,
+                "branch_priority": _rank_branches(label, fee, branches),
+            }
+        )
 
-    return geometry, assignments
+    return geometry, assignments, branch_priority
 
 
 def main() -> None:
-    geometry, assignments = build()
+    geometry, assignments, branch_priority = build()
     OUT_GEOMETRY.write_text(json.dumps(geometry, separators=(",", ":")) + "\n")
     OUT_ASSIGN.write_text(json.dumps(assignments, indent=2) + "\n")
+    OUT_BRANCH_PRIORITY.write_text(json.dumps(branch_priority, indent=2) + "\n")
 
     import collections
 
@@ -476,8 +673,30 @@ def main() -> None:
     print(f"{len(assignments)} polygons")
     for provider, count in sorted(providers.items()):
         print(f"  {provider:<14} {count}")
+
+    # Branch-priority summary: how many polygons each rank-1 branch/courier wins,
+    # and where a second branch adds a rank.
+    rank1 = collections.Counter(
+        (bp["branch_priority"][0]["branch_ref"], bp["branch_priority"][0]["courier"])
+        for bp in branch_priority
+        if bp["branch_priority"]
+    )
+    multi = sum(1 for bp in branch_priority if len(bp["branch_priority"]) > 1)
+    empty = sum(
+        1
+        for bp in branch_priority
+        if not bp["third_party"] and not bp["branch_priority"]
+    )
+    print("\nrank-1 by (branch, courier):")
+    for (ref, courier), count in sorted(rank1.items()):
+        print(f"  {ref} {courier:<14} {count}")
+    print(f"polygons with a rank-2 branch: {multi}")
+    if empty:
+        print(f"  !! non-third-party polygons with NO serviceable branch: {empty}")
+
     print(f"\nwrote {OUT_GEOMETRY.relative_to(Path.cwd())}")
     print(f"wrote {OUT_ASSIGN.relative_to(Path.cwd())}")
+    print(f"wrote {OUT_BRANCH_PRIORITY.relative_to(Path.cwd())}")
 
 
 if __name__ == "__main__":
