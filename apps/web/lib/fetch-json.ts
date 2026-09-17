@@ -23,13 +23,67 @@ function backoffMs(attempt: number): number {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * `fetch`, retrying a transient server error (5xx) or a network-level failure.
+ * A ceiling on how many API fetches are in flight AT ONCE during the production
+ * build — nothing during normal serving.
+ *
+ * The build prerenders the whole catalogue in one pass, and the API sheds load
+ * with a 503 the moment ~9 request connections are checked out (a deliberately
+ * small pool, capped by Postgres `max_connections`; see the API's
+ * `PoolSaturationMiddleware`). Unbounded, the parallel prerender pins that pool
+ * saturated for the whole build and every fetch — retries included — comes back
+ * 503, which failed the deploy and left it to be re-run by hand once the burst
+ * passed. Six keeps the build comfortably under that ceiling while still
+ * fetching several pages at once; paired with a single prerender worker (see
+ * `next.config.ts`) so this per-process gate is a true global cap.
+ *
+ * At runtime the gate is a no-op: each serverless invocation is already isolated
+ * and a cross-request cap would only add latency, so it applies to the build
+ * phase alone.
+ */
+const BUILD_FETCH_CONCURRENCY = 6;
+const IS_BUILD = process.env.NEXT_PHASE === 'phase-production-build';
+
+let inFlight = 0;
+const fetchWaiters: Array<() => void> = [];
+
+async function acquireFetchSlot(): Promise<void> {
+  if (inFlight < BUILD_FETCH_CONCURRENCY) {
+    inFlight += 1;
+    return;
+  }
+  // No free slot: queue. A releaser hands the slot straight over (it does not
+  // decrement), so the count stays balanced without a re-increment here.
+  await new Promise<void>((resolve) => fetchWaiters.push(resolve));
+}
+
+function releaseFetchSlot(): void {
+  const next = fetchWaiters.shift();
+  if (next) {
+    next();
+  } else {
+    inFlight -= 1;
+  }
+}
+
+/**
+ * `fetch`, retrying a transient server error (5xx) or a network-level failure,
+ * and — during the build only — gated through `BUILD_FETCH_CONCURRENCY`.
  *
  * Returns the final `Response` — including a 4xx, or a 5xx from the last attempt
  * — for the caller to interpret; only a network error that outlived the retries
  * is rethrown. 4xx is deterministic (a 404 is a real answer) and never retried.
  */
 async function fetchRetrying(url: string, init?: NextInit): Promise<Response> {
+  if (!IS_BUILD) return fetchWithRetries(url, init);
+  await acquireFetchSlot();
+  try {
+    return await fetchWithRetries(url, init);
+  } finally {
+    releaseFetchSlot();
+  }
+}
+
+async function fetchWithRetries(url: string, init?: NextInit): Promise<Response> {
   for (let attempt = 1; ; attempt++) {
     try {
       const res = await fetch(url, init);

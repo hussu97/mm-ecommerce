@@ -23,6 +23,27 @@ const nextConfig: NextConfig = {
       dynamic: 30,
       static: 180,
     },
+    // The production build prerenders the whole catalogue against the API in one
+    // pass, and that API sheds load with a 503 once ~9 request connections are
+    // checked out — a deliberately small pool, capped by Postgres
+    // `max_connections` (see mm-ecommerce apps/api/app/core/database.py). Left
+    // unbounded, the parallel prerender pins that pool saturated for the whole
+    // build and every product fetch — retries included — comes back 503, failing
+    // the deploy (and needing a manual re-run once the burst has passed).
+    //
+    // Prerender in a SINGLE worker process (`cpus: 1` — otherwise Next spawns one
+    // per CPU, up to ten on a Vercel runner), so the per-process fetch semaphore
+    // in `lib/fetch-json.ts` is a true GLOBAL cap: ten workers each admitting six
+    // would be sixty concurrent, well over the ceiling. The worst case matters
+    // because a deploy flushes the `products:*` cache immediately before this
+    // build (see deploy.yml), so every fetch is a cold DB read holding its pool
+    // connection longer — the same burst that a warm API shrugs off saturates a
+    // just-deployed one. A low max-concurrency keeps the worker from queueing more
+    // page renders than the semaphore will admit, and a retry re-renders any page
+    // whose data fetch still failed after its own retries.
+    cpus: 1,
+    staticGenerationMaxConcurrency: 4,
+    staticGenerationRetryCount: 3,
   },
   async rewrites() {
     return [
