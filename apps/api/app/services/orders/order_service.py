@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -37,6 +38,7 @@ from app.core.phone import describe_phone
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.branch import Branch
 from app.models.cart import Cart, CartItem
+from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import (
     DeliveryMethodEnum,
     Order,
@@ -71,7 +73,7 @@ from app.services.catalog import availability_service
 from app.services.catalog.storefront_visibility import is_website_product_visible
 from app.services.couriers import courier_service, lalamove_service
 from app.services.delivery import delivery_promise, delivery_service, fulfilment_service
-from app.services.delivery.delivery_zone_service import Zone
+from app.services.delivery.delivery_zone_service import Zone, ZoneBranch
 from app.services.orders import (
     order_economics,
     order_fees,
@@ -619,6 +621,129 @@ async def resolve_branch(
         )
         .scalars()
         .first()
+    )
+
+
+@dataclass(frozen=True)
+class FulfilmentChoice:
+    """The kitchen that will make this order, and how it leaves the door.
+
+    `provider` is the *selected* branch's courier — a rank-2 branch serves its
+    zone on its own courier, not the preferred branch's — and `alternate_providers`
+    are that branch's escapes. Both are the assignment's own values, so the
+    estimate, dispatch and reassignment all agree on who is carrying this order.
+    """
+
+    branch: Branch
+    provider: str
+    alternate_providers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NoBranchFulfils:
+    """No branch that serves this zone can make the whole basket.
+
+    `best_branch` is the branch that comes closest — the fewest blocked lines,
+    ties broken by rank — so the resolution screen shows the customer the
+    shortest list of things to remove, and the quote is priced against the
+    kitchen an order would actually go to once they do. `create_order` turns this
+    into a refusal; `preview_order` turns it into a report.
+    """
+
+    best_branch: Branch | None
+    unavailable: list[availability_service.UnavailableLine]
+
+
+async def _load_active_branch(db: AsyncSession, branch_id: uuid.UUID) -> Branch | None:
+    branch = await db.get(Branch, branch_id)
+    if branch is not None and branch.deleted_at is None and branch.is_active:
+        return branch
+    return None
+
+
+async def select_fulfilment(
+    db: AsyncSession,
+    zone: Zone | None,
+    cart: Cart | None,
+    *,
+    pickup_branch_id: uuid.UUID | None = None,
+) -> FulfilmentChoice | NoBranchFulfils:
+    """
+    Choose the branch that makes this basket, walking the zone's priority.
+
+    A zone carries an ordered list of branches (`zone.branches`). This walks it
+    in rank order and returns the first branch that can make *every* line in the
+    cart — its courier and its escapes travel with it. Falling through the whole
+    list without a branch that can make everything is a `NoBranchFulfils`, not a
+    branch: the caller decides whether that is a refusal (`create_order`) or a
+    warning (`preview_order`).
+
+    Pickup is unchanged and never walks stock — the customer named the store, and
+    the box has to be waiting *there*. A zone with no priority list at all (a
+    hand-built zone, a pin outside every shape, a pickup order with no zone) falls
+    back to `resolve_branch`, so every path that worked before still resolves to a
+    kitchen and `orders.branch_id` stays non-null.
+    """
+    # Pickup: the chosen store wins outright, exactly as `resolve_branch` does.
+    if pickup_branch_id is not None:
+        branch = await resolve_branch(db, zone, pickup_branch_id=pickup_branch_id)
+        if branch is not None:
+            return FulfilmentChoice(
+                branch=branch,
+                provider=zone.fulfilment_provider
+                if zone
+                else FulfilmentProviderEnum.THIRD_PARTY.value,
+                alternate_providers=tuple(zone.alternate_providers) if zone else (),
+            )
+
+    # Active candidates in rank order. An inactive or deleted branch in the list
+    # is skipped rather than offered — a courier cannot collect from a kitchen
+    # that is closed.
+    candidates: list[tuple[Branch, ZoneBranch]] = []
+    if zone is not None:
+        for zb in zone.branches:
+            branch = await _load_active_branch(db, zb.branch_id)
+            if branch is not None:
+                candidates.append((branch, zb))
+
+    # No usable priority list — legacy zone, no zone, or every listed branch is
+    # closed. Fall back to the single-branch resolution and wrap it, so behaviour
+    # is identical to before multi-branch existed.
+    if not candidates:
+        branch = await resolve_branch(db, zone, pickup_branch_id=pickup_branch_id)
+        if branch is None:
+            return NoBranchFulfils(best_branch=None, unavailable=[])
+        return FulfilmentChoice(
+            branch=branch,
+            provider=zone.fulfilment_provider
+            if zone
+            else FulfilmentProviderEnum.THIRD_PARTY.value,
+            alternate_providers=tuple(zone.alternate_providers) if zone else (),
+        )
+
+    # Walk the priority. The first branch that can make everything wins; along
+    # the way keep the one that comes closest, in case none can.
+    best_branch: Branch | None = None
+    best_unavailable: list[availability_service.UnavailableLine] | None = None
+    for branch, zb in candidates:
+        unavailable = await availability_service.unavailable_cart_lines(
+            db, cart=cart, branch_id=branch.id
+        )
+        if not unavailable:
+            return FulfilmentChoice(
+                branch=branch,
+                provider=zb.fulfilment_provider,
+                alternate_providers=tuple(zb.alternate_providers),
+            )
+        # Candidates are already in rank order, so the first branch to reach a
+        # given (smaller) count keeps it — rank is the tie-break for free.
+        if best_unavailable is None or len(unavailable) < len(best_unavailable):
+            best_branch = branch
+            best_unavailable = unavailable
+
+    return NoBranchFulfils(
+        best_branch=best_branch,
+        unavailable=best_unavailable or [],
     )
 
 
@@ -1215,41 +1340,44 @@ async def create_order(
     #    NULL, so this is part of building the row rather than something done to
     #    it afterwards — and a shop with no branch that can take online orders
     #    is a shop that cannot take this one.
-    branch = await resolve_branch(
+    #
+    #    `select_fulfilment` walks the zone's branch priority and picks the first
+    #    kitchen that can make the whole basket, which folds the old step 5a
+    #    availability check into the branch choice itself: a branch that cannot
+    #    make everything is not the branch this order goes to. The fee was already
+    #    priced against the *preferred* branch's courier (rank-1, above) and stays
+    #    the same whichever branch bakes; only who carries it — the provider and
+    #    its estimate — follows the winner.
+    choice = await select_fulfilment(
         db,
         totals.zone,
+        cart,
         pickup_branch_id=(
             data.pickup_branch_id
             if data.delivery_method == DeliveryMethodEnum.PICKUP
             else None
         ),
     )
-    if branch is None:
-        logger.error("No branch can take online orders; refusing %s", data.email)
-        raise BadRequestError(
-            "We can't take online orders right now. Please try again shortly."
-        )
-
-    # 5a. Can that kitchen actually make this basket?
-    #
-    #     Only answerable here: the catalogue hid nothing, because a product is
-    #     hidden from browsing only when *every* branch is out of it, and the
-    #     branch this order goes to was not known until the line above. The
-    #     shopper may also have changed the address at the checkout and moved
-    #     the order to a different kitchen after adding everything.
-    #
-    #     Refused with a code rather than a sentence so the web app can open the
-    #     resolution screen instead of showing a toast the customer cannot act
-    #     on. Checked again here even though that screen exists, because a
-    #     screen is a courtesy and this is the guarantee.
-    unavailable = await availability_service.unavailable_cart_lines(
-        db, cart=cart, branch_id=branch.id
-    )
-    if unavailable:
+    if isinstance(choice, NoBranchFulfils):
+        if choice.best_branch is None:
+            logger.error("No branch can take online orders; refusing %s", data.email)
+            raise BadRequestError(
+                "We can't take online orders right now. Please try again shortly."
+            )
+        # Some kitchen serves this pin but none can make this exact basket.
+        #
+        # Refused with a code rather than a sentence so the web app can open the
+        # resolution screen instead of showing a toast the customer cannot act
+        # on. Checked here even though that screen exists, because a screen is a
+        # courtesy and this is the guarantee — the shopper may have changed the
+        # address after adding everything, moving the order to a kitchen that is
+        # out of something the catalogue never hid (a product is hidden from
+        # browsing only when *every* branch is out of it).
         raise ConflictError(
             "Some items aren't available at the branch serving this address",
             code=availability_service.UNAVAILABLE_AT_BRANCH,
         )
+    branch = choice.branch
 
     # 5b. What the checkout told this customer, captured before the row is
     #     written so the order carries the promise rather than a later
@@ -1262,10 +1390,13 @@ async def create_order(
     #
     #     Asked here rather than taken from the request: the browser is not the
     #     record of what we promised, and a client that sent a flattering number
-    #     would be believed.
+    #     would be believed. Resolved for the *selected* branch and its courier —
+    #     a rank-2 kitchen on a different courier promises a different time.
     promised: delivery_promise.DeliveryPromise | None = None
     if data.delivery_method == DeliveryMethodEnum.DELIVERY:
-        promised = await delivery_promise.promise_for_zone(db, totals.zone)
+        promised = await delivery_promise.promise_for_zone(
+            db, totals.zone, branch_id=branch.id, provider=choice.provider
+        )
 
     # 6. Claim stock for stock-tracked products (fails if any is out of stock)
     await _decrement_stock(db, cart)
@@ -1323,7 +1454,7 @@ async def create_order(
         # here and passed down so `lalamove_service` stays clear of a courier
         # import it would otherwise have to make locally.
         effective_provider, _ = courier_service.effective_provider(
-            totals.zone.fulfilment_provider if totals.zone else None,
+            choice.provider if totals.zone else None,
             totals.zone.name if totals.zone else None,
             city=str((order.shipping_address_snapshot or {}).get("city") or ""),
         )
@@ -1493,19 +1624,30 @@ async def preview_order(
 
     # The kitchen this pin resolves to, and what it has run out of.
     #
-    # `resolve_branch` is the same call `create_order` makes at step 5, from the
-    # same zone this pricing produced — so the branch the customer is warned
-    # about is the branch the order would actually go to. A preview reports;
-    # `create_order` is what refuses.
-    branch = await resolve_branch(
+    # `select_fulfilment` is the same call `create_order` makes at step 5, from
+    # the same zone this pricing produced — so the branch the customer is warned
+    # about is the branch the order would actually go to, and the courier/estimate
+    # in the summary belongs to the winning kitchen. A preview reports; when no
+    # branch can make the whole basket it names the *closest* one (fewest blocked
+    # lines) so the total is priced against the kitchen the order lands on once
+    # the customer removes what that branch is out of. `create_order` is what
+    # refuses.
+    choice = await select_fulfilment(
         db,
         totals.zone,
+        cart,
         pickup_branch_id=(
             data.pickup_branch_id
             if data.delivery_method == DeliveryMethodEnum.PICKUP
             else None
         ),
     )
+    if isinstance(choice, FulfilmentChoice):
+        branch = choice.branch
+        unavailable: list[availability_service.UnavailableLine] = []
+    else:
+        branch = choice.best_branch
+        unavailable = choice.unavailable
 
     # Match what `create_order` will charge: if the resolved kitchen's website
     # channel is not VAT-registered, the quote must show zero VAT too, or the
@@ -1515,10 +1657,6 @@ async def preview_order(
     )
     if not tax_identity_service.is_vat_registered(entity):
         totals = order_pricing.apply_non_registered(totals)
-
-    unavailable = await availability_service.unavailable_cart_lines(
-        db, cart=cart, branch_id=branch.id if branch else None
-    )
 
     return OrderPreviewResponse(
         subtotal=float(totals.subtotal),

@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.bounded import BoundedLRU
 from app.models.delivery_polygon import (
@@ -18,12 +19,28 @@ from app.models.delivery_polygon import (
 
 __all__ = [
     "Zone",
+    "ZoneBranch",
     "find_zone",
     "get_active_version",
     "get_active_zones",
     "invalidate_cache",
     "point_in_geometry",
 ]
+
+
+@dataclass(frozen=True)
+class ZoneBranch:
+    """One branch's standing in a zone — its rank, its courier, its escapes.
+
+    The flattened form of a `PolygonBranchFulfilment` row. A zone carries these
+    in `rank` order; the checkout walks them and gives the order to the first
+    branch that can make the whole basket.
+    """
+
+    branch_id: uuid.UUID
+    rank: int
+    fulfilment_provider: str
+    alternate_providers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +79,12 @@ class Zone:
     #: Defaults to empty, so a zone built by hand in a test offers no
     #: reassignment rather than silently offering every courier.
     alternate_providers: tuple[str, ...] = ()
+    #: The branches that can serve this zone, in `rank` order — the authoritative
+    #: list the three fields above (`fulfilment_provider`, `branch_id`,
+    #: `alternate_providers`) mirror at rank 1. The checkout walks this and gives
+    #: the order to the first branch that can make the whole basket; empty means
+    #: the zone predates multi-branch and only the rank-1 mirror is known.
+    branches: tuple[ZoneBranch, ...] = ()
 
     @property
     def is_lalamove(self) -> bool:
@@ -189,6 +212,7 @@ async def get_active_zones(db: AsyncSession) -> tuple[Zone, ...]:
     result = await db.execute(
         select(DeliveryPolygon)
         .where(DeliveryPolygon.version_id == version.id)
+        .options(selectinload(DeliveryPolygon.branch_fulfilments))
         .order_by(DeliveryPolygon.display_order)
     )
     zones = tuple(_to_zone(p) for p in result.scalars().all())
@@ -207,12 +231,31 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         tuple(tuple((float(c[0]), float(c[1])) for c in ring) for ring in poly)
         for poly in polys
     )
+    # The ordered branch list is the authoritative source. `branch_fulfilments`
+    # is already rank-ordered by the relationship, so `[0]` is the preferred
+    # branch. When a polygon has no assignment rows at all — a hand-built zone, a
+    # fixture, a row written before the table existed — the three flat fields
+    # fall back to the deprecated columns, which is exactly how the zone behaved
+    # before multi-branch.
+    branches = tuple(
+        ZoneBranch(
+            branch_id=bf.branch_id,
+            rank=bf.rank,
+            fulfilment_provider=bf.fulfilment_provider
+            or FulfilmentProviderEnum.THIRD_PARTY.value,
+            alternate_providers=tuple(bf.alternate_providers or ()),
+        )
+        for bf in p.branch_fulfilments
+    )
+    preferred = branches[0] if branches else None
     return Zone(
         id=p.id,
         name=p.name,
         delivery_fee=Decimal(str(p.delivery_fee)),
         fulfilment_provider=(
-            p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value
+            preferred.fulfilment_provider
+            if preferred is not None
+            else (p.fulfilment_provider or FulfilmentProviderEnum.THIRD_PARTY.value)
         ),
         pricing_mode=(p.pricing_mode or DeliveryPricingEnum.STATIC.value),
         free_delivery_eligible=bool(p.free_delivery_eligible),
@@ -221,8 +264,13 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
             if p.free_delivery_threshold is None
             else Decimal(str(p.free_delivery_threshold))
         ),
-        branch_id=p.branch_id,
-        alternate_providers=tuple(p.alternate_providers or ()),
+        branch_id=(preferred.branch_id if preferred is not None else p.branch_id),
+        alternate_providers=(
+            preferred.alternate_providers
+            if preferred is not None
+            else tuple(p.alternate_providers or ())
+        ),
+        branches=branches,
         min_lat=float(p.min_lat),
         max_lat=float(p.max_lat),
         min_lng=float(p.min_lng),

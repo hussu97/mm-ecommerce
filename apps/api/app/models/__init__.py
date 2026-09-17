@@ -68,6 +68,7 @@ from .delivery_polygon import (  # noqa: F401
     FulfilmentProviderEnum,
 )
 from .delivery_settings import DeliverySettings  # noqa: F401
+from .polygon_branch_fulfilment import PolygonBranchFulfilment  # noqa: F401
 from .device import (  # noqa: F401
     Device,
     DeviceStatusEnum,
