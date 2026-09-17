@@ -820,7 +820,9 @@ async def fees_summary(
     One source is chosen PER CHANNEL (statement lines when a channel has any in
     range, else the order feed), so Keeta is never double-counted. Providers
     disagree on a fee's SIGN, so every bucket is a positive magnitude —
-    "what they charged". `effective_rate` is commission ÷ gross.
+    "what they charged". Commission and every other fee are reported together as
+    `fees`, and `effective_rate` is the full take — (fees + VAT) ÷ gross — so it
+    reflects everything the marketplace deducted, not commission alone.
     """
     statement_rows = await _fees_from_statement_lines(db, channel, date_from, date_to)
     order_rows = await _fees_from_orders(db, channel, date_from, date_to)
@@ -909,18 +911,19 @@ async def _fees_from_orders(
 
 
 def _fees_row(channel: str, r, *, vat: object = ...) -> AggregatorFeesRow:
-    """One fees roll-up row, with the effective commission rate computed in Python.
-    `vat` defaults to the row's own `vat` column; pass None for the order feed,
-    which has no VAT column."""
+    """One fees roll-up row. Commission and every other fee are folded into a
+    single `fees` magnitude, and the effective rate is the full take —
+    `(fees + vat) / gross` — not commission alone. `vat` defaults to the row's own
+    `vat` column; pass None for the order feed, which has no VAT column."""
     gross = Decimal(r.gross_sales or 0)
-    commission = Decimal(r.commission or 0)
-    rate = float(commission / gross) if gross else None
+    vat_val = r.vat if vat is ... else vat
+    fees = Decimal(r.commission or 0) + Decimal(r.other_fees or 0)
+    rate = float((fees + Decimal(vat_val or 0)) / gross) if gross else None
     return AggregatorFeesRow(
         channel=channel,
         gross_sales=r.gross_sales,
-        commission=r.commission,
-        vat=r.vat if vat is ... else vat,
-        other_fees=r.other_fees,
+        fees=fees,
+        vat=vat_val,
         net_payable=r.net_payable,
         orders=r.orders or 0,
         effective_rate=rate,
@@ -936,14 +939,18 @@ def _fees_total(rows: list[AggregatorFeesRow]) -> AggregatorFeesRow:
         return sum((Decimal(str(v)) for v in vals), Decimal(0)) if vals else None
 
     gross = _s("gross_sales")
-    commission = _s("commission")
-    rate = float(commission / gross) if gross and commission is not None else None
+    fees = _s("fees")
+    vat = _s("vat")
+    rate = (
+        float((fees + (vat or Decimal(0))) / gross)
+        if gross and fees is not None
+        else None
+    )
     return AggregatorFeesRow(
         channel="all",
         gross_sales=gross,
-        commission=commission,
-        vat=_s("vat"),
-        other_fees=_s("other_fees"),
+        fees=fees,
+        vat=vat,
         net_payable=_s("net_payable"),
         orders=sum(r.orders for r in rows),
         effective_rate=rate,

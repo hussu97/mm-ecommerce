@@ -360,7 +360,9 @@ export interface paths {
          *     One source is chosen PER CHANNEL (statement lines when a channel has any in
          *     range, else the order feed), so Keeta is never double-counted. Providers
          *     disagree on a fee's SIGN, so every bucket is a positive magnitude —
-         *     "what they charged". `effective_rate` is commission ÷ gross.
+         *     "what they charged". Commission and every other fee are reported together as
+         *     `fees`, and `effective_rate` is the full take — (fees + VAT) ÷ gross — so it
+         *     reflects everything the marketplace deducted, not commission alone.
          */
         get: operations["fees_summary_api_v1_aggregators_fees_summary_get"];
         put?: never;
@@ -8810,16 +8812,20 @@ export interface components {
          *     Sourced from `aggregator_statement_line` bucketed by the provider's own
          *     line/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE
          *     (providers disagree on the sign of a fee — noon books it positive, the rest
-         *     negative), so `commission`/`vat`/`other_fees` read as "what they charged".
-         *     `orders` counts the distinct settled orders contributing.
+         *     negative), so `fees`/`vat` read as "what they charged". `fees` is the whole
+         *     charge the marketplace took — commission and every other fee, together, no
+         *     longer split — while `vat` is the tax the marketplace itemises on top of it.
+         *     `effective_rate` is the full take: `(fees + vat) / gross_sales`, so it
+         *     reflects everything deducted, not commission alone. `orders` counts the
+         *     distinct settled orders contributing.
          */
         AggregatorFeesRow: {
             /** Channel */
             channel: string;
-            /** Commission */
-            commission?: string | null;
             /** Effective Rate */
             effective_rate?: number | null;
+            /** Fees */
+            fees?: string | null;
             /** Gross Sales */
             gross_sales?: string | null;
             /** Net Payable */
@@ -8829,8 +8835,6 @@ export interface components {
              * @default 0
              */
             orders: number;
-            /** Other Fees */
-            other_fees?: string | null;
             /** Vat */
             vat?: string | null;
         };

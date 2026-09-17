@@ -680,15 +680,18 @@ class AggregatorFeesRow(BaseModel):
     Sourced from `aggregator_statement_line` bucketed by the provider's own
     line/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE
     (providers disagree on the sign of a fee — noon books it positive, the rest
-    negative), so `commission`/`vat`/`other_fees` read as "what they charged".
-    `orders` counts the distinct settled orders contributing.
+    negative), so `fees`/`vat` read as "what they charged". `fees` is the whole
+    charge the marketplace took — commission and every other fee, together, no
+    longer split — while `vat` is the tax the marketplace itemises on top of it.
+    `effective_rate` is the full take: `(fees + vat) / gross_sales`, so it
+    reflects everything deducted, not commission alone. `orders` counts the
+    distinct settled orders contributing.
     """
 
     channel: str
     gross_sales: Decimal | None = None
-    commission: Decimal | None = None
+    fees: Decimal | None = None
     vat: Decimal | None = None
-    other_fees: Decimal | None = None
     net_payable: Decimal | None = None
     orders: int = 0
     effective_rate: float | None = None

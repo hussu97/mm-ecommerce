@@ -237,15 +237,17 @@ export default function ReconciliationPage() {
     },
     {
       // The marketplace's own statement is the source of truth for commission,
-      // so there is nothing to reconcile it against — we show the scraped figure.
+      // so there is nothing to reconcile it against — we show the scraped figure
+      // and its effective rate together, one column: what they took and at what
+      // rate.
       header: 'Commission',
       className: 'text-right whitespace-nowrap',
-      render: r => <span className="tabular-nums text-gray-700">{money(r.commission_actual)}</span>,
-    },
-    {
-      header: 'Eff. rate',
-      className: 'text-right whitespace-nowrap',
-      render: r => <span className="tabular-nums text-gray-600">{formatRate(r.commission_rate_effective)}</span>,
+      render: r => (
+        <div className="text-right">
+          <div className="tabular-nums text-gray-700">{money(r.commission_actual)}</div>
+          <div className="tabular-nums text-xs text-gray-400">{formatRate(r.commission_rate_effective)}</div>
+        </div>
+      ),
     },
     {
       header: 'Refund (agg / MM)',

@@ -883,23 +883,11 @@
         "type": "object"
       },
       "AggregatorFeesRow": {
-        "description": "One channel's fee/VAT roll-up over the requested date range.\n\nSourced from `aggregator_statement_line` bucketed by the provider's own\nline/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE\n(providers disagree on the sign of a fee \u2014 noon books it positive, the rest\nnegative), so `commission`/`vat`/`other_fees` read as \"what they charged\".\n`orders` counts the distinct settled orders contributing.",
+        "description": "One channel's fee/VAT roll-up over the requested date range.\n\nSourced from `aggregator_statement_line` bucketed by the provider's own\nline/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE\n(providers disagree on the sign of a fee \u2014 noon books it positive, the rest\nnegative), so `fees`/`vat` read as \"what they charged\". `fees` is the whole\ncharge the marketplace took \u2014 commission and every other fee, together, no\nlonger split \u2014 while `vat` is the tax the marketplace itemises on top of it.\n`effective_rate` is the full take: `(fees + vat) / gross_sales`, so it\nreflects everything deducted, not commission alone. `orders` counts the\ndistinct settled orders contributing.",
         "properties": {
           "channel": {
             "title": "Channel",
             "type": "string"
-          },
-          "commission": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Commission"
           },
           "effective_rate": {
             "anyOf": [
@@ -911,6 +899,18 @@
               }
             ],
             "title": "Effective Rate"
+          },
+          "fees": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees"
           },
           "gross_sales": {
             "anyOf": [
@@ -940,18 +940,6 @@
             "default": 0,
             "title": "Orders",
             "type": "integer"
-          },
-          "other_fees": {
-            "anyOf": [
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Other Fees"
           },
           "vat": {
             "anyOf": [
@@ -35765,7 +35753,7 @@
     },
     "/api/v1/aggregators/fees/summary": {
       "get": {
-        "description": "Per-channel commission / VAT / net roll-up over a date range.\n\nThe commission figure is genuinely split by marketplace, and this merges the\ntwo sources so the picture is complete rather than half-dark:\n\n  \u2022 Channels that settle through detailed statement lines (Deliveroo, Keeta,\n    Noon) are read from `aggregator_statement_line` over `line_date` \u2014 the\n    authoritative settled fees, and the ONLY place VAT appears.\n  \u2022 Channels that do not (Talabat carries commission on the order feed; Careem\n    exposes no per-order fee at all) are read from `aggregator_order` over\n    `business_date` \u2014 commission and gross where the feed has them, no VAT.\n\nOne source is chosen PER CHANNEL (statement lines when a channel has any in\nrange, else the order feed), so Keeta is never double-counted. Providers\ndisagree on a fee's SIGN, so every bucket is a positive magnitude \u2014\n\"what they charged\". `effective_rate` is commission \u00f7 gross.",
+        "description": "Per-channel commission / VAT / net roll-up over a date range.\n\nThe commission figure is genuinely split by marketplace, and this merges the\ntwo sources so the picture is complete rather than half-dark:\n\n  \u2022 Channels that settle through detailed statement lines (Deliveroo, Keeta,\n    Noon) are read from `aggregator_statement_line` over `line_date` \u2014 the\n    authoritative settled fees, and the ONLY place VAT appears.\n  \u2022 Channels that do not (Talabat carries commission on the order feed; Careem\n    exposes no per-order fee at all) are read from `aggregator_order` over\n    `business_date` \u2014 commission and gross where the feed has them, no VAT.\n\nOne source is chosen PER CHANNEL (statement lines when a channel has any in\nrange, else the order feed), so Keeta is never double-counted. Providers\ndisagree on a fee's SIGN, so every bucket is a positive magnitude \u2014\n\"what they charged\". Commission and every other fee are reported together as\n`fees`, and `effective_rate` is the full take \u2014 (fees + VAT) \u00f7 gross \u2014 so it\nreflects everything the marketplace deducted, not commission alone.",
         "operationId": "fees_summary_api_v1_aggregators_fees_summary_get",
         "parameters": [
           {

@@ -18,13 +18,15 @@ type FeesRow = Schemas['AggregatorFeesRow'];
 /**
  * The Fees & VAT screen — the high-level commission/VAT picture for a date range.
  *
- * One row per marketplace: what they took (commission), the VAT on it where the
- * marketplace declares it, gross sales, net paid out, and the effective rate.
- * The commission figure is genuinely split by marketplace — some settle it on a
- * detailed statement, some only on the order feed — so the API merges both and
- * picks one source per channel; this screen just renders the result. Every fee is
- * a positive magnitude ("what they charged"), not a signed ledger entry. A blank
- * VAT is a channel that never itemises it, not a zero.
+ * One row per marketplace: gross sales, the fees they took (commission and every
+ * other fee, together — no longer split), the VAT on top where the marketplace
+ * declares it, net paid out, and the effective rate. The fee figure is genuinely
+ * split by marketplace at source — some settle it on a detailed statement, some
+ * only on the order feed — so the API merges both and picks one source per
+ * channel; this screen just renders the result. Every fee is a positive magnitude
+ * ("what they charged"), not a signed ledger entry. The effective rate is the
+ * full take, (fees + VAT) ÷ gross, so it reflects everything deducted rather than
+ * commission alone. A blank VAT is a channel that never itemises it, not a zero.
  */
 
 const CHANNEL_OPTIONS = [
@@ -127,11 +129,13 @@ export default function AggregatorFeesPage() {
       render: r => <span className="tabular-nums text-gray-700">{money(r.gross_sales)}</span>,
     },
     {
-      header: 'Commission',
+      // Commission and every other fee, together — the whole charge the
+      // marketplace took. It is no longer split into commission vs other fees.
+      header: 'Fees',
       className: 'text-right whitespace-nowrap',
       sortable: true,
-      sortAccessor: r => num(r.commission),
-      render: r => <span className="tabular-nums font-medium text-gray-800">{money(r.commission)}</span>,
+      sortAccessor: r => num(r.fees),
+      render: r => <span className="tabular-nums font-medium text-gray-800">{money(r.fees)}</span>,
     },
     {
       header: 'VAT',
@@ -141,14 +145,6 @@ export default function AggregatorFeesPage() {
       render: r => <span className="tabular-nums text-gray-700">{money(r.vat)}</span>,
     },
     {
-      header: 'Other fees',
-      priority: 'secondary',
-      className: 'text-right whitespace-nowrap',
-      sortable: true,
-      sortAccessor: r => num(r.other_fees),
-      render: r => <span className="tabular-nums text-gray-700">{money(r.other_fees)}</span>,
-    },
-    {
       header: 'Net payout',
       className: 'text-right whitespace-nowrap',
       sortable: true,
@@ -156,6 +152,8 @@ export default function AggregatorFeesPage() {
       render: r => <span className="tabular-nums text-gray-700">{money(r.net_payable)}</span>,
     },
     {
+      // The full take: (fees + VAT) ÷ gross, computed server-side — everything
+      // the marketplace deducted, not commission alone.
       header: 'Eff. rate',
       className: 'text-right whitespace-nowrap',
       sortable: true,
@@ -171,7 +169,7 @@ export default function AggregatorFeesPage() {
       <div>
         <h1 className="font-display text-2xl text-gray-800">Fees &amp; VAT</h1>
         <p className="text-xs text-gray-400 font-body mt-0.5">
-          Commission, VAT and net payout per marketplace over the chosen range
+          Fees, VAT and net payout per marketplace over the chosen range
         </p>
       </div>
 
@@ -206,15 +204,14 @@ export default function AggregatorFeesPage() {
       ) : (
         <>
           {t && (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <StatCard label="Gross sales" value={money(t.gross_sales)} sub={`${t.orders} orders`} />
               <StatCard
-                label="Commission"
-                value={money(t.commission)}
+                label="Fees"
+                value={money(t.fees)}
                 sub={`eff. ${rate(t.effective_rate)}`}
               />
               <StatCard label="VAT" value={money(t.vat)} />
-              <StatCard label="Other fees" value={money(t.other_fees)} />
               <StatCard label="Net payout" value={money(t.net_payable)} />
             </div>
           )}
@@ -230,9 +227,11 @@ export default function AggregatorFeesPage() {
             }
           />
           <p className="text-xs text-gray-400 font-body">
-            Commission is drawn from each marketplace&rsquo;s settled statement lines
-            where it publishes them (Deliveroo, Keeta, noon) and from the order feed
-            otherwise (Talabat). VAT appears only where the marketplace itemises it.
+            Fees are commission plus every other charge, drawn from each
+            marketplace&rsquo;s settled statement lines where it publishes them
+            (Deliveroo, Keeta, noon) and from the order feed otherwise (Talabat).
+            VAT appears only where the marketplace itemises it, and the effective
+            rate is the full take &mdash; (fees + VAT) &divide; gross.
           </p>
         </>
       )}
