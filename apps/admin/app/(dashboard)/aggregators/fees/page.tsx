@@ -52,6 +52,16 @@ function rate(value: number | null | undefined): string {
   return value == null ? '—' : `${(value * 100).toFixed(1)}%`;
 }
 
+/** A money value as a fraction of gross, for `rate()`; null when either is unknown. */
+function grossShare(
+  value: number | string | null | undefined,
+  gross: number | string | null | undefined,
+): number | null {
+  const v = value == null ? null : Number(value);
+  const g = gross == null ? null : Number(gross);
+  return v == null || g == null || g === 0 ? null : v / g;
+}
+
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="bg-white border border-gray-200 p-4">
@@ -145,6 +155,19 @@ export default function AggregatorFeesPage() {
       render: r => <span className="tabular-nums text-gray-700">{money(r.vat)}</span>,
     },
     {
+      // Money returned off the sale (a customer refund / vendor-liability reversal)
+      // — not a marketplace fee, but it also moves gross toward net.
+      header: 'Refunds',
+      className: 'text-right whitespace-nowrap',
+      sortable: true,
+      sortAccessor: r => num(r.refunds),
+      render: r => (
+        <span className="tabular-nums text-gray-600">
+          {Number(r.refunds ?? 0) > 0 ? `−${money(r.refunds)}` : money(r.refunds)}
+        </span>
+      ),
+    },
+    {
       header: 'Net payout',
       className: 'text-right whitespace-nowrap',
       sortable: true,
@@ -204,7 +227,7 @@ export default function AggregatorFeesPage() {
       ) : (
         <>
           {t && (
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
               <StatCard label="Gross sales" value={money(t.gross_sales)} sub={`${t.orders} orders`} />
               <StatCard
                 label="Fees"
@@ -212,6 +235,11 @@ export default function AggregatorFeesPage() {
                 sub={`eff. ${rate(t.effective_rate)}`}
               />
               <StatCard label="VAT" value={money(t.vat)} />
+              <StatCard
+                label="Refunds"
+                value={money(t.refunds)}
+                sub={`${rate(grossShare(t.refunds, t.gross_sales))} of gross`}
+              />
               <StatCard label="Net payout" value={money(t.net_payable)} />
             </div>
           )}

@@ -943,6 +943,10 @@ async def _fees_from_statement_lines(
         fc.in_(["merchant_compensation", "adjustment_increase"]),
         is_inbound_adjustment,
     )
+    # A refund is money that left the SALE (a customer refund, a vendor-liability
+    # reversal), NOT a marketplace fee — so it is bucketed apart from `other_fees`
+    # and kept out of the take, while still shown as part of gross → net.
+    is_refund = fc.in_(["customer_refund", "merchant_liability"])
     amt = func.abs(ln.amount)
 
     def _sum(cond):
@@ -960,8 +964,16 @@ async def _fees_from_statement_lines(
         _sum(is_gross).label("gross_sales"),
         _sum(is_commission).label("commission"),
         _sum(is_vat).label("vat"),
+        _sum(is_refund).label("refunds"),
         _sum(
-            and_(~is_gross, ~is_net, ~is_commission, ~is_vat, ~is_other_revenue)
+            and_(
+                ~is_gross,
+                ~is_net,
+                ~is_commission,
+                ~is_vat,
+                ~is_other_revenue,
+                ~is_refund,
+            )
         ).label("other_fees"),
         _sum_signed(is_net).label("net_payable"),
         func.count(distinct(ln.external_order_id)).label("orders"),
@@ -998,6 +1010,9 @@ async def _fees_from_orders(
             ),
             0,
         ).label("other_fees"),
+        # Refunds are money off the SALE (Talabat's item reversals + recoveries),
+        # not a fee — shown apart, tracking gross → net.
+        func.coalesce(func.sum(func.abs(o.refund_amount)), 0).label("refunds"),
         func.coalesce(func.sum(func.abs(o.net_payable)), 0).label("net_payable"),
         func.count().label("orders"),
     ).group_by(o.channel)
@@ -1059,6 +1074,7 @@ def _fees_row(channel: str, r, *, vat: object = ...) -> AggregatorFeesRow:
         gross_sales=r.gross_sales,
         fees=fees,
         vat=vat_val,
+        refunds=getattr(r, "refunds", None),
         net_payable=r.net_payable,
         orders=r.orders or 0,
         effective_rate=rate,
@@ -1086,6 +1102,7 @@ def _fees_total(rows: list[AggregatorFeesRow]) -> AggregatorFeesRow:
         gross_sales=gross,
         fees=fees,
         vat=vat,
+        refunds=_s("refunds"),
         net_payable=_s("net_payable"),
         orders=sum(r.orders for r in rows),
         effective_rate=rate,

@@ -883,7 +883,7 @@
         "type": "object"
       },
       "AggregatorFeesRow": {
-        "description": "One channel's fee/VAT roll-up over the requested date range.\n\nSourced from `aggregator_statement_line` bucketed by the provider's own\nline/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE\n(providers disagree on the sign of a fee \u2014 noon books it positive, the rest\nnegative), so `fees`/`vat` read as \"what they charged\". `fees` is the whole\ncharge the marketplace took \u2014 commission and every other fee, together, no\nlonger split \u2014 while `vat` is the tax the marketplace itemises on top of it.\n`effective_rate` is the full take: `(fees + vat) / gross_sales`, so it\nreflects everything deducted, not commission alone. `orders` counts the\ndistinct settled orders contributing.",
+        "description": "One channel's fee/VAT roll-up over the requested date range.\n\nSourced from `aggregator_statement_line` bucketed by the provider's own\nline/fee vocabulary, over `line_date`. Every figure is a positive MAGNITUDE\n(providers disagree on the sign of a fee \u2014 noon books it positive, the rest\nnegative), so `fees`/`vat` read as \"what they charged\". `fees` is the whole\ncharge the marketplace took \u2014 commission and every other fee, together, no\nlonger split \u2014 while `vat` is the tax the marketplace itemises on top of it.\n`effective_rate` is the full take: `(fees + vat) / gross_sales`, so it\nreflects everything deducted, not commission alone. `refunds` is the money\nthat left the SALE (a customer refund / vendor-liability reversal) \u2014 NOT a\nmarketplace fee, so it is kept out of `fees` and `effective_rate` and shown\nseparately, because it too moves gross toward net (gross \u2212 fees \u2212 vat \u2212 refunds\n\u2248 net_payable). `orders` counts the distinct settled orders contributing.",
         "properties": {
           "channel": {
             "title": "Channel",
@@ -940,6 +940,18 @@
             "default": 0,
             "title": "Orders",
             "type": "integer"
+          },
+          "refunds": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refunds"
           },
           "vat": {
             "anyOf": [

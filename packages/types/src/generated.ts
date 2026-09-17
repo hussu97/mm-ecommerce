@@ -8889,8 +8889,11 @@ export interface components {
          *     charge the marketplace took — commission and every other fee, together, no
          *     longer split — while `vat` is the tax the marketplace itemises on top of it.
          *     `effective_rate` is the full take: `(fees + vat) / gross_sales`, so it
-         *     reflects everything deducted, not commission alone. `orders` counts the
-         *     distinct settled orders contributing.
+         *     reflects everything deducted, not commission alone. `refunds` is the money
+         *     that left the SALE (a customer refund / vendor-liability reversal) — NOT a
+         *     marketplace fee, so it is kept out of `fees` and `effective_rate` and shown
+         *     separately, because it too moves gross toward net (gross − fees − vat − refunds
+         *     ≈ net_payable). `orders` counts the distinct settled orders contributing.
          */
         AggregatorFeesRow: {
             /** Channel */
@@ -8908,6 +8911,8 @@ export interface components {
              * @default 0
              */
             orders: number;
+            /** Refunds */
+            refunds?: string | null;
             /** Vat */
             vat?: string | null;
         };
