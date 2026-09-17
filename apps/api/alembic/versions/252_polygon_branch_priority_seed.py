@@ -20,12 +20,13 @@ The rank-1 mirror columns on `delivery_polygons` are rewritten to the new
 preferred branch too, and the active version's `revision` is bumped in the same
 transaction so every worker re-reads the map (the F-COU-9 cache class).
 
-**The snapshot must be the real probe output.** `uae_delivery_areas_branch_priority.v1.json`
-is produced by `scripts.build_delivery_areas` from per-branch Slider fares that
-only the production VM can probe (IP-whitelisted, origin-specific). Regenerate it
-from a live `--branch K001` and `--branch B001` probe and run
-`scripts.compare_branch_priority` before this ships; the file committed for
-development is a synthetic stand-in and is flagged as such in the cost fixtures.
+The snapshot `uae_delivery_areas_branch_priority.v1.json` is produced by
+`scripts.build_delivery_areas` from per-branch Slider fares that only the
+production VM can probe (IP-whitelisted, origin-specific). The committed copy is
+the **real** probe: `courier_costs.{K001,B001}.json` were surveyed live from the
+VM (34.18.98.2), the map rebuilt, and `scripts.compare_branch_priority` run
+green (no zero-serviceable zone, coverage preserved). Regenerate the same way if
+a branch moves or a fare card changes.
 
 Revision ID: 252_polygon_branch_priority_seed
 Revises: 251_polygon_branch_fulfilment
