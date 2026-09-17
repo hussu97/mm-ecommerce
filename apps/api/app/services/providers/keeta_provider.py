@@ -1181,6 +1181,15 @@ class KeetaClient(BaseAggregatorClient):
             status_events=events,
             gross_sales=gross_sales,
             net_sales=net_sales,
+            # VAT basis: Keeta bills its fees VAT-INCLUSIVE and never itemises the
+            # tax — `feeDtl.merchantFee` carries no vat/tax key, and the weekly bill
+            # labels every column "(VAT included)" (see `_BILL_LINE_SPEC`). So the
+            # commission/payment/marketing magnitudes here already contain the 5%,
+            # which is why the net invariant (gross − commission − payment −
+            # marketing ≈ net_payable) holds on one basis. This matches Careem
+            # (also inclusive); noon's order commission is VAT-exclusive, which is a
+            # separate cross-channel inconsistency in `OrderEconomics.net`.
+            #
             # Base commission only. Keeta's "Promotion funded by merchant"
             # (`activityFee`) is a separate merchant cost carried on `marketing_fee`
             # below — the marketplace itemises it apart from commission (portal

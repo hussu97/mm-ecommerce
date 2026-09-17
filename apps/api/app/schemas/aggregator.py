@@ -546,6 +546,36 @@ class ReconSummaryOut(BaseModel):
     totals: ReconSummaryRow
 
 
+class AggregatorPeriodChargeRow(BaseModel):
+    """One non-order charge a marketplace billed over a period, not per order.
+
+    The recurring cost of being on the platform — Deliveroo's monthly admin fee,
+    an invoice-correction credit, the VAT on either — arrives on a settlement line
+    with NO `external_order_id`, so it never reaches the per-order reconciliation
+    (which is one row per order). These rows surface those lines verbatim: the
+    signed `amount` is the merchant's net effect (negative is a charge, positive a
+    credit), and a VAT line appears as its own row rather than being split back
+    onto the charge, so nothing here is derived. `charge_date` is the line's date.
+    """
+
+    channel: str
+    charge_date: str | None = None
+    line_type: str | None = None
+    fee_category: str | None = None
+    amount: Decimal
+    lines: int = 0
+
+
+class AggregatorPeriodChargesOut(BaseModel):
+    """The period-charges read: the non-order settlement lines over a date range,
+    newest first, with the net effect summed across them."""
+
+    from_date: str | None = None
+    to_date: str | None = None
+    rows: list[AggregatorPeriodChargeRow]
+    total_amount: Decimal | None = None
+
+
 # ── Layer A: settlement reconciliation (sales↔statement↔payout) ───────────────
 class SettlementPayoutInfo(BaseModel):
     """The transfer that settled a statement, as far as the payout feed knows."""

@@ -514,6 +514,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/aggregators/reconciliation/period-charges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reconciliation Period Charges
+         * @description The non-order charges a marketplace bills over a period — the cost of being
+         *     on the platform, which per-order reconciliation cannot see.
+         *
+         *     Reconciliation is one row per order, but a monthly platform/admin fee, an
+         *     invoice-correction credit, and the VAT on either arrive on settlement lines
+         *     with NO `external_order_id`. This reads those lines straight from
+         *     `aggregator_statement_line` (dropping only the gross/net-payout plumbing, which
+         *     is not a charge), so the recurring fees show up alongside the order recon.
+         *     Amounts are signed — the merchant's net effect — so a fee reads negative and a
+         *     credit positive, and a VAT line stands on its own rather than being split back
+         *     onto a charge.
+         */
+        get: operations["reconciliation_period_charges_api_v1_aggregators_reconciliation_period_charges_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/aggregators/reconciliation/settlement": {
         parameters: {
             query?: never;
@@ -8977,6 +9007,50 @@ export interface components {
             tenant?: string | null;
             /** Username */
             username?: string | null;
+        };
+        /**
+         * AggregatorPeriodChargeRow
+         * @description One non-order charge a marketplace billed over a period, not per order.
+         *
+         *     The recurring cost of being on the platform — Deliveroo's monthly admin fee,
+         *     an invoice-correction credit, the VAT on either — arrives on a settlement line
+         *     with NO `external_order_id`, so it never reaches the per-order reconciliation
+         *     (which is one row per order). These rows surface those lines verbatim: the
+         *     signed `amount` is the merchant's net effect (negative is a charge, positive a
+         *     credit), and a VAT line appears as its own row rather than being split back
+         *     onto the charge, so nothing here is derived. `charge_date` is the line's date.
+         */
+        AggregatorPeriodChargeRow: {
+            /** Amount */
+            amount: string;
+            /** Channel */
+            channel: string;
+            /** Charge Date */
+            charge_date?: string | null;
+            /** Fee Category */
+            fee_category?: string | null;
+            /** Line Type */
+            line_type?: string | null;
+            /**
+             * Lines
+             * @default 0
+             */
+            lines: number;
+        };
+        /**
+         * AggregatorPeriodChargesOut
+         * @description The period-charges read: the non-order settlement lines over a date range,
+         *     newest first, with the net effect summed across them.
+         */
+        AggregatorPeriodChargesOut: {
+            /** From Date */
+            from_date?: string | null;
+            /** Rows */
+            rows: components["schemas"]["AggregatorPeriodChargeRow"][];
+            /** To Date */
+            to_date?: string | null;
+            /** Total Amount */
+            total_amount?: string | null;
         };
         /**
          * AggregatorReauthBackoffPush
@@ -21279,6 +21353,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AggregatorReconciliationList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconciliation_period_charges_api_v1_aggregators_reconciliation_period_charges_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AggregatorPeriodChargesOut"];
                 };
             };
             /** @description Validation Error */

@@ -60,6 +60,8 @@ from app.schemas.aggregator import (
     AggregatorFeesRow,
     AggregatorFeesSummaryOut,
     AggregatorInvoiceUrl,
+    AggregatorPeriodChargeRow,
+    AggregatorPeriodChargesOut,
     AggregatorReauthBackoffPush,
     AggregatorReconciliationList,
     AggregatorReconciliationOut,
@@ -680,6 +682,74 @@ async def reconciliation_summary(
 
 
 _DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
+
+
+@router.get(
+    "/reconciliation/period-charges",
+    response_model=AggregatorPeriodChargesOut,
+    dependencies=[Depends(require("reports.sales"))],
+)
+async def reconciliation_period_charges(
+    channel: str | None = Query(None),
+    date_from: str | None = Query(None, pattern=_DATE_RE),
+    date_to: str | None = Query(None, pattern=_DATE_RE),
+    db: AsyncSession = Depends(get_db),
+) -> AggregatorPeriodChargesOut:
+    """The non-order charges a marketplace bills over a period — the cost of being
+    on the platform, which per-order reconciliation cannot see.
+
+    Reconciliation is one row per order, but a monthly platform/admin fee, an
+    invoice-correction credit, and the VAT on either arrive on settlement lines
+    with NO `external_order_id`. This reads those lines straight from
+    `aggregator_statement_line` (dropping only the gross/net-payout plumbing, which
+    is not a charge), so the recurring fees show up alongside the order recon.
+    Amounts are signed — the merchant's net effect — so a fee reads negative and a
+    credit positive, and a VAT line stands on its own rather than being split back
+    onto a charge.
+    """
+    ln = AggregatorStatementLine
+    lt = func.lower(func.coalesce(ln.line_type, ""))
+    fc = func.lower(func.coalesce(ln.fee_category, ""))
+    is_gross = or_(fc == "gross_sales", lt.in_(["gross_sales", "sales", "sale"]))
+    is_net = or_(fc == "net_payable", lt.in_(["net_payable", "payout", "settlement"]))
+
+    stmt = (
+        select(
+            ln.channel.label("channel"),
+            ln.line_date.label("charge_date"),
+            ln.line_type.label("line_type"),
+            ln.fee_category.label("fee_category"),
+            func.coalesce(func.sum(ln.amount), 0).label("amount"),
+            func.count().label("lines"),
+        )
+        .where(or_(ln.external_order_id.is_(None), ln.external_order_id == ""))
+        .where(~is_gross)
+        .where(~is_net)
+        .group_by(ln.channel, ln.line_date, ln.line_type, ln.fee_category)
+        .order_by(ln.line_date.desc(), ln.channel)
+    )
+    if channel:
+        stmt = stmt.where(ln.channel == channel)
+    if date_from:
+        stmt = stmt.where(ln.line_date >= date_from)
+    if date_to:
+        stmt = stmt.where(ln.line_date <= date_to)
+
+    rows = [
+        AggregatorPeriodChargeRow(
+            channel=r.channel,
+            charge_date=r.charge_date,
+            line_type=r.line_type,
+            fee_category=r.fee_category,
+            amount=r.amount,
+            lines=r.lines,
+        )
+        for r in (await db.execute(stmt)).all()
+    ]
+    total = sum((row.amount for row in rows), Decimal(0)) if rows else None
+    return AggregatorPeriodChargesOut(
+        from_date=date_from, to_date=date_to, rows=rows, total_amount=total
+    )
 
 
 @router.get(

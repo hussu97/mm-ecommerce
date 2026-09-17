@@ -15,6 +15,7 @@ import type { Branch } from '@/lib/pos-types';
 type ReconRow = Schemas['AggregatorReconciliationOut'];
 type ReconSummary = Schemas['ReconSummaryOut'];
 type ReconSummaryRow = Schemas['ReconSummaryRow'];
+type PeriodCharge = Schemas['AggregatorPeriodChargeRow'];
 import { Badge, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { useApiList } from '@/hooks/useApiList';
@@ -74,6 +75,13 @@ function channelName(code: string): string {
   return code === 'noon' ? 'noon' : code.charAt(0).toUpperCase() + code.slice(1);
 }
 
+/** A snake_case provider category ("monthly_admin_fee") as words ("Monthly admin fee"). */
+function prettyLabel(value: string | null | undefined): string {
+  if (!value) return '—';
+  const spaced = value.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
 /**
  * A rate as a percent, whichever way the API encoded it.
  *
@@ -130,6 +138,7 @@ export default function ReconciliationPage() {
   const [flaggedOnly, setFlaggedOnly] = useState(false);
 
   const [summary, setSummary] = useState<ReconSummary | null>(null);
+  const [periodCharges, setPeriodCharges] = useState<PeriodCharge[]>([]);
   const [summaryError, setSummaryError] = useState('');
   // Bumped by the retry button to re-run the load below; the fetch lives in the
   // effect rather than in a callback the effect calls, so nothing sets state
@@ -171,6 +180,24 @@ export default function ReconciliationPage() {
       active = false;
     };
   }, [channel, branchId, summaryReload]);
+
+  // Non-order platform/period charges — a monthly admin fee, a credit, its VAT —
+  // that per-order reconciliation cannot see. Answers to channel only (they carry
+  // no branch), and a failure here never blocks the recon table below.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const data = await reconciliationApi.periodCharges({ channel: channel || undefined });
+        if (active) setPeriodCharges(data.rows ?? []);
+      } catch {
+        if (active) setPeriodCharges([]);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [channel, summaryReload]);
 
   // Server-side pagination by limit/offset. `useApiList` speaks page/perPage, so
   // the fetcher turns the page into an offset and the `{ items, total }` answer
@@ -316,6 +343,52 @@ export default function ReconciliationPage() {
           {cards.map(c => (
             <StatCard key={c.label} label={c.label} value={c.value} sub={c.sub} tone={c.tone} />
           ))}
+        </div>
+      )}
+
+      {/* Platform & period charges — non-order fees per-order recon cannot see. */}
+      {periodCharges.length > 0 && (
+        <div className="bg-white border border-gray-200">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <p className="text-[11px] font-body uppercase tracking-widest text-gray-400">
+              Platform &amp; period charges
+            </p>
+            <p className="text-xs text-gray-400 font-body mt-0.5">
+              Recurring fees the marketplace bills outside any single order &mdash; a
+              monthly platform fee, a credit, the VAT on either. Not part of the
+              per-order counts above.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-wider text-gray-400 font-body">
+                  <th className="px-4 py-2 font-normal">Date</th>
+                  <th className="px-4 py-2 font-normal">Channel</th>
+                  <th className="px-4 py-2 font-normal">Charge</th>
+                  <th className="px-4 py-2 font-normal text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {periodCharges.map((c, i) => (
+                  <tr key={`${c.channel}-${c.charge_date}-${c.fee_category}-${i}`} className="border-t border-gray-50">
+                    <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{c.charge_date ?? '—'}</td>
+                    <td className="px-4 py-2">
+                      <Badge variant="neutral">{channelName(c.channel)}</Badge>
+                    </td>
+                    <td className="px-4 py-2 text-gray-700">{prettyLabel(c.fee_category)}</td>
+                    <td
+                      className={`px-4 py-2 text-right tabular-nums ${
+                        Number(c.amount) < 0 ? 'text-gray-700' : 'text-emerald-600'
+                      }`}
+                    >
+                      {money(c.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

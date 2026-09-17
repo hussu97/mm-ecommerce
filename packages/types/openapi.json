@@ -1268,6 +1268,115 @@
         "title": "AggregatorMailboxWrite",
         "type": "object"
       },
+      "AggregatorPeriodChargeRow": {
+        "description": "One non-order charge a marketplace billed over a period, not per order.\n\nThe recurring cost of being on the platform \u2014 Deliveroo's monthly admin fee,\nan invoice-correction credit, the VAT on either \u2014 arrives on a settlement line\nwith NO `external_order_id`, so it never reaches the per-order reconciliation\n(which is one row per order). These rows surface those lines verbatim: the\nsigned `amount` is the merchant's net effect (negative is a charge, positive a\ncredit), and a VAT line appears as its own row rather than being split back\nonto the charge, so nothing here is derived. `charge_date` is the line's date.",
+        "properties": {
+          "amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Amount",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "charge_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Charge Date"
+          },
+          "fee_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Category"
+          },
+          "line_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Type"
+          },
+          "lines": {
+            "default": 0,
+            "title": "Lines",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "amount"
+        ],
+        "title": "AggregatorPeriodChargeRow",
+        "type": "object"
+      },
+      "AggregatorPeriodChargesOut": {
+        "description": "The period-charges read: the non-order settlement lines over a date range,\nnewest first, with the net effect summed across them.",
+        "properties": {
+          "from_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Date"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/AggregatorPeriodChargeRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "to_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Date"
+          },
+          "total_amount": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Amount"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "title": "AggregatorPeriodChargesOut",
+        "type": "object"
+      },
       "AggregatorReauthBackoffPush": {
         "description": "The worker publishing when it will next re-drive a channel's login.\n\nSent on a reauth failure (with the backoff's next-attempt time) so the ingest\ncan skip a wait the worker will not honour in time; `backoff_until=None` clears\nit. Same push-bearer auth as the session push.",
         "properties": {
@@ -36315,6 +36424,95 @@
           }
         ],
         "summary": "List Reconciliation",
+        "tags": [
+          "Aggregators"
+        ]
+      }
+    },
+    "/api/v1/aggregators/reconciliation/period-charges": {
+      "get": {
+        "description": "The non-order charges a marketplace bills over a period \u2014 the cost of being\non the platform, which per-order reconciliation cannot see.\n\nReconciliation is one row per order, but a monthly platform/admin fee, an\ninvoice-correction credit, and the VAT on either arrive on settlement lines\nwith NO `external_order_id`. This reads those lines straight from\n`aggregator_statement_line` (dropping only the gross/net-payout plumbing, which\nis not a charge), so the recurring fees show up alongside the order recon.\nAmounts are signed \u2014 the merchant's net effect \u2014 so a fee reads negative and a\ncredit positive, and a VAT line stands on its own rather than being split back\nonto a charge.",
+        "operationId": "reconciliation_period_charges_api_v1_aggregators_reconciliation_period_charges_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AggregatorPeriodChargesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reconciliation Period Charges",
         "tags": [
           "Aggregators"
         ]

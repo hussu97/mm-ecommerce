@@ -27,6 +27,7 @@ import { loginPathFor } from './auth-redirect';
 // contract (rule 8); these aliases keep the friendly names the code below uses.
 type ReconList = Schemas['AggregatorReconciliationList'];
 type ReconSummary = Schemas['ReconSummaryOut'];
+type PeriodCharges = Schemas['AggregatorPeriodChargesOut'];
 type SyncRunList = Schemas['AggregatorSyncRunList'];
 type RunTriggerResult = Schemas['AggregatorRunTriggerOut'];
 type RunTriggerInput = Schemas['AggregatorRunTriggerIn'];
@@ -808,6 +809,10 @@ export const reconciliationApi = {
   /** Per-channel roll-up and a grand total, for the stat cards. */
   summary: (params?: { channel?: string; branch_id?: string }) =>
     api.get<ReconSummary>(`/aggregators/reconciliation/summary${buildQs(params)}`),
+  /** Non-order charges (a monthly platform/admin fee, a credit, its VAT) — the
+   *  cost of being on the platform that per-order recon cannot see. */
+  periodCharges: (params?: { channel?: string; date_from?: string; date_to?: string }) =>
+    api.get<PeriodCharges>(`/aggregators/reconciliation/period-charges${buildQs(params)}`),
 };
 
 // ─── Aggregator settlement invoices + fees/VAT ────────────────────────────────
