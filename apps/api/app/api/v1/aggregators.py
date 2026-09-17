@@ -32,6 +32,7 @@ from app.core.exceptions import (
     ServiceUnavailableError,
     UnauthorizedError,
 )
+from app.core.money import money as _q_money
 from app.core.permissions import require
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
@@ -855,14 +856,33 @@ async def _fees_from_statement_lines(
     is_gross = or_(fc == "gross_sales", lt.in_(["gross_sales", "sales", "sale"]))
     is_net = or_(fc == "net_payable", lt.in_(["net_payable", "payout", "settlement"]))
     # Money that comes IN to the merchant (a Keeta-fault compensation, an upward
-    # adjustment) is other-revenue, NOT a fee — `net_payable` already includes it,
-    # so abs()'ing it into `other_fees` would both double-count and inflate the fee
-    # total. Keep only cost-side lines (deductions/downward adjustments) in fees.
-    is_other_revenue = fc.in_(["merchant_compensation", "adjustment_increase"])
+    # adjustment, a Deliveroo invoice-correction credit) is other-revenue, NOT a
+    # fee — `net_payable` already includes it, so abs()'ing it into `other_fees`
+    # would both double-count and inflate the fee total. Keep only cost-side lines
+    # (deductions/downward adjustments) in fees.
+    #
+    # Two ways a line is inbound revenue: a known Keeta category, OR any
+    # `adjustment` line with a POSITIVE amount. Deliveroo's adjustment
+    # `fee_category` is free text (the portal's Activity label), so a string
+    # allow-list cannot keep pace — key off the sign instead. This is safe across
+    # channels because only noon books its fees positive, and noon emits no
+    # `adjustment` lines, so a positive adjustment is always money paid back.
+    is_inbound_adjustment = and_(lt == "adjustment", ln.amount > 0)
+    is_other_revenue = or_(
+        fc.in_(["merchant_compensation", "adjustment_increase"]),
+        is_inbound_adjustment,
+    )
     amt = func.abs(ln.amount)
 
     def _sum(cond):
         return func.coalesce(func.sum(amt).filter(cond), 0)
+
+    # Net payout is the amount DUE to the merchant, and its sign is meaningful — a
+    # negative net line (a period the marketplace clawed back more than it paid)
+    # reduces the payout. So sum it signed, not abs()'d: Deliveroo carries net
+    # lines of both signs, and abs() overstated the payout by double the negatives.
+    def _sum_signed(cond):
+        return func.coalesce(func.sum(ln.amount).filter(cond), 0)
 
     stmt = select(
         ln.channel.label("channel"),
@@ -872,7 +892,7 @@ async def _fees_from_statement_lines(
         _sum(
             and_(~is_gross, ~is_net, ~is_commission, ~is_vat, ~is_other_revenue)
         ).label("other_fees"),
-        _sum(is_net).label("net_payable"),
+        _sum_signed(is_net).label("net_payable"),
         func.count(distinct(ln.external_order_id)).label("orders"),
     ).group_by(ln.channel)
     if channel:
@@ -910,6 +930,23 @@ async def _fees_from_orders(
     }
 
 
+# UAE VAT is 5%, and some marketplaces bill their fees VAT-INCLUSIVE without ever
+# itemising the tax. Keeta is the case: its weekly billing XLSX labels every money
+# column "(VAT included)" — item price, commission, bank fee, subscription, POS fee
+# — and carries no VAT-amount column anywhere (confirmed from a live bill), so the
+# commission/bank-fee lines we store already have the 5% inside them and the VAT
+# bucket comes out 0. The channels that DO break VAT out (Deliveroo/Careem/noon/
+# Talabat) book fees ex-VAT plus a separate `vat` line, so leaving Keeta's fees
+# VAT-inclusive makes the Fees column mean two different things across rows.
+_VAT_INCLUSIVE_FEE_CHANNELS = frozenset({CHANNEL_KEETA})
+_VAT_RATE = Decimal("0.05")
+
+
+def _embedded_vat(fees: Decimal) -> Decimal:
+    """The 5% VAT baked into a VAT-inclusive fee magnitude: fee × 5 / 105."""
+    return _q_money(fees * _VAT_RATE / (Decimal(1) + _VAT_RATE))
+
+
 def _fees_row(channel: str, r, *, vat: object = ...) -> AggregatorFeesRow:
     """One fees roll-up row. Commission and every other fee are folded into a
     single `fees` magnitude, and the effective rate is the full take —
@@ -918,7 +955,18 @@ def _fees_row(channel: str, r, *, vat: object = ...) -> AggregatorFeesRow:
     gross = Decimal(r.gross_sales or 0)
     vat_val = r.vat if vat is ... else vat
     fees = Decimal(r.commission or 0) + Decimal(r.other_fees or 0)
-    rate = float((fees + Decimal(vat_val or 0)) / gross) if gross else None
+    # For a channel that bills fees VAT-inclusive and never itemises the tax, peel
+    # the embedded 5% out of `fees` into the VAT column so the split matches the
+    # other channels. This does NOT move the effective rate — (fees + VAT)/gross is
+    # unchanged whether the VAT sits inside `fees` or beside it — and it leaves the
+    # stored statement lines untouched, so reconciliation still sees the real billed
+    # (VAT-inclusive) commission the invoice charged.
+    vat_dec = Decimal(vat_val or 0)
+    if channel in _VAT_INCLUSIVE_FEE_CHANNELS and not vat_dec and fees:
+        vat_dec = _embedded_vat(fees)
+        fees = fees - vat_dec
+        vat_val = vat_dec
+    rate = float((fees + vat_dec) / gross) if gross else None
     return AggregatorFeesRow(
         channel=channel,
         gross_sales=r.gross_sales,
