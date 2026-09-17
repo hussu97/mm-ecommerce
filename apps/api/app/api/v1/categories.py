@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import cache_delete_pattern, cache_get, cache_set
-from app.core.deps import browsing_branch, get_db, get_db_lazy, get_optional_user
+from app.core.deps import (
+    browsing_branch,
+    browsing_branch_ids,
+    get_db,
+    get_db_lazy,
+    get_optional_user,
+)
 from app.core.exceptions import ForbiddenError
 from app.core.permissions import require
 from app.models.user import User
@@ -63,6 +69,7 @@ async def list_categories(
         ),
     ),
     branch: uuid.UUID | None = Depends(browsing_branch),
+    branch_ids: list[uuid.UUID] | None = Depends(browsing_branch_ids),
     db: AsyncSession = Depends(get_db_lazy),
     viewer: User | None = Depends(get_optional_user),
 ):
@@ -84,7 +91,12 @@ async def list_categories(
     # Keyed by branch, because two kitchens have two counts and the nav is drawn
     # from this. One entry serving both would put a chip on the nav for a
     # category the shopper's own branch has nothing in.
-    cache_key = _CACHE_KEY.format(channel=f"{resolved}:{branch or 'any'}")
+    branch_token = (
+        "set:" + ",".join(sorted(str(b) for b in branch_ids))
+        if branch_ids
+        else str(branch or "any")
+    )
+    cache_key = _CACHE_KEY.format(channel=f"{resolved}:{branch_token}")
     cacheable = not include_inactive and resolved in _CACHED_CHANNELS
 
     if cacheable:
@@ -96,7 +108,11 @@ async def list_categories(
             return cached
 
     result = await category_service.get_all(
-        db, include_inactive=include_inactive, channel=resolved, branch_id=branch
+        db,
+        include_inactive=include_inactive,
+        channel=resolved,
+        branch_id=branch,
+        branch_ids=branch_ids,
     )
 
     if cacheable:

@@ -3167,6 +3167,98 @@
         "title": "Body_upload_image_api_v1_uploads_image_post",
         "type": "object"
       },
+      "BranchAssignmentInput": {
+        "description": "One branch's standing in a zone, as the admin sets it.",
+        "properties": {
+          "alternate_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Alternate Providers",
+            "type": "array"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "fulfilment_provider": {
+            "title": "Fulfilment Provider",
+            "type": "string"
+          },
+          "rank": {
+            "minimum": 1.0,
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "branch_id",
+          "rank",
+          "fulfilment_provider"
+        ],
+        "title": "BranchAssignmentInput",
+        "type": "object"
+      },
+      "BranchAssignmentResponse": {
+        "description": "One assignment row, as the admin screens read it back.",
+        "properties": {
+          "alternate_providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Alternate Providers",
+            "type": "array"
+          },
+          "branch_id": {
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "fulfilment_provider": {
+            "title": "Fulfilment Provider",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "polygon_id": {
+            "title": "Polygon Id",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "polygon_id",
+          "branch_id",
+          "rank",
+          "fulfilment_provider",
+          "alternate_providers"
+        ],
+        "title": "BranchAssignmentResponse",
+        "type": "object"
+      },
+      "BranchAssignmentSet": {
+        "description": "The complete ordered branch list for a zone, replacing whatever is there.\n\nSet as a whole rather than a row at a time because the invariant is a\nproperty of the set \u2014 ranks dense and unique from 1, each branch once \u2014 and\nediting one row at a time would step through states that violate it. This is\nthe create/update/delete of assignments in one atomic replace.",
+        "properties": {
+          "assignments": {
+            "items": {
+              "$ref": "#/components/schemas/BranchAssignmentInput"
+            },
+            "title": "Assignments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "assignments"
+        ],
+        "title": "BranchAssignmentSet",
+        "type": "object"
+      },
       "BranchChannelTaxConfigResponse": {
         "properties": {
           "branch_id": {
@@ -8849,6 +8941,18 @@
               }
             ],
             "title": "Free Threshold"
+          },
+          "polygon_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Polygon Id"
           },
           "serviceable": {
             "default": true,
@@ -42075,6 +42179,25 @@
               "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
               "title": "Branch Id"
             }
+          },
+          {
+            "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+            "in": "query",
+            "name": "polygon_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+              "title": "Polygon Id"
+            }
           }
         ],
         "responses": {
@@ -43782,6 +43905,160 @@
           }
         ],
         "summary": "Update Polygon",
+        "tags": [
+          "Delivery Zones"
+        ]
+      }
+    },
+    "/api/v1/delivery-zones/polygons/{polygon_id}/assignments": {
+      "delete": {
+        "description": "Remove a zone's whole branch list.\n\nThe zone then has no assignment rows, and runtime falls back to its rank-1\nmirror columns (`branch_id` and its courier) \u2014 the single-branch behaviour a\nhand-built zone has always had. Those columns are left as they are, so the\npreferred branch keeps serving; only the alternates are gone.",
+        "operationId": "delete_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "polygon_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Polygon Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Delete Assignments",
+        "tags": [
+          "Delivery Zones"
+        ]
+      },
+      "get": {
+        "description": "The branches that serve this zone, in rank order.",
+        "operationId": "list_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "polygon_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Polygon Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchAssignmentResponse"
+                  },
+                  "title": "Response List Assignments Api V1 Delivery Zones Polygons  Polygon Id  Assignments Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Assignments",
+        "tags": [
+          "Delivery Zones"
+        ]
+      },
+      "put": {
+        "description": "Replace a zone's whole ordered branch list.\n\nThis is the create/update/delete of assignments in one atomic replace: the\nsubmitted list becomes the zone's branches, rows no longer named are dropped,\nand the rank-1 branch's courier and escapes are mirrored back onto the\npolygon's single-value columns so the map and list views \u2014 which read those\ncolumns \u2014 stay in step with the list.\n\nRefuses a set whose ranks are not dense and unique from 1, or that names a\nbranch twice, or an unknown courier, or a branch that does not exist: each of\nthose would publish a map the checkout cannot walk unambiguously.",
+        "operationId": "set_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "polygon_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Polygon Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchAssignmentSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchAssignmentResponse"
+                  },
+                  "title": "Response Set Assignments Api V1 Delivery Zones Polygons  Polygon Id  Assignments Put",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Assignments",
         "tags": [
           "Delivery Zones"
         ]
@@ -58909,6 +59186,25 @@
               "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
               "title": "Branch Id"
             }
+          },
+          {
+            "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+            "in": "query",
+            "name": "polygon_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+              "title": "Polygon Id"
+            }
           }
         ],
         "responses": {
@@ -59108,6 +59404,25 @@
               "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
               "title": "Branch Id"
             }
+          },
+          {
+            "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+            "in": "query",
+            "name": "polygon_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+              "title": "Polygon Id"
+            }
           }
         ],
         "responses": {
@@ -59176,6 +59491,25 @@
               ],
               "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
               "title": "Branch Id"
+            }
+          },
+          {
+            "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+            "in": "query",
+            "name": "polygon_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+              "title": "Polygon Id"
             }
           }
         ],
@@ -59340,6 +59674,25 @@
               ],
               "description": "The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area.",
               "title": "Branch Id"
+            }
+          },
+          {
+            "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+            "in": "query",
+            "name": "polygon_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area.",
+              "title": "Polygon Id"
             }
           }
         ],

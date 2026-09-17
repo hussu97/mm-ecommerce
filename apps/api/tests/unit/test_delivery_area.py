@@ -229,10 +229,13 @@ def test_the_response_model_carries_nothing_else():
         # The minutes behind an express badge, so the card and the checkout
         # cannot name two durations for one pin. A number, never the courier.
         "express_minutes",
-        # The kitchen this pin resolves to, which the storefront hands back on
-        # catalogue reads so the shelf matches the branch. An id, not a name:
-        # `zone_name` remains the only field here allowed to name a place.
+        # The preferred (rank-1) kitchen, for a pre-basket estimate. An id, not a
+        # name: `zone_name` remains the only field here allowed to name a place.
         "branch_id",
+        # The polygon the pin resolves to. The browser hands it back on catalogue
+        # reads so the shelf is the union of the branches that can serve this
+        # zone, not just the preferred one.
+        "polygon_id",
     }
 
 

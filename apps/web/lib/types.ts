@@ -831,11 +831,18 @@ export interface DeliveryArea {
    */
   express_minutes?: number | null;
   /**
-   * The kitchen this pin resolves to, or null where we do not serve it.
-   *
-   * `LocationProvider` writes it to a cookie so the server-rendered catalogue
-   * can filter to that branch — see `lib/location/branch-cookie.ts`. Null is an
-   * answer, read as "show what any branch can make".
+   * The preferred (rank-1) kitchen this pin resolves to, or null where we do
+   * not serve it. For the pre-cart estimate display only — the winning branch
+   * for a real basket is chosen server-side at preview/placement time.
    */
   branch_id?: string | null;
+  /**
+   * The delivery polygon this pin falls in, or null where we do not serve it.
+   *
+   * `LocationProvider` writes it to the `mm_zone` cookie so the server-rendered
+   * catalogue can narrow to the union of every branch that serves this polygon
+   * — see `lib/location/branch-cookie.ts`. Null is an answer, read as "show what
+   * any branch can make".
+   */
+  polygon_id?: string | null;
 }

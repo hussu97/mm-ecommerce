@@ -291,3 +291,35 @@ async def browsing_branch(
         logger.info("Ignoring browsing branch %s, which cannot take orders", branch_id)
         return None
     return branch.id
+
+
+async def browsing_branch_ids(
+    polygon_id: uuid.UUID | None = Query(
+        None,
+        description=(
+            "The polygon the shopper's pin resolves to. Given one, the "
+            "storefront narrows its union to exactly the branches that can serve "
+            "that pin; omitted, it shows the whole website-delivery union. Read "
+            "the polygon id off GET /delivery/area."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db_lazy),
+) -> list[uuid.UUID] | None:
+    """
+    The branches that can serve this shopper's pin, in priority order.
+
+    The multi-branch counterpart to `browsing_branch`: a pin resolves to a
+    polygon, and a polygon names an ordered list of kitchens. The catalogue lists
+    a product the moment one of them has it, and the basket later picks whichever
+    can make the whole thing. None — no polygon, or one that has dropped off the
+    active map — keeps the wider website-delivery union, the honest answer when we
+    cannot pin the shopper to a zone. Active-branch filtering is left to the
+    availability SQL, so a closed kitchen in the list simply does not count.
+    """
+    if polygon_id is None:
+        return None
+    from app.services.delivery import delivery_zone_service
+
+    zone = await delivery_zone_service.active_zone_by_id(db, polygon_id)
+    ids = delivery_zone_service.priority_branch_ids(zone)
+    return list(ids) or None

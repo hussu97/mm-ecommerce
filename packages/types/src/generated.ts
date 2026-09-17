@@ -2705,6 +2705,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/delivery-zones/polygons/{polygon_id}/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Assignments
+         * @description The branches that serve this zone, in rank order.
+         */
+        get: operations["list_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_get"];
+        /**
+         * Set Assignments
+         * @description Replace a zone's whole ordered branch list.
+         *
+         *     This is the create/update/delete of assignments in one atomic replace: the
+         *     submitted list becomes the zone's branches, rows no longer named are dropped,
+         *     and the rank-1 branch's courier and escapes are mirrored back onto the
+         *     polygon's single-value columns so the map and list views — which read those
+         *     columns — stay in step with the list.
+         *
+         *     Refuses a set whose ranks are not dense and unique from 1, or that names a
+         *     branch twice, or an unknown courier, or a branch that does not exist: each of
+         *     those would publish a map the checkout cannot walk unambiguously.
+         */
+        put: operations["set_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_put"];
+        post?: never;
+        /**
+         * Delete Assignments
+         * @description Remove a zone's whole branch list.
+         *
+         *     The zone then has no assignment rows, and runtime falls back to its rank-1
+         *     mirror columns (`branch_id` and its courier) — the single-branch behaviour a
+         *     hand-built zone has always had. Those columns are left as they are, so the
+         *     preferred branch keeps serving; only the alternates are gone.
+         */
+        delete: operations["delete_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delivery-zones/polygons/{polygon_id}/geometry": {
         parameters: {
             query?: never;
@@ -9764,6 +9807,54 @@ export interface components {
             /** File */
             file: string;
         };
+        /**
+         * BranchAssignmentInput
+         * @description One branch's standing in a zone, as the admin sets it.
+         */
+        BranchAssignmentInput: {
+            /** Alternate Providers */
+            alternate_providers?: string[];
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Fulfilment Provider */
+            fulfilment_provider: string;
+            /** Rank */
+            rank: number;
+        };
+        /**
+         * BranchAssignmentResponse
+         * @description One assignment row, as the admin screens read it back.
+         */
+        BranchAssignmentResponse: {
+            /** Alternate Providers */
+            alternate_providers: string[];
+            /** Branch Id */
+            branch_id: string;
+            /** Fulfilment Provider */
+            fulfilment_provider: string;
+            /** Id */
+            id: string;
+            /** Polygon Id */
+            polygon_id: string;
+            /** Rank */
+            rank: number;
+        };
+        /**
+         * BranchAssignmentSet
+         * @description The complete ordered branch list for a zone, replacing whatever is there.
+         *
+         *     Set as a whole rather than a row at a time because the invariant is a
+         *     property of the set — ranks dense and unique from 1, each branch once — and
+         *     editing one row at a time would step through states that violate it. This is
+         *     the create/update/delete of assignments in one atomic replace.
+         */
+        BranchAssignmentSet: {
+            /** Assignments */
+            assignments: components["schemas"]["BranchAssignmentInput"][];
+        };
         /** BranchChannelTaxConfigResponse */
         BranchChannelTaxConfigResponse: {
             /**
@@ -11678,6 +11769,8 @@ export interface components {
             free_delivery_available: boolean;
             /** Free Threshold */
             free_threshold?: number | null;
+            /** Polygon Id */
+            polygon_id?: string | null;
             /**
              * Serviceable
              * @default true
@@ -24497,6 +24590,8 @@ export interface operations {
                 channel?: ("web" | "pos" | "all") | null;
                 /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
                 branch_id?: string | null;
+                /** @description The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area. */
+                polygon_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -25420,6 +25515,101 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PolygonResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                polygon_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchAssignmentResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                polygon_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BranchAssignmentSet"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchAssignmentResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_assignments_api_v1_delivery_zones_polygons__polygon_id__assignments_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                polygon_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -33906,6 +34096,8 @@ export interface operations {
                 channel?: "web" | "pos" | "all";
                 /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
                 branch_id?: string | null;
+                /** @description The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area. */
+                polygon_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -34023,6 +34215,8 @@ export interface operations {
                 limit?: number;
                 /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
                 branch_id?: string | null;
+                /** @description The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area. */
+                polygon_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -34056,6 +34250,8 @@ export interface operations {
                 limit?: number;
                 /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
                 branch_id?: string | null;
+                /** @description The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area. */
+                polygon_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -34123,6 +34319,8 @@ export interface operations {
             query?: {
                 /** @description The kitchen the shopper's pin resolves to. Given one, the storefront answers for what that branch can make; omitted, for what any branch can. Read `branch_id` off GET /delivery/area. */
                 branch_id?: string | null;
+                /** @description The polygon the shopper's pin resolves to. Given one, the storefront narrows its union to exactly the branches that can serve that pin; omitted, it shows the whole website-delivery union. Read the polygon id off GET /delivery/area. */
+                polygon_id?: string | null;
             };
             header?: never;
             path: {

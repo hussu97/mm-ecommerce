@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.cache import cache_get, cache_set
 from app.core.deps import (
     browsing_branch,
+    browsing_branch_ids,
     get_current_active_user,
     get_db,
     get_db_lazy,
@@ -46,6 +47,21 @@ router = APIRouter()
 # was ~12 needless recomputes/hour each. Client caching is `_PUBLIC_CACHE_CONTROL`
 # (60s), separate from this.
 _FEATURED_TTL = 1800
+
+
+def _branch_cache_token(
+    branch: uuid.UUID | None, branch_ids: list[uuid.UUID] | None
+) -> str:
+    """A stable cache-key fragment for who this catalogue answer is for.
+
+    The priority set wins when present: its union is what the answer reflects,
+    and it is order-independent, so the ids are sorted to collapse two pins with
+    the same serving branches onto one entry. Falls back to the single browsing
+    branch, then to the whole-estate 'any'.
+    """
+    if branch_ids:
+        return "set:" + ",".join(sorted(str(b) for b in branch_ids))
+    return str(branch or "any")
 
 
 async def _invalidate_catalogue_caches() -> None:
@@ -91,6 +107,7 @@ async def list_products(
         ),
     ),
     branch: uuid.UUID | None = Depends(browsing_branch),
+    branch_ids: list[uuid.UUID] | None = Depends(browsing_branch_ids),
     db: AsyncSession = Depends(get_db),
     viewer: User | None = Depends(get_optional_user),
 ):
@@ -118,6 +135,7 @@ async def list_products(
         channel=channel,
         staff=is_catalogue_staff,
         branch_id=branch,
+        branch_ids=branch_ids,
     )
     pages = max(1, (total + per_page - 1) // per_page)
     return ProductListResponse(
@@ -134,6 +152,7 @@ async def list_featured(
     response: Response,
     limit: int = Query(8, ge=1, le=50),
     branch: uuid.UUID | None = Depends(browsing_branch),
+    branch_ids: list[uuid.UUID] | None = Depends(browsing_branch_ids),
     db: AsyncSession = Depends(get_db_lazy),
 ):
     """Get featured products."""
@@ -141,12 +160,16 @@ async def list_featured(
     # The branch is part of the key, not a variation the key ignores. Two
     # kitchens have two answers here, and one cache entry serving both would
     # put whichever was asked for first in front of every shopper for the TTL.
-    cache_key = f"products:featured:{limit}:{branch or 'any'}"
+    # The priority set is part of it too: the union over one pin's branches is a
+    # different answer from another's, and from the whole-estate union.
+    cache_key = f"products:featured:{limit}:{_branch_cache_token(branch, branch_ids)}"
     cached = await cache_get(cache_key)
     if cached is not None:
         return cached
 
-    result = await product_service.get_featured(db, limit=limit, branch_id=branch)
+    result = await product_service.get_featured(
+        db, limit=limit, branch_id=branch, branch_ids=branch_ids
+    )
     await cache_set(
         cache_key,
         [r.model_dump(mode="json") for r in result],
@@ -160,6 +183,7 @@ async def list_cart_addons(
     response: Response,
     limit: int = Query(8, ge=1, le=20),
     branch: uuid.UUID | None = Depends(browsing_branch),
+    branch_ids: list[uuid.UUID] | None = Depends(browsing_branch_ids),
     db: AsyncSession = Depends(get_db_lazy),
 ):
     """
@@ -169,12 +193,16 @@ async def list_cart_addons(
     it this path would be read as a product whose slug is "cart-addons".
     """
     response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
-    cache_key = f"products:cart_addons:{limit}:{branch or 'any'}"
+    cache_key = (
+        f"products:cart_addons:{limit}:{_branch_cache_token(branch, branch_ids)}"
+    )
     cached = await cache_get(cache_key)
     if cached is not None:
         return cached
 
-    result = await product_service.get_cart_addons(db, limit=limit, branch_id=branch)
+    result = await product_service.get_cart_addons(
+        db, limit=limit, branch_id=branch, branch_ids=branch_ids
+    )
     await cache_set(
         cache_key,
         [r.model_dump(mode="json") for r in result],
@@ -242,6 +270,7 @@ async def list_all_branch_availability(
 async def get_product(
     slug: str,
     branch: uuid.UUID | None = Depends(browsing_branch),
+    branch_ids: list[uuid.UUID] | None = Depends(browsing_branch_ids),
     db: AsyncSession = Depends(get_db),
     viewer: User | None = Depends(get_optional_user),
 ):
@@ -256,7 +285,9 @@ async def get_product(
     """
     if viewer is not None and (viewer.is_staff or viewer.is_admin):
         return await product_service.get_by_slug_admin(db, slug)
-    return await product_service.get_by_slug(db, slug, branch_id=branch)
+    return await product_service.get_by_slug(
+        db, slug, branch_id=branch, branch_ids=branch_ids
+    )
 
 
 def _announce(product: ProductResponse) -> None:

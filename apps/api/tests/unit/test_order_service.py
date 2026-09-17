@@ -21,6 +21,7 @@ from app.services.delivery.fulfilment_service import Fulfilment
 from app.services.orders import order_service
 from app.services.orders.order_service import (
     VALID_TRANSITIONS,
+    FulfilmentChoice,
     create_order,
     update_status,
 )
@@ -154,6 +155,22 @@ def mock_fulfilment():
         # NULL, so this has to answer even for tests that are only about
         # arithmetic. Resolving it for real would mean three more queries on a
         # session whose results are a fixed script.
+        # `create_order` now picks the kitchen through `select_fulfilment`, which
+        # walks the zone's branch priority and checks stock at each — three more
+        # queries on a session whose results are a fixed script. These tests are
+        # about arithmetic, so it is stubbed to the one branch, on its own
+        # courier, exactly as `resolve_branch` was before it. `resolve_branch`
+        # stays patched too: it is still the pickup/legacy fallback inside
+        # `select_fulfilment` and other call sites reach it directly.
+        patch(
+            "app.services.orders.order_service.select_fulfilment",
+            new_callable=AsyncMock,
+            return_value=FulfilmentChoice(
+                branch=branch,
+                provider="third_party",
+                alternate_providers=(),
+            ),
+        ),
         patch(
             "app.services.orders.order_service.resolve_branch",
             new_callable=AsyncMock,
@@ -399,18 +416,17 @@ def _db_for_create(
     Execute call order:
       1. cart lookup
       2. tax group lookup (one per distinct group in the basket)
-      3. branch availability: products out here, then options out here
-      4. [extra_results — e.g. one stock decrement per stock-tracked product]
-      5. _generate_order_number (numeric max of today's sequence)
-      6. select CartItems for deletion
-      7. final Order reload
+      3. [extra_results — e.g. one stock decrement per stock-tracked product]
+      4. _generate_order_number (numeric max of today's sequence)
+      5. select CartItems for deletion
+      6. final Order reload
 
-    Step 3 is the branch stock check. It sits after the kitchen is resolved,
-    because until then there is no branch to ask about — the catalogue hides a
-    product only when *every* branch is out of it, so the per-branch answer can
-    only be given once the address has named one. Both fixtures return nothing,
-    which is the ordinary day: this branch is out of nothing and every basket
-    goes through.
+    The branch stock check no longer issues its own queries here: `create_order`
+    resolves the kitchen and its availability through `select_fulfilment`, which
+    the module's autouse `mock_fulfilment` fixture stubs to one branch — so the
+    two availability lookups that used to sit between the tax group and the stock
+    claim are gone from this sequence. `select_fulfilment`'s own walk is covered
+    in `test_select_fulfilment`.
 
     The tax lookup is new: the storefront prices from each product's own tax
     group now rather than from a module constant. These fixtures return no
@@ -434,8 +450,6 @@ def _db_for_create(
             [
                 _result(scalar_one_or_none=cart),
                 _result(scalars_unique_one_or_none=None),
-                _result(scalars_all=[]),  # nothing out of stock at this branch
-                _result(scalars_all=[]),  # nor any option
                 *(extra_results or []),
                 _result(scalar_one_or_none=last_order_seq),
                 _result(scalars_all=cart_items or []),

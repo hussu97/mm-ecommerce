@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
@@ -19,6 +19,9 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, UUIDMixin, utcnow
+
+if TYPE_CHECKING:
+    from .polygon_branch_fulfilment import PolygonBranchFulfilment
 
 
 class FulfilmentProviderEnum(str, enum.Enum):
@@ -247,6 +250,12 @@ class DeliveryPolygon(Base, UUIDMixin):
     #:
     #: Nullable, and null means "fall back to the single configured pickup
     #: branch" — which is how the column could land without changing behaviour.
+    #:
+    #: **Rank-1 mirror.** The authoritative branch list is
+    #: `branch_fulfilments` (see `PolygonBranchFulfilment`); this column holds the
+    #: preferred (rank-1) branch so every consumer that has not yet learned the
+    #: ordered list keeps working. Runtime falls back to it only when a polygon
+    #: has no assignment rows at all (a hand-built zone, a fixture).
     branch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("branches.id", ondelete="RESTRICT"),
@@ -260,6 +269,11 @@ class DeliveryPolygon(Base, UUIDMixin):
     # The *preferred* one. It is what every order placed here is priced and
     # dispatched against, and it is unchanged — the column below is what makes
     # the word "preferred" mean anything.
+    #
+    # **Rank-1 mirror** of `branch_fulfilments[0].fulfilment_provider`. The
+    # courier now varies by which branch fulfils; this column is the preferred
+    # branch's courier, kept for consumers still reading the single value and as
+    # the fee/estimate the storefront shows before a basket is known.
     fulfilment_provider: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -310,6 +324,23 @@ class DeliveryPolygon(Base, UUIDMixin):
 
     version: Mapped[DeliveryPolygonVersion] = relationship(
         "DeliveryPolygonVersion", back_populates="polygons"
+    )
+    #: The branches that can serve this zone, in `rank` order — the authoritative
+    #: source that the three columns above (`branch_id`, `fulfilment_provider`,
+    #: `alternate_providers`) now *mirror* at rank 1. The checkout walks this list
+    #: and gives the order to the first branch that can make the whole basket.
+    #:
+    #: Not eager-loaded (`lazy="select"`): the hot path is the active-map parse in
+    #: `delivery_zone_service.get_active_zones`, which loads these with an explicit
+    #: `selectinload` once per map version and caches the result, so a per-row
+    #: lazy load would be both redundant there and a `MissingGreenlet` waiting to
+    #: happen anywhere else. `order_by` keeps rank 1 first so `branch_fulfilments[0]`
+    #: is the preferred branch without a sort at the call site.
+    branch_fulfilments: Mapped[list[PolygonBranchFulfilment]] = relationship(
+        "PolygonBranchFulfilment",
+        back_populates="polygon",
+        cascade="all, delete-orphan",
+        order_by="PolygonBranchFulfilment.rank",
     )
 
     def __repr__(self) -> str:

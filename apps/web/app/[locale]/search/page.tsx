@@ -6,7 +6,7 @@ import { ProductGrid } from '@/components/category/ProductGrid';
 import { SearchTracker } from '@/components/analytics/SearchTracker';
 import { getTranslations, createT } from '@/lib/i18n/server';
 import { Icon } from '@/components/ui/Icon';
-import { browsingBranch } from '@/lib/location/branch-server';
+import { browsingZone } from '@/lib/location/branch-server';
 
 interface SearchParams {
   q?: string;
@@ -17,7 +17,7 @@ interface SearchParams {
 
 async function searchProducts(
   params: SearchParams,
-  branchId: string | null,
+  zoneId: string | null,
 ): Promise<ProductListResponse | null> {
   const { q, category, sort, page } = params;
   if (!q) return null;
@@ -28,10 +28,10 @@ async function searchProducts(
     ...(category && { category }),
     ...(sort && { sort }),
     ...(page && { page }),
-    // Somebody searching for a cake their own kitchen cannot make is somebody
-    // being sent to a page the checkout will refuse. This route is already
-    // `no-store`, so scoping it costs nothing that was being saved.
-    ...(branchId && { branch_id: branchId }),
+    // Somebody searching for a cake no branch serving their zone can make is
+    // somebody being sent to a page the checkout will refuse. This route is
+    // already `no-store`, so scoping it costs nothing that was being saved.
+    ...(zoneId && { polygon_id: zoneId }),
   });
 
   // A bounded wait, and any failure (non-2xx or timeout) resolves to null — the
@@ -80,7 +80,7 @@ export default async function SearchPage({
   const translations = await getTranslations(locale);
   const t = createT(translations);
 
-  const data = await searchProducts(sp, await browsingBranch());
+  const data = await searchProducts(sp, await browsingZone());
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-12">

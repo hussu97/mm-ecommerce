@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeliveryZoneMap, DeliveryZoneShape } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -43,6 +43,19 @@ const PROVIDER_STYLE: Record<string, { fill: string; stroke: string; label: stri
   third_party: { fill: '#94a3b8', stroke: '#64748b', label: 'Third party' },
 };
 
+/**
+ * A zone the branch in view does not serve.
+ *
+ * Only ever shown in a per-branch view: on the "Preferred" map every zone has a
+ * rank-1 courier, so nothing is unserved there. Near-white with a hairline so a
+ * kitchen's real coverage reads as the coloured islands against the greyed-out
+ * rest of the country.
+ */
+const NOT_SERVED_STYLE = { fill: '#e5e7eb', stroke: '#cbd5e1', label: 'Not served here' };
+
+/** The map view: the preferred (rank-1) courier, or one branch's own couriers. */
+const PREFERRED = 'preferred';
+
 /** How far in a wheel notch takes you, and the limits. */
 const ZOOM_STEP = 1.18;
 const MIN_SCALE = 1;
@@ -61,6 +74,41 @@ interface Props {
 
 export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
   const [hovered, setHovered] = useState<DeliveryZoneShape | null>(null);
+  /**
+   * Whose map this is: the preferred (rank-1) courier for every zone, or one
+   * branch's own couriers with the zones it does not serve greyed out. Defaults
+   * to the preferred view — the map as it was before branches had their own.
+   */
+  const [mode, setMode] = useState<string>(PREFERRED);
+  const branches = data.branches ?? [];
+
+  // If the loaded map changes to one that does not include the branch currently
+  // in view (a different version, a branch removed), fall back to the preferred
+  // view rather than greying out every zone as "not served" by a branch that is
+  // no longer on the map.
+  useEffect(() => {
+    if (mode !== PREFERRED && !branches.some(b => b.id === mode)) {
+      setMode(PREFERRED);
+    }
+  }, [branches, mode]);
+
+  /**
+   * The courier to colour a zone by in the current view, or null when the
+   * branch in view does not serve it. In the preferred view this is always the
+   * rank-1 courier; in a branch view it is that branch's own courier for the
+   * zone, found in its ordered assignment list.
+   */
+  function zoneProvider(zone: DeliveryZoneShape): string | null {
+    if (mode === PREFERRED) return zone.fulfilment_provider;
+    const mine = zone.branch_fulfilments?.find(f => f.branch_id === mode);
+    return mine ? mine.fulfilment_provider : null;
+  }
+
+  /** The rank a branch holds in a zone, for the tooltip. */
+  function zoneRank(zone: DeliveryZoneShape): number | null {
+    if (mode === PREFERRED) return null;
+    return zone.branch_fulfilments?.find(f => f.branch_id === mode)?.rank ?? null;
+  }
   /**
    * The window onto the map, in viewBox units.
    *
@@ -129,6 +177,32 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
 
   return (
     <div className="relative">
+      {/* Perspective tabs. "Preferred" is the whole-country rank-1 view; each
+          branch tab recolours the map to that kitchen's own couriers and greys
+          the zones it does not serve, so a branch's coverage is visible at a
+          glance. Only shown once a map actually has branch assignments. */}
+      {branches.length > 0 && (
+        <div className="flex items-center gap-1 mb-2">
+          {[{ id: PREFERRED, reference: '', name: 'Preferred' }, ...branches].map(b => {
+            const selected = mode === b.id;
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => setMode(b.id)}
+                className={`px-2.5 py-1 text-[11px] font-body border transition-colors ${
+                  selected
+                    ? 'bg-gray-800 text-white border-gray-800'
+                    : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                }`}
+                title={b.reference ? `${b.name} (${b.reference})` : 'Preferred courier per zone'}
+              >
+                {b.id === PREFERRED ? 'Preferred' : `${b.name}${b.reference ? ` · ${b.reference}` : ''}`}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <svg
         ref={svgRef}
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
@@ -214,7 +288,11 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
             here depends on paint order. Largest first anyway, so a stray
             hairline of a big shape never sits over a small one. */}
         {projected.zones.map(({ zone, path }) => {
-          const style = PROVIDER_STYLE[zone.fulfilment_provider] ?? PROVIDER_STYLE.third_party;
+          const provider = zoneProvider(zone);
+          const served = provider != null;
+          const style = served
+            ? (PROVIDER_STYLE[provider] ?? PROVIDER_STYLE.third_party)
+            : NOT_SERVED_STYLE;
           const isActive = active?.id === zone.id;
           return (
             <path
@@ -224,7 +302,9 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
               // Rings after the first are holes. Even-odd is what makes them
               // read as holes rather than as another filled island.
               fillRule="evenodd"
-              fillOpacity={isActive ? 0.55 : 0.22}
+              // A served zone reads as a coloured island; an unserved one stays
+              // faint so a branch's real coverage is what the eye lands on.
+              fillOpacity={isActive ? 0.55 : served ? 0.28 : 0.12}
               stroke={style.stroke}
               strokeWidth={isActive ? 1.6 : 0.7}
               strokeLinejoin="round"
@@ -275,14 +355,28 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
           }}
         >
           <p className="text-xs font-body text-gray-800">{active.name}</p>
-          <p className="text-[11px] font-body text-gray-500 mt-0.5">
-            {formatCurrency(active.delivery_fee)} ·{' '}
-            {(PROVIDER_STYLE[active.fulfilment_provider] ?? PROVIDER_STYLE.third_party).label}
-          </p>
+          {(() => {
+            // The fee is the zone's, whichever branch bakes — it never moves
+            // off the polygon. Only the courier and the rank follow the branch.
+            const provider = zoneProvider(active);
+            const rank = zoneRank(active);
+            const courierLabel =
+              provider != null
+                ? (PROVIDER_STYLE[provider] ?? PROVIDER_STYLE.third_party).label
+                : mode === PREFERRED
+                  ? NOT_SERVED_STYLE.label
+                  : `Not served by ${branches.find(b => b.id === mode)?.name ?? 'this branch'}`;
+            return (
+              <p className="text-[11px] font-body text-gray-500 mt-0.5">
+                {formatCurrency(active.delivery_fee)} · {courierLabel}
+                {rank != null && ` · rank ${rank}`}
+              </p>
+            );
+          })()}
         </div>
       )}
 
-      <div className="flex items-center gap-4 mt-2">
+      <div className="flex items-center gap-4 mt-2 flex-wrap">
         {Object.entries(PROVIDER_STYLE).map(([key, style]) => (
           <div key={key} className="flex items-center gap-1.5">
             <span
@@ -292,6 +386,15 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
             <span className="text-[11px] font-body text-gray-500">{style.label}</span>
           </div>
         ))}
+        {mode !== PREFERRED && (
+          <div className="flex items-center gap-1.5">
+            <span
+              className="inline-block w-3 h-3 border"
+              style={{ backgroundColor: NOT_SERVED_STYLE.fill, opacity: 0.5, borderColor: NOT_SERVED_STYLE.stroke }}
+            />
+            <span className="text-[11px] font-body text-gray-500">{NOT_SERVED_STYLE.label}</span>
+          </div>
+        )}
         <span className="text-[11px] font-body text-gray-400 ml-auto">
           Hover a zone for its fee. Drag or one finger to pan, pinch or
           ⌘/Ctrl + scroll to zoom, double-click to fit.

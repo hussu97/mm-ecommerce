@@ -183,7 +183,14 @@ async def _load_inputs(
     return inputs
 
 
-async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Context:
+async def _load(
+    db: AsyncSession,
+    zone: Zone | None,
+    moment: datetime,
+    *,
+    branch_id: uuid.UUID | None = None,
+    provider: str | None = None,
+) -> _Context:
     if zone is None:
         return _Context(None, None, None, None)
 
@@ -192,8 +199,13 @@ async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Conte
     # right transit schedule and names the courier that will really carry it
     # (F-COU-19). This is the same resolution the fare quote and dispatch use.
     # A pure lookup, so it stays out here and keys the cache below.
+    #
+    # `provider` and `branch_id` let a caller name the *selected* branch and its
+    # courier — a rank-2 kitchen on a different courier promises a different time.
+    # Absent, both fall back to the zone's preferred (rank-1) values, which is
+    # what the product card and any pre-basket caller want.
     provider_code, _ = courier_service.effective_provider(
-        zone.fulfilment_provider, zone.name
+        provider or zone.fulfilment_provider, zone.name
     )
     # From the day being quoted rather than from "today". They are the same
     # instant on every live call, and they stop being the same the moment
@@ -201,7 +213,7 @@ async def _load(db: AsyncSession, zone: Zone | None, moment: datetime) -> _Conte
     # where the question starts, or the closures that mattered are missing.
     day = trading_hours.local(moment).date()
 
-    inputs = await _load_inputs(db, provider_code, zone.branch_id, day)
+    inputs = await _load_inputs(db, provider_code, branch_id or zone.branch_id, day)
     return _Context(
         zone,
         inputs.courier,
@@ -361,7 +373,12 @@ def _first_open(day: date, closed_dates: frozenset[str]) -> tuple[date, str]:
 
 
 async def promise_for_zone(
-    db: AsyncSession, zone: Zone | None, *, moment: datetime | None = None
+    db: AsyncSession,
+    zone: Zone | None,
+    *,
+    branch_id: uuid.UUID | None = None,
+    provider: str | None = None,
+    moment: datetime | None = None,
 ) -> DeliveryPromise | None:
     """
     The delivery promise for a zone. `None` when there is nothing to promise.
@@ -369,7 +386,12 @@ async def promise_for_zone(
     The one entry point. Everything that shows a customer a delivery time —
     the product card, the checkout, the order confirmation, the email — comes
     through here, so they cannot disagree.
+
+    `branch_id` and `provider` name the branch that will actually fulfil and the
+    courier it will use, when the checkout has walked the zone's priority and
+    chosen one. Left out, the promise is the zone's preferred (rank-1) branch and
+    courier — the honest best case a product card shows before a basket exists.
     """
     now = moment or datetime.now(timezone.utc)
-    context = await _load(db, zone, now)
+    context = await _load(db, zone, now, branch_id=branch_id, provider=provider)
     return resolve(context, now)

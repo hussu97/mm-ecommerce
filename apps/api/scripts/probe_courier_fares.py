@@ -6,43 +6,65 @@ container on the VM:
 
     # find the live slot (api-1 or api-green-1) from `docker ps`, then:
     docker exec -w /app <live-api-slot> sh -lc \
-        'PYTHONPATH=/app python -u scripts/probe_courier_fares.py'
-    # copy the result back:
-    docker cp <live-api-slot>:/tmp/courier_costs.json /tmp/courier_costs.json
-    gcloud compute scp mm-backend:/tmp/courier_costs.json ./courier_costs.json \
-        --zone me-central1-a
+        'PYTHONPATH=/app python -u scripts/probe_courier_fares.py --branch K001'
+    # copy the result back (note the per-branch filename):
+    docker cp <live-api-slot>:/tmp/courier_costs.K001.json /tmp/courier_costs.K001.json
+    gcloud compute scp mm-backend:/tmp/courier_costs.K001.json \
+        ./courier_costs.K001.json --zone me-central1-a
 
-It is deliberately **minimal** — it imports only the Slider provider (no DB, no
-other services), because a full-app probe running beside the live process OOMs
-the 1 GB e2-small. Fare calls are read-only (no bookings).
+**Fares are origin-specific, so each branch is a separate VM run.** A run's
+pickup origin is the branch row's own pin (`--branch K001` = Sharjah kitchen,
+`--branch B001` = Barsha), loaded from the DB so the probe and the delivery
+geometry cannot drift from the branch. Slider prices every delivery area *from
+that origin*, and because the API is IP-whitelisted to the VM there is no way to
+probe a second origin from the first: register each branch and run this once per
+branch on the VM.
+
+It is deliberately **minimal** — it imports only the Slider provider and one
+`Branch` lookup (no other services), because a full-app probe running beside the
+live process OOMs the 1 GB e2-small. Fare calls are read-only (no bookings).
 
 **By default only areas missing a Slider fare are probed** — an area already in
-`courier_costs.json` keeps its committed fare, which preserves a hand-tuned or
-averaged survey while filling in newly-added areas. Set `PROBE_ALL=1` to re-probe
-every area from scratch.
+this branch's `courier_costs.<REF>.json` keeps its committed fare, which
+preserves a hand-tuned or averaged survey while filling in newly-added areas.
+Set `PROBE_ALL=1` to re-probe every area from scratch.
 
 Lalamove and noon Send were never IP-blocked and come from the rate card, not a
 live call. Every area already priced keeps its committed lalamove / noon; an
 area new since the last probe is modelled from the Slider road distance:
   * lalamove  ~= round(18 + 0.68 * road_km), refused (ERR_OUT_OF_SERVICE) past
     175 km — the range the survey showed Lalamove serving.
-  * noon Send  = 12 flat inside the kitchen's emirate (Sharjah) within its 20 km
-    road ceiling, else it cannot serve.
+  * noon Send  = the marginal rate card (base 12 to 10 km, +1/km to 15, +1.5/km
+    to 20) on noon's own road distance, inside the **branch's own emirate**
+    (Sharjah for K001, Dubai for B001) within its 20 km ceiling, else no serve.
 
-Writes app/data/courier_costs.json in place AND /tmp/courier_costs.json, and
-prints a summary. Commit the file; `scripts/build_delivery_areas.py` reads it.
+Writes app/data/courier_costs.<REF>.json in place AND /tmp/courier_costs.<REF>.json,
+and prints a summary. Commit the file; `scripts/build_delivery_areas.py` reads
+every branch's copy.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
 from pathlib import Path
 
-# Slider only — importing DB/session or the other courier services is what OOMs
-# the slot. `provider` is the module-level client, configured from settings.
+from sqlalchemy import select
+
+# Slider + one Branch lookup only — importing DB/session or the other courier
+# services is what OOMs the slot. `provider` is the module-level Slider client,
+# configured from settings.
+from app.core.database import AsyncSessionFactory
+from app.models.branch import Branch
 from app.services.providers.slider_provider import SliderError, aed, provider
+
+#: The branches that fulfil, and the default. Each is probed from its own pin on
+#: its own VM run; there is no single-run way to price a second origin because
+#: the fare API is IP-whitelisted (see the module docstring).
+BRANCH_CHOICES = ("K001", "B001")
+DEFAULT_BRANCH = "K001"
 
 
 def _find_data() -> Path:
@@ -63,18 +85,47 @@ def _find_data() -> Path:
 
 DATA = _find_data()
 AREAS = DATA / "uae_delivery_areas.json"
-COSTS = DATA / "courier_costs.json"
 
 #: The bike's road ceiling — the same `settings.SLIDER_BIKE_MAX_KM`. Above it the
 #: survey only ever reached an area on a car, so the recorded tier is `car`.
 BIKE_MAX_KM = 35.0
 #: Lalamove's serving range and its fitted rate line (from the committed survey).
 LALAMOVE_MAX_KM = 175.0
-#: noon Send: flat inside Sharjah within this road ceiling, nothing beyond.
-NOON_FLAT = 12
+#: noon Send rate card, mirrored from `noon_send_service.rate_card_cost` (the
+#: probe must not import that module — pulling a courier service into the slot
+#: OOMs it, the same reason Lalamove is modelled above). Kept in step by hand: a
+#: change to the real card must change these.
+#:
+#: The bands are **marginal** — the base covers the first 10 km and each band
+#: prices only the distance inside it. Standard cakes go by bike, so the base is
+#: the bike tier (`settings.NOON_SEND_BASE`, 12), not the bulky-car 25. The AED 1
+#: peak surge is deliberately left out: the ranking wants a typical off-peak run,
+#: and adding a surge that fires only in the evening would overstate every zone.
+NOON_BASE = 12.0
 NOON_MAX_KM = 20.0
+#: Straight-line -> noon road distance (`settings.NOON_SEND_DETOUR_FACTOR`). noon
+#: prices its own road distance, which is a longer detour than Slider's 1.44, so
+#: noon uses this rather than the Slider road_km the fare API returned.
+NOON_DETOUR = 1.49
+
+
+def _noon_rate_card(road_km: float) -> float:
+    """AED noon Send charges for a run of this road length — the marginal card."""
+    capped = min(road_km, NOON_MAX_KM)
+    if capped <= 10:
+        return NOON_BASE
+    if capped <= 15:
+        return NOON_BASE + (capped - 10) * 1.00
+    return NOON_BASE + 5.0 + (capped - 15) * 1.50
+
+
 #: Straight-line -> road, when Slider gave no distance (its own is preferred).
 DETOUR = 1.44
+
+
+def _costs_path(reference: str) -> Path:
+    """This branch's committed cost file, e.g. courier_costs.K001.json."""
+    return DATA / f"courier_costs.{reference}.json"
 
 
 def _stop(lat: float, lng: float, address: str) -> dict:
@@ -135,22 +186,66 @@ def _lalamove_model(road_km: float | None) -> tuple[int | None, str | None]:
     return round(18 + 0.68 * road_km), None
 
 
-def _noon_model(emirate: str, road_km: float | None) -> int | None:
-    if emirate != "Sharjah" or road_km is None or road_km > NOON_MAX_KM:
+def _noon_model(
+    area_emirate: str, origin_emirate: str, straight_km: float | None
+) -> float | None:
+    """noon-Send rate-card fare, or None where it cannot serve.
+
+    noon Send cannot cross an emirate boundary, so it serves an area only when
+    the area sits in the branch's *own* emirate (Sharjah for K001, Dubai for
+    B001) and inside the 20 km road ceiling. The fare is the marginal rate card,
+    not a flat rate — a run past 10 km costs more than one inside it — priced on
+    noon's own road distance (`straight_km * NOON_DETOUR`), which is what the app
+    charges against.
+    """
+    if area_emirate != origin_emirate or straight_km is None:
         return None
-    return NOON_FLAT
+    road_km = straight_km * NOON_DETOUR
+    if road_km > NOON_MAX_KM:
+        return None
+    return round(_noon_rate_card(road_km), 2)
 
 
-async def main() -> None:
+async def _branch_origin(reference: str) -> tuple[float, float, str, str]:
+    """This branch's pickup pin and emirate, from its DB row.
+
+    Returns (lat, lng, emirate, address). The emirate is the branch's `city`
+    column ("Sharjah", "Dubai") — the same vocabulary the areas file uses for
+    `emirate` — which is what noon Send's same-emirate rule is checked against.
+    """
+    async with AsyncSessionFactory() as db:
+        branch = (
+            await db.execute(select(Branch).where(Branch.reference == reference))
+        ).scalar_one_or_none()
+    if branch is None:
+        raise SystemExit(f"no branch with reference {reference!r}")
+    if branch.latitude is None or branch.longitude is None:
+        raise SystemExit(f"branch {reference} has no coordinates")
+    emirate = (branch.city or "").strip()
+    if not emirate:
+        raise SystemExit(
+            f"branch {reference} has no city — needed for the noon-Send emirate gate"
+        )
+    address = branch.address or branch.name
+    return float(branch.latitude), float(branch.longitude), emirate, address
+
+
+async def main(reference: str) -> None:
     doc = json.loads(AREAS.read_text())
-    pickup = doc["pickup"]
     areas = doc["areas"]
-    klat, klng = float(pickup["lat"]), float(pickup["lng"])
-    kaddr = pickup.get("address", "")
 
-    existing = json.loads(COSTS.read_text())
+    klat, klng, origin_emirate, kaddr = await _branch_origin(reference)
+
+    costs_file = _costs_path(reference)
+    try:
+        existing = json.loads(costs_file.read_text())
+    except FileNotFoundError:
+        existing = {}
     prior = existing.get("costs", {})
     probe_all = os.environ.get("PROBE_ALL") == "1"
+
+    print(f"branch  : {reference} ({origin_emirate})")
+    print(f"pickup  : {klat}, {klng}")
 
     costs: dict[str, dict] = {}
     fresh = kept = 0
@@ -200,7 +295,15 @@ async def main() -> None:
             lalamove, lala_err = was.get("lalamove"), was.get("lalamove_error")
         else:
             lalamove, lala_err = _lalamove_model(road_km)
-        noon = was["noon_send"] if "noon_send" in was else _noon_model(emirate, road_km)
+        # noon prices its own road distance off the straight-line, not Slider's
+        # road_km (a different detour), so it is given the haversine here.
+        noon = (
+            was["noon_send"]
+            if "noon_send" in was
+            else _noon_model(
+                emirate, origin_emirate, _haversine_km(klat, klng, lat, lng)
+            )
+        )
 
         costs[label] = {
             "km": road_km,
@@ -217,14 +320,29 @@ async def main() -> None:
         print(f"  {label:32} {road_km:6.1f}km  bike={bike} car={car} [{mark}]")
 
     out = {
+        # The origin this run priced from — read back by build_delivery_areas so
+        # its per-branch bike-reachability and emirate rules use the same pin.
+        "branch": {
+            "ref": reference,
+            "emirate": origin_emirate,
+            "lat": klat,
+            "lng": klng,
+            "address": kaddr,
+        },
         "source": (
-            "slider: PROD probe from VM 34.18.98.2 via scripts.probe_courier_fares "
-            "(already-surveyed areas kept, new areas probed); lalamove + noon_send: "
-            "rate card (committed kept, new modelled)"
+            f"slider: PROD probe from VM 34.18.98.2 via scripts.probe_courier_fares "
+            f"--branch {reference} (already-surveyed areas kept, new areas probed); "
+            "lalamove + noon_send: rate card (committed kept, new modelled)"
             if not probe_all
             else existing.get("source", "")
         ),
-        "note": existing.get("note", ""),
+        "note": existing.get(
+            "note",
+            "Slider fares are live production, priced from this branch's pin (bike "
+            "offered cross-emirate up to its road ceiling; null bike = car-only). "
+            "lalamove_error non-null = Lalamove refuses. noon_send null = cannot "
+            "serve (crosses the branch's emirate / >20km).",
+        ),
         "costs": costs,
     }
     payload = json.dumps(out, indent=2) + "\n"
@@ -232,12 +350,13 @@ async def main() -> None:
     # in-place copy is a convenience for a local run and is best-effort: inside
     # the deployed image the data dir is owned by the app user, so a container
     # exec cannot write it, and that must not fail the probe.
-    Path("/tmp/courier_costs.json").write_text(payload)
+    tmp = Path(f"/tmp/courier_costs.{reference}.json")
+    tmp.write_text(payload)
     try:
-        COSTS.write_text(payload)
-        where = f"{COSTS} and /tmp/courier_costs.json"
+        costs_file.write_text(payload)
+        where = f"{costs_file} and {tmp}"
     except OSError:
-        where = "/tmp/courier_costs.json (in-place copy not writable here)"
+        where = f"{tmp} (in-place copy not writable here)"
     print(
         f"\nprobed {fresh} new area(s), kept {kept} already-surveyed; total "
         f"{len(costs)}. wrote {where}"
@@ -245,4 +364,12 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--branch",
+        choices=BRANCH_CHOICES,
+        default=DEFAULT_BRANCH,
+        help="branch reference whose pin is the pickup origin (default K001)",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(args.branch))

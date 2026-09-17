@@ -17,15 +17,16 @@ Each has its own `APIRouter` here, so the routes and their prefix are unchanged.
 
 from fastapi import APIRouter
 
-from . import couriers, settings, versions
+from . import assignments, couriers, settings, versions
 
 router = APIRouter()
-# Include order does not affect matching here: every route in every group
-# begins with a distinct literal segment (`/versions`, `/couriers`, `/settings`,
-# `/map`, `/polygons`, `/summary`) and none of the groups declares a bare
-# `/{param}`. Adding one would change that, so add it to `versions` and keep it
-# last.
+# Include order does not affect matching here: every route across these groups is
+# a distinct full path — `assignments` shares the `/polygons` prefix with
+# `versions` but only ever at the longer `/polygons/{id}/assignments`, which no
+# other route claims — and none of the groups declares a bare `/{param}`. Adding
+# one would change that, so add it to `versions` and keep it last.
 router.include_router(versions.router)
+router.include_router(assignments.router)
 router.include_router(couriers.router)
 router.include_router(settings.router)
 

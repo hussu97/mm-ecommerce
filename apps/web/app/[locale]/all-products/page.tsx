@@ -17,7 +17,7 @@ import {
   productSortOptions,
 } from '@/lib/product-sort';
 import { fetchJson } from '@/lib/fetch-json';
-import { branchParam, browsingBranch } from '@/lib/location/branch-server';
+import { zoneParam, browsingZone } from '@/lib/location/branch-server';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 /**
@@ -192,10 +192,10 @@ export default async function AllProductsPage({
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
   const sort = parseProductSort(sortStr);
 
-  // See the category page: the grid answers for the kitchen this pin resolves
-  // to, and a reader who has told us nothing keeps the estate-wide answer.
-  const branchId = await browsingBranch();
-  const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}&sort=${sort}${category ? `&category=${category}` : ''}${branchParam(branchId)}`;
+  // See the category page: the grid answers for the delivery zone this pin
+  // falls in, and a reader who has told us nothing keeps the estate-wide answer.
+  const zoneId = await browsingZone();
+  const productUrl = `${RSC_API_BASE}/products?per_page=${PER_PAGE}&page=${page}&sort=${sort}${category ? `&category=${category}` : ''}${zoneParam(zoneId)}`;
 
   const [categories, productData, translations] = await Promise.all([
     // Shared with the locale layout's nav bar, so this render asks once.

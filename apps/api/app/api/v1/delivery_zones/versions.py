@@ -28,8 +28,10 @@ from app.models.delivery_polygon import (
     DeliveryPricingEnum,
     FulfilmentProviderEnum,
 )
+from app.models.polygon_branch_fulfilment import PolygonBranchFulfilment
 from app.models.user import User
 from app.services import audit_service
+from app.services.catalog import catalogue_cache
 from app.services.delivery import delivery_service, delivery_zone_service
 
 from .schemas import (
@@ -94,7 +96,15 @@ async def _load_version(
 ) -> DeliveryPolygonVersion:
     result = await db.execute(
         select(DeliveryPolygonVersion)
-        .options(selectinload(DeliveryPolygonVersion.polygons))
+        # The per-zone branch list is loaded with the polygons rather than left
+        # to lazy-load: `create_version` clones it, and reaching for
+        # `polygon.branch_fulfilments` on a bare row inside an async session
+        # raises `MissingGreenlet` rather than issuing a query.
+        .options(
+            selectinload(DeliveryPolygonVersion.polygons).selectinload(
+                DeliveryPolygon.branch_fulfilments
+            )
+        )
         .where(DeliveryPolygonVersion.id == version_id)
     )
     version = result.scalars().first()
@@ -150,7 +160,20 @@ async def zone_map(
     zones = []
     lats: list[float] = []
     lngs: list[float] = []
+    branch_ids: set[uuid.UUID] = set()
     for polygon in sorted(version.polygons, key=lambda p: p.display_order):
+        # The ordered branch list behind the per-branch map view: which kitchen
+        # serves this zone, at what rank, on which courier. Rank-ordered so the
+        # client can read `[0]` as the preferred branch without sorting.
+        fulfilments = [
+            {
+                "branch_id": str(a.branch_id),
+                "rank": a.rank,
+                "fulfilment_provider": a.fulfilment_provider,
+            }
+            for a in sorted(polygon.branch_fulfilments, key=lambda a: a.rank)
+        ]
+        branch_ids.update(a.branch_id for a in polygon.branch_fulfilments)
         zones.append(
             {
                 "id": str(polygon.id),
@@ -163,15 +186,37 @@ async def zone_map(
                 "free_delivery_threshold": float(polygon.free_delivery_threshold),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
+                "branch_fulfilments": fulfilments,
                 "geometry": _simplify(polygon.geometry, tolerance),
             }
         )
         lats += [float(polygon.min_lat), float(polygon.max_lat)]
         lngs += [float(polygon.min_lng), float(polygon.max_lng)]
 
+    # The branches any zone on this map is served from, for the map's per-branch
+    # tabs. Named here so the client draws a tab per real kitchen rather than a
+    # bare id. Ordered by reference so Sharjah (K001) leads Barsha (B001).
+    branches: list[dict[str, str]] = []
+    if branch_ids:
+        rows = (
+            (
+                await db.execute(
+                    select(Branch)
+                    .where(Branch.id.in_(branch_ids))
+                    .order_by(Branch.reference)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        branches = [
+            {"id": str(b.id), "reference": b.reference, "name": b.name} for b in rows
+        ]
+
     return {
         "version": {"id": str(version.id), "name": version.name},
         "zones": zones,
+        "branches": branches,
         # The stored bounding boxes, so the client can frame the country
         # without walking every coordinate it was just sent.
         "bounds": {
@@ -358,6 +403,23 @@ async def create_version(
             max_lng=polygon.max_lng,
             display_order=polygon.display_order,
         )
+        # The ordered per-zone branch list is the authoritative source; the four
+        # columns copied by hand above are only its rank-1 mirror. Cloning the
+        # mirror but not the list is the bug this exists to prevent: a drafted or
+        # published map would keep the preferred branch on every zone yet lose
+        # every alternate branch, silently reverting the whole map to
+        # single-branch fulfilment with nothing on screen to say it changed. Rank,
+        # branch, courier and escapes are preserved per assignment; `list(...)` on
+        # the escapes so the clone does not share the source row's mutable JSONB.
+        copy.branch_fulfilments = [
+            PolygonBranchFulfilment(
+                branch_id=assignment.branch_id,
+                rank=assignment.rank,
+                fulfilment_provider=assignment.fulfilment_provider,
+                alternate_providers=list(assignment.alternate_providers or []),
+            )
+            for assignment in polygon.branch_fulfilments
+        ]
         db.add(copy)
     await db.flush()
 
@@ -559,10 +621,18 @@ async def activate_version(
     version.is_active = True
     version.activated_at = datetime.now(timezone.utc)
     await db.flush()
-    # No cache bust here: publishing a different map moves the active version id,
-    # which is part of the cache key, so every worker's next read misses its old
-    # entry and picks the new map up on its own. The previous `invalidate_cache()`
-    # cleared only this worker, and ran before the commit — see F-COU-9.
+    # No zone-cache bust here: publishing a different map moves the active
+    # version id, which is part of the cache key, so every worker's next read
+    # misses its old entry and picks the new map up on its own. The previous
+    # `invalidate_cache()` cleared only this worker, and ran before the commit —
+    # see F-COU-9.
+    #
+    # The storefront catalogue caches are a different story: they are keyed by
+    # the serving-branch set, not the map version, and the estate union is taken
+    # over the branches assigned on the *active* map. Publishing a map with a
+    # different set of assigned branches changes what is listed, so those Redis
+    # answers must be retired or they serve the old map's union for their TTL.
+    await catalogue_cache.retire()
 
     await audit_service.log_action(
         db,
