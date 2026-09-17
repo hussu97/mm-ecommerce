@@ -906,6 +906,15 @@ async def fees_summary(
     chosen: dict[str, AggregatorFeesRow] = dict(order_rows)
     chosen.update(statement_rows)
 
+    # Refunds are money off the SALE, not a marketplace fee, and every provider
+    # rolls its refund (Keeta's merchant liability, Talabat's item reversals,
+    # noon's) onto `aggregator_order.refund_amount` at ingest — while a statement
+    # channel's fee lines carry none. So source the refund apart from fees, from the
+    # order feed, uniformly for every channel (noon's refund lives only there).
+    refunds = await _refunds_from_orders(db, channel, date_from, date_to)
+    for ch, row in chosen.items():
+        row.refunds = refunds.get(ch)
+
     by_channel = [chosen[ch] for ch in sorted(chosen)]
     totals = _fees_total(by_channel)
     return AggregatorFeesSummaryOut(
@@ -944,8 +953,11 @@ async def _fees_from_statement_lines(
         is_inbound_adjustment,
     )
     # A refund is money that left the SALE (a customer refund, a vendor-liability
-    # reversal), NOT a marketplace fee — so it is bucketed apart from `other_fees`
-    # and kept out of the take, while still shown as part of gross → net.
+    # reversal), NOT a marketplace fee — so a refund statement line is kept OUT of
+    # `other_fees` (and thus out of the take). The refund VALUE shown is not summed
+    # here, though: it comes uniformly from `aggregator_order.refund_amount` (see
+    # `_refunds_from_orders`), the authoritative per-order refund every channel rolls
+    # its refund onto.
     is_refund = fc.in_(["customer_refund", "merchant_liability"])
     amt = func.abs(ln.amount)
 
@@ -964,7 +976,6 @@ async def _fees_from_statement_lines(
         _sum(is_gross).label("gross_sales"),
         _sum(is_commission).label("commission"),
         _sum(is_vat).label("vat"),
-        _sum(is_refund).label("refunds"),
         _sum(
             and_(
                 ~is_gross,
@@ -1010,9 +1021,6 @@ async def _fees_from_orders(
             ),
             0,
         ).label("other_fees"),
-        # Refunds are money off the SALE (Talabat's item reversals + recoveries),
-        # not a fee — shown apart, tracking gross → net.
-        func.coalesce(func.sum(func.abs(o.refund_amount)), 0).label("refunds"),
         func.coalesce(func.sum(func.abs(o.net_payable)), 0).label("net_payable"),
         func.count().label("orders"),
     ).group_by(o.channel)
@@ -1025,6 +1033,37 @@ async def _fees_from_orders(
     return {
         r.channel: _fees_row(r.channel, r, vat=None)
         for r in (await db.execute(stmt)).all()
+    }
+
+
+async def _refunds_from_orders(
+    db: AsyncSession, channel: str | None, date_from: str | None, date_to: str | None
+) -> dict[str, Decimal]:
+    """Per-channel refund total from `aggregator_order.refund_amount` over the range.
+
+    The authoritative refund for EVERY channel: each provider rolls its refund onto
+    this column at ingest (Keeta's merchant liability, Talabat's item reversals,
+    noon's), so it is the one source that catches a statement channel's refund too —
+    noon's refund lives only here, never on its statement lines. Dated by
+    `business_date`, matching the order feed.
+    """
+    o = AggregatorOrder
+    stmt = (
+        select(
+            o.channel.label("channel"),
+            func.coalesce(func.sum(func.abs(o.refund_amount)), 0).label("refunds"),
+        )
+        .where(o.refund_amount.isnot(None))
+        .group_by(o.channel)
+    )
+    if channel:
+        stmt = stmt.where(o.channel == channel)
+    if date_from:
+        stmt = stmt.where(o.business_date >= date_from)
+    if date_to:
+        stmt = stmt.where(o.business_date <= date_to)
+    return {
+        r.channel: Decimal(str(r.refunds or 0)) for r in (await db.execute(stmt)).all()
     }
 
 
