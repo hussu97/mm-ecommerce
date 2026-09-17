@@ -8,12 +8,19 @@ right column, reconciles to net, and captures the merchant delivery subsidy.
 
 from __future__ import annotations
 
+import base64
 import io
 from decimal import Decimal
 
 import openpyxl
 
-from app.services.providers.keeta_provider import _parse_bill_xlsx
+from app.services.providers.keeta_provider import (
+    _is_single_day_bill,
+    _parse_bill_xlsx,
+)
+from app.services.providers.keeta_provider import (
+    provider as keeta,
+)
 
 
 def _bill(headers: dict[int, str], data: dict[int, object], ncol: int) -> bytes:
@@ -144,4 +151,42 @@ def test_source_key_is_stable_per_order_and_category():
     assert (
         keys["commission"]
         == "KEETA_BILL_1_2026-09-08_2026-09-14:5167840151623393:commission"
+    )
+
+
+def test_detects_single_day_bills():
+    assert _is_single_day_bill({"displayTimeText": "7 Sep 2026"}) is True
+    assert _is_single_day_bill({"displayTimeText": "7 Sep 2026~7 Sep 2026"}) is True
+    # A genuine weekly range is not a single-day bill.
+    assert _is_single_day_bill({"displayTimeText": "1 Sep 2026 ~ 7 Sep 2026"}) is False
+    # No displayTimeText → not treated as single-day (prod bills always carry one).
+    assert _is_single_day_bill({"taskName": "bill-[X] 7 Sep 2026 Order"}) is False
+    assert _is_single_day_bill({}) is False
+
+
+def test_parse_finance_skips_single_day_bill():
+    """A daily-snapshot bill is dropped — it duplicates the weekly bill's orders."""
+    payload = {
+        "shopId": "1644189187",
+        "statement_id": "DT_DAILY",
+        "displayTimeText": "7 Sep 2026",
+        "bill_xlsx_b64": base64.b64encode(_bill(_H38, _D38, 38)).decode("ascii"),
+    }
+    result = keeta.parse_finance(payload)
+    assert result.statements == []
+    assert "single-day" in (result.truncation_note or "")
+
+
+def test_parse_finance_keeps_weekly_bill_with_stable_id():
+    payload = {
+        "shopId": "1644189187",
+        "statement_id": "DT_WEEKLY",
+        "displayTimeText": "1 Sep 2026 ~ 7 Sep 2026",
+        "bill_xlsx_b64": base64.b64encode(_bill(_H40, _D40, 40)).decode("ascii"),
+    }
+    result = keeta.parse_finance(payload)
+    assert len(result.statements) == 1
+    assert (
+        result.statements[0].statement_id
+        == "KEETA_BILL_1644189187_2026-09-01_2026-09-07"
     )

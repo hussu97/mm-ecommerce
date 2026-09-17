@@ -358,6 +358,31 @@ def _period_from_display(value: Any) -> tuple[date | None, date | None]:
     return (None, None)
 
 
+def _is_single_day_bill(row: dict[str, Any]) -> bool:
+    """A one-day "daily snapshot" bill — Keeta emits these for some shops ALONGSIDE
+    the weekly bill that already covers the same orders, so ingesting both
+    double-counts every order of that day; the weekly is canonical and the daily is
+    skipped. Keyed on `displayTimeText`, which reads a single day ("7 Sep 2026" or
+    "7 Sep 2026~7 Sep 2026") for a daily and a range ("1 Sep 2026 ~ 7 Sep 2026") for
+    the weekly. (The `taskName` wraps the dates in prose that does not cleanly parse,
+    and every bill carries a `displayTimeText`, so it is the reliable signal.)
+
+    A shop billed ONLY daily would have no weekly to fall back on, but every MM
+    Keeta shop is billed weekly, so a single-day bill is always the redundant one.
+    """
+    text = _get_value(row, "displayTimeText")
+    if text is None:
+        return False
+    text = str(text)
+    start, end = _period_from_display(text)
+    if start is not None and end is not None:
+        return start == end  # explicit "X ~ X"
+    # A bare single date with no range ("7 Sep 2026") is a one-day bill.
+    return not any(s in text for s in ("~", " - ", " to ")) and (
+        _keeta_short_date(text) is not None
+    )
+
+
 def _dotted_date(value: Any) -> date | None:
     """Parse Keeta's billing-cycle date — `'2026.08.15'` → date, else None."""
     if value is None:
@@ -1374,6 +1399,18 @@ class KeetaClient(BaseAggregatorClient):
           resolved rows). `_extract_rows` walks it into statement + payout rows.
         """
         if isinstance(payload, dict) and _has_finance_file(payload):
+            # Skip a one-day "daily snapshot" bill: Keeta emits these alongside the
+            # weekly bill that already carries the same orders, so ingesting both
+            # double-counts that day. The weekly is canonical (see _is_single_day_bill).
+            if _get_value(payload, "bill_xlsx_b64") and _is_single_day_bill(payload):
+                return FinanceResult(
+                    statements=[],
+                    payouts=[],
+                    truncation_note=(
+                        "Keeta single-day bill skipped — redundant with the weekly "
+                        "bill that covers the same orders."
+                    ),
+                )
             statement = self._statement_from(payload, 1)
             if statement is None:
                 return FinanceResult(
