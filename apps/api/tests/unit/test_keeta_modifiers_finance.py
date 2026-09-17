@@ -806,6 +806,28 @@ import zipfile as _zipfile  # noqa: E402
 from datetime import datetime as _dt  # noqa: E402
 from datetime import timezone as _tz  # noqa: E402
 
+# 1-indexed column → header, the real 40-column "Order Summary" layout. The parser
+# locates columns by these header names (row 3), so the fixtures carry them.
+_REAL_BILL_HEADERS = {
+    6: "Transaction date",
+    9: "Order Number",
+    16: "Original item price (VAT included)",
+    18: "Total Compensation to Merchant (VAT included)",
+    20: "Adjustment increases (not included in invoices)",
+    21: "Subtotal of commission fee (VAT included)",
+    22: "Bank fee (VAT included)",
+    29: "Total Platform Deductions from Merchant (Merchant's Liability, VAT included)",
+    32: "Adjustment decreases (not included in invoices)",
+    33: "Payable to merchant",
+    34: "Notes",
+    35: "Total Commission(VAT included)",
+}
+
+
+def _bill_header_row() -> list:
+    return [_REAL_BILL_HEADERS.get(c) for c in range(1, 41)]
+
+
 # 1-indexed column → value, transcribed from the real bill.xlsx "Order Summary".
 _REAL_BILL_ROWS = [
     {
@@ -845,7 +867,7 @@ def _build_bill_xlsx_b64() -> str:
     # Rows 1–3 are titles/headers in the real file; only their presence matters.
     ws.append(["Order information"])
     ws.append([])
-    ws.append(["Brand Name"])  # header row 3
+    ws.append(_bill_header_row())  # header row 3 — real column names
     for spec in _REAL_BILL_ROWS:
         values = [None] * 40
         for col, value in spec.items():
@@ -870,7 +892,9 @@ def test_parse_finance_bill_xlsx_yields_statement_with_outlet_and_period():
     assert result.truncation_note is None
     assert len(result.statements) == 1
     stmt = result.statements[0]
-    assert stmt.statement_id == "DT2091796450566606888"
+    # A bill is keyed on (shop, period), not the per-download-task taskViewId, so
+    # Keeta re-listing the same bill under a new task upserts rather than duplicates.
+    assert stmt.statement_id == "KEETA_BILL_1644189187_2026-08-15_2026-08-22"
     assert stmt.external_outlet_id == "1644189187"
     assert stmt.period_start == "2026-08-15"
     assert stmt.period_end == "2026-08-22"
@@ -919,7 +943,7 @@ def _build_bill_xlsx_b64_with_refunds() -> str:
     ws.title = "Order Summary"
     ws.append(["Order information"])
     ws.append([])
-    ws.append(["Brand Name"])  # header row 3
+    ws.append(_bill_header_row())  # header row 3 — real column names
     rows = [
         {  # vendor-fault: a merchant-liability deduction (money clawed back)
             4: "1644336388",
@@ -1109,8 +1133,11 @@ def test_parse_finance_bill_xlsx_payout_couples_to_statement():
     assert len(result.statements) == 1
     stmt = result.statements[0]
     assert result.payouts, "expected at least one weekly payout"
+    # The statement is keyed on (shop, period); the payout couples to whatever id
+    # the statement carries, so assert the coupling rather than a literal task id.
+    assert stmt.statement_id.startswith("KEETA_BILL_")
     for payout in result.payouts:
-        assert payout.statement_id == stmt.statement_id == "DT2091796450566606888"
+        assert payout.statement_id == stmt.statement_id
 
 
 @pytest.mark.skipif(

@@ -414,38 +414,65 @@ def _strip_blobs(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k not in _FINANCE_FILE_KEYS}
 
 
-#: "Order Summary" sheet: header on row 3, data from row 4. Money columns are
-#: 1-indexed (matching the reverse-engineered layout). Each becomes its own
-#: statement line so gross / commission / bank-fee / net stay distinguishable.
+#: "Order Summary" sheet: header on row 3, data from row 4. Columns are located by
+#: HEADER NAME, never a fixed index: Keeta ships more than one layout — a 40-column
+#: form and, from ~Sep 2026, a 38-column form that drops "Total Commission" /
+#: "Total Top-up to Minimum" / "Drone service fee" / "Advertising costs" and shifts
+#: every later column left — so a fixed index silently reads the wrong column on one
+#: of them (it was booking "Product subsidies by Keeta" as commission and "Minimum
+#: Commission" as net on every newer bill). Header text is identical across layouts,
+#: so a name lookup parses both and survives the next reshuffle.
 _BILL_SHEET = "Order Summary"
-_BILL_ORDER_NO_COL = 9  # 16-digit Order Number == sales external_order_id
-_BILL_TXN_DATE_COL = 6  # "15 Aug 2026"
-_BILL_NOTES_COL = 34  # per-order "Notes" — the refund/fault reason text
-#: category → (source column, line_type, fee_category, keep_zero).
-#: `keep_zero` keeps a real 0.00 for the four always-present money legs; the
-#: refund/compensation/adjustment legs are near-always 0 (Keeta refunds are rare —
-#: 0 of 301 settled rows in a two-week sample), so they are emitted ONLY when
-#: non-zero. A 0 there means "none", not a row worth keeping across thousands of
-#: orders. Column indices verified 2026-09-12 against a live billing XLSX (the
-#: "Order Summary" sheet, header row 3), cross-checked with its "Explanation" tab.
-_BILL_LINE_SPEC: tuple[tuple[str, int, str, str, bool], ...] = (
-    ("gross", 16, "sales", "gross_sales", True),  # Original item price (VAT incl)
-    ("commission", 35, "commission", "commission", True),  # Total Commission (incl)
-    ("bank_fee", 22, "fee", "bank_fee", True),  # Bank fee (VAT incl)
-    ("net", 33, "payout", "net_payable", True),  # Payable to Restaurant (net)
+_BILL_ORDER_NO_HEADER = "order number"  # 16-digit == sales external_order_id
+_BILL_TXN_DATE_HEADER = "transaction date"
+_BILL_NOTES_HEADER = "notes"
+
+#: (header substring, line_type, fee_category, keep_zero). Matched case-insensitively
+#: against the row-3 header, first hit wins, so each substring is specific enough not
+#: to collide (e.g. "bank fee (vat" avoids "Bank Fee Rate"). `keep_zero` keeps a real
+#: 0.00 for the always-present legs; the rest are emitted only when non-zero.
+#:
+#: Every MERCHANT-borne cost is captured so the legs reconcile to net
+#: (gross + commission + bank + subsidies == payable) — the merchant delivery
+#: subsidy was being dropped, understating Keeta's true take. Keeta-BORNE subsidies
+#: ("… by Keeta") are excluded: Keeta funds those, so they are not a merchant fee.
+#: Commission is resolved separately (Total Commission, else Subtotal + Top-up).
+_BILL_COLUMN_SPEC: tuple[tuple[str, str, str, bool], ...] = (
+    ("original item price", "sales", "gross_sales", True),
+    ("bank fee (vat", "fee", "bank_fee", True),
+    ("payable to merchant", "payout", "net_payable", True),
+    (
+        "delivery subsidies (keeta delivery) covered by merchant",
+        "fee",
+        "delivery_subsidy",
+        False,
+    ),
+    ("product campaign expenses by merchant", "fee", "product_campaign", False),
+    (
+        "delivery promotion subsidy (merchant delivery",
+        "fee",
+        "delivery_promotion",
+        False,
+    ),
+    ("subscription fee", "fee", "subscription_fee", False),
+    ("pos machine fee", "fee", "pos_machine_fee", False),
+    ("drone service fee", "fee", "drone_service_fee", False),
     # Refund / fault legs (per the "Explanation" tab):
-    #  c18 "Total Compensation to Merchant" — "refunds NOT due to merchant
-    #      responsibility" → KEETA-FAULT: the platform pays the merchant, our
-    #      payout is made whole, so this is other-revenue and must NEVER reduce the
-    #      sale. It is the signal for "refunded but it was Keeta's fault".
-    #  c29 "Total Platform Deductions from Merchant (Merchant's Liability)" —
-    #      VENDOR-FAULT: money clawed from our payout, the Talabat-equivalent that
-    #      overstates net sales until booked as a refund (see the ingest step that
-    #      rolls this onto `aggregator_order.refund_amount`).
-    ("compensation", 18, "compensation", "merchant_compensation", False),
-    ("merchant_liability", 29, "deduction", "merchant_liability", False),
-    ("adjustment_increase", 20, "adjustment", "adjustment_increase", False),
-    ("adjustment_decrease", 32, "adjustment", "adjustment_decrease", False),
+    #  "Total Compensation to Merchant" — KEETA-FAULT refund: Keeta pays the
+    #      merchant, our payout is whole, so it is other-revenue and must NEVER
+    #      reduce the sale (the "refunded but Keeta's fault" signal).
+    #  "Total Platform Deductions from Merchant (Merchant's Liability)" —
+    #      VENDOR-FAULT: money clawed from our payout, rolled onto
+    #      `aggregator_order.refund_amount` by the ingest step.
+    ("total compensation to merchant", "compensation", "merchant_compensation", False),
+    (
+        "total platform deductions from merchant",
+        "deduction",
+        "merchant_liability",
+        False,
+    ),
+    ("adjustment increases", "adjustment", "adjustment_increase", False),
+    ("adjustment decreases", "adjustment", "adjustment_decrease", False),
 )
 
 #: Fee categories that carry the per-order Notes text (the refund/fault reason).
@@ -456,6 +483,23 @@ def _cell(values: tuple[Any, ...], col: int) -> Any:
     """A 1-indexed column from an openpyxl `values_only` row, padded to None."""
     idx = col - 1
     return values[idx] if 0 <= idx < len(values) else None
+
+
+def _cell0(values: tuple[Any, ...], idx: int | None) -> Any:
+    """A 0-indexed column (the index a header lookup returns), padded to None."""
+    if idx is None:
+        return None
+    return values[idx] if 0 <= idx < len(values) else None
+
+
+def _header_col(headers: tuple[Any, ...], *needles: str) -> int | None:
+    """The 0-indexed column whose header contains any `needle` (case-insensitive),
+    first match in sheet order. None when the sheet has no such column."""
+    for idx, head in enumerate(headers):
+        text = str(head).strip().lower() if head is not None else ""
+        if text and any(n in text for n in needles):
+            return idx
+    return None
 
 
 def _parse_bill_xlsx(
@@ -488,26 +532,47 @@ def _parse_bill_xlsx(
             )
             return []
         sheet = workbook[_BILL_SHEET]
+        rows = list(sheet.iter_rows(values_only=True))
+        if len(rows) < 4:
+            return []
+        headers = rows[2]  # row 3 carries the column names
+
+        # Resolve every column we need by header name, once for the sheet.
+        order_col = _header_col(headers, _BILL_ORDER_NO_HEADER)
+        if order_col is None:
+            logger.warning(
+                "keeta: bill xlsx for %s has no %r column",
+                statement_id,
+                _BILL_ORDER_NO_HEADER,
+            )
+            return []
+        date_col = _header_col(headers, _BILL_TXN_DATE_HEADER)
+        notes_col = _header_col(headers, _BILL_NOTES_HEADER)
+        # Commission: "Total Commission" where the layout has it (== subtotal +
+        # top-up), else the "Subtotal of commission fee" plus any min-commission
+        # top-up. The newer 38-column layout drops the "Total Commission" column.
+        total_comm_col = _header_col(headers, "total commission")
+        subtotal_comm_col = _header_col(headers, "subtotal of commission fee")
+        topup_col = _header_col(headers, "total top-up to minimum")
+        spec_cols = [
+            (_header_col(headers, needle), line_type, fee_category, keep_zero)
+            for needle, line_type, fee_category, keep_zero in _BILL_COLUMN_SPEC
+        ]
+
         lines: list[StandardStatementLine] = []
-        for values in sheet.iter_rows(min_row=4, values_only=True):
-            order_no = _cell(values, _BILL_ORDER_NO_COL)
+        for values in rows[3:]:
+            order_no = _cell0(values, order_col)
             if order_no is None or not str(order_no).strip():
                 continue
             order_no = str(order_no).strip()
-            line_date = _date_str(_keeta_short_date(_cell(values, _BILL_TXN_DATE_COL)))
-            notes_val = _cell(values, _BILL_NOTES_COL)
+            line_date = _date_str(_keeta_short_date(_cell0(values, date_col)))
+            notes_val = _cell0(values, notes_col)
             notes = str(notes_val).strip() if notes_val not in (None, "") else None
-            for category, col, line_type, fee_category, keep_zero in _BILL_LINE_SPEC:
-                amount = _money(_cell(values, col))
-                if amount is None:
-                    continue
-                # A 0 refund/compensation/adjustment leg is "none", not a row — only
-                # the four always-present money legs keep an explicit 0.00.
-                if not keep_zero and amount == 0:
-                    continue
+
+            def _emit(line_type: str, fee_category: str, amount: Decimal) -> None:
                 lines.append(
                     StandardStatementLine(
-                        source_key=f"{statement_id}:{order_no}:{category}",
+                        source_key=f"{statement_id}:{order_no}:{fee_category}",
                         statement_id=statement_id,
                         external_order_id=order_no,
                         line_date=line_date,
@@ -520,6 +585,25 @@ def _parse_bill_xlsx(
                         currency="AED",
                     )
                 )
+
+            commission = _money(_cell0(values, total_comm_col))
+            if commission is None:
+                commission = _money(_cell0(values, subtotal_comm_col))
+                topup = _money(_cell0(values, topup_col))
+                if commission is not None and topup is not None:
+                    commission += topup
+            if commission is not None:
+                _emit("commission", "commission", commission)
+
+            for col, line_type, fee_category, keep_zero in spec_cols:
+                amount = _money(_cell0(values, col))
+                if amount is None:
+                    continue
+                # A 0 refund/compensation/adjustment/subsidy leg is "none", not a
+                # row — only the always-present legs keep an explicit 0.00.
+                if not keep_zero and amount == 0:
+                    continue
+                _emit(line_type, fee_category, amount)
         return lines
     finally:
         workbook.close()
@@ -1183,7 +1267,7 @@ class KeetaClient(BaseAggregatorClient):
             net_sales=net_sales,
             # VAT basis: Keeta bills its fees VAT-INCLUSIVE and never itemises the
             # tax — `feeDtl.merchantFee` carries no vat/tax key, and the weekly bill
-            # labels every column "(VAT included)" (see `_BILL_LINE_SPEC`). So the
+            # labels every column "(VAT included)" (see `_BILL_COLUMN_SPEC`). So the
             # commission/payment/marketing magnitudes here already contain the 5%,
             # which is why the net invariant (gross − commission − payment −
             # marketing ≈ net_payable) holds on one basis. This matches Careem
@@ -1369,6 +1453,19 @@ class KeetaClient(BaseAggregatorClient):
             else:
                 period_start, period_end = _period_from_yyyymm(_get_value(row, "time"))
         currency = _first_text(row, _CURRENCY_KEYS) or "AED"
+
+        # A billing-report bill: key the statement on (shop, period), not the
+        # per-download-task `taskViewId`. Keeta's download-task list returns the SAME
+        # bill under several taskViewIds, so keying on the task double-counted every
+        # re-listed bill (a bill's every line ingested twice). The payout side
+        # already uses this stable scheme (`KEETA_BILL_{shop}_{cycleEnd}`); this
+        # brings the statement + its lines in line so a re-listed bill upserts in
+        # place. Falls back to the taskViewId when shop or period is unknown.
+        if _get_value(row, "bill_xlsx_b64"):
+            shop = _first_text(row, _OUTLET_ID_KEYS)
+            start_str, end_str = _date_str(period_start), _date_str(period_end)
+            if shop and start_str and end_str:
+                statement_id = f"KEETA_BILL_{shop}_{start_str}_{end_str}"
 
         # Archive the commission invoice (zip/pdf) when the worker sent its bytes;
         # the billing-report xlsx is data, not a VAT document, so it is parsed
