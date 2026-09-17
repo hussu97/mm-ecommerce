@@ -34,8 +34,9 @@ live call. Every area already priced keeps its committed lalamove / noon; an
 area new since the last probe is modelled from the Slider road distance:
   * lalamove  ~= round(18 + 0.68 * road_km), refused (ERR_OUT_OF_SERVICE) past
     175 km — the range the survey showed Lalamove serving.
-  * noon Send  = 12 flat inside the **branch's own emirate** (Sharjah for K001,
-    Dubai for B001) within its 20 km road ceiling, else it cannot serve.
+  * noon Send  = the marginal rate card (base 12 to 10 km, +1/km to 15, +1.5/km
+    to 20) on noon's own road distance, inside the **branch's own emirate**
+    (Sharjah for K001, Dubai for B001) within its 20 km ceiling, else no serve.
 
 Writes app/data/courier_costs.<REF>.json in place AND /tmp/courier_costs.<REF>.json,
 and prints a summary. Commit the file; `scripts/build_delivery_areas.py` reads
@@ -90,10 +91,34 @@ AREAS = DATA / "uae_delivery_areas.json"
 BIKE_MAX_KM = 35.0
 #: Lalamove's serving range and its fitted rate line (from the committed survey).
 LALAMOVE_MAX_KM = 175.0
-#: noon Send: flat inside the branch's emirate within this road ceiling, nothing
-#: beyond.
-NOON_FLAT = 12
+#: noon Send rate card, mirrored from `noon_send_service.rate_card_cost` (the
+#: probe must not import that module — pulling a courier service into the slot
+#: OOMs it, the same reason Lalamove is modelled above). Kept in step by hand: a
+#: change to the real card must change these.
+#:
+#: The bands are **marginal** — the base covers the first 10 km and each band
+#: prices only the distance inside it. Standard cakes go by bike, so the base is
+#: the bike tier (`settings.NOON_SEND_BASE`, 12), not the bulky-car 25. The AED 1
+#: peak surge is deliberately left out: the ranking wants a typical off-peak run,
+#: and adding a surge that fires only in the evening would overstate every zone.
+NOON_BASE = 12.0
 NOON_MAX_KM = 20.0
+#: Straight-line -> noon road distance (`settings.NOON_SEND_DETOUR_FACTOR`). noon
+#: prices its own road distance, which is a longer detour than Slider's 1.44, so
+#: noon uses this rather than the Slider road_km the fare API returned.
+NOON_DETOUR = 1.49
+
+
+def _noon_rate_card(road_km: float) -> float:
+    """AED noon Send charges for a run of this road length — the marginal card."""
+    capped = min(road_km, NOON_MAX_KM)
+    if capped <= 10:
+        return NOON_BASE
+    if capped <= 15:
+        return NOON_BASE + (capped - 10) * 1.00
+    return NOON_BASE + 5.0 + (capped - 15) * 1.50
+
+
 #: Straight-line -> road, when Slider gave no distance (its own is preferred).
 DETOUR = 1.44
 
@@ -162,17 +187,23 @@ def _lalamove_model(road_km: float | None) -> tuple[int | None, str | None]:
 
 
 def _noon_model(
-    area_emirate: str, origin_emirate: str, road_km: float | None
-) -> int | None:
-    """Flat noon-Send fare, or None where it cannot serve.
+    area_emirate: str, origin_emirate: str, straight_km: float | None
+) -> float | None:
+    """noon-Send rate-card fare, or None where it cannot serve.
 
     noon Send cannot cross an emirate boundary, so it serves an area only when
     the area sits in the branch's *own* emirate (Sharjah for K001, Dubai for
-    B001) and inside the 20 km road ceiling.
+    B001) and inside the 20 km road ceiling. The fare is the marginal rate card,
+    not a flat rate — a run past 10 km costs more than one inside it — priced on
+    noon's own road distance (`straight_km * NOON_DETOUR`), which is what the app
+    charges against.
     """
-    if area_emirate != origin_emirate or road_km is None or road_km > NOON_MAX_KM:
+    if area_emirate != origin_emirate or straight_km is None:
         return None
-    return NOON_FLAT
+    road_km = straight_km * NOON_DETOUR
+    if road_km > NOON_MAX_KM:
+        return None
+    return round(_noon_rate_card(road_km), 2)
 
 
 async def _branch_origin(reference: str) -> tuple[float, float, str, str]:
@@ -264,10 +295,14 @@ async def main(reference: str) -> None:
             lalamove, lala_err = was.get("lalamove"), was.get("lalamove_error")
         else:
             lalamove, lala_err = _lalamove_model(road_km)
+        # noon prices its own road distance off the straight-line, not Slider's
+        # road_km (a different detour), so it is given the haversine here.
         noon = (
             was["noon_send"]
             if "noon_send" in was
-            else _noon_model(emirate, origin_emirate, road_km)
+            else _noon_model(
+                emirate, origin_emirate, _haversine_km(klat, klng, lat, lng)
+            )
         )
 
         costs[label] = {

@@ -6,14 +6,14 @@
     "lng": 55.1741736,
     "address": "Attibassi Coffee, Al Shafar Tower 1, Barsha Heights, Dubai"
   },
-  "source": "slider: PROD probe from VM 34.18.98.2 via scripts.probe_courier_fares --branch B001 (already-surveyed areas kept, new areas probed); lalamove + noon_send: rate card (committed kept, new modelled)",
+  "source": "",
   "note": "Slider fares are live production, priced from this branch's pin (bike offered cross-emirate up to its road ceiling; null bike = car-only). lalamove_error non-null = Lalamove refuses. noon_send null = cannot serve (crosses the branch's emirate / >20km).",
   "costs": {
     "Al Qasimia": {
       "km": 41.0,
-      "minutes": 42,
+      "minutes": 43,
       "slider_bike": null,
-      "slider_car": 48.07,
+      "slider_car": 48.72,
       "slider_tier": "car",
       "slider_distance_km": 41.0,
       "lalamove": 46,
@@ -22,9 +22,9 @@
     },
     "Al Majaz": {
       "km": 38.42,
-      "minutes": 38,
+      "minutes": 39,
       "slider_bike": null,
-      "slider_car": 44.52,
+      "slider_car": 45.17,
       "slider_tier": "car",
       "slider_distance_km": 38.42,
       "lalamove": 44,
@@ -54,23 +54,23 @@
       "noon_send": null
     },
     "Abu Shagara": {
-      "km": 39.99,
-      "minutes": 40,
+      "km": 41.38,
+      "minutes": 41,
       "slider_bike": null,
-      "slider_car": 46.4,
+      "slider_car": 47.56,
       "slider_tier": "car",
-      "slider_distance_km": 39.99,
-      "lalamove": 45,
+      "slider_distance_km": 41.38,
+      "lalamove": 46,
       "lalamove_error": null,
       "noon_send": null
     },
     "Rolla / Al Ghuwair": {
-      "km": 43.45,
-      "minutes": 45,
+      "km": 43.81,
+      "minutes": 44,
       "slider_bike": null,
-      "slider_car": 50.93,
+      "slider_car": 50.41,
       "slider_tier": "car",
-      "slider_distance_km": 43.45,
+      "slider_distance_km": 43.81,
       "lalamove": 48,
       "lalamove_error": null,
       "noon_send": null
@@ -88,9 +88,9 @@
     },
     "Al Nahda (Sharjah)": {
       "km": 35.14,
-      "minutes": 29,
+      "minutes": 30,
       "slider_bike": null,
-      "slider_car": 37.45,
+      "slider_car": 38.1,
       "slider_tier": "car",
       "slider_distance_km": 35.14,
       "lalamove": 42,
@@ -99,9 +99,9 @@
     },
     "Al Nud": {
       "km": 40.57,
-      "minutes": 39,
+      "minutes": 41,
       "slider_bike": null,
-      "slider_car": 45.96,
+      "slider_car": 47.26,
       "slider_tier": "car",
       "slider_distance_km": 40.57,
       "lalamove": 46,
@@ -110,9 +110,9 @@
     },
     "Al Yarmook": {
       "km": 40.38,
-      "minutes": 39,
+      "minutes": 38,
       "slider_bike": null,
-      "slider_car": 45.89,
+      "slider_car": 45.24,
       "slider_tier": "car",
       "slider_distance_km": 40.38,
       "lalamove": 45,
@@ -121,9 +121,9 @@
     },
     "Maysaloon": {
       "km": 42.83,
-      "minutes": 47,
+      "minutes": 46,
       "slider_bike": null,
-      "slider_car": 52.0,
+      "slider_car": 51.35,
       "slider_tier": "car",
       "slider_distance_km": 42.83,
       "lalamove": 47,
@@ -132,9 +132,9 @@
     },
     "Muwaileh": {
       "km": 46.21,
-      "minutes": 43,
+      "minutes": 45,
       "slider_bike": null,
-      "slider_car": 52.19,
+      "slider_car": 53.53,
       "slider_tier": "car",
       "slider_distance_km": 46.21,
       "lalamove": 49,
@@ -143,9 +143,9 @@
     },
     "Al Zahia": {
       "km": 49.7,
-      "minutes": 49,
+      "minutes": 52,
       "slider_bike": null,
-      "slider_car": 57.57,
+      "slider_car": 59.58,
       "slider_tier": "car",
       "slider_distance_km": 49.7,
       "lalamove": 52,
@@ -154,9 +154,9 @@
     },
     "University City": {
       "km": 49.31,
-      "minutes": 45,
+      "minutes": 48,
       "slider_bike": null,
-      "slider_car": 54.74,
+      "slider_car": 56.75,
       "slider_tier": "car",
       "slider_distance_km": 49.31,
       "lalamove": 52,
@@ -208,12 +208,12 @@
       "noon_send": null
     },
     "Dibba Al Hisn": {
-      "km": 165.16,
-      "minutes": 117,
+      "km": 165.17,
+      "minutes": 116,
       "slider_bike": null,
-      "slider_car": 148.16,
+      "slider_car": 147.5,
       "slider_tier": "car",
-      "slider_distance_km": 165.16,
+      "slider_distance_km": 165.17,
       "lalamove": 130,
       "lalamove_error": null,
       "noon_send": null
@@ -231,9 +231,9 @@
     },
     "Ajman Corniche": {
       "km": 51.72,
-      "minutes": 57,
+      "minutes": 59,
       "slider_bike": null,
-      "slider_car": 63.72,
+      "slider_car": 65.06,
       "slider_tier": "car",
       "slider_distance_km": 51.72,
       "lalamove": 53,
@@ -242,9 +242,9 @@
     },
     "Mushairef": {
       "km": 53.65,
-      "minutes": 56,
+      "minutes": 58,
       "slider_bike": null,
-      "slider_car": 63.8,
+      "slider_car": 65.14,
       "slider_tier": "car",
       "slider_distance_km": 53.65,
       "lalamove": 54,
@@ -253,9 +253,9 @@
     },
     "Al Rashidiya": {
       "km": 54.85,
-      "minutes": 58,
+      "minutes": 60,
       "slider_bike": null,
-      "slider_car": 65.61,
+      "slider_car": 66.95,
       "slider_tier": "car",
       "slider_distance_km": 54.85,
       "lalamove": 55,
@@ -264,9 +264,9 @@
     },
     "Al Zahra": {
       "km": 53.49,
-      "minutes": 55,
+      "minutes": 57,
       "slider_bike": null,
-      "slider_car": 63.07,
+      "slider_car": 64.41,
       "slider_tier": "car",
       "slider_distance_km": 53.49,
       "lalamove": 54,
@@ -275,9 +275,9 @@
     },
     "Al Nuaimiya": {
       "km": 49.52,
-      "minutes": 51,
+      "minutes": 53,
       "slider_bike": null,
-      "slider_car": 58.84,
+      "slider_car": 60.18,
       "slider_tier": "car",
       "slider_distance_km": 49.52,
       "lalamove": 52,
@@ -286,9 +286,9 @@
     },
     "Ajman City Centre": {
       "km": 52.52,
-      "minutes": 56,
+      "minutes": 58,
       "slider_bike": null,
-      "slider_car": 63.36,
+      "slider_car": 64.7,
       "slider_tier": "car",
       "slider_distance_km": 52.52,
       "lalamove": 54,
@@ -297,9 +297,9 @@
     },
     "Al Mowaihat": {
       "km": 56.99,
-      "minutes": 55,
+      "minutes": 57,
       "slider_bike": null,
-      "slider_car": 64.44,
+      "slider_car": 65.78,
       "slider_tier": "car",
       "slider_distance_km": 56.99,
       "lalamove": 57,
@@ -308,9 +308,9 @@
     },
     "Al Rawda": {
       "km": 52.64,
-      "minutes": 55,
+      "minutes": 57,
       "slider_bike": null,
-      "slider_car": 62.74,
+      "slider_car": 64.08,
       "slider_tier": "car",
       "slider_distance_km": 52.64,
       "lalamove": 54,
@@ -319,9 +319,9 @@
     },
     "Al Hamidiyah": {
       "km": 58.7,
-      "minutes": 56,
+      "minutes": 58,
       "slider_bike": null,
-      "slider_car": 65.77,
+      "slider_car": 67.11,
       "slider_tier": "car",
       "slider_distance_km": 58.7,
       "lalamove": 58,
@@ -330,9 +330,9 @@
     },
     "Emirates City / Ajman One": {
       "km": 57.39,
-      "minutes": 59,
+      "minutes": 60,
       "slider_bike": null,
-      "slider_car": 67.27,
+      "slider_car": 67.94,
       "slider_tier": "car",
       "slider_distance_km": 57.39,
       "lalamove": 57,
@@ -341,9 +341,9 @@
     },
     "Al Jurf": {
       "km": 56.72,
-      "minutes": 60,
+      "minutes": 62,
       "slider_bike": null,
-      "slider_car": 67.68,
+      "slider_car": 69.02,
       "slider_tier": "car",
       "slider_distance_km": 56.72,
       "lalamove": 57,
@@ -363,9 +363,9 @@
     },
     "UAQ Old Town": {
       "km": 87.53,
-      "minutes": 73,
+      "minutes": 75,
       "slider_bike": null,
-      "slider_car": 88.41,
+      "slider_car": 89.75,
       "slider_tier": "car",
       "slider_distance_km": 87.53,
       "lalamove": 78,
@@ -373,21 +373,21 @@
       "noon_send": null
     },
     "Al Salamah": {
-      "km": 86.06,
-      "minutes": 71,
+      "km": 73.07,
+      "minutes": 73,
       "slider_bike": null,
-      "slider_car": 86.49,
+      "slider_car": 82.77,
       "slider_tier": "car",
-      "slider_distance_km": 86.06,
-      "lalamove": 77,
+      "slider_distance_km": 73.07,
+      "lalamove": 68,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Raas": {
       "km": 89.1,
-      "minutes": 76,
+      "minutes": 78,
       "slider_bike": null,
-      "slider_car": 91.03,
+      "slider_car": 92.37,
       "slider_tier": "car",
       "slider_distance_km": 89.1,
       "lalamove": 79,
@@ -396,9 +396,9 @@
     },
     "Al Haditha": {
       "km": 82.02,
-      "minutes": 70,
+      "minutes": 72,
       "slider_bike": null,
-      "slider_car": 84.25,
+      "slider_car": 85.59,
       "slider_tier": "car",
       "slider_distance_km": 82.02,
       "lalamove": 74,
@@ -407,9 +407,9 @@
     },
     "Emirates Modern Industrial": {
       "km": 87.78,
-      "minutes": 77,
+      "minutes": 79,
       "slider_bike": null,
-      "slider_car": 91.18,
+      "slider_car": 92.52,
       "slider_tier": "car",
       "slider_distance_km": 87.78,
       "lalamove": 78,
@@ -428,43 +428,43 @@
       "noon_send": null
     },
     "RAK City / Al Nakheel": {
-      "km": 124.8,
-      "minutes": 92,
+      "km": 132.33,
+      "minutes": 89,
       "slider_bike": null,
-      "slider_car": 115.67,
+      "slider_car": 116.6,
       "slider_tier": "car",
-      "slider_distance_km": 124.8,
-      "lalamove": 103,
+      "slider_distance_km": 132.33,
+      "lalamove": 108,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Dhait": {
-      "km": 119.86,
-      "minutes": 86,
+      "km": 127.39,
+      "minutes": 83,
       "slider_bike": null,
-      "slider_car": 109.73,
+      "slider_car": 110.65,
       "slider_tier": "car",
-      "slider_distance_km": 119.86,
-      "lalamove": 100,
+      "slider_distance_km": 127.39,
+      "lalamove": 105,
       "lalamove_error": null,
       "noon_send": null
     },
     "Mina Al Arab": {
-      "km": 117.86,
-      "minutes": 87,
+      "km": 125.39,
+      "minutes": 84,
       "slider_bike": null,
-      "slider_car": 109.62,
+      "slider_car": 110.54,
       "slider_tier": "car",
-      "slider_distance_km": 117.86,
-      "lalamove": 98,
+      "slider_distance_km": 125.39,
+      "lalamove": 103,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Hamra Village": {
       "km": 112.82,
-      "minutes": 90,
+      "minutes": 92,
       "slider_bike": null,
-      "slider_car": 109.66,
+      "slider_car": 111.0,
       "slider_tier": "car",
       "slider_distance_km": 112.82,
       "lalamove": 95,
@@ -472,43 +472,43 @@
       "noon_send": null
     },
     "Digdaga": {
-      "km": 115.68,
-      "minutes": 80,
+      "km": 115.69,
+      "minutes": 79,
       "slider_bike": null,
-      "slider_car": 104.08,
+      "slider_car": 103.41,
       "slider_tier": "car",
-      "slider_distance_km": 115.68,
+      "slider_distance_km": 115.69,
       "lalamove": 97,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Rams": {
-      "km": 148.61,
-      "minutes": 96,
+      "km": 148.62,
+      "minutes": 95,
       "slider_bike": null,
-      "slider_car": 127.64,
+      "slider_car": 126.97,
       "slider_tier": "car",
-      "slider_distance_km": 148.61,
+      "slider_distance_km": 148.62,
       "lalamove": 119,
       "lalamove_error": null,
       "noon_send": null
     },
     "Sha'am": {
-      "km": 163.77,
-      "minutes": 108,
+      "km": 163.78,
+      "minutes": 107,
       "slider_bike": null,
-      "slider_car": 141.59,
+      "slider_car": 140.92,
       "slider_tier": "car",
-      "slider_distance_km": 163.77,
+      "slider_distance_km": 163.78,
       "lalamove": 129,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Jazirah Al Hamra": {
       "km": 108.31,
-      "minutes": 81,
+      "minutes": 83,
       "slider_bike": null,
-      "slider_car": 101.87,
+      "slider_car": 103.21,
       "slider_tier": "car",
       "slider_distance_km": 108.31,
       "lalamove": 92,
@@ -527,21 +527,21 @@
       "noon_send": null
     },
     "Dibba Al Fujairah": {
-      "km": 161.83,
-      "minutes": 112,
+      "km": 161.85,
+      "minutes": 111,
       "slider_bike": null,
-      "slider_car": 143.51,
+      "slider_car": 142.85,
       "slider_tier": "car",
-      "slider_distance_km": 161.83,
+      "slider_distance_km": 161.85,
       "lalamove": 128,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Bidiyah": {
       "km": 161.11,
-      "minutes": 107,
+      "minutes": 106,
       "slider_bike": null,
-      "slider_car": 139.88,
+      "slider_car": 139.21,
       "slider_tier": "car",
       "slider_distance_km": 161.11,
       "lalamove": 128,
@@ -561,9 +561,9 @@
     },
     "Sakamkam": {
       "km": 148.05,
-      "minutes": 103,
+      "minutes": 104,
       "slider_bike": null,
-      "slider_car": 132.11,
+      "slider_car": 132.78,
       "slider_tier": "car",
       "slider_distance_km": 148.05,
       "lalamove": 119,
@@ -572,9 +572,9 @@
     },
     "Al Nahda (Dubai)": {
       "km": 34.02,
-      "minutes": 29,
-      "slider_bike": 31.18,
-      "slider_car": 37.04,
+      "minutes": 30,
+      "slider_bike": 31.77,
+      "slider_car": 37.69,
       "slider_tier": "bike",
       "slider_distance_km": 34.02,
       "lalamove": 41,
@@ -604,21 +604,21 @@
       "noon_send": null
     },
     "Bur Dubai / Al Karama": {
-      "km": 23.92,
+      "km": 23.85,
       "minutes": 22,
-      "slider_bike": 23.78,
-      "slider_car": 28.75,
+      "slider_bike": 23.76,
+      "slider_car": 28.72,
       "slider_tier": "bike",
-      "slider_distance_km": 23.92,
+      "slider_distance_km": 23.85,
       "lalamove": 34,
       "lalamove_error": null,
       "noon_send": null
     },
     "Jumeirah 1": {
       "km": 20.96,
-      "minutes": 22,
-      "slider_bike": 22.95,
-      "slider_car": 27.66,
+      "minutes": 23,
+      "slider_bike": 23.53,
+      "slider_car": 28.31,
       "slider_tier": "bike",
       "slider_distance_km": 20.96,
       "lalamove": 32,
@@ -634,7 +634,7 @@
       "slider_distance_km": 18.33,
       "lalamove": 30,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": null
     },
     "Business Bay": {
       "km": 15.61,
@@ -645,16 +645,16 @@
       "slider_distance_km": 15.61,
       "lalamove": 29,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 23.84
     },
     "International City": {
-      "km": 32.95,
+      "km": 33.32,
       "minutes": 30,
-      "slider_bike": 31.46,
-      "slider_car": 37.29,
+      "slider_bike": 31.56,
+      "slider_car": 37.43,
       "slider_tier": "bike",
-      "slider_distance_km": 32.95,
-      "lalamove": 40,
+      "slider_distance_km": 33.32,
+      "lalamove": 41,
       "lalamove_error": null,
       "noon_send": null
     },
@@ -667,7 +667,7 @@
       "slider_distance_km": 10.12,
       "lalamove": 25,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 13.72
     },
     "Dubai Silicon Oasis": {
       "km": 28.49,
@@ -689,7 +689,7 @@
       "slider_distance_km": 4.64,
       "lalamove": 21,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.0
     },
     "Dubai Hills Estate": {
       "km": 11.4,
@@ -700,18 +700,18 @@
       "slider_distance_km": 11.4,
       "lalamove": 26,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 13.13
     },
     "Palm Jumeirah": {
-      "km": 10.47,
-      "minutes": 14,
-      "slider_bike": 15.38,
-      "slider_car": 18.57,
+      "km": 10.59,
+      "minutes": 16,
+      "slider_bike": 16.57,
+      "slider_car": 19.92,
       "slider_tier": "bike",
-      "slider_distance_km": 10.47,
+      "slider_distance_km": 10.59,
       "lalamove": 25,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.0
     },
     "Dubai Marina / JBR": {
       "km": 7.86,
@@ -722,7 +722,7 @@
       "slider_distance_km": 7.86,
       "lalamove": 23,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.0
     },
     "JLT": {
       "km": 7.59,
@@ -733,7 +733,7 @@
       "slider_distance_km": 7.59,
       "lalamove": 23,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.0
     },
     "JVC": {
       "km": 8.18,
@@ -744,7 +744,7 @@
       "slider_distance_km": 8.18,
       "lalamove": 24,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.0
     },
     "Motor City": {
       "km": 14.04,
@@ -755,7 +755,7 @@
       "slider_distance_km": 14.04,
       "lalamove": 28,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 14.71
     },
     "Discovery Gardens": {
       "km": 13.45,
@@ -766,7 +766,7 @@
       "slider_distance_km": 13.45,
       "lalamove": 27,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.52
     },
     "Jebel Ali": {
       "km": 19.71,
@@ -777,7 +777,7 @@
       "slider_distance_km": 19.71,
       "lalamove": 31,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": null
     },
     "Dubai Investment Park": {
       "km": 20.66,
@@ -788,7 +788,7 @@
       "slider_distance_km": 20.66,
       "lalamove": 32,
       "lalamove_error": null,
-      "noon_send": null
+      "noon_send": 23.95
     },
     "Hatta": {
       "km": 151.63,
@@ -803,9 +803,9 @@
     },
     "Yas Island": {
       "km": 97.99,
-      "minutes": 61,
+      "minutes": 60,
       "slider_bike": null,
-      "slider_car": 84.45,
+      "slider_car": 83.78,
       "slider_tier": "car",
       "slider_distance_km": 97.99,
       "lalamove": 85,
@@ -814,9 +814,9 @@
     },
     "Al Raha Beach": {
       "km": 102.13,
-      "minutes": 64,
+      "minutes": 63,
       "slider_bike": null,
-      "slider_car": 88.07,
+      "slider_car": 87.4,
       "slider_tier": "car",
       "slider_distance_km": 102.13,
       "lalamove": 87,
@@ -825,9 +825,9 @@
     },
     "Masdar City": {
       "km": 104.37,
-      "minutes": 67,
+      "minutes": 66,
       "slider_bike": null,
-      "slider_car": 90.95,
+      "slider_car": 90.28,
       "slider_tier": "car",
       "slider_distance_km": 104.37,
       "lalamove": 89,
@@ -836,9 +836,9 @@
     },
     "Khalifa City": {
       "km": 106.13,
-      "minutes": 69,
+      "minutes": 68,
       "slider_bike": null,
-      "slider_car": 92.98,
+      "slider_car": 92.31,
       "slider_tier": "car",
       "slider_distance_km": 106.13,
       "lalamove": 90,
@@ -846,21 +846,21 @@
       "noon_send": null
     },
     "Shakhbout City": {
-      "km": 111.03,
+      "km": 109.73,
       "minutes": 68,
       "slider_bike": null,
-      "slider_car": 94.22,
+      "slider_car": 93.71,
       "slider_tier": "car",
-      "slider_distance_km": 111.03,
-      "lalamove": 94,
+      "slider_distance_km": 109.73,
+      "lalamove": 93,
       "lalamove_error": null,
       "noon_send": null
     },
     "Mohammed Bin Zayed City": {
       "km": 124.29,
-      "minutes": 77,
+      "minutes": 76,
       "slider_bike": null,
-      "slider_car": 105.42,
+      "slider_car": 104.75,
       "slider_tier": "car",
       "slider_distance_km": 124.29,
       "lalamove": 103,
@@ -868,24 +868,24 @@
       "noon_send": null
     },
     "Mussafah": {
-      "km": 123.09,
+      "km": 122.31,
       "minutes": 78,
       "slider_bike": null,
-      "slider_car": 105.63,
+      "slider_car": 105.32,
       "slider_tier": "car",
-      "slider_distance_km": 123.09,
-      "lalamove": 102,
+      "slider_distance_km": 122.31,
+      "lalamove": 101,
       "lalamove_error": null,
       "noon_send": null
     },
     "Saadiyat Island": {
-      "km": 119.02,
+      "km": 117.72,
       "minutes": 72,
       "slider_bike": null,
-      "slider_car": 100.02,
+      "slider_car": 99.51,
       "slider_tier": "car",
-      "slider_distance_km": 119.02,
-      "lalamove": 99,
+      "slider_distance_km": 117.72,
+      "lalamove": 98,
       "lalamove_error": null,
       "noon_send": null
     },
@@ -912,35 +912,35 @@
       "noon_send": null
     },
     "Al Zahiyah (Tourist Club)": {
-      "km": 127.46,
-      "minutes": 79,
+      "km": 126.15,
+      "minutes": 78,
       "slider_bike": null,
-      "slider_car": 108.0,
+      "slider_car": 106.82,
       "slider_tier": "car",
-      "slider_distance_km": 127.46,
-      "lalamove": 105,
+      "slider_distance_km": 126.15,
+      "lalamove": 104,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Khalidiyah": {
-      "km": 130.84,
-      "minutes": 83,
+      "km": 129.54,
+      "minutes": 82,
       "slider_bike": null,
-      "slider_car": 112.0,
+      "slider_car": 110.82,
       "slider_tier": "car",
-      "slider_distance_km": 130.84,
-      "lalamove": 107,
+      "slider_distance_km": 129.54,
+      "lalamove": 106,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Bateen": {
-      "km": 132.7,
-      "minutes": 85,
+      "km": 131.4,
+      "minutes": 84,
       "slider_bike": null,
-      "slider_car": 114.06,
+      "slider_car": 112.89,
       "slider_tier": "car",
-      "slider_distance_km": 132.7,
-      "lalamove": 108,
+      "slider_distance_km": 131.4,
+      "lalamove": 107,
       "lalamove_error": null,
       "noon_send": null
     },
@@ -956,32 +956,32 @@
       "noon_send": null
     },
     "Al Shamkha": {
-      "km": 113.31,
-      "minutes": 69,
+      "km": 112.01,
+      "minutes": 68,
       "slider_bike": null,
-      "slider_car": 95.78,
+      "slider_car": 94.6,
       "slider_tier": "car",
-      "slider_distance_km": 113.31,
-      "lalamove": 95,
+      "slider_distance_km": 112.01,
+      "lalamove": 94,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Ain City Centre": {
-      "km": 143.18,
-      "minutes": 96,
+      "km": 143.57,
+      "minutes": 95,
       "slider_bike": null,
-      "slider_car": 125.52,
+      "slider_car": 125.0,
       "slider_tier": "car",
-      "slider_distance_km": 143.18,
-      "lalamove": 115,
+      "slider_distance_km": 143.57,
+      "lalamove": 116,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Jimi": {
       "km": 141.56,
-      "minutes": 90,
+      "minutes": 89,
       "slider_bike": null,
-      "slider_car": 120.87,
+      "slider_car": 120.2,
       "slider_tier": "car",
       "slider_distance_km": 141.56,
       "lalamove": 114,
@@ -990,9 +990,9 @@
     },
     "Al Muwaiji": {
       "km": 142.29,
-      "minutes": 91,
+      "minutes": 90,
       "slider_bike": null,
-      "slider_car": 121.82,
+      "slider_car": 121.15,
       "slider_tier": "car",
       "slider_distance_km": 142.29,
       "lalamove": 115,
@@ -1001,9 +1001,9 @@
     },
     "Hili": {
       "km": 148.42,
-      "minutes": 111,
+      "minutes": 110,
       "slider_bike": null,
-      "slider_car": 137.61,
+      "slider_car": 136.94,
       "slider_tier": "car",
       "slider_distance_km": 148.42,
       "lalamove": 119,
@@ -1055,12 +1055,12 @@
       "noon_send": null
     },
     "Ghayathi": {
-      "km": 342.66,
-      "minutes": 203,
+      "km": 341.36,
+      "minutes": 202,
       "slider_bike": null,
-      "slider_car": 275.01,
+      "slider_car": 273.83,
       "slider_tier": "car",
-      "slider_distance_km": 342.66,
+      "slider_distance_km": 341.36,
       "lalamove": null,
       "lalamove_error": "ERR_OUT_OF_SERVICE",
       "noon_send": null
@@ -1078,9 +1078,9 @@
     },
     "Al Dhaid": {
       "km": 91.59,
-      "minutes": 64,
+      "minutes": 65,
       "slider_bike": null,
-      "slider_car": 83.96,
+      "slider_car": 84.63,
       "slider_tier": "car",
       "slider_distance_km": 91.59,
       "lalamove": 80,
@@ -1089,9 +1089,9 @@
     },
     "Mleiha": {
       "km": 93.33,
-      "minutes": 60,
+      "minutes": 61,
       "slider_bike": null,
-      "slider_car": 81.96,
+      "slider_car": 82.63,
       "slider_tier": "car",
       "slider_distance_km": 93.33,
       "lalamove": 81,
@@ -1100,9 +1100,9 @@
     },
     "Al Madam": {
       "km": 73.92,
-      "minutes": 56,
+      "minutes": 55,
       "slider_bike": null,
-      "slider_car": 71.71,
+      "slider_car": 71.04,
       "slider_tier": "car",
       "slider_distance_km": 73.92,
       "lalamove": 68,
@@ -1132,32 +1132,32 @@
       "noon_send": null
     },
     "Lehbab": {
-      "km": 52.34,
+      "km": 52.73,
       "minutes": 42,
       "slider_bike": null,
-      "slider_car": 53.91,
+      "slider_car": 54.06,
       "slider_tier": "car",
-      "slider_distance_km": 52.34,
+      "slider_distance_km": 52.73,
       "lalamove": 54,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Marmoom": {
-      "km": 54.17,
+      "km": 54.56,
       "minutes": 45,
       "slider_bike": null,
-      "slider_car": 56.64,
+      "slider_car": 56.79,
       "slider_tier": "car",
-      "slider_distance_km": 54.17,
+      "slider_distance_km": 54.56,
       "lalamove": 55,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Lisaili": {
       "km": 47.39,
-      "minutes": 43,
+      "minutes": 42,
       "slider_bike": null,
-      "slider_car": 52.65,
+      "slider_car": 51.98,
       "slider_tier": "car",
       "slider_distance_km": 47.39,
       "lalamove": 50,
@@ -1177,9 +1177,9 @@
     },
     "Al Faqa": {
       "km": 81.51,
-      "minutes": 55,
+      "minutes": 54,
       "slider_bike": null,
-      "slider_car": 74.0,
+      "slider_car": 73.33,
       "slider_tier": "car",
       "slider_distance_km": 81.51,
       "lalamove": 73,
@@ -1187,21 +1187,21 @@
       "noon_send": null
     },
     "Al Rifaa": {
-      "km": 42.86,
-      "minutes": 44,
+      "km": 43.12,
+      "minutes": 43,
       "slider_bike": null,
-      "slider_car": 50.06,
+      "slider_car": 49.5,
       "slider_tier": "car",
-      "slider_distance_km": 42.86,
+      "slider_distance_km": 43.12,
       "lalamove": 47,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Ramtha": {
       "km": 40.67,
-      "minutes": 39,
+      "minutes": 41,
       "slider_bike": null,
-      "slider_car": 46.0,
+      "slider_car": 47.3,
       "slider_tier": "car",
       "slider_distance_km": 40.67,
       "lalamove": 46,
@@ -1209,21 +1209,21 @@
       "noon_send": null
     },
     "Al Goaz": {
-      "km": 42.59,
-      "minutes": 39,
+      "km": 40.02,
+      "minutes": 41,
       "slider_bike": null,
-      "slider_car": 46.71,
+      "slider_car": 47.06,
       "slider_tier": "car",
-      "slider_distance_km": 42.59,
-      "lalamove": 47,
+      "slider_distance_km": 40.02,
+      "lalamove": 45,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Sharq": {
       "km": 44.24,
-      "minutes": 46,
+      "minutes": 48,
       "slider_bike": null,
-      "slider_car": 51.87,
+      "slider_car": 53.17,
       "slider_tier": "car",
       "slider_distance_km": 44.24,
       "lalamove": 48,
@@ -1232,9 +1232,9 @@
     },
     "Al Riqa (Sharjah)": {
       "km": 43.7,
-      "minutes": 44,
+      "minutes": 46,
       "slider_bike": null,
-      "slider_car": 50.37,
+      "slider_car": 51.67,
       "slider_tier": "car",
       "slider_distance_km": 43.7,
       "lalamove": 48,
@@ -1242,21 +1242,21 @@
       "noon_send": null
     },
     "Halwan": {
-      "km": 44.71,
-      "minutes": 46,
+      "km": 43.73,
+      "minutes": 45,
       "slider_bike": null,
-      "slider_car": 52.04,
+      "slider_car": 51.03,
       "slider_tier": "car",
-      "slider_distance_km": 44.71,
+      "slider_distance_km": 43.73,
       "lalamove": 48,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Suyoh": {
       "km": 47.1,
-      "minutes": 42,
+      "minutes": 45,
       "slider_bike": null,
-      "slider_car": 51.87,
+      "slider_car": 53.88,
       "slider_tier": "car",
       "slider_distance_km": 47.1,
       "lalamove": 50,
@@ -1264,32 +1264,32 @@
       "noon_send": null
     },
     "Al Tai": {
-      "km": 53.49,
-      "minutes": 49,
+      "km": 64.04,
+      "minutes": 48,
       "slider_bike": null,
-      "slider_car": 59.05,
+      "slider_car": 62.5,
       "slider_tier": "car",
-      "slider_distance_km": 53.49,
-      "lalamove": 54,
+      "slider_distance_km": 64.04,
+      "lalamove": 62,
       "lalamove_error": null,
       "noon_send": null
     },
     "Muweilah Commercial": {
-      "km": 45.24,
+      "km": 43.32,
       "minutes": 42,
       "slider_bike": null,
-      "slider_car": 51.14,
+      "slider_car": 48.93,
       "slider_tier": "car",
-      "slider_distance_km": 45.24,
-      "lalamove": 49,
+      "slider_distance_km": 43.32,
+      "lalamove": 47,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Hamriyah (Sharjah)": {
       "km": 62.21,
-      "minutes": 63,
+      "minutes": 65,
       "slider_bike": null,
-      "slider_car": 71.83,
+      "slider_car": 73.17,
       "slider_tier": "car",
       "slider_distance_km": 62.21,
       "lalamove": 60,
@@ -1298,9 +1298,9 @@
     },
     "Al Rashidiya (Ajman)": {
       "km": 53.29,
-      "minutes": 55,
+      "minutes": 56,
       "slider_bike": null,
-      "slider_car": 62.99,
+      "slider_car": 63.66,
       "slider_tier": "car",
       "slider_distance_km": 53.29,
       "lalamove": 54,
@@ -1309,9 +1309,9 @@
     },
     "Al Rawda (Ajman)": {
       "km": 53.5,
-      "minutes": 55,
+      "minutes": 57,
       "slider_bike": null,
-      "slider_car": 63.08,
+      "slider_car": 64.42,
       "slider_tier": "car",
       "slider_distance_km": 53.5,
       "lalamove": 54,
@@ -1320,9 +1320,9 @@
     },
     "Al Zahra (Ajman)": {
       "km": 54.25,
-      "minutes": 57,
+      "minutes": 59,
       "slider_bike": null,
-      "slider_car": 64.71,
+      "slider_car": 66.05,
       "slider_tier": "car",
       "slider_distance_km": 54.25,
       "lalamove": 55,
@@ -1331,9 +1331,9 @@
     },
     "Al Bustan (Ajman)": {
       "km": 52.46,
-      "minutes": 54,
+      "minutes": 56,
       "slider_bike": null,
-      "slider_car": 62.0,
+      "slider_car": 63.34,
       "slider_tier": "car",
       "slider_distance_km": 52.46,
       "lalamove": 54,
@@ -1342,9 +1342,9 @@
     },
     "Al Qusais": {
       "km": 40.47,
-      "minutes": 34,
+      "minutes": 36,
       "slider_bike": null,
-      "slider_car": 42.67,
+      "slider_car": 43.97,
       "slider_tier": "car",
       "slider_distance_km": 40.47,
       "lalamove": 46,
@@ -1352,24 +1352,24 @@
       "noon_send": null
     },
     "Muhaisnah": {
-      "km": 43.76,
-      "minutes": 37,
+      "km": 40.2,
+      "minutes": 36,
       "slider_bike": null,
-      "slider_car": 45.84,
+      "slider_car": 43.87,
       "slider_tier": "car",
-      "slider_distance_km": 43.76,
-      "lalamove": 48,
+      "slider_distance_km": 40.2,
+      "lalamove": 45,
       "lalamove_error": null,
       "noon_send": null
     },
     "Al Twar": {
-      "km": 36.0,
-      "minutes": 34,
+      "km": 36.6,
+      "minutes": 32,
       "slider_bike": null,
-      "slider_car": 41.02,
+      "slider_car": 39.94,
       "slider_tier": "car",
-      "slider_distance_km": 36.0,
-      "lalamove": 42,
+      "slider_distance_km": 36.6,
+      "lalamove": 43,
       "lalamove_error": null,
       "noon_send": null
     },
@@ -1418,21 +1418,21 @@
       "noon_send": null
     },
     "Al Jaddaf": {
-      "km": 25.69,
-      "minutes": 23,
-      "slider_bike": 25.22,
-      "slider_car": 30.06,
+      "km": 25.51,
+      "minutes": 22,
+      "slider_bike": 24.58,
+      "slider_car": 29.34,
       "slider_tier": "bike",
-      "slider_distance_km": 25.69,
+      "slider_distance_km": 25.51,
       "lalamove": 35,
       "lalamove_error": null,
       "noon_send": null
     },
     "Oud Metha": {
       "km": 24.63,
-      "minutes": 22,
-      "slider_bike": 23.98,
-      "slider_car": 29.01,
+      "minutes": 21,
+      "slider_bike": 23.4,
+      "slider_car": 28.36,
       "slider_tier": "bike",
       "slider_distance_km": 24.63,
       "lalamove": 35,
@@ -1441,9 +1441,9 @@
     },
     "Za'abeel": {
       "km": 20.07,
-      "minutes": 18,
-      "slider_bike": 20.38,
-      "slider_car": 24.73,
+      "minutes": 19,
+      "slider_bike": 20.96,
+      "slider_car": 25.38,
       "slider_tier": "bike",
       "slider_distance_km": 20.07,
       "lalamove": 32,
@@ -1474,14 +1474,14 @@
     },
     "Umm Suqeim": {
       "km": 9.02,
-      "minutes": 12,
-      "slider_bike": 13.81,
-      "slider_car": 16.74,
+      "minutes": 13,
+      "slider_bike": 14.39,
+      "slider_car": 17.39,
       "slider_tier": "bike",
       "slider_distance_km": 9.02,
       "lalamove": 24,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.0
     },
     "Arjan": {
       "km": 10.48,
@@ -1492,7 +1492,7 @@
       "slider_distance_km": 10.48,
       "lalamove": 25,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 12.94
     },
     "Dubai Sports City": {
       "km": 10.37,
@@ -1503,7 +1503,7 @@
       "slider_distance_km": 10.37,
       "lalamove": 25,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 13.88
     },
     "Dubai Production City": {
       "km": 14.14,
@@ -1514,7 +1514,7 @@
       "slider_distance_km": 14.14,
       "lalamove": 28,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 13.59
     },
     "Arabian Ranches": {
       "km": 15.22,
@@ -1525,7 +1525,7 @@
       "slider_distance_km": 15.22,
       "lalamove": 28,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 19.2
     },
     "Damac Hills": {
       "km": 16.35,
@@ -1536,7 +1536,7 @@
       "slider_distance_km": 16.35,
       "lalamove": 29,
       "lalamove_error": null,
-      "noon_send": 12
+      "noon_send": 20.41
     },
     "Town Square": {
       "km": 21.54,
@@ -1551,9 +1551,9 @@
     },
     "Al Salamah (UAQ)": {
       "km": 86.69,
-      "minutes": 72,
+      "minutes": 74,
       "slider_bike": null,
-      "slider_car": 87.41,
+      "slider_car": 88.75,
       "slider_tier": "car",
       "slider_distance_km": 86.69,
       "lalamove": 77,
@@ -1561,12 +1561,12 @@
       "noon_send": null
     },
     "Al Hamra (RAK)": {
-      "km": 110.24,
-      "minutes": 85,
+      "km": 110.14,
+      "minutes": 88,
       "slider_bike": null,
-      "slider_car": 105.3,
+      "slider_car": 107.27,
       "slider_tier": "car",
-      "slider_distance_km": 110.24,
+      "slider_distance_km": 110.14,
       "lalamove": 93,
       "lalamove_error": null,
       "noon_send": null

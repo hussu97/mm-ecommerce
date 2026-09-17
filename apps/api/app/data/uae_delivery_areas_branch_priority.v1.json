@@ -299,7 +299,7 @@
       {
         "rank": 1,
         "branch_ref": "K001",
-        "courier": "slider_bike",
+        "courier": "noon_send",
         "alternates": [
           "lalamove"
         ]
@@ -1165,7 +1165,7 @@
       {
         "rank": 1,
         "branch_ref": "B001",
-        "courier": "noon_send",
+        "courier": "slider_bike",
         "alternates": [
           "lalamove"
         ]
@@ -1187,8 +1187,9 @@
       {
         "rank": 1,
         "branch_ref": "B001",
-        "courier": "noon_send",
+        "courier": "slider_bike",
         "alternates": [
+          "noon_send",
           "lalamove"
         ]
       },
@@ -1451,7 +1452,7 @@
       {
         "rank": 1,
         "branch_ref": "B001",
-        "courier": "noon_send",
+        "courier": "slider_bike",
         "alternates": [
           "lalamove"
         ]
@@ -1473,7 +1474,7 @@
       {
         "rank": 1,
         "branch_ref": "B001",
-        "courier": "slider_bike",
+        "courier": "noon_send",
         "alternates": [
           "lalamove"
         ]
