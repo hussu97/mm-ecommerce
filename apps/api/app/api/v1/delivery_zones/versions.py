@@ -159,7 +159,20 @@ async def zone_map(
     zones = []
     lats: list[float] = []
     lngs: list[float] = []
+    branch_ids: set[uuid.UUID] = set()
     for polygon in sorted(version.polygons, key=lambda p: p.display_order):
+        # The ordered branch list behind the per-branch map view: which kitchen
+        # serves this zone, at what rank, on which courier. Rank-ordered so the
+        # client can read `[0]` as the preferred branch without sorting.
+        fulfilments = [
+            {
+                "branch_id": str(a.branch_id),
+                "rank": a.rank,
+                "fulfilment_provider": a.fulfilment_provider,
+            }
+            for a in sorted(polygon.branch_fulfilments, key=lambda a: a.rank)
+        ]
+        branch_ids.update(a.branch_id for a in polygon.branch_fulfilments)
         zones.append(
             {
                 "id": str(polygon.id),
@@ -172,15 +185,37 @@ async def zone_map(
                 "free_delivery_threshold": float(polygon.free_delivery_threshold),
                 "fulfilment_provider": polygon.fulfilment_provider,
                 "display_order": polygon.display_order,
+                "branch_fulfilments": fulfilments,
                 "geometry": _simplify(polygon.geometry, tolerance),
             }
         )
         lats += [float(polygon.min_lat), float(polygon.max_lat)]
         lngs += [float(polygon.min_lng), float(polygon.max_lng)]
 
+    # The branches any zone on this map is served from, for the map's per-branch
+    # tabs. Named here so the client draws a tab per real kitchen rather than a
+    # bare id. Ordered by reference so Sharjah (K001) leads Barsha (B001).
+    branches: list[dict[str, str]] = []
+    if branch_ids:
+        rows = (
+            (
+                await db.execute(
+                    select(Branch)
+                    .where(Branch.id.in_(branch_ids))
+                    .order_by(Branch.reference)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        branches = [
+            {"id": str(b.id), "reference": b.reference, "name": b.name} for b in rows
+        ]
+
     return {
         "version": {"id": str(version.id), "name": version.name},
         "zones": zones,
+        "branches": branches,
         # The stored bounding boxes, so the client can frame the country
         # without walking every coordinate it was just sent.
         "bounds": {

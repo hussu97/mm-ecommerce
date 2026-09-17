@@ -1063,14 +1063,29 @@ export interface DeliveryZoneShape {
    * `free_delivery_eligible` says.
    */
   free_delivery_threshold: number;
+  /** The preferred (rank-1) courier — what the "Preferred" map view colours by. */
   fulfilment_provider: FulfilmentProvider;
   display_order: number;
+  /**
+   * The branches that serve this zone, in rank order, each on its own courier.
+   * Drives the per-branch map views: a branch tab colours every zone by that
+   * branch's courier for it and greys the zones it does not serve.
+   */
+  branch_fulfilments: DeliveryZoneBranchFulfilment[];
   geometry: ZoneGeometry;
+}
+
+export interface DeliveryZoneBranchFulfilment {
+  branch_id: string;
+  rank: number;
+  fulfilment_provider: FulfilmentProvider;
 }
 
 export interface DeliveryZoneMap {
   version: { id: string; name: string } | null;
   zones: DeliveryZoneShape[];
+  /** The kitchens any zone on this map is served from — the per-branch tabs. */
+  branches: { id: string; reference: string; name: string }[];
   bounds: { min_lat: number; max_lat: number; min_lng: number; max_lng: number } | null;
 }
 
