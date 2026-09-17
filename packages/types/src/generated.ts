@@ -14870,6 +14870,8 @@ export interface components {
             aggregator_driver_phone?: string | null;
             /** Aggregator Driver Status */
             aggregator_driver_status?: string | null;
+            /** Branch Id */
+            branch_id?: string | null;
             /** Cancellation Reason */
             cancellation_reason?: string | null;
             courier?: components["schemas"]["CourierBadge"] | null;

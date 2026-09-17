@@ -340,6 +340,13 @@ class OrderResponse(BaseModel):
     #: separation is what keeps "the customer is not told who carries their
     #: cake" a property of the type rather than a rule someone has to remember.
     fulfilment: FulfilmentResponse | None = None
+    #: The kitchen this order is fulfilled from — the same field, and the same
+    #: meaning, as `OrderListResponse.branch_id`; null for an order placed before
+    #: zones named a branch. A bare id, not the branch's name or address: it
+    #: carries the *who bakes it* the owner order notification needs (which the
+    #: courier-free `fulfilment` block deliberately withholds from delivery
+    #: orders) without putting a kitchen's address on the customer's track page.
+    branch_id: UUID | None = None
     #: Which channel rang this up — `online` for the storefront, `cashier` for
     #: the counter. Carried so the mailer can tell them apart: a counter sale is
     #: handed over across the counter with a printed receipt, and has no use for

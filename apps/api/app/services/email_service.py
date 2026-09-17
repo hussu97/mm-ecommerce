@@ -43,6 +43,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.database import AsyncSessionFactory
 from app.core.trading_hours import DELIVERY_TIMEZONE
+from app.models.branch import Branch
 from app.models.email_log import EmailLog
 from app.models.order import OrderStatusEnum
 from app.models.pos_order import OrderSourceEnum
@@ -822,6 +823,24 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
 
     subject = f"New order — {order.order_number} | Melting Moments"
     context = _order_context(order)
+    # Name the fulfilling kitchen — for delivery too, not just collection.
+    # `_order_context` fills `branch` from `fulfilment.branch`, which is
+    # deliberately pickup-only so the customer's track page never names which
+    # kitchen baked their delivery. The two owners who read this email do need
+    # it, so resolve it here from the order's `branch_id` on email_service's own
+    # session (the `_log` pattern), leaving the customer-facing response and its
+    # generated contract untouched. Only when the pickup path did not already set
+    # it, so a collection order keeps its localised pickup-branch card.
+    if context.get("branch") is None and order.branch_id is not None:
+        try:
+            async with AsyncSessionFactory() as db:
+                context["branch"] = await db.get(Branch, order.branch_id)
+        except Exception as exc:
+            logger.error(
+                "owner_order_notification branch lookup failed for %s: %s",
+                order.order_number,
+                exc,
+            )
     snapshot = order.shipping_address_snapshot or {}
     for recipient in OWNER_ORDER_RECIPIENTS:
         try:

@@ -517,6 +517,59 @@ async def test_the_counter_does_not_need_telling_about_the_counter(sent):
     assert len(sent) == len(email_service.OWNER_ORDER_RECIPIENTS)
 
 
+@pytest.mark.asyncio
+async def test_the_owner_email_names_the_kitchen_for_a_delivery_order(
+    sent, monkeypatch
+):
+    """The two owners are told which branch bakes a *delivery* order — the fact
+    the customer-facing `fulfilment` block deliberately withholds (its `branch`
+    is pickup-only). It is resolved from `branch_id` on email_service's own
+    session, so patch that session to a branch and assert it reaches the copy."""
+
+    class _FakeBranch:
+        name = "Melting Moments · Barsha"
+        city = "Dubai"
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def get(self, _model, _id):
+            return _FakeBranch()
+
+    monkeypatch.setattr(email_service, "AsyncSessionFactory", lambda: _FakeSession())
+
+    order = _order(method=DeliveryMethodEnum.DELIVERY, branch=None)
+    order.branch_id = uuid.uuid4()
+    await email_service.send_owner_order_notification(order)
+
+    assert sent, "owner notification should send for an online delivery order"
+    text = body(sent[0])
+    assert "Melting Moments · Barsha" in text, "the fulfilling branch must be named"
+    assert "Dubai" in text, "the branch city should follow the name"
+
+
+@pytest.mark.asyncio
+async def test_the_owner_email_survives_a_branch_lookup_that_fails(sent, monkeypatch):
+    """The branch lookup is a courtesy, not the point: a session failure must not
+    stop the owner notification (email_service never raises). The email still
+    goes, just without the branch row."""
+
+    def _boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(email_service, "AsyncSessionFactory", _boom)
+
+    order = _order(method=DeliveryMethodEnum.DELIVERY, branch=None)
+    order.branch_id = uuid.uuid4()
+    await email_service.send_owner_order_notification(order)
+
+    assert len(sent) == len(email_service.OWNER_ORDER_RECIPIENTS)
+
+
 def test_the_gate_reads_the_channel_and_not_whether_it_reached_a_register():
     """
     The regression this whole rule is one edit away from.
