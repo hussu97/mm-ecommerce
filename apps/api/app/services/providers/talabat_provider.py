@@ -1249,15 +1249,18 @@ class TalabatClient(BaseAggregatorClient):
             # Item-level reversal on a delivered order: when the customer reports a
             # missing/wrong item, Talabat refunds them and bills it back to the
             # vendor as an "Operational Charges" line (a vendor-agreed refund lands
-            # under "Vendor Refunds"). That money left the sale after delivery, so
-            # carry it as the order's `refund_amount` — the promote step books it
-            # onto `orders.refunded_amount`, which net revenue already subtracts,
-            # so the gross the customer was charged stays on the header while the
-            # net follows the ledger. Capped at the subtotal so net never goes
-            # below zero. A *cancelled* order's whole value is handled by the
-            # cancellation path, not a partial reversal, so it is left out here.
-            reversal = (_money(row.get("Operational Charges")) or Decimal("0")) + (
-                _money(row.get("Vendor Refunds")) or Decimal("0")
+            # under "Vendor Refunds"; a later recovery under "Amount owed back to
+            # Talabat"). That money left the sale after delivery, so carry it as the
+            # order's `refund_amount` — the promote step books it onto
+            # `orders.refunded_amount`, which net revenue already subtracts, so the
+            # gross the customer was charged stays on the header while the net
+            # follows the ledger. Capped at the subtotal so net never goes below
+            # zero. A *cancelled* order's whole value is handled by the cancellation
+            # path, not a partial reversal, so it is left out here.
+            reversal = (
+                (_money(row.get("Operational Charges")) or Decimal("0"))
+                + (_money(row.get("Vendor Refunds")) or Decimal("0"))
+                + (_money(row.get("Amount owed back to Talabat")) or Decimal("0"))
             )
             refund_amount = (
                 (min(reversal, subtotal) if subtotal is not None else reversal)

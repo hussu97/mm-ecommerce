@@ -503,6 +503,30 @@ def test_orders_from_csv_vendor_refund_adds_to_reversal():
     assert order.refund_amount == Decimal("25.00")
 
 
+def test_orders_from_csv_amount_owed_back_adds_to_reversal():
+    """'Amount owed back to Talabat' (a post-delivery recovery) joins the refund
+    reversal alongside Operational Charges and Vendor Refunds."""
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-4006",
+                "Store ID": "793319",
+                "Order status": "Delivered",
+                "Subtotal": "100.00",
+                "Order Items": "1 Cake",
+                "Operational Charges": "5.00",
+                "Vendor Refunds": "0.00",
+                "Amount owed back to Talabat": "8.00",
+                "Order received at": "2026-09-09 12:00",
+                "Delivered at": "2026-09-09 12:40",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    assert order.refund_amount == Decimal("13.00")  # 5 + 8
+
+
 def test_orders_from_csv_reversal_capped_at_subtotal():
     client = TalabatClient()
     csv_text = _csv_from_rows(
