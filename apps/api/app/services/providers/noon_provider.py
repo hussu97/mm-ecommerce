@@ -64,6 +64,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.money import money as _money
 from app.models.aggregator import CHANNEL_NOON
 from app.services.aggregators.modifiers import expand_modifiers
 from app.services.aggregators.normalized import (
@@ -89,6 +90,10 @@ from app.services.providers.aggregator_base import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: UAE VAT on marketplace commission. noon reports commission VAT-exclusive; this
+#: grosses it up so `commission_amount` is VAT-inclusive like the other channels.
+_COMMISSION_VAT_RATE = Decimal("0.05")
 
 _RMS = "https://restaurant.noon.partners"
 _ORDER_STATEMENT_URL = f"{_RMS}/_food-restaurant/finance/statement/orders"
@@ -1284,8 +1289,18 @@ class NoonClient(BaseAggregatorClient):
     def _commission_from(row: dict[str, Any]) -> Decimal | None:
         """The real commission, backed out of the statement: `fees_exc_vat` less
         the genuinely non-commission fees (`_NOON_NON_COMMISSION_FEES`), floored
-        at zero. `lead_generation_fee` is the commission itself and is left in.
-        None when `fees_exc_vat` is absent — an unknown cut, not a zero one.
+        at zero, then made VAT-INCLUSIVE. `lead_generation_fee` is the commission
+        itself and is left in. None when `fees_exc_vat` is absent — an unknown cut,
+        not a zero one.
+
+        VAT basis: noon reports `fees_exc_vat` VAT-EXCLUSIVE, but every other
+        channel's `commission_amount` (Keeta, Careem, Talabat) is VAT-INCLUSIVE,
+        and `OrderEconomics.net` subtracts it verbatim as the real cost. Booking
+        noon ex-VAT therefore understated its take and overstated net by the 5%
+        commission VAT, and left noon's reconciliation rate ex-VAT while the others
+        were inclusive. So gross it up by VAT to match. noon exposes no per-fee VAT
+        in this feed (only the sale's `total_vat`), so the flat 5% is the available
+        basis; migration 251 backfills the rows already stored ex-VAT.
         """
         fees_exc_vat = _num(_first(row, "fees_exc_vat", "feesExcVat"))
         if fees_exc_vat is None:
@@ -1296,7 +1311,9 @@ class NoonClient(BaseAggregatorClient):
             if fee is not None:
                 other += fee
         value = abs(fees_exc_vat) - other
-        return value if value > 0 else Decimal(0)
+        if value <= 0:
+            return Decimal(0)
+        return _money(value * (Decimal(1) + _COMMISSION_VAT_RATE))
 
     # ── finance (statements + payouts as distinct wallet tabs) ──────────────
     async def fetch_statements(

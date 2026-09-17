@@ -579,9 +579,11 @@ class TestMergeOmsIntoRms:
         assert merged.statement_id == "ST-2026-08-22"
 
     def test_commission_comes_from_rms(self):
-        """commission = fees_exc_vat (9.0) − (payment_fee 0.5 + delivery_fee 2.0) = 6.5"""
+        """commission = fees_exc_vat (9.0) − (payment_fee 0.5 + delivery_fee 2.0)
+        = 6.5 ex-VAT, then grossed up by 5% VAT to 6.83 — noon's commission is
+        booked VAT-inclusive to match the other channels (see _commission_from)."""
         merged = _merge_oms_into_rms(self._oms(), self._rms())
-        assert merged.commission_amount == Decimal("6.5")
+        assert merged.commission_amount == Decimal("6.83")
 
     def test_net_payable_comes_from_rms(self):
         merged = _merge_oms_into_rms(self._oms(), self._rms())
@@ -807,7 +809,8 @@ async def test_fetch_sales_merges_oms_items_with_rms_fees(session_with_tokens):
     assert order.items[0].modifiers[0].quantity == Decimal("1")
     # RMS fields
     assert order.statement_id == "ST-2026-08-22"
-    assert order.commission_amount == Decimal("6.5")
+    # 6.5 ex-VAT grossed up by 5% VAT — noon commission is booked VAT-inclusive.
+    assert order.commission_amount == Decimal("6.83")
     assert order.net_payable == Decimal("35.37")
 
 
