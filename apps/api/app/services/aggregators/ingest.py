@@ -58,6 +58,7 @@ from app.models.aggregator import (
     RUN_PARTIAL,
     RUN_RUNNING,
     SESSION_LIVE,
+    STATEMENT_GRAIN_ORDER,
     AggregatorBranchMap,
     AggregatorOrder,
     AggregatorOrderItem,
@@ -82,6 +83,18 @@ from app.services.aggregators.normalized import (
     SalesResult,
     StandardOrder,
     StandardStatement,
+)
+from app.services.aggregators.statement_categories import (
+    is_fee as is_fee_line,
+)
+from app.services.aggregators.statement_categories import (
+    is_gross as is_gross_line,
+)
+from app.services.aggregators.statement_categories import (
+    is_net as is_net_line,
+)
+from app.services.aggregators.statement_categories import (
+    is_vat as is_vat_line,
 )
 from app.services.providers.aggregator_base import (
     AggregatorAuthError,
@@ -713,6 +726,11 @@ async def _upsert_statement(
             )
         )
 
+    # A header total the provider did not declare (Deliveroo/Keeta/Careem publish
+    # only lines) is derived from those lines, so the header — and any header-level
+    # report — is not blank.
+    await _fill_statement_totals_from_lines(db, channel, statement)
+
     # Couple every order this statement settled back to it, so the order→statement
     # link holds for EVERY channel — not only the ones whose sales feed already
     # carries the statement id (noon's RMS does; deliveroo/talabat/keeta learn it
@@ -729,6 +747,156 @@ async def _upsert_statement(
     # Book settled vendor-fault deductions as the order's refund, so the next
     # promote lowers net sales to match the payout (see `apply_statement_refunds`).
     await apply_statement_refunds(db, channel, settled_order_ids)
+    # Correct the order feed's PROVISIONAL fees with the settlement's authoritative
+    # ones, so the sales↔statement reconciliation ties out (see the function).
+    await backfill_order_economics_from_statement(db, channel, statement.statement_id)
+
+
+async def _fill_statement_totals_from_lines(
+    db: AsyncSession, channel: str, statement: StandardStatement
+) -> None:
+    """Derive a statement header's NULL money totals from its own lines.
+
+    Deliveroo, Keeta and Careem publish per-order/summary lines but no header
+    roll-up, so `gross_sales` / `net_payable` / `total_fees` / `total_vat` land
+    null and every header-level read (the settlement reconciler's declared-net
+    check, any future header report) goes dark. Sum the lines into those four
+    buckets — gross/fees/VAT as magnitudes, net SIGNED — using the same
+    `statement_categories` predicates the Fees roll-up and the order back-fill use,
+    so all three agree on what a fee is.
+
+    Fills only a total the provider left null (noon and Talabat declare their own,
+    which stay authoritative), and writes only a value that actually changes, so a
+    daily re-ingest does not churn `updated_at`.
+    """
+    if (
+        statement.gross_sales is not None
+        and statement.net_payable is not None
+        and statement.total_fees is not None
+        and statement.total_vat is not None
+    ):
+        return  # provider declared every total — nothing to derive
+    ln = AggregatorStatementLine
+    gross, net, fees, vat = (
+        await db.execute(
+            select(
+                func.sum(func.abs(ln.amount)).filter(is_gross_line(ln)),
+                func.sum(ln.amount).filter(is_net_line(ln)),
+                func.sum(func.abs(ln.amount)).filter(is_fee_line(ln)),
+                func.sum(func.abs(ln.amount)).filter(is_vat_line(ln)),
+            ).where(ln.channel == channel, ln.statement_id == statement.statement_id)
+        )
+    ).one()
+
+    fills: dict[str, Any] = {}
+    changed = []
+    for provided, derived, col in (
+        (statement.gross_sales, gross, AggregatorStatement.gross_sales),
+        (statement.net_payable, net, AggregatorStatement.net_payable),
+        (statement.total_fees, fees, AggregatorStatement.total_fees),
+        (statement.total_vat, vat, AggregatorStatement.total_vat),
+    ):
+        if provided is None and derived is not None:
+            v = Decimal(str(derived))
+            fills[col.key] = v
+            changed.append(col.is_distinct_from(v))
+    if not fills:
+        return
+    await db.execute(
+        sql_update(AggregatorStatement)
+        .where(
+            AggregatorStatement.channel == channel,
+            AggregatorStatement.statement_id == statement.statement_id,
+            or_(*changed),
+        )
+        .values(**fills, updated_at=utcnow())
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def backfill_order_economics_from_statement(
+    db: AsyncSession, channel: str, statement_id: str
+) -> int:
+    """Overwrite the order feed's provisional fees with the settled statement's.
+
+    The hourly sales pull stamps each order with a PROVISIONAL fee breakdown — and
+    for an order the marketplace has not settled yet, that provision can be wrong,
+    not merely absent. noon is the clear case: an OMS-only order carries
+    ``net_payable == gross_sales`` (no cut taken) until its weekly RMS settlement
+    publishes; the 10-day sales lookback then stops re-pulling it, so the provision
+    never self-corrects and the order over-states its payout by the full commission.
+    Deliveroo is the other case — its sales feed carries no per-order fees at all,
+    only the statement does.
+
+    The published statement is authoritative for the SETTLEMENT layer, so when it
+    itemises an order (grain=order) this rolls its ``net_payable`` — the amount the
+    marketplace actually paid — onto the order, WINNING over the provision (that is
+    what corrects noon's stale-provisional and Deliveroo's absent net, so the
+    sales↔statement reconciliation ties out and promote's cancellation test sees
+    the real sign). ``gross_sales`` — the sale the customer placed, which the sales
+    feed knows first-hand — is only filled when the order lacks it. `net_payable`
+    is summed SIGNED (a clawback line is negative); gross is a magnitude.
+
+    It deliberately does NOT touch the order's per-fee columns
+    (``commission_amount``/``vat_amount``). Those are the marketplace's own cut, the
+    Fees & VAT roll-up already reads them straight off the statement lines for a
+    statement-fed channel, and their sales-feed representation differs from the
+    line's by convention (noon books order commission VAT-INCLUSIVE while its line
+    is ex-VAT — see migration ``251_noon_commission_incl``), so writing the line's
+    figure back onto the order would make the feed self-inconsistent for no gain.
+
+    Matches the order the same way the rest of the settlement join does
+    (`_order_matches_line_ids`, so Deliveroo's `drn_id` resolves), and writes only
+    when a value actually changes — so a daily re-ingest does not needlessly bump
+    `updated_at` and re-trigger promotion. Returns aggregator orders updated.
+    """
+    ln = AggregatorStatementLine
+    rows = (
+        await db.execute(
+            select(
+                ln.external_order_id,
+                func.sum(func.abs(ln.amount)).filter(is_gross_line(ln)).label("gross"),
+                func.sum(ln.amount).filter(is_net_line(ln)).label("net"),
+            )
+            .where(
+                ln.channel == channel,
+                ln.statement_id == statement_id,
+                ln.grain == STATEMENT_GRAIN_ORDER,
+                ln.external_order_id.is_not(None),
+            )
+            .group_by(ln.external_order_id)
+        )
+    ).all()
+
+    updated = 0
+    for external_order_id, gross, net in rows:
+        values: dict[str, Any] = {}
+        changed = []
+        # Settlement wins over the provisional order-feed net.
+        if net is not None:
+            v = Decimal(str(net))
+            values["net_payable"] = v
+            changed.append(AggregatorOrder.net_payable.is_distinct_from(v))
+        # Gross: the sales feed is first-hand for the customer's sale — fill only a
+        # gap, never overwrite.
+        if gross is not None:
+            v = Decimal(str(gross))
+            values["gross_sales"] = func.coalesce(AggregatorOrder.gross_sales, v)
+            changed.append(AggregatorOrder.gross_sales.is_(None))
+        if not values:
+            continue
+        result = await db.execute(
+            sql_update(AggregatorOrder)
+            .where(
+                AggregatorOrder.channel == channel,
+                _order_matches_line_ids({str(external_order_id)}),
+                or_(*changed),
+            )
+            .values(**values, updated_at=utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        updated += int(result.rowcount or 0)
+    return updated
 
 
 async def _stamp_orders_from_settled_ids(

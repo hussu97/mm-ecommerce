@@ -1334,7 +1334,16 @@ class KeetaClient(BaseAggregatorClient):
                 _first_money(row, ("cancellationFee", "cancelFee"))
             ),
             net_payable=net_payable,
-            statement_id=_first_text(row, _STATEMENT_ID_KEYS),
+            # NOT `_STATEMENT_ID_KEYS`: a Keeta sales row carries a bill-DETAIL id
+            # (`billId`/`settleId`, e.g. `DT2097…`) that is a different id namespace
+            # from the weekly settlement statement's own key
+            # (`KEETA_BILL_{shopId}_{cycleEnd}`, minted in `_parse_bill_xlsx`). Stamping
+            # the detail id here left every Keeta order pointing at a statement that
+            # does not exist, so the sales↔statement join found nothing. Leave it
+            # unset at sales time; the finance pass couples the order to its real
+            # statement from the bill's own per-order lines
+            # (`_stamp_orders_from_settled_ids`). The detail id stays in `raw`.
+            statement_id=None,
             items=self._items_from(row, order_id),
             raw=row,
         )

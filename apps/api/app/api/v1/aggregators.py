@@ -106,6 +106,7 @@ from app.services.aggregators import (
     mapping,
     session_store,
     settlement_reconcile,
+    statement_categories,
     statement_docs,
 )
 
@@ -927,38 +928,22 @@ async def _fees_from_statement_lines(
 ) -> dict[str, AggregatorFeesRow]:
     """Fee/VAT roll-up per channel from the settled statement lines (has VAT)."""
     ln = AggregatorStatementLine
-    lt = func.lower(func.coalesce(ln.line_type, ""))
-    fc = func.lower(func.coalesce(ln.fee_category, ""))
-    # Provider-verbatim words → buckets. VAT is tested first so a "commission_vat"
-    # line lands in VAT, not commission.
-    is_vat = or_(lt == "vat", fc.like("%vat%"))
-    is_commission = and_(fc == "commission", ~is_vat)
-    is_gross = or_(fc == "gross_sales", lt.in_(["gross_sales", "sales", "sale"]))
-    is_net = or_(fc == "net_payable", lt.in_(["net_payable", "payout", "settlement"]))
+    # Provider-verbatim words → buckets, shared with the settlement back-fill in
+    # `ingest` so a reported fee and a written-back order fee cannot drift apart
+    # (`statement_categories`). VAT is tested first so a "commission_vat" line
+    # lands in VAT, not commission.
+    is_vat = statement_categories.is_vat(ln)
+    is_commission = statement_categories.is_commission(ln)
+    is_gross = statement_categories.is_gross(ln)
+    is_net = statement_categories.is_net(ln)
     # Money that comes IN to the merchant (a Keeta-fault compensation, an upward
     # adjustment, a Deliveroo invoice-correction credit) is other-revenue, NOT a
     # fee — `net_payable` already includes it, so abs()'ing it into `other_fees`
-    # would both double-count and inflate the fee total. Keep only cost-side lines
-    # (deductions/downward adjustments) in fees.
-    #
-    # Two ways a line is inbound revenue: a known Keeta category, OR any
-    # `adjustment` line with a POSITIVE amount. Deliveroo's adjustment
-    # `fee_category` is free text (the portal's Activity label), so a string
-    # allow-list cannot keep pace — key off the sign instead. This is safe across
-    # channels because only noon books its fees positive, and noon emits no
-    # `adjustment` lines, so a positive adjustment is always money paid back.
-    is_inbound_adjustment = and_(lt == "adjustment", ln.amount > 0)
-    is_other_revenue = or_(
-        fc.in_(["merchant_compensation", "adjustment_increase"]),
-        is_inbound_adjustment,
-    )
-    # A refund is money that left the SALE (a customer refund, a vendor-liability
-    # reversal), NOT a marketplace fee — so a refund statement line is kept OUT of
-    # `other_fees` (and thus out of the take). The refund VALUE shown is not summed
-    # here, though: it comes uniformly from `aggregator_order.refund_amount` (see
-    # `_refunds_from_orders`), the authoritative per-order refund every channel rolls
-    # its refund onto.
-    is_refund = fc.in_(["customer_refund", "merchant_liability"])
+    # would both double-count and inflate the fee total. A refund line is money off
+    # the SALE, also not a fee (and its value comes from the order feed, not here).
+    # Both live in `statement_categories` so the back-fill excludes them identically.
+    is_other_revenue = statement_categories.is_other_revenue(ln)
+    is_refund = statement_categories.is_refund(ln)
     amt = func.abs(ln.amount)
 
     def _sum(cond):
