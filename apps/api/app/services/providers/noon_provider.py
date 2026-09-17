@@ -1629,7 +1629,13 @@ class NoonClient(BaseAggregatorClient):
         line_date = _parse_date(_first(row, "order_date", "orderDate", "business_date"))
         line_date_iso = line_date.isoformat() if line_date else None
         currency = _first(row, "currency", "currencyCode") or "AED"
-        # (label, line_type, fee_category, value)
+        # (label, line_type, fee_category, value). NO VAT line: `total_vat` is the
+        # customer's SALE VAT (output VAT the merchant collects and remits), NOT a
+        # fee noon charges — booking it as a "vat" line made the Fees & VAT roll-up
+        # count it toward the take. noon's fees are all VAT-INCLUSIVE (commission via
+        # `_commission_from`, the tax-invoice fees via `priceInclVat`), so the fee
+        # VAT is derived from them (noon is in `_VAT_INCLUSIVE_FEE_CHANNELS`), not
+        # taken from the sale VAT.
         candidates: list[tuple[str, str, str | None, Decimal | None]] = [
             (
                 "net_payable",
@@ -1644,7 +1650,6 @@ class NoonClient(BaseAggregatorClient):
                 _num(_first(row, "order_value", "orderValue", "item_value")),
             ),
             ("commission", "fee", "commission", NoonClient._commission_from(row)),
-            ("vat", "vat", "vat", _abs(_num(_first(row, "total_vat", "totalVat")))),
         ]
         lines: list[StandardStatementLine] = []
         for label, line_type, fee_category, amount in candidates:

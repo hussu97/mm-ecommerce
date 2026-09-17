@@ -37,6 +37,7 @@ from app.core.permissions import require
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
     CHANNEL_KEETA,
+    CHANNEL_NOON,
     MATCH_MATCHED,
     MATCH_NO_MAKER_SIDE,
     MATCH_UNMATCHED_AGG,
@@ -1000,15 +1001,19 @@ async def _fees_from_orders(
     }
 
 
-# UAE VAT is 5%, and some marketplaces bill their fees VAT-INCLUSIVE without ever
-# itemising the tax. Keeta is the case: its weekly billing XLSX labels every money
-# column "(VAT included)" — item price, commission, bank fee, subscription, POS fee
-# — and carries no VAT-amount column anywhere (confirmed from a live bill), so the
-# commission/bank-fee lines we store already have the 5% inside them and the VAT
-# bucket comes out 0. The channels that DO break VAT out (Deliveroo/Careem/noon/
-# Talabat) book fees ex-VAT plus a separate `vat` line, so leaving Keeta's fees
-# VAT-inclusive makes the Fees column mean two different things across rows.
-_VAT_INCLUSIVE_FEE_CHANNELS = frozenset({CHANNEL_KEETA})
+# UAE VAT is 5%, and some marketplaces' fees are stored VAT-INCLUSIVE with no
+# separate fee-VAT line, so the VAT is derived from the fee here (fee × 5/105) and
+# split out for display. Two channels:
+#   • Keeta — its weekly billing XLSX labels every money column "(VAT included)" and
+#     carries no VAT-amount column at all, so the stored commission/bank-fee already
+#     have the 5% inside them.
+#   • noon — its commission is grossed up to VAT-inclusive at ingest and its
+#     tax-invoice fees are stored `priceInclVat`; its only VAT figure in the feed is
+#     the customer's SALE VAT, which is not a fee and is deliberately NOT booked as a
+#     fee-VAT line (see `_statement_lines_from_order_row`).
+# Careem/Deliveroo/Talabat DO break fee VAT out into their own `vat` lines, so they
+# are not here.
+_VAT_INCLUSIVE_FEE_CHANNELS = frozenset({CHANNEL_KEETA, CHANNEL_NOON})
 _VAT_RATE = Decimal("0.05")
 
 

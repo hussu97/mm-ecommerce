@@ -191,3 +191,23 @@ async def test_overview_summary_lines_empty_when_no_platform_fee(monkeypatch):
     monkeypatch.setattr(provider, "_rms_headers", lambda session: {})
 
     assert await provider._overview_summary_lines(object(), "S1") == []
+
+
+def test_statement_lines_omit_sale_vat():
+    """noon's `total_vat` is the customer SALE VAT (output VAT the merchant remits),
+    NOT a fee — so it is not booked as a statement 'vat' line. Only net, gross and
+    the (VAT-inclusive) commission are emitted; the fee VAT is derived downstream."""
+    row = {
+        "order_nr": "5197840000000001",
+        "order_date": "2026-09-10",
+        "net_payable": "26.20",
+        "order_value": "40.00",
+        "fees_exc_vat": "9.0",
+        "total_vat": "1.90",  # sale VAT — must NOT become a fee line
+    }
+    lines = provider._statement_lines_from_order_row("STMT", row)
+    assert all(ln.line_type != "vat" for ln in lines)
+    assert all(ln.fee_category != "vat" for ln in lines)
+    assert Decimal("1.90") not in {abs(ln.amount) for ln in lines}
+    # commission (VAT-inclusive) is still emitted.
+    assert any(ln.fee_category == "commission" for ln in lines)
