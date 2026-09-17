@@ -176,6 +176,9 @@ class TransferOrderReportChild(BaseModel):
     destination_branch_name: str | None = None
     status: str
     item_count: int
+    #: The requested transfer quantity across every line of the leg (Σ line.quantity),
+    #: independent of how much has since been sent or received.
+    total_quantity: Decimal
     total_sent: Decimal
     total_received: Decimal
     sent_value: Decimal

@@ -19560,6 +19560,8 @@ export interface components {
             sent_value: string;
             /** Status */
             status: string;
+            /** Total Quantity */
+            total_quantity: string;
             /** Total Received */
             total_received: string;
             /** Total Sent */

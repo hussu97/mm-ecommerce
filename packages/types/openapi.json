@@ -32485,6 +32485,11 @@
             "title": "Status",
             "type": "string"
           },
+          "total_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Quantity",
+            "type": "string"
+          },
           "total_received": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Total Received",
@@ -32507,6 +32512,7 @@
           "destination_branch_id",
           "status",
           "item_count",
+          "total_quantity",
           "total_sent",
           "total_received",
           "sent_value",

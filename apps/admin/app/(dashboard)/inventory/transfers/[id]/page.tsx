@@ -199,7 +199,7 @@ export default function TransferOrderDetailPage() {
                   <th className="px-2 py-1">Destination</th>
                   <th className="px-2 py-1">Reference</th>
                   <th className="px-2 py-1">Status</th>
-                  <th className="px-2 py-1 text-right">Items</th>
+                  <th className="px-2 py-1 text-right">Qty</th>
                   <th className="px-2 py-1 text-right">Sent</th>
                   <th className="px-2 py-1 text-right">Received</th>
                   <th className="px-2 py-1 text-right">Sent value</th>
@@ -213,7 +213,7 @@ export default function TransferOrderDetailPage() {
                     <td className="px-2 py-1 font-medium">{child.destination_branch_name ?? branchName(child.destination_branch_id)}</td>
                     <td className="px-2 py-1 text-gray-600">{child.reference}</td>
                     <td className="px-2 py-1"><Badge variant={transferStatusVariant(child.status)}>{transferStatusLabel(child.status)}</Badge></td>
-                    <td className="px-2 py-1 text-right tabular-nums">{child.item_count}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_quantity)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_sent)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_received)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.sent_value)}</td>

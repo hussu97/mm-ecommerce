@@ -273,6 +273,10 @@ async def _build_report(db: AsyncSession, order: TransferOrder) -> TransferOrder
             destination_branch_name=names.get(child.branch_id),
             status=child.status,
             item_count=len(child.items),
+            total_quantity=sum(
+                (Decimal(str(line.quantity)) for line in child.items),
+                Decimal("0"),
+            ),
             total_sent=sum(
                 (Decimal(str(line.sent_quantity)) for line in child.items),
                 Decimal("0"),
