@@ -34,7 +34,7 @@ every header-level read goes dark. Derive them from the lines — gross/fees/VAT
 magnitudes, net SIGNED — filling only a total the provider left null (noon and
 Talabat declare their own).
 
-Revision ID: 253_aggregator_settlement_backfill
+Revision ID: 253_settlement_backfill
 Revises: 252_polygon_branch_priority_seed
 Create Date: 2026-09-17
 """
@@ -43,7 +43,7 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "253_aggregator_settlement_backfill"
+revision: str = "253_settlement_backfill"
 down_revision: Union[str, None] = "252_polygon_branch_priority_seed"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
