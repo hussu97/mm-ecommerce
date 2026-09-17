@@ -920,13 +920,19 @@ class CareemClient(BaseAggregatorClient):
         )
         bdate = _dubai_date(placed_at)
         price = detail.get("price") if isinstance(detail.get("price"), dict) else {}
-        # The shop's sale is the MENU value (`price.sub_total`/`total`/`original`),
-        # NOT `total_price`/`charge_amount` — those are what the customer was
-        # charged, which includes Careem's own CPlus markup on top of the menu
-        # price (e.g. 57.75 charged on a 55 menu subtotal) and is not the shop's
-        # revenue. Tax is 0 for this (non-tax-registered) merchant, so sub_total is
-        # the goods value.
-        gross = _num(_first(price, "sub_total", "total", "original"))
+        # The shop's sale is the MENU value of the goods — `price.total` /
+        # `price.original` (equal on every Careem order seen, and equal to the sum
+        # of the item prices and to the settlement statement's gross line). NOT
+        # `total_price` / `charge_amount`, which are what the customer was charged
+        # WITH Careem's CPlus markup on top and are not the shop's revenue.
+        #
+        # `sub_total` is deliberately NOT preferred: on a CPlus order Careem reports
+        # a sub_total BELOW the menu value (e.g. 93.75 on a 125 menu the customer
+        # actually paid 125 for), a Careem-internal figure that understated our
+        # gross — and its commission is billed on the full 125. `total`/`original`
+        # is the goods value; `sub_total` is only a last-resort fallback. Tax is 0
+        # for this (non-tax-registered) merchant.
+        gross = _num(_first(price, "total", "original", "sub_total"))
         if gross is None:
             gross = minimal.gross_sales
         merchant = (
