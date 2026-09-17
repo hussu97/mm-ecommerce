@@ -425,6 +425,10 @@ export const ordersApi = {
     date_from?: string;
     date_to?: string;
     branch_id?: string;
+    /** Multi-select fulfilling branches (the OR of them). */
+    branch_ids?: string[];
+    /** Multi-select legal entities the order was billed under. */
+    legal_entity_ids?: string[];
     page?: number;
     per_page?: number;
   }) => api.get<PaginatedOrders>(`/orders/admin/all${buildQs(params)}`),
@@ -650,6 +654,8 @@ export const dashboardApi = {
     date_to?: string;
     statuses?: string[];
     couriers?: string[];
+    branch_ids?: string[];
+    legal_entity_ids?: string[];
   }) => api.get<DashboardToday>(`/dashboard/today${buildQs(params)}`),
 };
 

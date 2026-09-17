@@ -171,6 +171,43 @@ function Section({ title, children, action }: { title: string; children: ReactNo
 }
 
 /** A labelled share bar — orders width proportional to the row's share. */
+/** One clickable scorecard in a selector breakdown (branch, legal entity).
+ *  With no `onToggle` (a null-code "Unknown" bucket) it renders as a static card. */
+function BreakdownCard({
+  row,
+  on,
+  onToggle,
+}: {
+  row: DashboardBreakdownRow;
+  on: boolean;
+  onToggle?: () => void;
+}) {
+  const body = (
+    <div className="text-left leading-tight">
+      <div className="text-xs font-body text-gray-600">{row.label}</div>
+      <div className="font-display text-sm text-gray-800">
+        {row.orders} · <span className="text-gray-500">{formatCurrency(row.revenue)}</span>
+      </div>
+    </div>
+  );
+  if (!onToggle) {
+    return <div className="border border-gray-100 px-3 py-2 opacity-70">{body}</div>;
+  }
+  return (
+    <button
+      onClick={onToggle}
+      aria-pressed={on}
+      title={on ? 'Remove from filter' : 'Filter to this'}
+      className={cn(
+        'border px-3 py-2 transition-colors',
+        on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
+      )}
+    >
+      {body}
+    </button>
+  );
+}
+
 function BreakdownBars({ rows, empty }: { rows: DashboardBreakdownRow[]; empty: string }) {
   if (rows.length === 0) {
     return <p className="text-xs text-gray-400 font-body py-3">{empty}</p>;
@@ -388,7 +425,15 @@ function HeatmapTable({
 }
 
 export default function DashboardPage() {
-  const { filters, patch, toggleStatus, toggleCourier, clearAll } = useOrderFilters();
+  const {
+    filters,
+    patch,
+    toggleStatus,
+    toggleCourier,
+    toggleBranch,
+    toggleLegalEntity,
+    clearAll,
+  } = useOrderFilters();
 
   const [data, setData] = useState<DashboardToday | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -725,12 +770,37 @@ export default function DashboardPage() {
         </Section>
       )}
 
-      {/* Sales by branch — every order resolves to a branch, so this is the
-          whole day's takings split by where they were rung up or fulfilled. */}
+      {/* Sales by branch — every order resolves to a branch. Click a branch to
+          narrow every figure and the list below to it (multi-select). */}
       {data?.by_branch && data.by_branch.length > 0 && (
         <Section title="Sales by Branch">
-          <div className="bg-white border border-gray-200 p-4">
-            <BreakdownBars rows={data.by_branch} empty="No orders yet today" />
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_branch.map((row) => (
+              <BreakdownCard
+                key={row.code ?? row.label}
+                row={row}
+                on={row.code ? filters.branches.includes(row.code) : false}
+                onToggle={row.code ? () => toggleBranch(row.code!) : undefined}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Sales by legal entity — the registered identity each sale was billed
+          under. Click to narrow (multi-select); a non-registered counter sale
+          groups under an un-clickable "Unknown". */}
+      {data?.by_legal_entity && data.by_legal_entity.length > 0 && (
+        <Section title="Sales by Legal Entity">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_legal_entity.map((row) => (
+              <BreakdownCard
+                key={row.code ?? row.label}
+                row={row}
+                on={row.code ? filters.legalEntities.includes(row.code) : false}
+                onToggle={row.code ? () => toggleLegalEntity(row.code!) : undefined}
+              />
+            ))}
           </div>
         </Section>
       )}

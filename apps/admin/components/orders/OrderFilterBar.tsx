@@ -8,7 +8,7 @@
  * when a dashboard scorecard links here.
  */
 
-import { Input, Select } from '@/components/ui';
+import { Input } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { COURIER_OPTIONS } from '@/lib/couriers';
 import { CourierMark } from '@/components/orders/CourierLogo';
@@ -67,8 +67,11 @@ export function OrderFilterBar({
   onPatch,
   onToggleStatus,
   onToggleCourier,
+  onToggleBranch,
+  onToggleLegalEntity,
   onClearAll,
   branchOptions,
+  legalEntityOptions,
 }: {
   filters: OrderFilters;
   /** The live search box value (debounced into the URL by the parent). */
@@ -77,8 +80,11 @@ export function OrderFilterBar({
   onPatch: (partial: Partial<OrderFilters>) => void;
   onToggleStatus: (v: string) => void;
   onToggleCourier: (v: string) => void;
+  onToggleBranch: (v: string) => void;
+  onToggleLegalEntity: (v: string) => void;
   onClearAll: () => void;
   branchOptions: { value: string; label: string }[];
+  legalEntityOptions: { value: string; label: string }[];
 }) {
   return (
     <div className="mb-4 space-y-3">
@@ -124,19 +130,6 @@ export function OrderFilterBar({
             onChange={e => onSearch(e.target.value)}
           />
         </div>
-        {branchOptions.length > 0 && (
-          <div className="w-52">
-            <label className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1">
-              Branch
-            </label>
-            <Select
-              value={filters.branch}
-              onChange={e => onPatch({ branch: e.target.value })}
-              options={branchOptions}
-              placeholder="All branches"
-            />
-          </div>
-        )}
         {hasAnyFilter(filters) && (
           <button
             onClick={onClearAll}
@@ -181,6 +174,44 @@ export function OrderFilterBar({
           ))}
         </div>
       </div>
+
+      {branchOptions.length > 0 && (
+        <div>
+          <span className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1.5">
+            Branch
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {branchOptions.map(b => (
+              <Chip
+                key={b.value}
+                on={filters.branches.includes(b.value)}
+                onClick={() => onToggleBranch(b.value)}
+              >
+                {b.label}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {legalEntityOptions.length > 0 && (
+        <div>
+          <span className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1.5">
+            Legal entity
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {legalEntityOptions.map(e => (
+              <Chip
+                key={e.value}
+                on={filters.legalEntities.includes(e.value)}
+                onClick={() => onToggleLegalEntity(e.value)}
+              >
+                {e.label}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

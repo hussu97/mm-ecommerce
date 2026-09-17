@@ -4894,6 +4894,17 @@
       "BreakdownRow": {
         "description": "One slice of the day \u2014 a status, a channel, a fulfilment or a payment.",
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -8500,6 +8511,13 @@
             "title": "By Fulfillment",
             "type": "array"
           },
+          "by_legal_entity": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Legal Entity",
+            "type": "array"
+          },
           "by_payment": {
             "items": {
               "$ref": "#/components/schemas/BreakdownRow"
@@ -8556,6 +8574,7 @@
           "by_status",
           "by_courier",
           "by_branch",
+          "by_legal_entity",
           "by_channel",
           "by_fulfillment",
           "by_payment",
@@ -43133,6 +43152,50 @@
               "description": "Narrow every figure to these carriers (multi-select) \u2014 `counter`, an aggregator marketplace, or a dispatch courier code",
               "title": "Couriers"
             }
+          },
+          {
+            "description": "Narrow every figure to these fulfilling branches (multi)",
+            "in": "query",
+            "name": "branch_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow every figure to these fulfilling branches (multi)",
+              "title": "Branch Ids"
+            }
+          },
+          {
+            "description": "Narrow every figure to these legal entities (multi)",
+            "in": "query",
+            "name": "legal_entity_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow every figure to these legal entities (multi)",
+              "title": "Legal Entity Ids"
+            }
           }
         ],
         "responses": {
@@ -53093,6 +53156,50 @@
                 }
               ],
               "title": "Branch Id"
+            }
+          },
+          {
+            "description": "Multi-select fulfilling branches; the OR of them.",
+            "in": "query",
+            "name": "branch_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-select fulfilling branches; the OR of them.",
+              "title": "Branch Ids"
+            }
+          },
+          {
+            "description": "Multi-select legal entities the order was billed under.",
+            "in": "query",
+            "name": "legal_entity_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-select legal entities the order was billed under.",
+              "title": "Legal Entity Ids"
             }
           },
           {

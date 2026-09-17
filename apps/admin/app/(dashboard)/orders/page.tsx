@@ -19,8 +19,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { ordersApi, exportApi } from '@/lib/api';
-import { branchesApi } from '@/lib/pos-api';
-import type { Branch } from '@/lib/pos-types';
+import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
+import type { Branch, LegalEntity } from '@/lib/pos-types';
 import type { Order, OrderStatus } from '@/lib/types';
 import { Badge, Button, Pagination, LoadError, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
@@ -119,9 +119,18 @@ function CostCover({ order }: { order: Order }) {
 
 export default function OrdersPage() {
   const router = useRouter();
-  const { filters, patch, toggleStatus, toggleCourier, clearAll } = useOrderFilters();
+  const {
+    filters,
+    patch,
+    toggleStatus,
+    toggleCourier,
+    toggleBranch,
+    toggleLegalEntity,
+    clearAll,
+  } = useOrderFilters();
 
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [legalEntities, setLegalEntities] = useState<LegalEntity[]>([]);
   const [exportError, setExportError] = useState('');
   // The search box is responsive while typing; the committed value lives in the
   // URL (so it persists and is shareable), written after a short debounce.
@@ -138,6 +147,10 @@ export default function OrdersPage() {
       .list()
       .then(rows => setBranches(rows.filter(b => !b.deleted_at)))
       .catch(() => setBranches([]));
+    void legalEntitiesApi
+      .list()
+      .then(setLegalEntities)
+      .catch(() => setLegalEntities([]));
   }, []);
 
   const orderParams = toOrdersParams(filters);
@@ -191,6 +204,8 @@ export default function OrdersPage() {
         onPatch={patch}
         onToggleStatus={toggleStatus}
         onToggleCourier={toggleCourier}
+        onToggleBranch={toggleBranch}
+        onToggleLegalEntity={toggleLegalEntity}
         onClearAll={() => {
           setSearchInput('');
           clearAll();
@@ -198,6 +213,10 @@ export default function OrdersPage() {
         branchOptions={branches.map(b => ({
           value: b.id,
           label: `${b.reference} · ${b.name}`,
+        }))}
+        legalEntityOptions={legalEntities.map(e => ({
+          value: e.id,
+          label: e.brand_name,
         }))}
       />
 

@@ -20,6 +20,10 @@ class BreakdownRow(BaseModel):
     label: str
     orders: int
     revenue: float
+    #: The raw grouping value, present on the *selector* breakdowns (branch,
+    #: legal entity) so the client can toggle that filter by id. Null for the
+    #: mixes whose cards are not selectors, and for an unattributed bucket.
+    code: str | None = None
 
 
 class SeriesPoint(BaseModel):
@@ -127,6 +131,11 @@ class DashboardTodayResponse(BaseModel):
     #: resolves to a branch (`orders.branch_id` is NOT NULL), so there is no
     #: unattributed bucket.
     by_branch: list[BreakdownRow]
+    #: By legal entity the order was billed under, over revenue-eligible orders.
+    #: The full entity menu (a selector, like `by_branch`); `legal_entity_id` is
+    #: nullable, so a non-registered counter sale falls in an "Unknown" bucket
+    #: with a null `code`.
+    by_legal_entity: list[BreakdownRow]
     #: By order source — storefront, cashier, aggregator.
     by_channel: list[BreakdownRow]
     #: Delivery vs pickup.

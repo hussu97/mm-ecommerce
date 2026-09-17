@@ -426,6 +426,12 @@ async def list_all_orders(
         None, description="ISO date; with date_from, an inclusive day range."
     ),
     branch_id: uuid.UUID | None = Query(None),
+    branch_ids: list[uuid.UUID] | None = Query(
+        None, description="Multi-select fulfilling branches; the OR of them."
+    ),
+    legal_entity_ids: list[uuid.UUID] | None = Query(
+        None, description="Multi-select legal entities the order was billed under."
+    ),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
@@ -441,6 +447,8 @@ async def list_all_orders(
         channel=channel,
         courier=courier,
         branch_id=branch_id,
+        branch_ids=branch_ids,
+        legal_entity_ids=legal_entity_ids,
         statuses=statuses,
         couriers=couriers,
         date_from=date_from,

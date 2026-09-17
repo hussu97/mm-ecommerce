@@ -25,8 +25,10 @@ export interface OrderFilters {
   statuses: string[];
   couriers: string[];
   search: string;
-  /** Orders-list only; the dashboard ignores it. */
-  branch: string;
+  /** Fulfilling branches (ids); multi-select, shared by dashboard + list. */
+  branches: string[];
+  /** Legal entities billed under (ids); multi-select, shared by both. */
+  legalEntities: string[];
 }
 
 export const EMPTY_FILTERS: OrderFilters = {
@@ -35,7 +37,8 @@ export const EMPTY_FILTERS: OrderFilters = {
   statuses: [],
   couriers: [],
   search: '',
-  branch: '',
+  branches: [],
+  legalEntities: [],
 };
 
 export function parseFilters(params: URLSearchParams): OrderFilters {
@@ -45,7 +48,8 @@ export function parseFilters(params: URLSearchParams): OrderFilters {
     statuses: params.getAll('status'),
     couriers: params.getAll('courier'),
     search: params.get('q') ?? '',
-    branch: params.get('branch') ?? '',
+    branches: params.getAll('branch'),
+    legalEntities: params.getAll('legal_entity'),
   };
 }
 
@@ -57,14 +61,21 @@ export function filtersToQuery(f: OrderFilters): string {
   for (const s of f.statuses) p.append('status', s);
   for (const c of f.couriers) p.append('courier', c);
   if (f.search) p.set('q', f.search);
-  if (f.branch) p.set('branch', f.branch);
+  for (const b of f.branches) p.append('branch', b);
+  for (const e of f.legalEntities) p.append('legal_entity', e);
   return p.toString();
 }
 
 /** Whether any filter is set — for showing a "clear all" affordance. */
 export function hasAnyFilter(f: OrderFilters): boolean {
   return Boolean(
-    f.from || f.to || f.statuses.length || f.couriers.length || f.search || f.branch,
+    f.from ||
+      f.to ||
+      f.statuses.length ||
+      f.couriers.length ||
+      f.search ||
+      f.branches.length ||
+      f.legalEntities.length,
   );
 }
 
@@ -76,10 +87,12 @@ export function toDashboardParams(f: OrderFilters) {
     date_to: ready ? f.to || undefined : undefined,
     statuses: f.statuses.length ? f.statuses : undefined,
     couriers: f.couriers.length ? f.couriers : undefined,
+    branch_ids: f.branches.length ? f.branches : undefined,
+    legal_entity_ids: f.legalEntities.length ? f.legalEntities : undefined,
   };
 }
 
-/** The `ordersApi.listAll` params for these filters (list adds search + branch). */
+/** The `ordersApi.listAll` params for these filters (list adds search). */
 export function toOrdersParams(f: OrderFilters) {
   const ready = Boolean(f.from) === Boolean(f.to);
   return {
@@ -88,7 +101,8 @@ export function toOrdersParams(f: OrderFilters) {
     statuses: f.statuses.length ? f.statuses : undefined,
     couriers: f.couriers.length ? f.couriers : undefined,
     search: f.search || undefined,
-    branch_id: f.branch || undefined,
+    branch_ids: f.branches.length ? f.branches : undefined,
+    legal_entity_ids: f.legalEntities.length ? f.legalEntities : undefined,
   };
 }
 
@@ -223,7 +237,7 @@ export function useOrderFilters() {
   );
 
   const toggleIn = useCallback(
-    (key: 'statuses' | 'couriers', value: string) => {
+    (key: 'statuses' | 'couriers' | 'branches' | 'legalEntities', value: string) => {
       const set = filters[key];
       patch({
         [key]: set.includes(value)
@@ -236,7 +250,20 @@ export function useOrderFilters() {
 
   const toggleStatus = useCallback((v: string) => toggleIn('statuses', v), [toggleIn]);
   const toggleCourier = useCallback((v: string) => toggleIn('couriers', v), [toggleIn]);
+  const toggleBranch = useCallback((v: string) => toggleIn('branches', v), [toggleIn]);
+  const toggleLegalEntity = useCallback(
+    (v: string) => toggleIn('legalEntities', v),
+    [toggleIn],
+  );
   const clearAll = useCallback(() => commit(EMPTY_FILTERS), [commit]);
 
-  return { filters, patch, toggleStatus, toggleCourier, clearAll };
+  return {
+    filters,
+    patch,
+    toggleStatus,
+    toggleCourier,
+    toggleBranch,
+    toggleLegalEntity,
+    clearAll,
+  };
 }

@@ -1968,6 +1968,8 @@ async def get_all_admin(
     channel: str | None = None,
     courier: str | None = None,
     branch_id: uuid.UUID | None = None,
+    branch_ids: list[uuid.UUID] | None = None,
+    legal_entity_ids: list[uuid.UUID] | None = None,
     statuses: list[str] | None = None,
     couriers: list[str] | None = None,
     date_from: str | None = None,
@@ -2004,8 +2006,16 @@ async def get_all_admin(
     if courier_filter is not None:
         base_stmt = base_stmt.where(courier_filter)
 
+    # Branch is a multi-select (`branch_ids`) mirroring the dashboard; the older
+    # single `branch_id` is folded in, the way `status`/`courier` are.
+    picked_branches = list(branch_ids or [])
     if branch_id is not None:
-        base_stmt = base_stmt.where(Order.branch_id == branch_id)
+        picked_branches.append(branch_id)
+    if picked_branches:
+        base_stmt = base_stmt.where(Order.branch_id.in_(picked_branches))
+
+    if legal_entity_ids:
+        base_stmt = base_stmt.where(Order.legal_entity_id.in_(legal_entity_ids))
 
     bounds = await business_day_service.range_bounds(db, date_from, date_to)
     if bounds is not None:

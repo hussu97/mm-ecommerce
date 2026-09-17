@@ -588,6 +588,9 @@ export interface DashboardBreakdownRow {
   label: string;
   orders: number;
   revenue: number;
+  /** The raw group value on selector breakdowns (branch, legal entity) so a card
+   *  can toggle that filter by id; null for non-selector mixes and unattributed. */
+  code?: string | null;
 }
 
 /** One carrier's delivered orders and revenue — a courier scorecard. */
@@ -651,6 +654,9 @@ export interface DashboardToday {
   by_courier: DashboardCourierRow[];
   /** By branch, across every channel — every order resolves to a branch. */
   by_branch: DashboardBreakdownRow[];
+  /** By legal entity billed under (a selector, like by_branch); null-entity
+   *  orders fall in an "Unknown" bucket with no code. */
+  by_legal_entity: DashboardBreakdownRow[];
   by_channel: DashboardBreakdownRow[];
   by_fulfillment: DashboardBreakdownRow[];
   by_payment: DashboardBreakdownRow[];

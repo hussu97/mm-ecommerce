@@ -10271,6 +10271,8 @@ export interface components {
          * @description One slice of the day — a status, a channel, a fulfilment or a payment.
          */
         BreakdownRow: {
+            /** Code */
+            code?: string | null;
             /** Label */
             label: string;
             /** Orders */
@@ -11481,6 +11483,8 @@ export interface components {
             by_courier: components["schemas"]["CourierBreakdownRow"][];
             /** By Fulfillment */
             by_fulfillment: components["schemas"]["BreakdownRow"][];
+            /** By Legal Entity */
+            by_legal_entity: components["schemas"]["BreakdownRow"][];
             /** By Payment */
             by_payment: components["schemas"]["BreakdownRow"][];
             /** By Status */
@@ -25122,6 +25126,10 @@ export interface operations {
                 statuses?: string[] | null;
                 /** @description Narrow every figure to these carriers (multi-select) — `counter`, an aggregator marketplace, or a dispatch courier code */
                 couriers?: string[] | null;
+                /** @description Narrow every figure to these fulfilling branches (multi) */
+                branch_ids?: string[] | null;
+                /** @description Narrow every figure to these legal entities (multi) */
+                legal_entity_ids?: string[] | null;
             };
             header?: never;
             path?: never;
@@ -30811,6 +30819,10 @@ export interface operations {
                 /** @description ISO date; with date_from, an inclusive day range. */
                 date_to?: string | null;
                 branch_id?: string | null;
+                /** @description Multi-select fulfilling branches; the OR of them. */
+                branch_ids?: string[] | null;
+                /** @description Multi-select legal entities the order was billed under. */
+                legal_entity_ids?: string[] | null;
                 page?: number;
                 per_page?: number;
             };
