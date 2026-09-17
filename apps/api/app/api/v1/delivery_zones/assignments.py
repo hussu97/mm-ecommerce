@@ -42,6 +42,7 @@ from app.schemas.delivery_zone import (
     BranchAssignmentSet,
 )
 from app.services import audit_service
+from app.services.catalog import catalogue_cache
 
 router = APIRouter()
 
@@ -196,9 +197,11 @@ async def set_assignments(
                 f"Choose one of: {', '.join(sorted(allowed))}",
             )
 
-    # Every branch exists and is live. Loaded in one query rather than one per
-    # assignment; a deleted branch cannot bake, so it is refused like the polygon
-    # edit route refuses it.
+    # Every branch exists and is live — present, not deleted, and active. Loaded
+    # in one query rather than one per assignment. A deleted or deactivated
+    # branch cannot bake, and letting one become the rank-1 mirror on the polygon
+    # would point order routing at a closed kitchen, so it is refused here rather
+    # than silently skipped at the checkout.
     found = (
         (await db.execute(select(Branch).where(Branch.id.in_(branch_ids))))
         .scalars()
@@ -207,9 +210,10 @@ async def set_assignments(
     by_id = {b.id: b for b in found}
     for bid in branch_ids:
         branch = by_id.get(bid)
-        if branch is None or branch.deleted_at is not None:
+        if branch is None or branch.deleted_at is not None or not branch.is_active:
             raise BadRequestError(
-                f"Branch {bid} does not exist, so nothing could bake this zone.",
+                f"Branch {bid} does not exist or is not active, so nothing "
+                "could bake this zone.",
             )
 
     before = _assignments_payload(polygon)
@@ -261,6 +265,11 @@ async def set_assignments(
     # Same-transaction cache-bust: the branch priority just changed, so every
     # worker's next quote must miss its stale parse. See `_bump_revision`.
     await _bump_revision(db, polygon.version_id)
+    # The storefront union is taken over the branches assigned on the active map,
+    # so which branches serve — and therefore what the featured rail, add-on tray
+    # and category counts list — just changed. Retire those Redis answers or they
+    # serve the old set for the rest of their TTL.
+    await catalogue_cache.retire()
     # Rank order, like the GET returns. The relationship's `order_by` only sorts
     # a fresh DB load; the collection we just appended to is still in the order
     # the request sent, which need not be rank order.
@@ -308,3 +317,6 @@ async def delete_assignments(
         request=request,
     )
     await _bump_revision(db, polygon.version_id)
+    # The serving set changed (this zone falls back to its rank-1 mirror), so the
+    # branch-keyed catalogue caches must be retired too — same reason as the set.
+    await catalogue_cache.retire()

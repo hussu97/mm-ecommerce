@@ -93,6 +93,7 @@ def upgrade() -> None:
             branch_id_by_ref[ref] = bid
 
     seeded = 0
+    matched = 0
     for area in priorities:
         ranks = area["branch_priority"]
         # Every branch this zone needs must exist, or it is left single-branch
@@ -105,6 +106,15 @@ def upgrade() -> None:
                     f"Snapshot names unknown courier {bp['courier']!r} for "
                     f"{area['name']!r}"
                 )
+            # The alternates land in JSONB, which no CHECK constraint covers, so
+            # a typo would persist as a dead escape `fulfilment_reassignment` can
+            # never use. Validate them here against the same set as the courier.
+            for alt in bp.get("alternates", []):
+                if alt not in _PROVIDERS:
+                    raise RuntimeError(
+                        f"Snapshot names unknown alternate courier {alt!r} for "
+                        f"{area['name']!r}"
+                    )
 
         # The zone on the active map with this name.
         polygon_id = conn.execute(
@@ -116,6 +126,10 @@ def upgrade() -> None:
         ).scalar()
         if polygon_id is None:
             continue
+        # A zone in the snapshot lines up with the active map by name. Tracked
+        # apart from `seeded` (which the untouched-default guard can legitimately
+        # keep at zero on a re-run) so a *total* miss is distinguishable below.
+        matched += 1
 
         # Guard: only seed a zone still at its single default row. `251` wrote
         # exactly one rank-1 assignment per zone (its old single branch); the
@@ -173,6 +187,20 @@ def upgrade() -> None:
             },
         )
         seeded += 1
+
+    # Name-drift guard. The snapshot matches the live map by zone name, so if
+    # branches did resolve (this database has the shop) yet not one snapshot zone
+    # was found on the active map, the snapshot was built against a differently
+    # named or differently versioned map. Silently seeding nothing there ships a
+    # single-branch prod, so fail loudly at the deploy gate instead of leaving it
+    # to be discovered in routing. (No branch resolved at all — a fresh database
+    # without the shop — is the legitimate no-op the migration is designed for.)
+    if branch_id_by_ref and matched == 0:
+        raise RuntimeError(
+            "252: branch-priority snapshot matched no zone on the active map by "
+            "name — the map was renamed or a different version is active. Rebuild "
+            "the snapshot against the live map before deploying."
+        )
 
     # Move the active version's cache key so every worker re-reads the new
     # priority — the same in-transaction bump the console's edits do (F-COU-9).

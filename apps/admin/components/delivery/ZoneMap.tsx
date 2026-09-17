@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeliveryZoneMap, DeliveryZoneShape } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 
@@ -81,6 +81,16 @@ export function ZoneMap({ data, selectedZoneId, onSelect }: Props) {
    */
   const [mode, setMode] = useState<string>(PREFERRED);
   const branches = data.branches ?? [];
+
+  // If the loaded map changes to one that does not include the branch currently
+  // in view (a different version, a branch removed), fall back to the preferred
+  // view rather than greying out every zone as "not served" by a branch that is
+  // no longer on the map.
+  useEffect(() => {
+    if (mode !== PREFERRED && !branches.some(b => b.id === mode)) {
+      setMode(PREFERRED);
+    }
+  }, [branches, mode]);
 
   /**
    * The courier to colour a zone by in the current view, or null when the

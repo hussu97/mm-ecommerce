@@ -53,6 +53,7 @@ from app.services import (
     branch_hours_sync,
     crud_service,
 )
+from app.services.catalog import catalogue_cache
 from app.services.delivery import fulfilment_service
 from app.services.pos import branch_channel_tax_service, business_day_service
 
@@ -170,6 +171,14 @@ async def update_branch(
         changes={"data": data.model_dump(mode="json", exclude_unset=True)},
         request=request,
     )
+    # The storefront catalogue union counts only branches that are active and
+    # take online orders (see `availability_service._website_delivery_branch_ids`),
+    # so toggling either flag changes what the featured rail, add-on tray and
+    # category counts list. Retire those branch-keyed Redis answers when a
+    # relevant flag was touched, or they serve the stale set for their TTL.
+    touched = data.model_dump(exclude_unset=True)
+    if "receives_online_orders" in touched or "is_active" in touched:
+        await catalogue_cache.retire()
     return branch
 
 

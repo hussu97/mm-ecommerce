@@ -27,6 +27,13 @@
 
 export const ZONE_COOKIE = 'mm_zone';
 
+/**
+ * The cookie this replaced (a single branch id). Nothing reads it any more, but
+ * it was written with a year-long `Max-Age`, so every returning shopper carries
+ * a dead value until it expires. Cleared alongside the first `mm_zone` write.
+ */
+const LEGACY_BRANCH_COOKIE = 'mm_branch';
+
 /** A year. The pin it was derived from outlives any session. */
 const MAX_AGE = 60 * 60 * 24 * 365;
 
@@ -44,6 +51,9 @@ export function rememberZone(polygonId: string | null | undefined): void {
   const base = `${ZONE_COOKIE}=`;
   const attrs = `Path=/; Max-Age=${polygonId ? MAX_AGE : 0}; SameSite=Lax`;
   document.cookie = `${base}${polygonId ?? ''}; ${attrs}`;
+  // Retire the pre-multi-branch cookie so it stops shadowing the zone for the
+  // rest of its year. A no-op once it is gone.
+  document.cookie = `${LEGACY_BRANCH_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
 /** What is currently recorded, for code that has to reason about it client-side. */

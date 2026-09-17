@@ -206,11 +206,23 @@ def _website_delivery_branch_ids():
     branch nobody has placed on the map serves no pin, so its stockouts must not
     gate what the website lists — and a counter-only shop (Barsha's till, say),
     which the flag already excludes, never appears at all.
+
+    **Empty-map fallback.** When *no* branch is assigned to any zone on the
+    active map — a map published without assignments, or the window before the
+    priority seed lands — requiring an assignment would make this set empty, the
+    count-trick's `branch_count > 0` guard would fail, and the whole catalogue
+    would show unfiltered (no stockout ever hides a product). That is a silent,
+    total loss of stock filtering off a delivery-map misconfiguration. So when
+    the active map has no assignments at all, fall back to every active online
+    branch — the pre-multi-branch set — keeping the filter working.
     """
     return select(Branch.id).where(
         Branch.is_active.is_(True),
         Branch.receives_online_orders.is_(True),
-        Branch.id.in_(_assigned_branch_ids_on_active_map()),
+        or_(
+            Branch.id.in_(_assigned_branch_ids_on_active_map()),
+            ~_assigned_branch_ids_on_active_map().exists(),
+        ),
     )
 
 
@@ -276,13 +288,29 @@ def out_at_every_branch_in_set_subquery(branch_ids: "Sequence[uuid.UUID]"):
     `select_fulfilment` walks. Without the flag the catalogue would list a
     product only a switched-off kitchen in the zone has, then the checkout would
     refuse it: the "promise nobody can keep" this narrowing exists to avoid.
+
+    **All-closed fallback.** If every branch serving this pin is switched off or
+    closed, the online-filtered set is empty and the count-trick would show the
+    whole catalogue unfiltered. Fall back to the estate-wide online union then,
+    so an unserviceable pin sees the stock-filtered country catalogue rather than
+    an unfiltered one; a pin with at least one open serving branch narrows to
+    exactly that set.
     """
     if not branch_ids:
         return literal(False)
-    ids = select(Branch.id).where(
+    pin_serving = select(Branch.id).where(
         Branch.is_active.is_(True),
         Branch.receives_online_orders.is_(True),
         Branch.id.in_(list(branch_ids)),
+    )
+    ids = select(Branch.id).where(
+        or_(
+            Branch.id.in_(pin_serving),
+            and_(
+                ~pin_serving.exists(),
+                Branch.id.in_(_website_delivery_branch_ids()),
+            ),
+        )
     )
     return _out_at_every_of(ids)
 

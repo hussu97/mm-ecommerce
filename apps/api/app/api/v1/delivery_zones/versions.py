@@ -31,6 +31,7 @@ from app.models.delivery_polygon import (
 from app.models.polygon_branch_fulfilment import PolygonBranchFulfilment
 from app.models.user import User
 from app.services import audit_service
+from app.services.catalog import catalogue_cache
 from app.services.delivery import delivery_service, delivery_zone_service
 
 from .schemas import (
@@ -620,10 +621,18 @@ async def activate_version(
     version.is_active = True
     version.activated_at = datetime.now(timezone.utc)
     await db.flush()
-    # No cache bust here: publishing a different map moves the active version id,
-    # which is part of the cache key, so every worker's next read misses its old
-    # entry and picks the new map up on its own. The previous `invalidate_cache()`
-    # cleared only this worker, and ran before the commit — see F-COU-9.
+    # No zone-cache bust here: publishing a different map moves the active
+    # version id, which is part of the cache key, so every worker's next read
+    # misses its old entry and picks the new map up on its own. The previous
+    # `invalidate_cache()` cleared only this worker, and ran before the commit —
+    # see F-COU-9.
+    #
+    # The storefront catalogue caches are a different story: they are keyed by
+    # the serving-branch set, not the map version, and the estate union is taken
+    # over the branches assigned on the *active* map. Publishing a map with a
+    # different set of assigned branches changes what is listed, so those Redis
+    # answers must be retired or they serve the old map's union for their TTL.
+    await catalogue_cache.retire()
 
     await audit_service.log_action(
         db,
