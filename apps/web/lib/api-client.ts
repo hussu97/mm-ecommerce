@@ -12,7 +12,7 @@
  * into a build error); it uses `lib/api-server.ts` instead, whose base URL is
  * absolute for reasons documented there.
  */
-import { readBranch } from '@/lib/location/branch-cookie';
+import { readZone } from '@/lib/location/branch-cookie';
 import 'client-only';
 
 import { analytics, normalisePath } from './analytics';
@@ -347,16 +347,16 @@ export const productsApi = {
   featured: (limit = 8) => api.get<Product[]>(`/products/featured?limit=${limit}`),
   /** The small extras the basket offers alongside itself. */
   /**
-   * The cart's add-on tray, for the kitchen this shopper's pin resolves to.
+   * The cart's add-on tray, for the delivery zone this shopper's pin resolves to.
    *
-   * Client-side, so it reads the cookie rather than being handed a branch: the
-   * tray is a suggestion the customer did not ask for, and a suggestion their
-   * own branch cannot make is worse than no tray at all.
+   * Client-side, so it reads the cookie rather than being handed a zone: the
+   * tray is a suggestion the customer did not ask for, and a suggestion no
+   * branch serving their zone can make is worse than no tray at all.
    */
   cartAddons: (limit = 8) => {
-    const branch = readBranch();
+    const zone = readZone();
     return api.get<Product[]>(
-      `/products/cart-addons?limit=${limit}${branch ? `&branch_id=${encodeURIComponent(branch)}` : ''}`,
+      `/products/cart-addons?limit=${limit}${zone ? `&polygon_id=${encodeURIComponent(zone)}` : ''}`,
     );
   },
   bySlug: (slug: string) => api.get<Product>(`/products/${slug}`),

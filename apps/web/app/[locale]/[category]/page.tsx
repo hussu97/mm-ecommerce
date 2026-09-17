@@ -20,7 +20,7 @@ import {
   type ProductSort,
 } from '@/lib/product-sort';
 import { fetchJson, fetchJsonOrNull } from '@/lib/fetch-json';
-import { branchParam, browsingBranch } from '@/lib/location/branch-server';
+import { zoneParam, browsingZone } from '@/lib/location/branch-server';
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://meltingmomentscakes.com';
 /**
  * How many products a listing page asks for.
@@ -66,7 +66,7 @@ async function getCategoryData(
   slug: string,
   page: number = 1,
   sort: ProductSort = DEFAULT_PRODUCT_SORT,
-  branchId: string | null = null,
+  zoneId: string | null = null,
 ): Promise<{ category: Category; products: Product[]; total: number; pages: number } | null> {
   // No try/catch that turns a failure into `null`. `null` means notFound(), and
   // under ISR a 404 rendered during a blip is *kept* — a live category gone for
@@ -78,7 +78,7 @@ async function getCategoryData(
       signal: AbortSignal.timeout(8000),
     }),
     fetchJson<ProductListResponse>(
-      `${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}${branchParam(branchId)}`,
+      `${RSC_API_BASE}/products?category=${slug}&per_page=${PER_PAGE}&page=${page}&sort=${sort}${zoneParam(zoneId)}`,
       {
         next: { revalidate: CONTENT_TTL, tags: [CACHE_TAGS.catalogue] },
         signal: AbortSignal.timeout(8000),
@@ -234,7 +234,7 @@ async function CategoryProducts({
   locale,
   page,
   sort,
-  branchId,
+  zoneId,
   categoryName,
   basePath,
   t,
@@ -243,12 +243,12 @@ async function CategoryProducts({
   locale: string;
   page: number;
   sort: ProductSort;
-  branchId: string | null;
+  zoneId: string | null;
   categoryName: string;
   basePath: string;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
-  const data = await getCategoryData(slug, page, sort, branchId);
+  const data = await getCategoryData(slug, page, sort, zoneId);
   // The category existed a moment ago — the page checked before rendering this
   // (`if (!category) notFound()` above, in front of the Suspense boundary). A
   // null here means the *listing* query failed, not that the page is missing —
@@ -327,11 +327,12 @@ export default async function CategoryPage({
   const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
   const sort = parseProductSort(sortStr);
 
-  // The kitchen this shopper's pin resolves to, so the grid is what that
-  // kitchen can make rather than what the estate collectively can. Reading the
-  // cookie makes this route dynamic for a shopper who has set a location; a
-  // crawler and a first visit have none and keep the cached, estate-wide page.
-  const branchId = await browsingBranch();
+  // The delivery zone this shopper's pin falls in, so the grid is what any
+  // branch serving that zone can make rather than what the estate collectively
+  // can. Reading the cookie makes this route dynamic for a shopper who has set a
+  // location; a crawler and a first visit have none and keep the cached,
+  // estate-wide page.
+  const zoneId = await browsingZone();
 
   // Awaited *before* anything renders, which is the whole point of the split.
   // `getCategoryMeta` is one small request and `React.cache`d — `generateMetadata`
@@ -389,13 +390,13 @@ export default async function CategoryPage({
         <div className="h-px bg-secondary/40 mt-2 sm:mt-4" />
       </header>
 
-      <Suspense key={`${slug}-${page}-${sort}-${branchId ?? ''}`} fallback={<ProductGridSkeleton />}>
+      <Suspense key={`${slug}-${page}-${sort}-${zoneId ?? ''}`} fallback={<ProductGridSkeleton />}>
         <CategoryProducts
           slug={slug}
           locale={locale}
           page={page}
           sort={sort}
-          branchId={branchId}
+          zoneId={zoneId}
           categoryName={categoryName}
           basePath={basePath}
           t={t}

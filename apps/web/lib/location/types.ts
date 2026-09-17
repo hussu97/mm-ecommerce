@@ -56,14 +56,20 @@ export interface DeliveryArea {
    */
   express_minutes?: number | null;
   /**
-   * The kitchen this pin resolves to, or null where we do not serve it.
-   *
-   * Handed straight back on catalogue reads so the shelf matches the branch
-   * that would bake the order. Null is an answer and not a gap — the server
-   * reads it as "show what any branch can make", which is the wider and safer
-   * of the two.
+   * The preferred (rank-1) kitchen this pin resolves to, or null where we do
+   * not serve it. For the pre-cart estimate display only — the winning branch
+   * for a real basket is chosen server-side at preview/placement time.
    */
   branch_id?: string | null;
+  /**
+   * The delivery polygon this pin falls in, or null where we do not serve it.
+   *
+   * Persisted as the browsing key (the `mm_zone` cookie) so the catalogue reads
+   * narrow to the union of every branch that serves this polygon. Null is an
+   * answer and not a gap — the server reads it as "show what any branch can
+   * make", which is the wider and safer of the two.
+   */
+  polygon_id?: string | null;
 }
 
 /** The shop itself, and the fallback when we know nothing. */

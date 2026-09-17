@@ -39,6 +39,7 @@ const deliveryArea = vi.fn<(lat: number, lng: number) => Promise<DeliveryArea>>(
   free_delivery_available: true,
   speed: 'express' as const,
   branch_id: 'sharjah',
+  polygon_id: 'sharjah-central',
 }));
 vi.mock('@/lib/api', () => ({
   addressesApi: { list: () => listAddresses() },
