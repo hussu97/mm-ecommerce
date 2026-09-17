@@ -985,7 +985,19 @@ async def _fees_from_orders(
         o.channel.label("channel"),
         func.coalesce(func.sum(func.abs(o.gross_sales)), 0).label("gross_sales"),
         func.coalesce(func.sum(func.abs(o.commission_amount)), 0).label("commission"),
-        func.coalesce(func.sum(func.abs(o.payment_fee)), 0).label("other_fees"),
+        # Every non-commission merchant fee on the order feed, not just payment:
+        # Talabat carries its Pro fee on `marketing_fee` and its avoidable-
+        # cancellation fee on `cancellation_fee`, and both reduce the payout, so a
+        # take that summed payment alone understated it (~3.4pp of Talabat's gross
+        # was the dropped Pro fee).
+        func.coalesce(
+            func.sum(
+                func.abs(func.coalesce(o.payment_fee, 0))
+                + func.abs(func.coalesce(o.marketing_fee, 0))
+                + func.abs(func.coalesce(o.cancellation_fee, 0))
+            ),
+            0,
+        ).label("other_fees"),
         func.coalesce(func.sum(func.abs(o.net_payable)), 0).label("net_payable"),
         func.count().label("orders"),
     ).group_by(o.channel)

@@ -1277,6 +1277,14 @@ class TalabatClient(BaseAggregatorClient):
                     net_sales=subtotal,
                     commission_amount=_money(row.get("Commission")),
                     payment_fee=_money(row.get("Online Payment Fee")),
+                    # The "Marketing Fees" column is the TALABAT PRO fee: a flat
+                    # AED 4 the merchant pays on every Talabat Pro customer's order
+                    # (funding their free delivery), 0 otherwise. It is a real
+                    # merchant cost that reduces the payout, distinct from the
+                    # percentage payment fee — carried on `marketing_fee` so the take
+                    # and `OrderEconomics.net` both account for it. (The flat 4 also
+                    # marks a Pro order — a cleaner signal than the delivery-fee proxy.)
+                    marketing_fee=_money(row.get("Marketing Fees Total")),
                     # Talabat direct delivery: the vendor CSV carries no delivery
                     # fee column at all, so it stays unknown (None) rather than 0.
                     delivery_fee=None,

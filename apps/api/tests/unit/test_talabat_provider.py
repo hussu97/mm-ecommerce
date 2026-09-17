@@ -401,6 +401,37 @@ def test_orders_from_csv_cancelled_order_sets_cancellation_fee():
     assert order.payment_fee == Decimal("0.80")
 
 
+def test_orders_from_csv_maps_talabat_pro_fee_to_marketing_fee():
+    """The flat AED-4 "Marketing Fees" column is the Talabat Pro fee (a merchant
+    cost), carried on marketing_fee and distinct from the percentage payment fee."""
+    client = TalabatClient()
+    csv_text = _csv_from_rows(
+        [
+            {
+                "Order ID": "TB-3003",
+                "Store ID": "728173",
+                "Order status": "Delivered",
+                "Subtotal": "40.00",
+                "Order Items": "1 Cake",
+                "Commission": "12.60",
+                "Online Payment Fee": "0.84",
+                "Marketing Fees Total": "4.00",
+                "Order received at": "2026-09-10 19:00",
+                "Accepted at": "2026-09-10 19:01",
+                "Ready to pick up at": "2026-09-10 19:05",
+                "Rider near pickup at": "",
+                "In delivery at": "2026-09-10 19:10",
+                "Delivered at": "2026-09-10 19:30",
+                "Cancelled at": "",
+            }
+        ]
+    )
+    order = client._orders_from_csv(csv_text)[0]
+    assert order.marketing_fee == Decimal("4.00")
+    assert order.commission_amount == Decimal("12.60")
+    assert order.payment_fee == Decimal("0.84")
+
+
 def test_orders_from_csv_absent_cancellation_fee_column_is_none():
     client = TalabatClient()
     csv_text = _csv_from_rows(
