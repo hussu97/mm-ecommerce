@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,6 +158,7 @@ async def get_all(
     channel: str = "web",
     staff: bool = False,
     branch_id: uuid.UUID | None = None,
+    branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> tuple[list[ProductResponse], int]:
     """
     List products for one sales channel.
@@ -206,7 +208,7 @@ async def get_all(
             *(
                 (sells_on(WEB_CHANNEL), active_website_category_clause())
                 if staff
-                else website_product_visibility_clause(branch_id)
+                else website_product_visibility_clause(branch_id, branch_ids=branch_ids)
             )
         )
     elif channel == "pos":
@@ -250,14 +252,18 @@ async def get_all(
 
 
 async def get_by_slug(
-    db: AsyncSession, slug: str, *, branch_id: uuid.UUID | None = None
+    db: AsyncSession,
+    slug: str,
+    *,
+    branch_id: uuid.UUID | None = None,
+    branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> ProductResponse:
     stmt = (
         select(Product)
         .options(*_product_load_options())
         .where(
             Product.slug == slug,
-            *website_product_visibility_clause(branch_id),
+            *website_product_visibility_clause(branch_id, branch_ids=branch_ids),
         )
     )
     result = await db.execute(stmt)
@@ -278,14 +284,18 @@ async def get_by_slug_admin(db: AsyncSession, slug: str) -> ProductResponse:
 
 
 async def get_featured(
-    db: AsyncSession, limit: int = 8, *, branch_id: uuid.UUID | None = None
+    db: AsyncSession,
+    limit: int = 8,
+    *,
+    branch_id: uuid.UUID | None = None,
+    branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[ProductResponse]:
     stmt = (
         select(Product)
         .options(*_product_load_options())
         .where(
             has_label(BESTSELLER_LABEL),
-            *website_product_visibility_clause(branch_id),
+            *website_product_visibility_clause(branch_id, branch_ids=branch_ids),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)
@@ -296,7 +306,11 @@ async def get_featured(
 
 
 async def get_cart_addons(
-    db: AsyncSession, limit: int = 8, *, branch_id: uuid.UUID | None = None
+    db: AsyncSession,
+    limit: int = 8,
+    *,
+    branch_id: uuid.UUID | None = None,
+    branch_ids: Sequence[uuid.UUID] | None = None,
 ) -> list[ProductResponse]:
     """
     The small things the cart offers alongside the basket — a gift note today.
@@ -310,7 +324,7 @@ async def get_cart_addons(
         .options(*_product_load_options())
         .where(
             Product.is_cart_addon == True,  # noqa: E712
-            *website_product_visibility_clause(branch_id),
+            *website_product_visibility_clause(branch_id, branch_ids=branch_ids),
         )
         .order_by(Product.display_order, Product.created_at.desc())
         .limit(limit)

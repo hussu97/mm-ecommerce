@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import or_
 
@@ -19,34 +20,45 @@ def active_website_category_clause():
     )
 
 
-def website_product_visibility_clause(branch_id: uuid.UUID | None = None):
+def website_product_visibility_clause(
+    branch_id: uuid.UUID | None = None,
+    *,
+    branch_ids: Sequence[uuid.UUID] | None = None,
+):
     """
     The complete database predicate for a product a shopper can buy.
 
-    `branch_id` is the kitchen that would make this shopper's order, resolved
-    from the pin they gave us. Given one, the catalogue answers for *that*
-    branch and nothing else — which is the only answer that survives the
-    checkout, because the checkout resolves the same branch from the same pin
-    and refuses what it cannot make.
+    Three answers, widest to narrowest:
 
-    Without one it falls back to the catalogue-wide half: a product every active
-    branch has marked out is not buyable anywhere and so is not listed. That is
-    the honest answer for a reader who has told us nothing — a crawler, or a
-    first visit before the browser has resolved a location — and it is
-    deliberately the *widest* answer, because a page cached for somebody with no
-    address must not carry one branch's stockouts.
+    * **`branch_ids`** — the branches that can serve this shopper's pin (a
+      polygon's priority list). The catalogue shows the *union* of them: a
+      product is hidden only when every one of those branches is out of it,
+      because the basket will give the order to whichever of them can make the
+      whole thing. This is the truest answer once a pin is known.
 
-    It used to be the only answer, on the reasoning that hiding a cake from
-    somebody whose own shop has it on the shelf is worse than offering one that
-    needs a different branch. That reasoning holds exactly as far as "we do not
-    know where they are". Once the pin has named a kitchen, showing that kitchen
-    cannot make it is not caution, it is a promise nobody can keep.
+    * **`branch_id`** — a single kitchen. The catalogue answers for that branch
+      alone, the pre-multi-branch behaviour, kept for callers not yet handing us
+      the set.
+
+    * **neither** — the website-delivery union: a product every website branch
+      has marked out is not buyable anywhere and so is not listed. The honest
+      answer for a reader who has told us nothing — a crawler, or a first visit
+      before the browser has resolved a location — and deliberately the widest,
+      because a page cached for somebody with no address must not carry one
+      branch's stockouts.
+
+    The per-branch answer that actually survives the checkout is enforced later,
+    at the cart and again at placement, where the basket resolves the same
+    branches from the same pin and refuses what none of them can make.
     """
-    availability = (
-        ~availability_service.unsellable_at_branch_subquery(branch_id)
-        if branch_id is not None
-        else ~availability_service.out_at_every_branch_subquery()
-    )
+    if branch_ids:
+        availability = ~availability_service.out_at_every_branch_in_set_subquery(
+            branch_ids
+        )
+    elif branch_id is not None:
+        availability = ~availability_service.unsellable_at_branch_subquery(branch_id)
+    else:
+        availability = ~availability_service.out_at_every_branch_subquery()
     return (
         Product.is_active.is_(True),
         sells_on(WEB_CHANNEL),

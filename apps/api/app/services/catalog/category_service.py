@@ -9,6 +9,7 @@ from app.models.product import POS_CHANNEL, WEB_CHANNEL, Product, sells_on
 from app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
 from app.services.catalog import menu_group_service
 from app.services.catalog.availability_service import (
+    out_at_every_branch_in_set_subquery,
     out_at_every_branch_subquery,
     unsellable_at_branch_subquery,
 )
@@ -71,7 +72,7 @@ __all__ = [
 ]
 
 
-def _countable_products(channel: str, branch_id=None):
+def _countable_products(channel: str, branch_id=None, branch_ids=None):
     """
     The join condition that decides which products a category is counted for.
 
@@ -99,11 +100,17 @@ def _countable_products(channel: str, branch_id=None):
         # the estate beside a grid filtered to one kitchen is a category header
         # reading "6" above four cakes.
         clause = clause & sells_on(WEB_CHANNEL)
-        clause = clause & (
-            ~unsellable_at_branch_subquery(branch_id)
-            if branch_id is not None
-            else ~out_at_every_branch_subquery()
-        )
+        # Same three answers as `website_product_visibility_clause`: the union
+        # over the pin's serving branches when we have the set, one branch when
+        # we have only that, else the website-delivery union. The header count
+        # and the grid under it must answer the same question.
+        if branch_ids:
+            availability = ~out_at_every_branch_in_set_subquery(branch_ids)
+        elif branch_id is not None:
+            availability = ~unsellable_at_branch_subquery(branch_id)
+        else:
+            availability = ~out_at_every_branch_subquery()
+        clause = clause & availability
     elif channel == POS_CHANNEL:
         # Scoped to the shop when we know it, so a POS category header counts
         # only what that branch's tree actually holds.
@@ -140,11 +147,12 @@ async def get_all(
     include_inactive: bool = False,
     channel: str | None = None,
     branch_id=None,
+    branch_ids=None,
 ) -> list[CategoryResponse]:
     channel = resolve_channel(channel, include_inactive)
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(Product, _countable_products(channel, branch_id))
+        .outerjoin(Product, _countable_products(channel, branch_id, branch_ids))
         .group_by(Category.id)
         .order_by(Category.display_order, Category.name)
     )
@@ -170,11 +178,12 @@ async def get_by_slug(
     include_inactive: bool = False,
     channel: str | None = None,
     branch_id=None,
+    branch_ids=None,
 ) -> CategoryResponse:
     channel = resolve_channel(channel, include_inactive)
     stmt = (
         select(Category, func.count(Product.id).label("product_count"))
-        .outerjoin(Product, _countable_products(channel, branch_id))
+        .outerjoin(Product, _countable_products(channel, branch_id, branch_ids))
         .where(Category.slug == slug)
         .group_by(Category.id)
     )

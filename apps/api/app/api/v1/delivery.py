@@ -99,7 +99,18 @@ class DeliveryAreaResponse(BaseModel):
     #:
     #: Null for a pin nowhere near us, where there is no kitchen to answer for
     #: and no order to place either.
+    #:
+    #: This is the **preferred (rank-1)** branch — the honest best case for a
+    #: banner or a product card before a basket exists. Which kitchen actually
+    #: bakes is decided at the cart, from the whole polygon priority, by whichever
+    #: branch can make everything.
     branch_id: uuid.UUID | None = None
+    #: The polygon this pin resolves to. The browser hands it back on catalogue
+    #: reads (`?polygon_id=`), and the storefront narrows its union to exactly the
+    #: branches that can serve this zone — a truer answer than the whole-country
+    #: union while still showing a product any one of those branches has. Null for
+    #: a pin outside every zone, where the catalogue keeps the wider union.
+    polygon_id: uuid.UUID | None = None
 
 
 class DeliveryCalculateResponse(BaseModel):
@@ -247,6 +258,7 @@ async def delivery_area(
         # It is also the whole cost of this field: one column already loaded,
         # on an endpoint the browser calls every time the pin moves.
         branch_id=zone.branch_id,
+        polygon_id=zone.id,
     )
 
 

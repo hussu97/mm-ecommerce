@@ -20,11 +20,13 @@ from app.models.delivery_polygon import (
 __all__ = [
     "Zone",
     "ZoneBranch",
+    "active_zone_by_id",
     "find_zone",
     "get_active_version",
     "get_active_zones",
     "invalidate_cache",
     "point_in_geometry",
+    "priority_branch_ids",
 ]
 
 
@@ -277,6 +279,28 @@ def _to_zone(p: DeliveryPolygon) -> Zone:
         max_lng=float(p.max_lng),
         rings=rings,
     )
+
+
+async def active_zone_by_id(db: AsyncSession, polygon_id: uuid.UUID) -> Zone | None:
+    """The polygon with this id on the active map, or None if it is not on it.
+
+    Used to turn the pin the storefront already resolved (a polygon id) back into
+    its ordered branch list without re-running point-in-polygon — the catalogue
+    narrows its union to exactly the branches that could serve this pin.
+    """
+    for zone in await get_active_zones(db):
+        if zone.id == polygon_id:
+            return zone
+    return None
+
+
+def priority_branch_ids(zone: Zone | None) -> tuple[uuid.UUID, ...]:
+    """The zone's branches in rank order — the set the catalogue's union narrows
+    to. Empty when the zone predates multi-branch or is None; the caller then
+    keeps the wider website-delivery union."""
+    if zone is None:
+        return ()
+    return tuple(zb.branch_id for zb in zone.branches)
 
 
 async def find_zone(db: AsyncSession, lat: float, lng: float) -> Zone | None:

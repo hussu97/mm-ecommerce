@@ -655,8 +655,21 @@ class NoBranchFulfils:
 
 
 async def _load_active_branch(db: AsyncSession, branch_id: uuid.UUID) -> Branch | None:
+    """A branch that may actually take this online order — active, not deleted,
+    and still switched on for online orders.
+
+    An assignment on the map says a branch *should* serve a zone; the
+    `receives_online_orders` flag is the branch's own switch, and turning it off
+    is how an operator pulls a kitchen out of online fulfilment without editing
+    the map. Both have to be true, so neither is a way to serve orders by
+    accident — the same pairing the website union is taken over."""
     branch = await db.get(Branch, branch_id)
-    if branch is not None and branch.deleted_at is None and branch.is_active:
+    if (
+        branch is not None
+        and branch.deleted_at is None
+        and branch.is_active
+        and branch.receives_online_orders
+    ):
         return branch
     return None
 

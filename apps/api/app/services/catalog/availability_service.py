@@ -28,16 +28,19 @@ nothing left is not a blocker — nobody had to pick from it.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.branch import Branch
+from app.models.delivery_polygon import DeliveryPolygon, DeliveryPolygonVersion
 from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
+from app.models.polygon_branch_fulfilment import PolygonBranchFulfilment
 from app.models.product import Product
 from app.services import option_snapshot
 from app.services.pos import business_day_service
@@ -170,30 +173,63 @@ def unsellable_at_branch_subquery(branch_id: uuid.UUID):
     return or_(marked_out, empty_required_group)
 
 
-def out_at_every_branch_subquery():
-    """
-    Products no branch can make.
+def _assigned_branch_ids_on_active_map():
+    """Branches that actually serve at least one zone on the active map.
 
-    The catalogue has no address and therefore no branch, so it hides a product
-    only when *every* active branch is out of it — anything less would hide a
-    cake from a shopper whose own branch has it on the shelf. The per-branch
-    answer is enforced later, at the cart and again at placement.
+    A branch is only part of website delivery once someone has wired it into the
+    map — given it a rank and a courier in some polygon (`polygon_branch_fulfilment`
+    on the active version). The flag alone is not enough: a branch switched on for
+    online orders but never placed on the map has no zone it can serve, no courier
+    to carry from it, and no business gating the catalogue.
+    """
+    return (
+        select(PolygonBranchFulfilment.branch_id)
+        .join(
+            DeliveryPolygon,
+            DeliveryPolygon.id == PolygonBranchFulfilment.polygon_id,
+        )
+        .join(
+            DeliveryPolygonVersion,
+            DeliveryPolygonVersion.id == DeliveryPolygon.version_id,
+        )
+        .where(DeliveryPolygonVersion.is_active.is_(True))
+    )
+
+
+def _website_delivery_branch_ids():
+    """The branches the website union is taken over.
+
+    A branch shows its shelf on the storefront only when it is active, bakes
+    website orders (`receives_online_orders`), **and** is actually assigned to
+    serve a zone on the active map (a branch priority + courier set in
+    `polygon_branch_fulfilment`). The flag is necessary but not sufficient: a
+    branch nobody has placed on the map serves no pin, so its stockouts must not
+    gate what the website lists — and a counter-only shop (Barsha's till, say),
+    which the flag already excludes, never appears at all.
+    """
+    return select(Branch.id).where(
+        Branch.is_active.is_(True),
+        Branch.receives_online_orders.is_(True),
+        Branch.id.in_(_assigned_branch_ids_on_active_map()),
+    )
+
+
+def _out_at_every_of(branch_ids_select):
+    """Products out at *every* branch in the given id-select — the count trick.
 
     Counting rows works because the tables are exception-only: being out at all
-    N branches takes N rows, and no other state produces that many.
+    N branches takes N rows, and no other state produces that many. `> 0` guards
+    the empty set — zero branches is "we have no shops here", not "out
+    everywhere", and hiding the whole catalogue over it is the worse answer.
     """
     branch_count = (
-        select(func.count(Branch.id))
-        .where(Branch.is_active.is_(True))
-        .scalar_subquery()
+        select(func.count()).select_from(branch_ids_select.subquery()).scalar_subquery()
     )
     out_count = (
         select(func.count(func.distinct(BranchProduct.branch_id)))
         .where(
             BranchProduct.product_id == Product.id,
-            BranchProduct.branch_id.in_(
-                select(Branch.id).where(Branch.is_active.is_(True))
-            ),
+            BranchProduct.branch_id.in_(branch_ids_select),
             or_(
                 BranchProduct.is_active.is_(False),
                 and_(
@@ -205,10 +241,42 @@ def out_at_every_branch_subquery():
         .correlate(Product)
         .scalar_subquery()
     )
-    # `> 0` guards the empty estate: with no active branches at all, zero is not
-    # "out everywhere", it is "we have no shops", and hiding the whole catalogue
-    # over it would be a worse answer than showing it.
     return and_(branch_count > 0, out_count >= branch_count)
+
+
+def out_at_every_branch_subquery():
+    """
+    Products no website branch can make — the union catalogue's hide rule.
+
+    The catalogue has no address and therefore no one branch, so it hides a
+    product only when *every* website-delivery branch is out of it — anything
+    less would hide a cake from a shopper a branch could still make it for. This
+    is the union the storefront shows: the moment one website branch has it, it
+    is listed. The per-branch answer is enforced later, at the cart and again at
+    placement, where the basket picks the branch that can make the whole thing.
+    """
+    return _out_at_every_of(_website_delivery_branch_ids())
+
+
+def out_at_every_branch_in_set_subquery(branch_ids: "Sequence[uuid.UUID]"):
+    """
+    Products out at every branch in a specific set — the per-pin narrowing.
+
+    Once a pin resolves to a polygon, the branches that can serve it are known
+    (the polygon's priority list). Narrowing the union to that set hides a
+    product the shopper's own polygon cannot make it for, which is a truer
+    answer than the whole-country union — while staying the union *within* the
+    set, so a product one serving branch has is still shown. An empty set means
+    "no branch serves this pin", which the caller handles as unserviceable
+    rather than by hiding the catalogue, so this returns a false predicate.
+    """
+    if not branch_ids:
+        return literal(False)
+    ids = select(Branch.id).where(
+        Branch.is_active.is_(True),
+        Branch.id.in_(list(branch_ids)),
+    )
+    return _out_at_every_of(ids)
 
 
 # ─── The predicate, in memory ─────────────────────────────────────────────────
@@ -265,6 +333,19 @@ class BranchAvailability:
             if not live:
                 blocking.append(link)
         return blocking
+
+
+def available_at_any(
+    product: Product, availabilities: "Sequence[BranchAvailability]"
+) -> bool:
+    """Whether *some* branch in the set can make the product — the union rule.
+
+    The in-memory twin of `out_at_every_branch_in_set_subquery`: the catalogue
+    lists a product the moment one serving branch has it, and only the cart,
+    which knows the whole basket, narrows to a single branch. Empty set → False:
+    no branch, nothing to make it.
+    """
+    return any(a.product_available(product) for a in availabilities)
 
 
 #: The refusal a checkout can branch on. The message is free to be reworded;
