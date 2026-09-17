@@ -68,7 +68,6 @@ from .delivery_polygon import (  # noqa: F401
     FulfilmentProviderEnum,
 )
 from .delivery_settings import DeliverySettings  # noqa: F401
-from .polygon_branch_fulfilment import PolygonBranchFulfilment  # noqa: F401
 from .device import (  # noqa: F401
     Device,
     DeviceStatusEnum,
@@ -199,6 +198,7 @@ from .payment_transaction import (  # noqa: F401
     PaymentTransactionStatusEnum,
 )
 from .phone_verification import PhoneVerification  # noqa: F401
+from .polygon_branch_fulfilment import PolygonBranchFulfilment  # noqa: F401
 from .pos_order import (  # noqa: F401
     DeliveryStatusEnum,
     DiscountSourceEnum,

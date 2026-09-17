@@ -77,3 +77,23 @@ async def test_the_register_keeps_its_own_catalogue():
     sql = await _sql_for(channel="pos", staff=True)
 
     assert "branch_products" not in sql
+
+
+async def test_the_pin_union_counts_only_online_branches():
+    """
+    Narrowing to a pin's serving branches (`branch_ids`) must count the same
+    online-eligible set the checkout walks. A branch switched off for online
+    orders is not a kitchen this order can go to, so its shelf must not keep a
+    product on the storefront that the checkout would then refuse — the
+    "promise nobody can keep". The set predicate must therefore constrain on
+    `receives_online_orders`, exactly as the estate-wide union does.
+    """
+    import uuid
+
+    sql = await _sql_for(channel="web", branch_ids=[uuid.uuid4(), uuid.uuid4()])
+
+    assert "branch_products" in sql, "the pin union still applies availability"
+    assert "receives_online_orders" in sql, (
+        "the pin's serving set must exclude branches switched off for online "
+        "orders, or the catalogue lists what the checkout refuses"
+    )

@@ -269,11 +269,19 @@ def out_at_every_branch_in_set_subquery(branch_ids: "Sequence[uuid.UUID]"):
     set, so a product one serving branch has is still shown. An empty set means
     "no branch serves this pin", which the caller handles as unserviceable
     rather than by hiding the catalogue, so this returns a false predicate.
+
+    The set is filtered to branches that can actually take this online order —
+    active **and** `receives_online_orders` — the same pair `_website_delivery_branch_ids`
+    takes the estate-wide union over and the same pair the checkout's
+    `select_fulfilment` walks. Without the flag the catalogue would list a
+    product only a switched-off kitchen in the zone has, then the checkout would
+    refuse it: the "promise nobody can keep" this narrowing exists to avoid.
     """
     if not branch_ids:
         return literal(False)
     ids = select(Branch.id).where(
         Branch.is_active.is_(True),
+        Branch.receives_online_orders.is_(True),
         Branch.id.in_(list(branch_ids)),
     )
     return _out_at_every_of(ids)
@@ -333,19 +341,6 @@ class BranchAvailability:
             if not live:
                 blocking.append(link)
         return blocking
-
-
-def available_at_any(
-    product: Product, availabilities: "Sequence[BranchAvailability]"
-) -> bool:
-    """Whether *some* branch in the set can make the product — the union rule.
-
-    The in-memory twin of `out_at_every_branch_in_set_subquery`: the catalogue
-    lists a product the moment one serving branch has it, and only the cart,
-    which knows the whole basket, narrows to a single branch. Empty set → False:
-    no branch, nothing to make it.
-    """
-    return any(a.product_available(product) for a in availabilities)
 
 
 #: The refusal a checkout can branch on. The message is free to be reworded;
