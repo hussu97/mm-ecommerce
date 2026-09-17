@@ -28,6 +28,7 @@ from app.models.delivery_polygon import (
     DeliveryPricingEnum,
     FulfilmentProviderEnum,
 )
+from app.models.polygon_branch_fulfilment import PolygonBranchFulfilment
 from app.models.user import User
 from app.services import audit_service
 from app.services.delivery import delivery_service, delivery_zone_service
@@ -94,7 +95,15 @@ async def _load_version(
 ) -> DeliveryPolygonVersion:
     result = await db.execute(
         select(DeliveryPolygonVersion)
-        .options(selectinload(DeliveryPolygonVersion.polygons))
+        # The per-zone branch list is loaded with the polygons rather than left
+        # to lazy-load: `create_version` clones it, and reaching for
+        # `polygon.branch_fulfilments` on a bare row inside an async session
+        # raises `MissingGreenlet` rather than issuing a query.
+        .options(
+            selectinload(DeliveryPolygonVersion.polygons).selectinload(
+                DeliveryPolygon.branch_fulfilments
+            )
+        )
         .where(DeliveryPolygonVersion.id == version_id)
     )
     version = result.scalars().first()
@@ -358,6 +367,23 @@ async def create_version(
             max_lng=polygon.max_lng,
             display_order=polygon.display_order,
         )
+        # The ordered per-zone branch list is the authoritative source; the four
+        # columns copied by hand above are only its rank-1 mirror. Cloning the
+        # mirror but not the list is the bug this exists to prevent: a drafted or
+        # published map would keep the preferred branch on every zone yet lose
+        # every alternate branch, silently reverting the whole map to
+        # single-branch fulfilment with nothing on screen to say it changed. Rank,
+        # branch, courier and escapes are preserved per assignment; `list(...)` on
+        # the escapes so the clone does not share the source row's mutable JSONB.
+        copy.branch_fulfilments = [
+            PolygonBranchFulfilment(
+                branch_id=assignment.branch_id,
+                rank=assignment.rank,
+                fulfilment_provider=assignment.fulfilment_provider,
+                alternate_providers=list(assignment.alternate_providers or []),
+            )
+            for assignment in polygon.branch_fulfilments
+        ]
         db.add(copy)
     await db.flush()
 
