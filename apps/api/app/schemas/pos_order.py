@@ -222,6 +222,13 @@ class PosOrderResponse(ORMModel):
     till_id: UUID | None
     order_type: str | None
     source: str | None
+    #: What the customer chose to pay with: `card` or `cod`. The website only
+    #: offers `cod` on a store-pickup order (delivery is card-only), so an online
+    #: `cod` order is always cash collected at the counter — the receipt flags it
+    #: "CASH ON COLLECTION" so the cashier takes the money before handing the bag
+    #: over. Mutated to the actual tender (`cash`, `card`, `mixed`) once a payment
+    #: is rung at the register. Null on a historical order that carried none.
+    payment_method: str | None = None
     pos_status: str | None
     #: The e-commerce lifecycle — `confirmed`, `packed`, `out_for_delivery`,
     #: `delivered`. `pos_status` beside it is the counter's own lifecycle, and

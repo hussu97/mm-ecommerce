@@ -21169,6 +21169,17 @@
             ],
             "title": "Original Order Id"
           },
+          "payment_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Method"
+          },
           "payments": {
             "default": [],
             "items": {

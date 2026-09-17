@@ -15828,6 +15828,8 @@ export interface components {
             order_type: string | null;
             /** Original Order Id */
             original_order_id?: string | null;
+            /** Payment Method */
+            payment_method?: string | null;
             /**
              * Payments
              * @default []
