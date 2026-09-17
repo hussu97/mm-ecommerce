@@ -102,6 +102,16 @@ jobs:
         run: pnpm --filter web exec tsc --noEmit
 
       - name: Build
+        # `next build` prerenders the API-backed SEO routes (sitemap.xml,
+        # image-sitemap.xml, llms*.txt), which fetch the catalogue at build time
+        # and — by design (F-WEB-6) — fail the build loudly if the API is
+        # unreachable rather than baking an empty sitemap. The committed
+        # apps/web/.env points at localhost, which no API answers in CI, so the
+        # build needs the real public API URL here, exactly as Vercel sets it in
+        # production. Read-only public GETs; keeps the sitemap ISR-cached (no
+        # force-dynamic), so there is no SEO or caching change.
+        env:
+          NEXT_PUBLIC_API_URL: https://api.meltingmomentscakes.com/api/v1
         run: pnpm --filter web build
 
   lint-admin:
