@@ -444,6 +444,12 @@ export interface SupplierContact {
   is_primary: boolean;
 }
 
+export interface SupplierMappedItem {
+  item_id: string;
+  item_name: string | null;
+  item_sku: string | null;
+}
+
 export interface Supplier {
   id: string;
   name: string;
@@ -456,6 +462,7 @@ export interface Supplier {
   is_active: boolean;
   deleted_at: string | null;
   contacts: SupplierContact[];
+  mapped_items: SupplierMappedItem[];
 }
 
 export interface SupplierItem {
@@ -463,7 +470,6 @@ export interface SupplierItem {
   supplier_id: string;
   item_id: string;
   supplier_sku: string | null;
-  default_unit_cost: number;
   lead_time_days: number;
   is_preferred: boolean;
   item_name: string | null;

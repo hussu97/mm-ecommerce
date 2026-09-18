@@ -18730,8 +18730,6 @@ export interface components {
         };
         /** SupplierItemResponse */
         SupplierItemResponse: {
-            /** Default Unit Cost */
-            default_unit_cost: string;
             /**
              * Id
              * Format: uuid
@@ -18763,11 +18761,6 @@ export interface components {
         /** SupplierItemUpsert */
         SupplierItemUpsert: {
             /**
-             * Default Unit Cost
-             * @default 0
-             */
-            default_unit_cost: number | string;
-            /**
              * Is Preferred
              * @default false
              */
@@ -18784,6 +18777,21 @@ export interface components {
             lead_time_days: number;
             /** Supplier Sku */
             supplier_sku?: string | null;
+        };
+        /**
+         * SupplierMappedItem
+         * @description A compact view of one item a supplier can supply, for the list page.
+         */
+        SupplierMappedItem: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Item Sku */
+            item_sku?: string | null;
         };
         /** SupplierResponse */
         SupplierResponse: {
@@ -18808,6 +18816,11 @@ export interface components {
             is_active: boolean;
             /** Is Vat Deductible */
             is_vat_deductible: boolean;
+            /**
+             * Mapped Items
+             * @default []
+             */
+            mapped_items: components["schemas"]["SupplierMappedItem"][];
             /** Name */
             name: string;
             /** Name Localized */

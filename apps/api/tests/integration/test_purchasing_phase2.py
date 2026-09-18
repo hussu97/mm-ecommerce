@@ -237,14 +237,14 @@ async def test_supplier_with_contacts_and_the_purchased_item_rule(engine, env):
         await supplier_service.set_supplier_items(
             db,
             supplier.id,
-            [SupplierItemUpsert(item_id=raw_id, default_unit_cost=D("10"))],
+            [SupplierItemUpsert(item_id=raw_id)],
         )
         # A produced good cannot be supplied by a vendor.
         with pytest.raises(BadRequestError, match="produced"):
             await supplier_service.set_supplier_items(
                 db,
                 supplier.id,
-                [SupplierItemUpsert(item_id=produced_id, default_unit_cost=D("1"))],
+                [SupplierItemUpsert(item_id=produced_id)],
             )
         await db.rollback()
 

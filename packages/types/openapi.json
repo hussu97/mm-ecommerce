@@ -29671,11 +29671,6 @@
       },
       "SupplierItemResponse": {
         "properties": {
-          "default_unit_cost": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Default Unit Cost",
-            "type": "string"
-          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -29749,7 +29744,6 @@
           "supplier_id",
           "item_id",
           "supplier_sku",
-          "default_unit_cost",
           "lead_time_days",
           "is_preferred"
         ],
@@ -29758,20 +29752,6 @@
       },
       "SupplierItemUpsert": {
         "properties": {
-          "default_unit_cost": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              }
-            ],
-            "default": "0",
-            "title": "Default Unit Cost"
-          },
           "is_preferred": {
             "default": false,
             "title": "Is Preferred",
@@ -29806,6 +29786,43 @@
           "item_id"
         ],
         "title": "SupplierItemUpsert",
+        "type": "object"
+      },
+      "SupplierMappedItem": {
+        "description": "A compact view of one item a supplier can supply, for the list page.",
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "item_sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Sku"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "SupplierMappedItem",
         "type": "object"
       },
       "SupplierResponse": {
@@ -29846,6 +29863,14 @@
           "is_vat_deductible": {
             "title": "Is Vat Deductible",
             "type": "boolean"
+          },
+          "mapped_items": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SupplierMappedItem"
+            },
+            "title": "Mapped Items",
+            "type": "array"
           },
           "name": {
             "title": "Name",

@@ -70,6 +70,7 @@ from app.schemas.inventory import (
     SupplierCreate,
     SupplierItemResponse,
     SupplierItemUpsert,
+    SupplierMappedItem,
     SupplierResponse,
     SupplierUpdate,
     WarehouseCreate,
@@ -114,7 +115,38 @@ async def list_suppliers(
     if not include_inactive:
         stmt = stmt.where(Supplier.is_active.is_(True))
     stmt = stmt.order_by(Supplier.name)
-    return list((await db.execute(stmt)).scalars().unique().all())
+    suppliers = list((await db.execute(stmt)).scalars().unique().all())
+
+    # Attach each supplier's mapped items in one query, so the list can show
+    # what a supplier supplies without a round-trip per row.
+    mapped: dict[uuid.UUID, list[SupplierMappedItem]] = {}
+    if suppliers:
+        rows = (
+            await db.execute(
+                select(
+                    SupplierItem.supplier_id,
+                    SupplierItem.item_id,
+                    InventoryItem.name,
+                    InventoryItem.sku,
+                )
+                .join(InventoryItem, InventoryItem.id == SupplierItem.item_id)
+                .where(SupplierItem.supplier_id.in_([s.id for s in suppliers]))
+                .order_by(InventoryItem.name)
+            )
+        ).all()
+        for supplier_id, item_id, item_name, item_sku in rows:
+            mapped.setdefault(supplier_id, []).append(
+                SupplierMappedItem(
+                    item_id=item_id, item_name=item_name, item_sku=item_sku
+                )
+            )
+
+    payload = []
+    for supplier in suppliers:
+        response = SupplierResponse.model_validate(supplier)
+        response.mapped_items = mapped.get(supplier.id, [])
+        payload.append(response)
+    return payload
 
 
 @suppliers_router.post(

@@ -275,15 +275,9 @@ function CreateOrder({
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
-  function prefillCost(index: number, itemId: string) {
-    const mapped = (supplierItems ?? []).find((r) => r.item_id === itemId);
-    const qty = Number(lines[index].quantity || 0);
-    const patch: Partial<DraftLine> = { item_id: itemId };
-    if (mapped && qty > 0) {
-      // Round to cents so the field shows a clean total, not a float artifact.
-      patch.entered_total = (mapped.default_unit_cost * qty).toFixed(2);
-    }
-    updateLine(index, patch);
+  // The unit for a chosen item, shown in its own column so the line reads cleanly.
+  function unitFor(itemId: string): string {
+    return items.find((i) => i.id === itemId)?.storage_unit ?? '';
   }
 
   async function save() {
@@ -360,15 +354,36 @@ function CreateOrder({
           onChange={(e) => setSupplierReference(e.target.value)}
           placeholder="Their PO / invoice no."
         />
-        <label className="text-xs font-body sm:col-span-2">
+        <div className="text-xs font-body sm:col-span-2">
           <span className="mb-1 block text-gray-500">Invoice image (optional)</span>
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp,application/pdf"
-            onChange={(e) => setInvoiceFile(e.target.files?.[0] ?? null)}
-            className="block w-full text-sm"
-          />
-        </label>
+          <div className="flex items-center gap-3">
+            <label className="cursor-pointer rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+              {invoiceFile ? 'Change file' : 'Choose file'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                onChange={(e) => setInvoiceFile(e.target.files?.[0] ?? null)}
+                className="hidden"
+              />
+            </label>
+            {invoiceFile ? (
+              <span className="flex items-center gap-2 text-sm text-gray-600">
+                <span className="material-icons text-[16px] text-primary">description</span>
+                {invoiceFile.name}
+                <button
+                  type="button"
+                  onClick={() => setInvoiceFile(null)}
+                  className="text-gray-400 hover:text-red-500"
+                  aria-label="Remove invoice"
+                >
+                  <span className="material-icons text-[16px]">close</span>
+                </button>
+              </span>
+            ) : (
+              <span className="text-gray-400">JPEG, PNG, WebP or PDF</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {supplier && (
@@ -383,6 +398,7 @@ function CreateOrder({
         <thead>
           <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
             <th className="py-2 text-left">Item</th>
+            <th className="py-2 text-left w-20">Unit</th>
             <th className="py-2 text-right w-28">Qty</th>
             <th className="py-2 text-right w-36">Total cost</th>
             <th className="py-2 text-right w-28">Unit cost</th>
@@ -398,14 +414,15 @@ function CreateOrder({
                 <td className="py-2 pr-2">
                   <Select
                     value={line.item_id}
-                    onChange={(e) => prefillCost(index, e.target.value)}
+                    onChange={(e) => updateLine(index, { item_id: e.target.value })}
                     options={pickable.map((i) => ({
                       value: i.id,
-                      label: `${i.sku} — ${i.name} (${i.storage_unit})`,
+                      label: `${i.sku} — ${i.name}`,
                     }))}
                     placeholder="Choose item…"
                   />
                 </td>
+                <td className="py-2 pr-2 text-gray-500">{unitFor(line.item_id) || '—'}</td>
                 <td className="py-2 pr-2">
                   <Input
                     type="number"

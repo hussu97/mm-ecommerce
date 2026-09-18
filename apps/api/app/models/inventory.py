@@ -446,12 +446,15 @@ class SupplierContact(Base, UUIDMixin, TimestampMixin):
 
 
 class SupplierItem(Base, UUIDMixin, TimestampMixin):
-    """A supplier↔item mapping: what a supplier can supply, and its usual price.
+    """A supplier↔item mapping: which items a supplier can supply.
 
     Only a **purchased** item may be mapped — one whose ``kind`` is a raw
     material, packaging or resale good and that owns no recipe (a recipe means
     the item is produced, not bought). That rule is enforced in the service on
     write; one item may be mapped to several suppliers.
+
+    The mapping carries no price: an item's cost comes only from the purchase
+    orders it is actually received on, never a stored "usual" figure.
     """
 
     __tablename__ = "supplier_items"
@@ -472,11 +475,6 @@ class SupplierItem(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     supplier_sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    #: The usual price per storage unit, prefilled onto a PO line (VAT-inclusive,
-    #: like everything else the shop keys in).
-    default_unit_cost: Mapped[Any] = mapped_column(
-        Numeric(16, 6), nullable=False, server_default="0"
-    )
     lead_time_days: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="0"
     )

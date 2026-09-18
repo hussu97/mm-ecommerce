@@ -288,6 +288,14 @@ class SupplierUpdate(BaseModel):
     contacts: list[SupplierContactInput] | None = None
 
 
+class SupplierMappedItem(BaseModel):
+    """A compact view of one item a supplier can supply, for the list page."""
+
+    item_id: UUID
+    item_name: str | None = None
+    item_sku: str | None = None
+
+
 class SupplierResponse(ORMModel):
     id: UUID
     name: str
@@ -302,12 +310,14 @@ class SupplierResponse(ORMModel):
     created_at: datetime
     updated_at: datetime
     contacts: list[SupplierContactResponse] = []
+    #: The items this supplier can supply, filled by the list endpoint so the
+    #: supplier table can show them without a query per row.
+    mapped_items: list[SupplierMappedItem] = []
 
 
 class SupplierItemUpsert(BaseModel):
     item_id: UUID
     supplier_sku: str | None = Field(None, max_length=100)
-    default_unit_cost: Decimal = Field(Decimal("0"), ge=0)
     lead_time_days: int = Field(0, ge=0, le=365)
     is_preferred: bool = False
 
@@ -317,7 +327,6 @@ class SupplierItemResponse(ORMModel):
     supplier_id: UUID
     item_id: UUID
     supplier_sku: str | None
-    default_unit_cost: Decimal
     lead_time_days: int
     is_preferred: bool
     #: Filled by the endpoint for the picker on both apps.

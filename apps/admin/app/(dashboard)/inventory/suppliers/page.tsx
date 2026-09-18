@@ -21,7 +21,6 @@ interface ContactDraft {
 
 interface MappingDraft {
   item_id: string;
-  default_unit_cost: string;
   supplier_sku: string;
 }
 
@@ -92,6 +91,18 @@ export default function SuppliersPage() {
             actions={(s) => <RowAction onClick={() => setEditing(s)}>Edit</RowAction>}
             columns={[
               { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (s) => s.name, render: (s) => <span className="font-medium">{s.name}</span> },
+              {
+                header: 'Supplies',
+                render: (s) =>
+                  s.mapped_items.length === 0 ? (
+                    <span className="text-gray-400">—</span>
+                  ) : (
+                    <span className="text-xs text-gray-600" title={s.mapped_items.map((m) => m.item_name ?? m.item_sku).join(', ')}>
+                      {s.mapped_items.slice(0, 3).map((m) => m.item_name ?? m.item_sku).join(', ')}
+                      {s.mapped_items.length > 3 ? ` +${s.mapped_items.length - 3}` : ''}
+                    </span>
+                  ),
+              },
               { header: 'Contacts', render: (s) => (s.contacts.length ? `${s.contacts.length}` : '—') },
               { header: 'VAT', render: (s) => (s.is_vat_deductible ? <Badge variant="info">Deductible</Badge> : <span className="text-gray-400">—</span>) },
               { header: 'Terms', sortable: true, sortAccessor: (s) => s.payment_terms_days, render: (s) => `${s.payment_terms_days} days` },
@@ -162,7 +173,6 @@ function SupplierModal({
         setMappings(
           rows.map((r) => ({
             item_id: r.item_id,
-            default_unit_cost: String(r.default_unit_cost),
             supplier_sku: r.supplier_sku ?? '',
           })),
         ),
@@ -224,7 +234,6 @@ function SupplierModal({
         saved.id,
         cleanMappings.map((m) => ({
           item_id: m.item_id,
-          default_unit_cost: Number(m.default_unit_cost) || 0,
           supplier_sku: m.supplier_sku.trim() || null,
         })),
       );
@@ -286,7 +295,7 @@ function SupplierModal({
       <section className="mt-5">
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-[11px] uppercase tracking-widest text-gray-500 font-body">Supplied items</h3>
-          <Button variant="ghost" size="sm" onClick={() => setMappings((p) => [...p, { item_id: '', default_unit_cost: '0', supplier_sku: '' }])}>
+          <Button variant="ghost" size="sm" onClick={() => setMappings((p) => [...p, { item_id: '', supplier_sku: '' }])}>
             Add item
           </Button>
         </div>
@@ -296,7 +305,7 @@ function SupplierModal({
           <>
             {mappings.length === 0 && <p className="text-xs text-gray-400 font-body">No items mapped. Only purchased items (no recipe) can be supplied.</p>}
             {mappings.map((m, index) => (
-              <div key={index} className="mb-2 grid items-end gap-2 sm:grid-cols-[2fr_1fr_1fr_auto]">
+              <div key={index} className="mb-2 grid items-end gap-2 sm:grid-cols-[2fr_1fr_auto]">
                 <label className="text-xs font-body">
                   {index === 0 && <span className="mb-1 block text-gray-500">Item</span>}
                   <select
@@ -312,7 +321,6 @@ function SupplierModal({
                     ))}
                   </select>
                 </label>
-                <Input label={index === 0 ? 'Usual cost' : undefined} type="number" step="0.000001" value={m.default_unit_cost} onChange={(e) => updateMapping(index, { default_unit_cost: e.target.value })} />
                 <Input label={index === 0 ? 'Supplier SKU' : undefined} value={m.supplier_sku} onChange={(e) => updateMapping(index, { supplier_sku: e.target.value })} />
                 <button className="pb-2 text-gray-400 hover:text-red-500" onClick={() => setMappings((p) => p.filter((_, i) => i !== index))}>
                   <span className="material-icons text-[16px]">close</span>

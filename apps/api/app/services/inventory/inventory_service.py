@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import delete, event, select, text
@@ -1232,6 +1233,9 @@ async def create_pos_purchase_order(
         branch_id=branch.id,
         warehouse_id=warehouse_id,
         business_date=business_date,
+        # A till PO is received the moment it is keyed, so the delivery is today
+        # (the branch business date) — never a date the cashier picks.
+        delivery_date=date.fromisoformat(business_date),
         supplier_reference=data.supplier_reference,
         invoice_object_key=invoice_object_key,
         invoice_content_type=invoice_content_type,
