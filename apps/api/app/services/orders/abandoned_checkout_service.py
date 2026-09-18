@@ -78,9 +78,7 @@ async def sweep_once(now: datetime | None = None) -> int:
         return 0
     now = now or utcnow()
 
-    async with advisory_lock.held(
-        _ADVISORY_LOCK_KEY, name="abandoned cart"
-    ) as mine:
+    async with advisory_lock.held(_ADVISORY_LOCK_KEY, name="abandoned cart") as mine:
         if not mine:
             return 0
 

@@ -301,7 +301,9 @@ class StripeProvider(PaymentGatewayProvider):
         try:
             session = stripe.checkout.Session.retrieve(sid)
         except StripeError as e:
-            logger.warning("Stripe resume lookup failed for %s: %s", order.order_number, e)
+            logger.warning(
+                "Stripe resume lookup failed for %s: %s", order.order_number, e
+            )
             return None
         if getattr(session, "status", None) != "open":
             return None
