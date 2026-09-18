@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Translations = dict[str, dict[str, str]]
 
@@ -236,32 +236,56 @@ class InventoryLevelResponse(ORMModel):
 # ─── Suppliers ────────────────────────────────────────────────────────────────
 
 
+class SupplierContactInput(BaseModel):
+    """One contact. Must carry an email or a phone — a name alone is refused."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    email: str | None = Field(None, max_length=255)
+    phone: str | None = Field(None, max_length=30)
+    is_primary: bool = False
+
+    @model_validator(mode="after")
+    def _reachable(self) -> SupplierContactInput:
+        if not (self.email or self.phone):
+            raise ValueError("A contact needs an email or a phone, not just a name")
+        return self
+
+
+class SupplierContactResponse(ORMModel):
+    id: UUID
+    name: str
+    email: str | None
+    phone: str | None
+    is_primary: bool
+
+
 class SupplierCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     name_localized: str | None = Field(None, max_length=200)
     reference: str | None = Field(None, max_length=50)
-    contact_name: str | None = Field(None, max_length=150)
-    phone: str | None = Field(None, max_length=30)
-    email: str | None = Field(None, max_length=255)
+    is_vat_deductible: bool = True
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int = Field(0, ge=0, le=365)
     notes: str | None = None
     is_active: bool = True
+    contacts: list[SupplierContactInput] = Field(default_factory=list)
 
 
 class SupplierUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     name_localized: str | None = Field(None, max_length=200)
     reference: str | None = Field(None, max_length=50)
-    contact_name: str | None = Field(None, max_length=150)
-    phone: str | None = Field(None, max_length=30)
-    email: str | None = Field(None, max_length=255)
+    is_vat_deductible: bool | None = None
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int | None = Field(None, ge=0, le=365)
     notes: str | None = None
     is_active: bool | None = None
+    #: When present, replaces the whole contact set; omit to leave contacts as-is.
+    contacts: list[SupplierContactInput] | None = None
 
 
 class SupplierResponse(ORMModel):
@@ -269,9 +293,7 @@ class SupplierResponse(ORMModel):
     name: str
     name_localized: str | None
     reference: str | None
-    contact_name: str | None
-    phone: str | None
-    email: str | None
+    is_vat_deductible: bool
     address: str | None
     tax_number: str | None
     payment_terms_days: int
@@ -279,12 +301,13 @@ class SupplierResponse(ORMModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    contacts: list[SupplierContactResponse] = []
 
 
 class SupplierItemUpsert(BaseModel):
     item_id: UUID
     supplier_sku: str | None = Field(None, max_length=100)
-    cost: Decimal = Field(Decimal("0"), ge=0)
+    default_unit_cost: Decimal = Field(Decimal("0"), ge=0)
     lead_time_days: int = Field(0, ge=0, le=365)
     is_preferred: bool = False
 
@@ -294,9 +317,13 @@ class SupplierItemResponse(ORMModel):
     supplier_id: UUID
     item_id: UUID
     supplier_sku: str | None
-    cost: Decimal
+    default_unit_cost: Decimal
     lead_time_days: int
     is_preferred: bool
+    #: Filled by the endpoint for the picker on both apps.
+    item_name: str | None = None
+    item_sku: str | None = None
+    storage_unit: str | None = None
 
 
 # ─── Transactions ─────────────────────────────────────────────────────────────
@@ -422,10 +449,17 @@ class InventoryTransactionResponse(ORMModel):
 
 
 class PurchaseOrderLineInput(BaseModel):
+    """One PO line. The user keys the quantity and the line's total cost.
+
+    ``entered_total`` is VAT-inclusive money for the whole line; the server
+    derives the per-unit cost and, for a VAT-deductible supplier, the recoverable
+    VAT slice.
+    """
+
     item_id: UUID
     quantity: Decimal = Field(gt=0)
     unit: UnitLiteral = "storage"
-    unit_cost: Decimal = Field(Decimal("0"), ge=0)
+    entered_total: Decimal = Field(Decimal("0"), ge=0)
 
 
 class PurchaseOrderCreate(BaseModel):
@@ -433,6 +467,7 @@ class PurchaseOrderCreate(BaseModel):
     branch_id: UUID
     warehouse_id: UUID | None = None
     delivery_date: date | None = None
+    supplier_reference: str | None = Field(None, max_length=100)
     additional_cost: Decimal = Field(Decimal("0"), ge=0)
     notes: str | None = None
     items: list[PurchaseOrderLineInput] = Field(min_length=1)
@@ -442,9 +477,27 @@ class PurchaseOrderUpdate(BaseModel):
     supplier_id: UUID | None = None
     warehouse_id: UUID | None = None
     delivery_date: date | None = None
+    supplier_reference: str | None = Field(None, max_length=100)
     additional_cost: Decimal | None = Field(None, ge=0)
     notes: str | None = None
     items: list[PurchaseOrderLineInput] | None = None
+
+
+class PosPurchaseOrderCreate(BaseModel):
+    """Create-and-receive in one call from the till.
+
+    The branch comes from the device, so it is not in the body. The invoice image
+    is an optional base64 payload the server stores in the private GCS bucket.
+    """
+
+    branch_id: UUID
+    supplier_id: UUID
+    warehouse_id: UUID | None = None
+    supplier_reference: str | None = Field(None, max_length=100)
+    notes: str | None = None
+    invoice_image_base64: str | None = None
+    invoice_content_type: str | None = Field(None, max_length=100)
+    items: list[PurchaseOrderLineInput] = Field(min_length=1)
 
 
 class PurchaseOrderLineResponse(ORMModel):
@@ -455,6 +508,9 @@ class PurchaseOrderLineResponse(ORMModel):
     outstanding_quantity: Decimal
     unit: str
     conversion_factor: Decimal
+    entered_total: Decimal
+    vat_amount: Decimal
+    net_total: Decimal
     unit_cost: Decimal
     total_cost: Decimal
     item_name: str | None = None
@@ -465,12 +521,18 @@ class PurchaseOrderResponse(ORMModel):
     id: UUID
     reference: str
     status: str
+    origin: str
     supplier_id: UUID
     branch_id: UUID
     warehouse_id: UUID | None
     business_date: str
     delivery_date: date | None
+    supplier_reference: str | None
+    invoice_object_key: str | None
     additional_cost: Decimal
+    subtotal_net: Decimal
+    vat_total: Decimal
+    total_gross: Decimal
     total_cost: Decimal
     notes: str | None
     creator_id: UUID | None
@@ -482,6 +544,31 @@ class PurchaseOrderResponse(ORMModel):
     updated_at: datetime
     items: list[PurchaseOrderLineResponse] = []
     supplier_name: str | None = None
+    #: A short-lived signed URL for the invoice image, when one is attached.
+    invoice_url: str | None = None
+
+
+class CostLayerResponse(ORMModel):
+    id: UUID
+    warehouse_id: UUID
+    source_kind: str
+    posting_sequence: int
+    purchase_order_id: UUID | None
+    original_quantity: Decimal
+    remaining_quantity: Decimal
+    unit_cost: Decimal
+    received_at: datetime
+    warehouse_name: str | None = None
+
+
+class ItemCostLayersResponse(BaseModel):
+    """The surviving FIFO layers for an item, and the valuation they imply."""
+
+    item_id: UUID
+    total_quantity: Decimal
+    total_value: Decimal
+    average_cost: Decimal
+    layers: list[CostLayerResponse] = []
 
 
 class ReceiveLine(BaseModel):

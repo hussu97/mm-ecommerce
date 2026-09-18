@@ -5,7 +5,7 @@
 // of that machinery, whose error handling rendered an object `detail` as
 // "[object Object]" and whose second refresh could race the first.
 
-import { api, buildQs } from './api';
+import { api, buildQs, request } from './api';
 import type { Schemas } from '@mm/types';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, Device, DrawerOperation,
@@ -15,7 +15,7 @@ import type {
   KitchenFlow, PaymentMethod,
   PermissionCatalogue, Printer, PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
-  Supplier, Tax,
+  Supplier, SupplierItem, ItemCostLayers, Tax,
   TaxGroup, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
@@ -228,10 +228,16 @@ export const inventoryApi = {
   warehouses: (branchId?: string) => api.get<Warehouse[]>(`/inventory/warehouses${buildQs({ branch_id: branchId })}`),
   createWarehouse: (d: Record<string, unknown>) => api.post<Warehouse>('/inventory/warehouses', d),
 
-  suppliers: () => api.get<Supplier[]>('/inventory/suppliers'),
+  suppliers: (params?: { include_inactive?: boolean }) =>
+    api.get<Supplier[]>(`/inventory/suppliers${buildQs(params)}`),
   createSupplier: (d: Record<string, unknown>) => api.post<Supplier>('/inventory/suppliers', d),
   updateSupplier: (id: string, d: Record<string, unknown>) => api.put<Supplier>(`/inventory/suppliers/${id}`, d),
   removeSupplier: (id: string) => api.delete<void>(`/inventory/suppliers/${id}`),
+  supplierItems: (id: string) => api.get<SupplierItem[]>(`/inventory/suppliers/${id}/items`),
+  setSupplierItems: (id: string, items: unknown[]) =>
+    api.put<SupplierItem[]>(`/inventory/suppliers/${id}/items`, items),
+  itemCostLayers: (itemId: string, branchId?: string) =>
+    api.get<ItemCostLayers>(`/inventory/items/${itemId}/cost-layers${buildQs({ branch_id: branchId })}`),
 
   transactions: (params?: { branch_id?: string; type?: string; status?: string; business_date?: string; search?: string; limit?: number; offset?: number }) =>
     api.get<InventoryTransaction[]>(`/inventory/transactions${buildQs(params)}`),
@@ -249,6 +255,12 @@ export const inventoryApi = {
   declinePurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/decline`),
   receivePurchaseOrder: (id: string, lines: Array<{ purchase_order_item_id: string; quantity: number }>) =>
     api.post<InventoryTransaction>(`/inventory/purchase-orders/${id}/receive`, { lines }),
+  uploadPurchaseOrderInvoice: (id: string, file: File) =>
+    request<PurchaseOrder>(`/inventory/purchase-orders/${id}/invoice`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    }),
 
   productRecipe: (productId: string) => api.get<Record<string, unknown>>(`/inventory/recipes/products/${productId}`),
   setProductRecipe: (productId: string, ingredients: unknown[]) =>

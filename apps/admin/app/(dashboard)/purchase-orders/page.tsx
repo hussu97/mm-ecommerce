@@ -8,6 +8,7 @@ import type {
   PurchaseOrder,
   PurchaseOrderStatus,
   Supplier,
+  SupplierItem,
 } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
@@ -30,8 +31,10 @@ const STATUS_VARIANT: Record<
 interface DraftLine {
   item_id: string;
   quantity: string;
-  unit_cost: string;
+  entered_total: string;
 }
+
+const VAT_RATE = 0.05;
 
 export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
@@ -226,17 +229,50 @@ function CreateOrder({
   const [supplierId, setSupplierId] = useState('');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [deliveryDate, setDeliveryDate] = useState('');
-  const [lines, setLines] = useState<DraftLine[]>([{ item_id: '', quantity: '1', unit_cost: '0' }]);
+  const [supplierReference, setSupplierReference] = useState('');
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [lines, setLines] = useState<DraftLine[]>([{ item_id: '', quantity: '1', entered_total: '0' }]);
+  // The items this supplier can supply — prefilled once a supplier is chosen.
+  const [supplierItems, setSupplierItems] = useState<SupplierItem[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const total = lines.reduce(
-    (sum, l) => sum + Number(l.quantity || 0) * Number(l.unit_cost || 0),
-    0,
-  );
+  const supplier = suppliers.find((s) => s.id === supplierId) ?? null;
+  const vatDeductible = supplier?.is_vat_deductible ?? false;
+
+  useEffect(() => {
+    if (!supplierId) {
+      setSupplierItems(null);
+      return;
+    }
+    let cancelled = false;
+    inventoryApi
+      .supplierItems(supplierId)
+      .then((rows) => { if (!cancelled) setSupplierItems(rows); })
+      .catch(() => { if (!cancelled) setSupplierItems([]); });
+    return () => { cancelled = true; };
+  }, [supplierId]);
+
+  // Offer the supplier's mapped items when we have them; otherwise every
+  // purchasable item, so a PO is never blocked on missing mappings.
+  const mappedIds = new Set((supplierItems ?? []).map((r) => r.item_id));
+  const pickable = (supplierItems && supplierItems.length > 0)
+    ? items.filter((i) => mappedIds.has(i.id))
+    : items.filter((i) => i.is_active && !i.deleted_at);
+
+  const grossTotal = lines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0);
+  const vatTotal = vatDeductible ? grossTotal - grossTotal / (1 + VAT_RATE) : 0;
 
   function updateLine(index: number, patch: Partial<DraftLine>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+
+  function prefillCost(index: number, itemId: string) {
+    const mapped = (supplierItems ?? []).find((r) => r.item_id === itemId);
+    const qty = Number(lines[index].quantity || 0);
+    const patch: Partial<DraftLine> = { item_id: itemId };
+    if (mapped && qty > 0) patch.entered_total = String(mapped.default_unit_cost * qty);
+    updateLine(index, patch);
   }
 
   async function save() {
@@ -248,17 +284,21 @@ function CreateOrder({
     setSaving(true);
     setError('');
     try {
-      await inventoryApi.createPurchaseOrder({
+      const po = await inventoryApi.createPurchaseOrder({
         supplier_id: supplierId,
         branch_id: branchId,
         delivery_date: deliveryDate || null,
+        supplier_reference: supplierReference.trim() || null,
         items: valid.map((l) => ({
           item_id: l.item_id,
           quantity: Number(l.quantity),
-          unit_cost: Number(l.unit_cost),
+          entered_total: Number(l.entered_total),
           unit: 'storage',
         })),
       });
+      if (invoiceFile) {
+        await inventoryApi.uploadPurchaseOrderInvoice(po.id, invoiceFile);
+      }
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed.');
@@ -290,65 +330,88 @@ function CreateOrder({
           value={deliveryDate}
           onChange={(e) => setDeliveryDate(e.target.value)}
         />
+        <Input
+          label="Supplier reference"
+          value={supplierReference}
+          onChange={(e) => setSupplierReference(e.target.value)}
+          placeholder="Their PO / invoice no."
+        />
+        <label className="text-xs font-body sm:col-span-2">
+          <span className="mb-1 block text-gray-500">Invoice image (optional)</span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp,application/pdf"
+            onChange={(e) => setInvoiceFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-sm"
+          />
+        </label>
       </div>
+
+      {supplier && (
+        <p className="mt-2 text-xs text-gray-500 font-body">
+          {vatDeductible
+            ? 'VAT-deductible supplier — VAT is split out of the total you enter for the reclaim report.'
+            : 'Not VAT-deductible — the whole amount is the cost.'}
+        </p>
+      )}
 
       <table className="mt-4 w-full text-sm">
         <thead>
           <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
             <th className="py-2 text-left">Item</th>
             <th className="py-2 text-right w-28">Qty</th>
-            <th className="py-2 text-right w-32">Unit cost</th>
-            <th className="py-2 text-right w-28">Total</th>
+            <th className="py-2 text-right w-36">Total cost</th>
+            <th className="py-2 text-right w-28">Unit cost</th>
             <th className="w-8" />
           </tr>
         </thead>
         <tbody>
-          {lines.map((line, index) => (
-            <tr key={index} className="border-b border-gray-100">
-              <td className="py-2 pr-2">
-                <Select
-                  value={line.item_id}
-                  onChange={(e) => updateLine(index, { item_id: e.target.value })}
-                  options={items
-                    .filter((i) => i.is_active && !i.deleted_at)
-                    .map((i) => ({
+          {lines.map((line, index) => {
+            const qty = Number(line.quantity || 0);
+            const unit = qty > 0 ? Number(line.entered_total || 0) / qty : 0;
+            return (
+              <tr key={index} className="border-b border-gray-100">
+                <td className="py-2 pr-2">
+                  <Select
+                    value={line.item_id}
+                    onChange={(e) => prefillCost(index, e.target.value)}
+                    options={pickable.map((i) => ({
                       value: i.id,
                       label: `${i.sku} — ${i.name} (${i.storage_unit})`,
                     }))}
-                  placeholder="Choose item…"
-                />
-              </td>
-              <td className="py-2 pr-2">
-                <Input
-                  type="number"
-                  step="0.0001"
-                  value={line.quantity}
-                  onChange={(e) => updateLine(index, { quantity: e.target.value })}
-                />
-              </td>
-              <td className="py-2 pr-2">
-                <Input
-                  type="number"
-                  step="0.000001"
-                  value={line.unit_cost}
-                  onChange={(e) => updateLine(index, { unit_cost: e.target.value })}
-                />
-              </td>
-              <td className="py-2 text-right">
-                {formatCurrency(Number(line.quantity || 0) * Number(line.unit_cost || 0))}
-              </td>
-              <td className="py-2 text-right">
-                {lines.length > 1 && (
-                  <button
-                    onClick={() => setLines((prev) => prev.filter((_, i) => i !== index))}
-                    className="text-gray-400 hover:text-red-500"
-                  >
-                    <span className="material-icons text-[16px]">close</span>
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
+                    placeholder="Choose item…"
+                  />
+                </td>
+                <td className="py-2 pr-2">
+                  <Input
+                    type="number"
+                    step="0.0001"
+                    value={line.quantity}
+                    onChange={(e) => updateLine(index, { quantity: e.target.value })}
+                  />
+                </td>
+                <td className="py-2 pr-2">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={line.entered_total}
+                    onChange={(e) => updateLine(index, { entered_total: e.target.value })}
+                  />
+                </td>
+                <td className="py-2 text-right text-gray-500">{formatCurrency(unit)}</td>
+                <td className="py-2 text-right">
+                  {lines.length > 1 && (
+                    <button
+                      onClick={() => setLines((prev) => prev.filter((_, i) => i !== index))}
+                      className="text-gray-400 hover:text-red-500"
+                    >
+                      <span className="material-icons text-[16px]">close</span>
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -356,11 +419,18 @@ function CreateOrder({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLines((prev) => [...prev, { item_id: '', quantity: '1', unit_cost: '0' }])}
+          onClick={() => setLines((prev) => [...prev, { item_id: '', quantity: '1', entered_total: '0' }])}
         >
           Add line
         </Button>
-        <p className="font-display text-lg text-primary">{formatCurrency(total)}</p>
+        <div className="text-right">
+          {vatDeductible && (
+            <p className="text-xs text-gray-500 font-body">
+              incl. VAT {formatCurrency(vatTotal)}
+            </p>
+          )}
+          <p className="font-display text-lg text-primary">{formatCurrency(grossTotal)}</p>
+        </div>
       </div>
 
       {error && <p className="mt-3 text-xs text-red-600 font-body">{error}</p>}

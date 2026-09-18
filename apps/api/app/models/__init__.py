@@ -90,7 +90,10 @@ from .grubops_order import GrubOpsOrderMap  # noqa: F401
 from .inventory import (  # noqa: F401
     TRANSACTION_SIGN,
     CostingMethodEnum,
+    CostLayerSourceKindEnum,
     InventoryCategory,
+    InventoryCostLayer,
+    InventoryCostLayerConsumption,
     InventoryItem,
     InventoryItemIngredient,
     InventoryLevel,
@@ -103,6 +106,7 @@ from .inventory import (  # noqa: F401
     PurchaseOrderItem,
     PurchaseOrderStatusEnum,
     Supplier,
+    SupplierContact,
     SupplierItem,
     TransactionStatusEnum,
     Warehouse,
@@ -198,7 +202,6 @@ from .payment_transaction import (  # noqa: F401
     PaymentTransactionStatusEnum,
 )
 from .phone_verification import PhoneVerification  # noqa: F401
-from .polygon_branch_fulfilment import PolygonBranchFulfilment  # noqa: F401
 from .pos_order import (  # noqa: F401
     DeliveryStatusEnum,
     DiscountSourceEnum,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
 from decimal import Decimal
 
@@ -10,12 +12,15 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import get_current_active_user, get_db
-from app.core.exceptions import BadRequestError, ConflictError
-from app.core.permissions import ensure, require
+from app.core import object_storage
+from app.core.config import settings
+from app.core.deps import get_db
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.permissions import require
 from app.models import (
     Branch,
     InventoryCategory,
+    InventoryCostLayer,
     InventoryItem,
     InventoryLevel,
     InventoryTransaction,
@@ -26,7 +31,6 @@ from app.models import (
     Product,
     ProductIngredient,
     PurchaseOrder,
-    PurchaseOrderItem,
     PurchaseOrderStatusEnum,
     Supplier,
     SupplierItem,
@@ -42,6 +46,7 @@ from app.schemas.inventory import (
     CloseCountRequest,
     CostAdjustmentRequest,
     CostAdjustmentResponse,
+    CostLayerResponse,
     InventoryCategoryCreate,
     InventoryCategoryResponse,
     InventoryCategoryUpdate,
@@ -51,7 +56,9 @@ from app.schemas.inventory import (
     InventoryLevelResponse,
     InventoryTransactionCreate,
     InventoryTransactionResponse,
+    ItemCostLayersResponse,
     OpenCountRequest,
+    PosPurchaseOrderCreate,
     PurchaseOrderCreate,
     PurchaseOrderResponse,
     PurchaseOrderUpdate,
@@ -71,7 +78,12 @@ from app.schemas.inventory import (
     WasteRequest,
 )
 from app.services import audit_service, crud_service
-from app.services.inventory import access_service, inventory_service, recipe_service
+from app.services.inventory import (
+    access_service,
+    inventory_service,
+    recipe_service,
+    supplier_service,
+)
 from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
@@ -89,13 +101,70 @@ categories_router = build_crud_router(
     entity_type="inventory_category",
 )
 
-suppliers_router = build_crud_router(
-    model=Supplier,
-    create_schema=SupplierCreate,
-    update_schema=SupplierUpdate,
-    response_schema=SupplierResponse,
-    entity_type="supplier",
+suppliers_router = APIRouter()
+
+
+@suppliers_router.get("", response_model=list[SupplierResponse])
+async def list_suppliers(
+    include_inactive: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.read")),
+):
+    stmt = select(Supplier).where(Supplier.deleted_at.is_(None))
+    if not include_inactive:
+        stmt = stmt.where(Supplier.is_active.is_(True))
+    stmt = stmt.order_by(Supplier.name)
+    return list((await db.execute(stmt)).scalars().unique().all())
+
+
+@suppliers_router.post(
+    "", response_model=SupplierResponse, status_code=status.HTTP_201_CREATED
 )
+async def create_supplier(
+    data: SupplierCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    return await supplier_service.create_supplier(db, data)
+
+
+@suppliers_router.get("/{supplier_id}", response_model=SupplierResponse)
+async def get_supplier(
+    supplier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.read")),
+):
+    supplier = await db.get(Supplier, supplier_id)
+    if supplier is None or supplier.deleted_at is not None:
+        raise NotFoundError("Supplier not found")
+    return supplier
+
+
+@suppliers_router.put("/{supplier_id}", response_model=SupplierResponse)
+async def update_supplier(
+    supplier_id: uuid.UUID,
+    data: SupplierUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    supplier = await db.get(Supplier, supplier_id)
+    if supplier is None or supplier.deleted_at is not None:
+        raise NotFoundError("Supplier not found")
+    return await supplier_service.update_supplier(db, supplier, data)
+
+
+@suppliers_router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_supplier(
+    supplier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    supplier = await db.get(Supplier, supplier_id)
+    if supplier is None or supplier.deleted_at is not None:
+        raise NotFoundError("Supplier not found")
+    supplier.is_active = False
+    supplier.deleted_at = inventory_service.utcnow()
+    await db.flush()
 
 
 # ─── Warehouses ───────────────────────────────────────────────────────────────
@@ -267,6 +336,58 @@ async def get_item(
 ):
     return await crud_service.get_or_404(
         db, InventoryItem, item_id, include_deleted=True
+    )
+
+
+@items_router.get("/{item_id}/cost-layers", response_model=ItemCostLayersResponse)
+async def get_item_cost_layers(
+    item_id: uuid.UUID,
+    branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("inventory.read")),
+):
+    """The surviving FIFO layers for an item — so its valuation is legible.
+
+    Each layer is a quantity still on the shelf at a known cost, oldest first
+    (the order the next issue will consume them). The weighted average is what
+    those layers imply, which is exactly ``InventoryLevel.average_cost``.
+    """
+    await crud_service.get_or_404(db, InventoryItem, item_id, include_deleted=True)
+    stmt = (
+        select(InventoryCostLayer, Warehouse.name)
+        .join(Warehouse, Warehouse.id == InventoryCostLayer.warehouse_id)
+        .where(
+            InventoryCostLayer.item_id == item_id,
+            InventoryCostLayer.remaining_quantity > 0,
+        )
+        .order_by(InventoryCostLayer.posting_sequence, InventoryCostLayer.layer_index)
+    )
+    if branch_id:
+        await access_service.assert_branch_access(db, _, branch_id)
+        stmt = stmt.where(InventoryCostLayer.branch_id == branch_id)
+    rows = list((await db.execute(stmt)).all())
+
+    layers: list[CostLayerResponse] = []
+    total_qty = Decimal("0")
+    total_value = Decimal("0")
+    for layer, warehouse_name in rows:
+        remaining = Decimal(str(layer.remaining_quantity))
+        total_qty += remaining
+        total_value += remaining * Decimal(str(layer.unit_cost))
+        response = CostLayerResponse.model_validate(layer)
+        response.warehouse_name = warehouse_name
+        layers.append(response)
+    average = (
+        (total_value / total_qty).quantize(Decimal("0.000001"))
+        if total_qty > 0
+        else Decimal("0")
+    )
+    return ItemCostLayersResponse(
+        item_id=item_id,
+        total_quantity=total_qty,
+        total_value=total_value,
+        average_cost=average,
+        layers=layers,
     )
 
 
@@ -920,6 +1041,11 @@ async def _serialise_po(
     else:
         supplier = suppliers_lookup.get(purchase_order.supplier_id)
     payload.supplier_name = supplier.name if supplier else None
+    if purchase_order.invoice_object_key:
+        payload.invoice_url = object_storage.signed_url(
+            bucket=settings.GCS_INVOICE_BUCKET,
+            key=purchase_order.invoice_object_key,
+        )
     return payload
 
 
@@ -1001,61 +1127,29 @@ async def create_purchase_order(
         await inventory_service.assert_warehouse_for_branch(
             db, data.warehouse_id, data.branch_id
         )
-    await crud_service.get_or_404(db, Supplier, data.supplier_id)
+    supplier = await crud_service.get_or_404(db, Supplier, data.supplier_id)
     business_date = await business_day_service.current_business_date(db, branch)
 
     purchase_order = PurchaseOrder(
         reference=await inventory_service.next_inventory_reference(db, "PO"),
         status=PurchaseOrderStatusEnum.DRAFT.value,
+        origin="admin",
         supplier_id=data.supplier_id,
         branch_id=data.branch_id,
         warehouse_id=data.warehouse_id,
         business_date=business_date,
         delivery_date=data.delivery_date,
+        supplier_reference=data.supplier_reference,
         additional_cost=data.additional_cost,
         notes=data.notes,
         creator_id=user.id,
     )
     db.add(purchase_order)
     await db.flush()
-    await _replace_po_lines(db, purchase_order, data.items)
+    await inventory_service.build_po_lines(
+        db, purchase_order, data.items, is_vat_deductible=supplier.is_vat_deductible
+    )
     return await _serialise_po(db, await _load_po(db, purchase_order.id))
-
-
-async def _replace_po_lines(
-    db: AsyncSession, purchase_order: PurchaseOrder, lines
-) -> None:
-    await db.execute(
-        delete(PurchaseOrderItem).where(
-            PurchaseOrderItem.purchase_order_id == purchase_order.id
-        )
-    )
-    total = Decimal("0")
-    for line in lines:
-        item = await db.get(InventoryItem, line.item_id)
-        if item is None:
-            raise BadRequestError(f"Inventory item {line.item_id} not found")
-        line_total = Decimal(str(line.quantity)) * Decimal(str(line.unit_cost))
-        total += line_total
-        db.add(
-            PurchaseOrderItem(
-                purchase_order_id=purchase_order.id,
-                item_id=line.item_id,
-                quantity=line.quantity,
-                unit=line.unit,
-                conversion_factor=(
-                    Decimal("1")
-                    if line.unit == "ingredient"
-                    else Decimal(str(item.storage_to_ingredient_factor))
-                ),
-                unit_cost=line.unit_cost,
-                total_cost=line_total,
-            )
-        )
-    purchase_order.total_cost = total + Decimal(
-        str(purchase_order.additional_cost or 0)
-    )
-    await db.flush()
 
 
 @purchase_orders_router.get("/{po_id}", response_model=PurchaseOrderResponse)
@@ -1092,7 +1186,15 @@ async def update_purchase_order(
         db, purchase_order, data.model_dump(exclude={"items"}, exclude_unset=True)
     )
     if data.items is not None:
-        await _replace_po_lines(db, purchase_order, data.items)
+        supplier = await crud_service.get_or_404(
+            db, Supplier, purchase_order.supplier_id
+        )
+        await inventory_service.build_po_lines(
+            db,
+            purchase_order,
+            data.items,
+            is_vat_deductible=supplier.is_vat_deductible,
+        )
     return await _serialise_po(db, await _load_po(db, po_id))
 
 
@@ -1182,19 +1284,57 @@ async def receive_purchase_order(
 # ─── Supplier catalogue ───────────────────────────────────────────────────────
 
 
+async def _enrich_supplier_items(
+    db: AsyncSession, rows: list[SupplierItem]
+) -> list[SupplierItemResponse]:
+    """Attach each mapped item's name/sku/storage unit for the PO picker."""
+    item_ids = {row.item_id for row in rows}
+    items: dict[uuid.UUID, InventoryItem] = {}
+    if item_ids:
+        items = {
+            i.id: i
+            for i in (
+                await db.execute(
+                    select(InventoryItem).where(InventoryItem.id.in_(item_ids))
+                )
+            )
+            .scalars()
+            .all()
+        }
+    payload = []
+    for row in rows:
+        item = items.get(row.item_id)
+        response = SupplierItemResponse.model_validate(row)
+        if item is not None:
+            response.item_name = item.name
+            response.item_sku = item.sku
+            response.storage_unit = item.storage_unit
+        payload.append(response)
+    return payload
+
+
+async def _supplier_items(
+    db: AsyncSession, supplier_id: uuid.UUID
+) -> list[SupplierItemResponse]:
+    rows = list(
+        (
+            await db.execute(
+                select(SupplierItem).where(SupplierItem.supplier_id == supplier_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return await _enrich_supplier_items(db, rows)
+
+
 @suppliers_router.get("/{supplier_id}/items", response_model=list[SupplierItemResponse])
 async def list_supplier_items(
     supplier_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(require("inventory.read")),
 ):
-    # Imperative rather than `Depends(require(...))`, alone among this file's
-    # routes: `set_supplier_items` calls this as a plain function to build its
-    # response, and a decorator dependency does not run on that path — the
-    # check would silently vanish for exactly one caller.
-    ensure(user, "inventory.read")
-    stmt = select(SupplierItem).where(SupplierItem.supplier_id == supplier_id)
-    return list((await db.execute(stmt)).scalars().all())
+    return await _supplier_items(db, supplier_id)
 
 
 @suppliers_router.put("/{supplier_id}/items", response_model=list[SupplierItemResponse])
@@ -1204,14 +1344,188 @@ async def set_supplier_items(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.manage")),
 ):
-    await crud_service.get_or_404(db, Supplier, supplier_id)
-    await db.execute(
-        delete(SupplierItem).where(SupplierItem.supplier_id == supplier_id)
+    # The purchased-item rule (kind + no recipe) is enforced in the service.
+    await supplier_service.set_supplier_items(db, supplier_id, data)
+    return await _supplier_items(db, supplier_id)
+
+
+# ─── Purchase-order invoice (private GCS bucket) ───────────────────────────────
+
+
+def _invoice_object_key(po_id: uuid.UUID, branch_id: uuid.UUID, ext: str) -> str:
+    return f"purchase-orders/{branch_id}/{po_id}/invoice{ext}"
+
+
+_INVOICE_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+}
+
+
+@purchase_orders_router.post("/{po_id}/invoice", response_model=PurchaseOrderResponse)
+async def upload_purchase_order_invoice(
+    po_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Attach an invoice image/PDF to a PO in the private finance bucket.
+
+    The body is the raw file bytes; the content type comes from the request
+    header. Stored under a deterministic key and signed on read — never public.
+    """
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
+    ext = _INVOICE_EXT.get(content_type)
+    if ext is None:
+        raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
+    body = await request.body()
+    if not body:
+        raise BadRequestError("No invoice file was uploaded")
+    key = _invoice_object_key(po_id, purchase_order.branch_id, ext)
+    object_storage.upload_object(
+        bucket=settings.GCS_INVOICE_BUCKET,
+        key=key,
+        body=body,
+        content_type=content_type,
+        cache_control="private, no-store",
     )
-    for entry in data:
-        db.add(SupplierItem(supplier_id=supplier_id, **entry.model_dump()))
+    purchase_order.invoice_object_key = key
+    purchase_order.invoice_content_type = content_type
     await db.flush()
-    return await list_supplier_items(supplier_id, db, user)
+    return await _serialise_po(db, await _load_po(db, po_id))
+
+
+# ─── Purchase orders on the till ───────────────────────────────────────────────
+
+pos_purchase_orders_router = APIRouter()
+
+
+@pos_purchase_orders_router.get("/suppliers", response_model=list[SupplierResponse])
+async def pos_list_suppliers(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Active suppliers, for the till's create-a-PO picker."""
+    stmt = (
+        select(Supplier)
+        .where(Supplier.deleted_at.is_(None), Supplier.is_active.is_(True))
+        .order_by(Supplier.name)
+    )
+    return list((await db.execute(stmt)).scalars().unique().all())
+
+
+@pos_purchase_orders_router.get(
+    "/suppliers/{supplier_id}/items", response_model=list[SupplierItemResponse]
+)
+async def pos_supplier_items(
+    supplier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """The items a supplier can supply — the lines the till offers to receive."""
+    return await _supplier_items(db, supplier_id)
+
+
+@pos_purchase_orders_router.get(
+    "/to-receive", response_model=list[PurchaseOrderResponse]
+)
+async def pos_purchase_orders_to_receive(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Admin-raised POs waiting to be received at this branch."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    stmt = (
+        select(PurchaseOrder)
+        .options(selectinload(PurchaseOrder.items))
+        .where(
+            PurchaseOrder.branch_id == branch_id,
+            PurchaseOrder.status.in_(
+                [
+                    PurchaseOrderStatusEnum.APPROVED.value,
+                    PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
+                ]
+            ),
+        )
+        .order_by(PurchaseOrder.created_at.desc())
+    )
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+    return [await _serialise_po(db, o) for o in orders]
+
+
+@pos_purchase_orders_router.post(
+    "/{po_id}/receive", response_model=PurchaseOrderResponse
+)
+async def pos_receive_purchase_order(
+    po_id: uuid.UUID,
+    data: ReceivePurchaseOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Receive an admin PO at the till — posts stock and its FIFO cost."""
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    received = {line.purchase_order_item_id: line.quantity for line in data.lines}
+    await inventory_service.receive_purchase_order(
+        db, purchase_order=purchase_order, user=user, received=received
+    )
+    return await _serialise_po(db, await _load_po(db, po_id))
+
+
+@pos_purchase_orders_router.post(
+    "", response_model=PurchaseOrderResponse, status_code=status.HTTP_201_CREATED
+)
+async def pos_create_purchase_order(
+    data: PosPurchaseOrderCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Create a PO at the till and receive it in one action."""
+    branch = await crud_service.get_or_404(db, Branch, data.branch_id)
+    await access_service.assert_branch_access(db, user, data.branch_id)
+    supplier = await crud_service.get_or_404(db, Supplier, data.supplier_id)
+    if data.warehouse_id:
+        await inventory_service.assert_warehouse_for_branch(
+            db, data.warehouse_id, data.branch_id
+        )
+
+    invoice_key: str | None = None
+    if data.invoice_image_base64:
+        content_type = (data.invoice_content_type or "").strip()
+        ext = _INVOICE_EXT.get(content_type)
+        if ext is None:
+            raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
+        try:
+            body = base64.b64decode(data.invoice_image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise BadRequestError("Invoice image is not valid base64") from exc
+        if not body:
+            raise BadRequestError("Invoice image is empty")
+        invoice_key = _invoice_object_key(uuid.uuid4(), data.branch_id, ext)
+        object_storage.upload_object(
+            bucket=settings.GCS_INVOICE_BUCKET,
+            key=invoice_key,
+            body=body,
+            content_type=content_type,
+            cache_control="private, no-store",
+        )
+
+    purchase_order, _ = await inventory_service.create_pos_purchase_order(
+        db,
+        branch=branch,
+        user=user,
+        supplier=supplier,
+        warehouse_id=data.warehouse_id,
+        data=data,
+        invoice_object_key=invoice_key,
+        invoice_content_type=data.invoice_content_type if invoice_key else None,
+    )
+    return await _serialise_po(db, await _load_po(db, purchase_order.id))
 
 
 # ─── Recipes ──────────────────────────────────────────────────────────────────

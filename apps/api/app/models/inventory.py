@@ -42,6 +42,7 @@ from .base import (
     UUIDMixin,
     business_date_format,
     status_vocabulary,
+    utcnow,
 )
 
 if TYPE_CHECKING:
@@ -363,6 +364,15 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
 
 
 class Supplier(Base, UUIDMixin, TimestampMixin):
+    """A vendor stock is purchased from.
+
+    ``is_vat_deductible`` (default true) says whether the VAT charged on this
+    supplier's invoices is recoverable — when it is, a purchase order splits the
+    tax out into ``purchase_order_items.vat_amount`` for the reclaim report. The
+    tax stays inside the item's FIFO cost either way; the split is a record for
+    reclaim, not a deduction from inventory value.
+    """
+
     __tablename__ = "suppliers"
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -370,9 +380,9 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
     reference: Mapped[str | None] = mapped_column(
         String(50), unique=True, nullable=True, index=True
     )
-    contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_vat_deductible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     payment_terms_days: Mapped[int] = mapped_column(
@@ -386,12 +396,63 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    contacts: Mapped[list[SupplierContact]] = relationship(
+        "SupplierContact",
+        back_populates="supplier",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     def __repr__(self) -> str:
         return f"<Supplier {self.name}>"
 
 
+class SupplierContact(Base, UUIDMixin, TimestampMixin):
+    """A person to reach at a supplier.
+
+    A supplier may have several. A contact must carry a way to reach them — the
+    ``ck_supplier_contact_reachable`` CHECK refuses a row that is a name and
+    nothing else (no email and no phone).
+    """
+
+    __tablename__ = "supplier_contacts"
+    __table_args__ = (
+        CheckConstraint(
+            "email IS NOT NULL OR phone IS NOT NULL",
+            name="ck_supplier_contact_reachable",
+        ),
+    )
+
+    supplier_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(150), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    supplier: Mapped[Supplier] = relationship("Supplier", back_populates="contacts")
+
+    def __repr__(self) -> str:
+        return f"<SupplierContact {self.name}>"
+
+
 class SupplierItem(Base, UUIDMixin, TimestampMixin):
-    """What a given supplier charges for a given item, and how fast they deliver."""
+    """A supplier↔item mapping: what a supplier can supply, and its usual price.
+
+    Only a **purchased** item may be mapped — one whose ``kind`` is a raw
+    material, packaging or resale good and that owns no recipe (a recipe means
+    the item is produced, not bought). That rule is enforced in the service on
+    write; one item may be mapped to several suppliers.
+    """
 
     __tablename__ = "supplier_items"
     __table_args__ = (
@@ -411,7 +472,9 @@ class SupplierItem(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
     supplier_sku: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    cost: Mapped[Any] = mapped_column(
+    #: The usual price per storage unit, prefilled onto a PO line (VAT-inclusive,
+    #: like everything else the shop keys in).
+    default_unit_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
     )
     lead_time_days: Mapped[int] = mapped_column(
@@ -632,6 +695,13 @@ class InventoryTransactionItem(Base, UUIDMixin):
         ForeignKey("recipe_versions.id", ondelete="RESTRICT"),
         nullable=True,
     )
+    #: The original line this line reverses, so FIFO cost layers can be restored
+    #: to (or removed from) exactly the layers the original movement touched.
+    reverses_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     recipe_path: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="[]")
     lot_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -660,6 +730,7 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
         status_vocabulary("purchase_orders", "status", PurchaseOrderStatusEnum),
         # Migration 100.
         business_date_format("purchase_orders"),
+        CheckConstraint("origin IN ('admin', 'pos')", name="ck_purchase_orders_origin"),
     )
 
     reference: Mapped[str] = mapped_column(
@@ -670,6 +741,11 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         server_default=PurchaseOrderStatusEnum.DRAFT.value,
         index=True,
+    )
+    #: Where the order was raised: 'admin' (received later on the till) or 'pos'
+    #: (created and auto-received at the till in one go).
+    origin: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="admin"
     )
     supplier_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -690,7 +766,25 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
     )
     business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
     delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: The supplier's own PO/invoice number, for reconciliation (optional).
+    supplier_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: GCS object key of the uploaded invoice image in the private finance bucket
+    #: (signed on read), plus its content type. Not a public URL.
+    invoice_object_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    invoice_content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     additional_cost: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    #: Frozen money totals. ``total_gross`` is what was paid (VAT-inclusive) and
+    #: is the value that reaches inventory; ``vat_total`` is the recoverable slice
+    #: recorded for the reclaim report; ``subtotal_net`` = gross − vat.
+    subtotal_net: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    vat_total: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    total_gross: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
     total_cost: Mapped[Any] = mapped_column(
@@ -756,9 +850,25 @@ class PurchaseOrderItem(Base, UUIDMixin):
     conversion_factor: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="1"
     )
+    #: What the user keyed for this line: the total, VAT-inclusive, in money.
+    entered_total: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    #: The recoverable VAT slice of ``entered_total`` (0 when the supplier is not
+    #: VAT-deductible). Recorded for the reclaim report; still inside the cost.
+    vat_amount: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    #: ``entered_total − vat_amount`` — the net-of-VAT line total.
+    net_total: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    #: Gross cost per storage unit (``entered_total ÷ quantity``) — the value that
+    #: becomes the FIFO layer's unit cost on receipt.
     unit_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
     )
+    #: Gross line total (== ``entered_total``); kept for report continuity.
     total_cost: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
@@ -778,6 +888,180 @@ class PurchaseOrderItem(Base, UUIDMixin):
 
     def __repr__(self) -> str:
         return f"<PurchaseOrderItem item={self.item_id} qty={self.quantity}>"
+
+
+# ─── FIFO cost layers ───────────────────────────────────────────────────────────
+
+
+class CostLayerSourceKindEnum(str, enum.Enum):
+    """How a cost layer came to exist. All are inbound (stock-adding) events."""
+
+    PURCHASING = "purchasing"
+    OPENING_BALANCE = "opening_balance"
+    #: Auto-created for pre-existing on-hand that had no cost history, the first
+    #: time a purchase gives us a price to value it at.
+    BACKFILL = "backfill"
+    TRANSFER_RECEIVE = "transfer_receive"
+    PRODUCTION = "production"
+    RETURN_FROM_ORDERS = "return_from_orders"
+    POSITIVE_ADJUSTMENT = "positive_adjustment"
+    COUNT_OVERAGE = "count_overage"
+
+
+class InventoryCostLayer(Base, UUIDMixin, TimestampMixin):
+    """
+    One FIFO cost layer: a quantity of stock received at a known unit cost.
+
+    Costing is **FIFO**. Every inbound movement lays down a layer; every issue
+    consumes the oldest layers first (ordered by ``posting_sequence`` then
+    ``layer_index``), recording an `InventoryCostLayerConsumption` per layer it
+    draws from. ``InventoryLevel.average_cost`` is derived from the surviving
+    layers (Σ remaining × cost ÷ Σ remaining), so a sale changes what remains is
+    worth without ever blending an average.
+
+    A layer is a **projection of the immutable ledger** — the truth is
+    `inventory_transaction_items` (``signed_quantity``, ``unit_cost``,
+    ``posting_sequence``). Layers and consumptions can always be regenerated by
+    `ledger_service.reconcile_levels(apply=True)`, so they carry no immutability
+    trigger of their own.
+    """
+
+    __tablename__ = "inventory_cost_layers"
+    __table_args__ = (
+        status_vocabulary(
+            "inventory_cost_layers", "source_kind", CostLayerSourceKindEnum
+        ),
+        CheckConstraint(
+            "remaining_quantity >= 0", name="ck_inventory_cost_layer_remaining"
+        ),
+        CheckConstraint(
+            "original_quantity >= 0", name="ck_inventory_cost_layer_original"
+        ),
+        CheckConstraint("unit_cost >= 0", name="ck_inventory_cost_layer_cost"),
+    )
+
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    #: Denormalised so the branch advisory lock and per-branch rebuilds can scope
+    #: layers without joining through the warehouse.
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    source_transaction_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transactions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    source_line_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    purchase_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    source_kind: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    #: The FIFO ordering key — copied from the inbound transaction's posting
+    #: sequence, so layers consume in the exact order stock was posted.
+    posting_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: Tie-break within a single transaction (the line's ordinal), so two layers
+    #: born of the same posting still have a deterministic FIFO order.
+    layer_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    original_quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    remaining_quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    #: Per storage unit, net of recoverable VAT.
+    unit_cost: Mapped[Any] = mapped_column(Numeric(16, 6), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    exhausted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<InventoryCostLayer item={self.item_id} "
+            f"remaining={self.remaining_quantity}@{self.unit_cost}>"
+        )
+
+
+class InventoryCostLayerConsumption(Base, UUIDMixin):
+    """
+    One draw from one cost layer by one outbound ledger line — the COGS trail.
+
+    A consumption of 350 units that spans two layers writes two rows, so the
+    cost of any issue is fully attributable to the receipts it drew from. Written
+    append-only by the posting path; a reversal restores the layer's
+    ``remaining_quantity`` rather than editing these.
+    """
+
+    __tablename__ = "inventory_cost_layer_consumptions"
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="ck_inventory_cost_consumption_quantity"),
+    )
+
+    consuming_line_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transaction_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    #: Null only for a shortfall row — stock issued that no layer covered
+    #: (negative-stock branches), costed at a fallback and flagged below.
+    layer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_cost_layers.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    unit_cost: Mapped[Any] = mapped_column(Numeric(16, 6), nullable=False)
+    total_cost: Mapped[Any] = mapped_column(Numeric(20, 4), nullable=False)
+    posting_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: True when the layers ran dry (negative stock is allowed for this branch)
+    #: and this row was costed at a fallback rather than a real layer.
+    is_shortfall: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<InventoryCostLayerConsumption layer={self.layer_id} "
+            f"qty={self.quantity}@{self.unit_cost}>"
+        )
 
 
 # ─── Recipes ──────────────────────────────────────────────────────────────────
