@@ -411,6 +411,7 @@ async def record_order_delivery(
     zone: Zone | None,
     cart: Cart | None,
     provider: str | None = None,
+    estimate: Estimate | None = None,
 ) -> OrderDelivery:
     """
     Open the delivery record as the order is written.
@@ -451,9 +452,19 @@ async def record_order_delivery(
         polygon_id=zone.id if zone else None,
         fee_charged=Decimal(str(order.delivery_fee or 0)),
     )
+    # A courier quote resolved for the *selected* branch at creation (the live
+    # winner of a noon Send / Slider-bike comparison) describes this order better
+    # than the basket's parked figure, which was quoted against the rank-1 branch
+    # and can name a different courier — so it wins where it is supplied.
+    if estimate is not None:
+        delivery.quoted_cost = estimate.cost
+        delivery.quoted_currency = estimate.currency
+        delivery.quoted_distance_m = estimate.distance_m
+        delivery.quotation_id = estimate.quotation_id
+        delivery.quoted_at = datetime.now(timezone.utc)
     # The estimate the shopper's own basket collected a moment ago, carried
     # across rather than re-quoted: it is the number that described this order.
-    if cart is not None and cart.delivery_quote_cost is not None:
+    elif cart is not None and cart.delivery_quote_cost is not None:
         delivery.quoted_cost = cart.delivery_quote_cost
         delivery.quoted_currency = cart.delivery_quote_currency
         delivery.quoted_distance_m = cart.delivery_quote_distance_m

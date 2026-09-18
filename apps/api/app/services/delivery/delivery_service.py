@@ -135,6 +135,12 @@ class DeliveryPrice:
     serviceable: bool
     is_dynamic: bool
     estimate: lalamove_service.Estimate | None = None
+    #: The courier this estimate was actually priced against — the winner where a
+    #: zone is priced live between noon Send and a Slider bike, the zone's own
+    #: courier otherwise. It travels on the result so the cart parks, and the
+    #: order stamps, the same courier the fee was quoted from. `None` where there
+    #: was nothing to quote (no pin, or unserviceable).
+    provider: str | None = None
     error: str | None = None
     #: The basket that earns free delivery *for this pin* — the zone's own
     #: threshold where it sets one, the national default otherwise.
@@ -305,17 +311,21 @@ async def price(
     # costed on Lalamove's rate card would look like it loses money on every
     # order when it makes a few dirhams, and a second kitchen would be costed
     # from the first one's front door.
-    estimate, error = await courier_service.estimate_for_point(
+    estimate, error, chosen_provider = await courier_service.resolve_and_estimate(
         db,
-        zone.fulfilment_provider if zone else None,
-        float(latitude),
-        float(longitude),
-        address,
-        zone.branch_id if zone else None,
+        # The rank-1 branch's courier and its alternates. Where those name the
+        # noon Send / Slider-bike pair the two are priced live and the cheaper
+        # wins; otherwise this is the zone's single courier, unchanged.
+        provider=zone.fulfilment_provider,
+        alternate_providers=zone.alternate_providers,
+        latitude=float(latitude),
+        longitude=float(longitude),
+        address=address,
+        branch_id=zone.branch_id,
         # The zone's own name, because one courier's price depends on which
         # emirate the drop is in and a pin does not carry one. Every zone name
         # begins with its emirate by construction.
-        zone.name if zone else None,
+        zone_name=zone.name,
     )
 
     eligible = zone is not None and zone.free_delivery_eligible
@@ -341,6 +351,7 @@ async def price(
             serviceable=True,
             is_dynamic=False,
             estimate=estimate,
+            provider=chosen_provider,
             error=error,
             free_threshold=threshold,
         )
@@ -354,6 +365,7 @@ async def price(
             serviceable=True,
             is_dynamic=True,
             estimate=estimate,
+            provider=chosen_provider,
             error=error,
             free_threshold=threshold,
         )
@@ -379,6 +391,7 @@ async def price(
             serviceable=False,
             is_dynamic=True,
             estimate=None,
+            provider=chosen_provider,
             error=error,
             free_threshold=threshold,
         )
@@ -517,18 +530,15 @@ async def quote_priced(
         and (priced.estimate is not None or priced.error is not None)
     ):
         # The courier this customer actually resolves to, not the zone's raw
-        # provider: for a Slider zone with Slider unconfigured the estimate above
-        # was quoted against the fallback, so the provider parked beside it on the
-        # basket has to name the same courier or the two disagree.
-        effective, _ = courier_service.effective_provider(
-            priced.zone.fulfilment_provider if priced.zone else None,
-            priced.zone.name if priced.zone else None,
-        )
+        # provider: the fee was quoted against the winner of the live noon
+        # Send / Slider-bike comparison (or the Slider fallback when Slider is
+        # unconfigured), so the provider parked beside it on the basket must name
+        # that same courier or the two disagree. `price()` already resolved it.
         await lalamove_service.record_cart_estimate(
             db,
             cart,
             zone=priced.zone,
-            provider=effective,
+            provider=priced.provider,
             # The fee actually charged, free delivery included, because the
             # comparison that matters is cost against revenue. An unserviceable
             # pin charges nothing because it sells nothing.

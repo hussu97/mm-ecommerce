@@ -80,10 +80,13 @@ Writes:
   * app/data/uae_delivery_zones.v7.geojson.json — name -> geometry.
   * app/data/uae_delivery_areas_assignments.v4.json — name -> fee, threshold,
     provider; the map migration reads it for everything but shape.
-  * app/data/uae_delivery_areas_branch_priority.v1.json — name -> third_party +
-    ordered branch_priority (rank, branch_ref, courier, alternates). A later
-    migration carries this simulation output as the per-zone branch list.
-Earlier vX files that shipped migrations froze are left untouched.
+  * app/data/uae_delivery_areas_branch_priority.v2.json — name -> third_party +
+    ordered branch_priority (rank, branch_ref, courier, alternates). A migration
+    carries this simulation output as the per-zone branch list. `v2` adds the
+    symmetric noon Send / Slider-bike pair over `v1` (a noon zone a bike can
+    reach lists `slider_bike`, and vice versa) so the pair can be priced live.
+Earlier vX files that shipped migrations froze are left untouched — `v1` is what
+migration `252` reads and must not be rewritten; this script emits `v2`.
 
 Regenerate and commit all three. Nothing computes this at runtime. Slider's fares
 in each `courier_costs.<REF>.json` are a production probe from the whitelisted VM
@@ -106,7 +109,9 @@ EMIRATES = DATA / "uae_emirates.geojson.json"
 V2_GEOMETRY = DATA / "uae_delivery_zones.geojson.json"
 OUT_GEOMETRY = DATA / "uae_delivery_zones.v7.geojson.json"
 OUT_ASSIGN = DATA / "uae_delivery_areas_assignments.v4.json"
-OUT_BRANCH_PRIORITY = DATA / "uae_delivery_areas_branch_priority.v1.json"
+#: `v1` is frozen — migration `252` reads it and it must not be rewritten. This
+#: script emits `v2`, which migration `255` reads (the symmetric noon/bike pair).
+OUT_BRANCH_PRIORITY = DATA / "uae_delivery_areas_branch_priority.v2.json"
 
 #: The kitchen's emirate and its pin. A Slider bike only rides where it can reach
 #: the kitchen without crossing another emirate — the kitchen's own contiguous
@@ -420,16 +425,28 @@ def _cheapest_serviceable_own_courier(
     return courier, price
 
 
-def _branch_alternates(courier: str, *, noon_serviceable: bool) -> list[str]:
+def _branch_alternates(
+    courier: str, *, noon_serviceable: bool, bike_serviceable: bool = False
+) -> list[str]:
     """The manual/automatic move targets for one branch's chosen own courier.
 
     `FALLBACKS[courier]` with the courier itself removed, always closing on
     Lalamove, and noon Send dropped where this branch's noon model cannot serve
     the area (it crosses the branch's emirate, or is over 20 km).
+
+    The pair is made **symmetric**: where the branch's own courier is noon Send
+    and a Slider **bike** can also reach the area, `slider_bike` is added as an
+    alternate — the mirror of the `slider_bike → noon_send` alternate `FALLBACKS`
+    already produces. That mutual listing is exactly the signal
+    `courier_service.comparison_candidates` reads to price the two live and pick
+    the cheaper per order, so a zone noon happened to win at survey time can still
+    flip to a bike when the bike is live-cheaper (and vice versa).
     """
     alts = [a for a in FALLBACKS.get(courier, ()) if a != courier]
     if not noon_serviceable:
         alts = [a for a in alts if a != "noon_send"]
+    if courier == "noon_send" and bike_serviceable and "slider_bike" not in alts:
+        alts.append("slider_bike")
     alts = [a for a in alts if a != "lalamove"]
     alts.append("lalamove")
     return alts
@@ -464,7 +481,12 @@ def _rank_branches(label: str, fee: Decimal, branches: list[dict]) -> list[dict]
             continue
         courier, cost = own
         alts = _branch_alternates(
-            courier, noon_serviceable=cost_entry.get("noon_send") is not None
+            courier,
+            noon_serviceable=cost_entry.get("noon_send") is not None,
+            bike_serviceable=(
+                label in branch["bike_labels"]
+                and cost_entry.get("slider_bike") is not None
+            ),
         )
         # `order` is the deterministic tie-break: equal cost -> Sharjah (order 0).
         ranked.append((cost, order, branch["ref"], courier, alts))

@@ -39,6 +39,7 @@ Third-party zones fall through everything here untouched, exactly as before.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -63,12 +64,14 @@ __all__ = [
     "books_itself",
     "cancel",
     "carrier_for",
+    "comparison_candidates",
     "effective_provider",
     "may_be_carried_by",
     "dispatch",
     "estimate_for_point",
     "is_enabled",
     "may_use_noon_send",
+    "resolve_and_estimate",
 ]
 
 LALAMOVE = FulfilmentProviderEnum.LALAMOVE.value
@@ -83,6 +86,15 @@ THIRD_PARTY = FulfilmentProviderEnum.THIRD_PARTY.value
 #: versus car. (The bare legacy `slider` was retired in
 #: `241_drop_legacy_slider`; its rows are now `slider_car`.)
 SLIDER_PROVIDERS = frozenset({SLIDER_BIKE, SLIDER_CAR})
+
+#: The one pair of couriers a single zone can be priced **live between**: noon
+#: Send and a Slider **bike**. Both can carry the same short urban run — noon
+#: Send on its flat rate card, a Slider bike on a live fare — and which is
+#: cheaper flips from order to order (the card has a surge; the bike fare is a
+#: live quote that swings well above the survey). Everywhere else the map's one
+#: courier stands. Ordered noon-first so a tie resolves to it — noon Send makes
+#: no network call, cannot time out, and does not spend Slider's rate limit.
+_COMPARABLE_PAIR: tuple[str, str] = (NOON_SEND, SLIDER_BIKE)
 
 #: How long to wait between re-tries of a single order's dispatch, one rung per
 #: attempt. A failure that outlives the last rung stops retrying and goes on the
@@ -843,3 +855,131 @@ async def estimate_for_point(
     return await lalamove_service.estimate_for_point(
         db, latitude, longitude, address, branch_id
     )
+
+
+def comparison_candidates(
+    provider: str | None,
+    alternate_providers: object = (),
+) -> tuple[str, str] | None:
+    """The two couriers this branch's zone should be priced live between, or None.
+
+    A branch-row is *comparable* when its own courier is one of the pair
+    (`noon_send` / `slider_bike`) **and** the other of the pair is listed among
+    its `alternate_providers` — the signal, seeded from the fare survey, that
+    both can actually reach this ground from this branch. Everything else (a
+    `slider_car` / `lalamove` / `third_party` zone, or a bike zone noon Send
+    cannot serve, or a noon zone no bike can reach) returns None and is priced
+    against its single courier exactly as before.
+
+    Inferred from the providers already on the row rather than a new flag: the
+    pair-mate in `alternate_providers` *is* the eligibility, and it doubles as
+    the manual-move target it already was.
+    """
+    if provider not in _COMPARABLE_PAIR:
+        return None
+    mate = SLIDER_BIKE if provider == NOON_SEND else NOON_SEND
+    try:
+        alts = set(alternate_providers or ())
+    except TypeError:
+        return None
+    if mate not in alts:
+        return None
+    return _COMPARABLE_PAIR
+
+
+async def _estimate_one(
+    db: AsyncSession,
+    candidate: str,
+    latitude: float,
+    longitude: float,
+    address: str | None,
+    branch_id: uuid.UUID | None,
+    zone_name: str | None,
+):
+    """One comparable candidate's estimate, or `(None, reason)` — never raises.
+
+    noon Send is priced as a bike (`bulky=False`, the default) and Slider is
+    pinned to `bike` — the comparison is bike-against-bike by construction, a
+    car is never silently substituted. A courier whose credential is absent is
+    simply dropped from the contest, mirroring `estimate_for_point`.
+    """
+    if candidate == NOON_SEND:
+        if not noon_send_service.is_enabled():
+            return None, "noon Send is not configured"
+        return await noon_send_service.estimate_for_point(
+            db, latitude, longitude, address, branch_id
+        )
+    if not slider_service.is_enabled():
+        return None, "Slider is not configured"
+    return await slider_service.estimate_for_point(
+        db,
+        latitude,
+        longitude,
+        address,
+        branch_id,
+        drop_emirate=zone_name,
+        vehicle=slider_service.vehicle_for_provider(SLIDER_BIKE),
+    )
+
+
+async def resolve_and_estimate(
+    db: AsyncSession,
+    *,
+    provider: str | None,
+    alternate_providers: object = (),
+    latitude: float,
+    longitude: float,
+    address: str | None = None,
+    branch_id: uuid.UUID | None = None,
+    zone_name: str | None = None,
+):
+    """What to charge for this branch's run **and which courier wins it**.
+
+    A superset of `estimate_for_point`: the same never-raises,
+    never-blocks-a-sale contract, but it returns the chosen provider alongside
+    the estimate so the fee, the cart's parked courier, the stamped
+    `OrderDelivery.provider` and the dispatch all name the one courier that was
+    actually the cheapest — quote, creation and dispatch cannot disagree.
+
+    For a non-comparable row it is exactly today's behaviour: one courier,
+    resolved through `effective_provider` (so a Slider zone with Slider
+    unconfigured is quoted against its fallback). For a comparable row it prices
+    both couriers of the pair and returns the cheaper serviceable one, a tie
+    going to noon Send. If neither can serve — a bike with no fare and a drop
+    past noon Send's 20 km — it degrades to the single-courier path rather than
+    inventing a price.
+    """
+    candidates = comparison_candidates(provider, alternate_providers)
+    if candidates is None:
+        estimate, error = await estimate_for_point(
+            db, provider, latitude, longitude, address, branch_id, zone_name
+        )
+        chosen, _ = effective_provider(provider, zone_name)
+        return estimate, error, chosen
+
+    results = await asyncio.gather(
+        *(
+            _estimate_one(
+                db, candidate, latitude, longitude, address, branch_id, zone_name
+            )
+            for candidate in candidates
+        )
+    )
+
+    priced = [
+        (candidate, estimate, error)
+        for candidate, (estimate, error) in zip(candidates, results)
+        if estimate is not None
+    ]
+    if priced:
+        # Cheapest wins; the pair is ordered noon-first so `min` breaks a tie to
+        # noon Send without a second comparison.
+        candidate, estimate, error = min(priced, key=lambda row: row[1].cost)
+        return estimate, error, candidate
+
+    # Nobody in the pair could serve this drop. Return the same unserviceable
+    # answer the caller would have had before, with the first courier's reason to
+    # log rather than a silent None.
+    error = next((err for _, err in results if err), None)
+    chosen, _ = effective_provider(provider, zone_name)
+    return None, error, chosen

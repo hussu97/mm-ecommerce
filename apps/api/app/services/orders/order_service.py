@@ -1466,13 +1466,53 @@ async def create_order(
         # anything but the zone's own courier; the resolved string is computed
         # here and passed down so `lalamove_service` stays clear of a courier
         # import it would otherwise have to make locally.
+        #
+        # Where the selected branch's zone is priced live between noon Send and a
+        # Slider bike, the cheaper of the two is chosen **now** and frozen onto the
+        # row: the decision is made once, at creation, so dispatch books exactly
+        # this courier rather than re-running a comparison whose answer drifts with
+        # Slider's live fare and noon Send's surge. Every other zone keeps the pure
+        # string resolution with no courier call, unchanged.
+        provider_source = choice.provider
+        frozen_estimate = None
+        snapshot = order.shipping_address_snapshot or {}
+        if totals.zone is not None and courier_service.comparison_candidates(
+            choice.provider, choice.alternate_providers
+        ):
+            try:
+                drop_lat = float(snapshot.get("latitude"))
+                drop_lng = float(snapshot.get("longitude"))
+            except (TypeError, ValueError):
+                drop_lat = drop_lng = None
+            if drop_lat is not None and drop_lng is not None:
+                (
+                    frozen_estimate,
+                    _err,
+                    winner,
+                ) = await courier_service.resolve_and_estimate(
+                    db,
+                    provider=choice.provider,
+                    alternate_providers=choice.alternate_providers,
+                    latitude=drop_lat,
+                    longitude=drop_lng,
+                    address=snapshot.get("address_line_1"),
+                    branch_id=choice.branch.id,
+                    zone_name=totals.zone.name,
+                )
+                if winner is not None:
+                    provider_source = winner
         effective_provider, _ = courier_service.effective_provider(
-            choice.provider if totals.zone else None,
+            provider_source if totals.zone else None,
             totals.zone.name if totals.zone else None,
-            city=str((order.shipping_address_snapshot or {}).get("city") or ""),
+            city=str(snapshot.get("city") or ""),
         )
         await lalamove_service.record_order_delivery(
-            db, order, zone=totals.zone, cart=cart, provider=effective_provider
+            db,
+            order,
+            zone=totals.zone,
+            cart=cart,
+            provider=effective_provider,
+            estimate=frozen_estimate,
         )
 
     # 9. Cash orders confirm themselves. A card order is confirmed by its

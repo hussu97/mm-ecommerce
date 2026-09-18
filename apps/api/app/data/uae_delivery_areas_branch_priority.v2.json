@@ -1,0 +1,2822 @@
+[
+  {
+    "name": "Sharjah \u00b7 Al Qasimia",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Majaz",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Khan",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Taawun",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Abu Shagara",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Rolla / Al Ghuwair",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Layyah",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Nahda (Sharjah)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Nud",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Yarmook",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Maysaloon",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Muwaileh",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Zahia",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 University City",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Rahmaniya",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Sharjah Industrial Area",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Khor Fakkan",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Kalba",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Dibba Al Hisn",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Masafi",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Ajman Corniche",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Mushairef",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Rashidiya",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Zahra",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Nuaimiya",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Ajman City Centre",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Mowaihat",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Rawda",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Hamidiyah",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Emirates City / Ajman One",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Jurf",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Masfout",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 UAQ Old Town",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Salamah",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Raas",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Haditha",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Emirates Modern Industrial",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Falaj Al Mualla",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 RAK City / Al Nakheel",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Dhait",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Mina Al Arab",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Hamra Village",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Digdaga",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Rams",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Sha'am",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Jazirah Al Hamra",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Fujairah City",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Dibba Al Fujairah",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Al Bidiyah",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Al Faseel",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Fujairah \u00b7 Sakamkam",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Nahda (Dubai)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Deira / Al Rigga",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Mirdif",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Bur Dubai / Al Karama",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Jumeirah 1",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Downtown Dubai",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Business Bay",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 International City",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Quoz",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Silicon Oasis",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Barsha",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Hills Estate",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Palm Jumeirah",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Marina / JBR",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 JLT",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 JVC",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Motor City",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Discovery Gardens",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Jebel Ali",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Investment Park",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Hatta",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Yas Island",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Raha Beach",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Masdar City",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Khalifa City",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Shakhbout City",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Mohammed Bin Zayed City",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Mussafah",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Saadiyat Island",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Reem Island",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Maryah Island",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Zahiyah (Tourist Club)",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Khalidiyah",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Bateen",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Abu Dhabi Corniche",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Shamkha",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Ain City Centre",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Jimi",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Muwaiji",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Hili",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Zakher",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Al Yahar",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Ruwais",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Madinat Zayed",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Ghayathi",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Abu Dhabi \u00b7 Liwa / Mezairaa",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Dhaid",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Mleiha",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Madam",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Batayih",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Awir",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Lehbab",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Marmoom",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Lisaili",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Margham",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Faqa",
+    "third_party": true,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "third_party",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Rifaa",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Ramtha",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Goaz",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Sharq",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Riqa (Sharjah)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "noon_send",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Halwan",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Suyoh",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Tai",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Muweilah Commercial",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Sharjah \u00b7 Al Hamriyah (Sharjah)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Rashidiya (Ajman)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Rawda (Ajman)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Zahra (Ajman)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ajman \u00b7 Al Bustan (Ajman)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Qusais",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Muhaisnah",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Twar",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Warqa",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Nad Al Hamar",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Khawaneej",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Mizhar",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Al Jaddaf",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Oud Metha",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Za'abeel",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Nad Al Sheba",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Meydan",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Umm Suqeim",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Arjan",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Sports City",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Dubai Production City",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Arabian Ranches",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Damac Hills",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "noon_send",
+        "alternates": [
+          "slider_bike",
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Dubai \u00b7 Town Square",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "B001",
+        "courier": "slider_bike",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Umm al-Quwain \u00b7 Al Salamah (UAQ)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Ras al-Khaimah \u00b7 Al Hamra (RAK)",
+    "third_party": false,
+    "branch_priority": [
+      {
+        "rank": 1,
+        "branch_ref": "K001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      },
+      {
+        "rank": 2,
+        "branch_ref": "B001",
+        "courier": "slider_car",
+        "alternates": [
+          "lalamove"
+        ]
+      }
+    ]
+  }
+]
