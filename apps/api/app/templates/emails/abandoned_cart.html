@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}{{ t('abandoned.subject') }} — {{ order.order_number }}{% endblock %}
+{% block preheader %}{{ t('abandoned.preheader', order_number=order.order_number) }}{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">{{ t('abandoned.eyebrow') }}</p>
+    <h2 class="hero-title">{{ t('abandoned.heading', name=name) }}</h2>
+  </td></tr>
+</table>
+
+{{ parts.order_chip(order.order_number) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" align="center" style="padding-top: 18px;">
+    <p class="lead" style="text-align:center;">
+      {{ t('abandoned.lead') }}
+    </p>
+  </td></tr>
+</table>
+
+{{ parts.order_summary(items, totals) }}
+{{ parts.button(resume_url, t('abandoned.cta')) }}
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 24px;">
+    <p class="muted">
+      {{ t('abandoned.footnote') }}
+      <a href="{{ web_url }}/{{ locale }}/contact">{{ t('cta.contact_us') }}</a>
+    </p>
+  </td></tr>
+</table>
+{% endblock %}

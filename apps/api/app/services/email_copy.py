@@ -120,6 +120,20 @@ STRINGS: dict[str, dict[str, str]] = {
             "We'll write again the moment it's on its way. If anything here "
             "looks wrong, let us know and we'll sort it out."
         ),
+        # ── abandoned cart ──────────────────────────────────────────────────────
+        "abandoned.subject": "You left something in the oven",
+        "abandoned.eyebrow": "Still warm",
+        "abandoned.heading": "Your order is one step away, {name}.",
+        "abandoned.preheader": "Finish paying for {order_number} — your cart is saved.",
+        "abandoned.lead": (
+            "You started checking out but the payment didn't go through. Your cart "
+            "is still here — pick up right where you left off and we'll start baking."
+        ),
+        "abandoned.cta": "Complete your payment",
+        "abandoned.footnote": (
+            "This link takes you straight to the payment page for this order. If "
+            "you've already paid or changed your mind, you can ignore this."
+        ),
         # ── packed ────────────────────────────────────────────────────────────
         "packed.subject_pickup": "Ready to collect",
         "packed.subject_delivery": "On its way",
@@ -439,6 +453,20 @@ STRINGS: dict[str, dict[str, str]] = {
         "confirmation.footnote_delivery": (
             "سنراسلك فور أن يكون في طريقه إليك. إن بدا أي شيء هنا غير صحيح، "
             "أخبرنا وسنتولى الأمر."
+        ),
+        # ── abandoned cart ──────────────────────────────────────────────────────
+        "abandoned.subject": "لم تُكمل طلبك بعد",
+        "abandoned.eyebrow": "طلبك محفوظ",
+        "abandoned.heading": "طلبك على بُعد خطوة واحدة يا {name}.",
+        "abandoned.preheader": "أكمل دفع {order_number} — سلتك محفوظة.",
+        "abandoned.lead": (
+            "بدأت إتمام الطلب لكن عملية الدفع لم تكتمل. سلتك ما زالت محفوظة — "
+            "أكمل من حيث توقفت وسنبدأ التحضير."
+        ),
+        "abandoned.cta": "أكمل الدفع",
+        "abandoned.footnote": (
+            "يأخذك هذا الرابط مباشرةً إلى صفحة الدفع لهذا الطلب. إن كنت قد دفعت "
+            "بالفعل أو غيّرت رأيك، يمكنك تجاهل هذه الرسالة."
         ),
         # ── packed ────────────────────────────────────────────────────────────
         "packed.subject_pickup": "جاهز للاستلام",

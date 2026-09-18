@@ -371,6 +371,21 @@ async def test_every_template_renders_in_arabic(sent):
         ), message["subject"]
 
 
+@pytest.mark.asyncio
+async def test_abandoned_cart_email_renders_with_resume_link(sent):
+    """The recovery email renders in Arabic, carries the gateway resume link, and
+    leaks no raw copy key."""
+    await email_service.send_abandoned_cart(
+        _order(locale="ar"), resume_url="https://pay.example/resume/x"
+    )
+    assert len(sent) == 1
+    message = sent[0]
+    assert 'dir="rtl"' in html_tag(message), message["subject"]
+    html = body(message)
+    assert "https://pay.example/resume/x" in html
+    assert not re.search(r"\babandoned\.[a-z_]+\b", html), message["subject"]
+
+
 # ── dates ─────────────────────────────────────────────────────────────────────
 
 

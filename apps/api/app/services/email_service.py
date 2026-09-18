@@ -57,6 +57,7 @@ __all__ = [
     "notify_status_change",
     "send_order_cancelled",
     "send_order_confirmation",
+    "send_abandoned_cart",
     "send_order_delivered",
     "send_order_out_for_delivery",
     "send_order_packed",
@@ -780,6 +781,22 @@ async def send_order_confirmation(order: OrderResponse) -> None:
         order,
         template="order_confirmation.html",
         subject=_subject("confirmation.subject", order),
+    )
+
+
+async def send_abandoned_cart(order: OrderResponse, *, resume_url: str) -> None:
+    """Remind a customer to finish a checkout they started but never paid.
+
+    `resume_url` is the gateway's own still-live hosted payment page (from
+    `provider.resume_url`), so the CTA drops them straight back on the payment
+    screen with the cart intact. Funnels through `_send_order_email`, so it is
+    journalled to `email_log` under the `abandoned_cart` template — which is also
+    the once-only guard the sweep reads via `already_sent`."""
+    await _send_order_email(
+        order,
+        template="abandoned_cart.html",
+        subject=_subject("abandoned.subject", order),
+        resume_url=resume_url,
     )
 
 

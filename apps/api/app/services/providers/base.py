@@ -225,6 +225,23 @@ class PaymentGatewayProvider(ABC):
         """
         return None
 
+    async def resume_url(self, order: Order) -> str | None:
+        """
+        The still-live hosted payment page for *order*, or None.
+
+        The abandoned-cart reminder needs to drop a customer straight back on the
+        payment screen for a checkout they started but never finished. The order
+        keeps the gateway's own handle (`order.payment_id`) from `create_session`;
+        this re-fetches that session and returns its checkout URL **only while it
+        is still open and unpaid** — an expired, completed, or cancelled session
+        returns None so the reminder is skipped rather than mailing a dead link.
+
+        Default None: a gateway that cannot re-offer a session (or is not wired
+        for recovery) simply never contributes a resumable order. Never raises —
+        a lookup failure reads as "not resumable", not an error the sweep sees.
+        """
+        return None
+
     async def refund(
         self,
         *,

@@ -810,6 +810,10 @@ gives the intended value rather than an empty one:
 | `LALAMOVE_QUOTE_CACHE_SECONDS` | `120` | |
 | `STOREFRONT_SCHEDULER_ENABLED` | `true` | The in-process loop that dispatches orders, lands arrivals, tracks drivers and sends the daily email. Storefront only |
 | `DAILY_SALES_EMAIL_ENABLED` | `false` | Auto-send of the once-a-day sales report email. Off in production; set to `true` to resume. Manual send is unaffected. Storefront only |
+| `ABANDONED_CART_EMAIL_ENABLED` | `true` | Abandoned-cart recovery email: reminds a customer who started checkout but never paid, once, with the cart contents and a link to the gateway's still-live payment page. Storefront only; `false` disables the loop |
+| `ABANDONED_CART_AFTER_MINUTES` | `60` | How long after checkout was started to wait before the reminder |
+| `ABANDONED_CART_MAX_AGE_HOURS` | `23` | Don't remind orders older than this — the gateway session has usually expired (Stripe dies at ~24h), so the link would be dead |
+| `ABANDONED_CART_SWEEP_MINUTES` | `15` | How often the sweep runs. `0` disables it |
 
 **The fallbacks are load-bearing, not tidiness.** An unset secret expands to an
 empty string, and an empty value in `.env` overrides the Python default rather

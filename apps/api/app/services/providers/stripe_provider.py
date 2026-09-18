@@ -285,6 +285,30 @@ class StripeProvider(PaymentGatewayProvider):
             raw_status=getattr(session, "status", None),
         )
 
+    async def resume_url(self, order: Order) -> str | None:
+        """The hosted Checkout page for a started-but-unpaid Stripe order.
+
+        `order.payment_id` holds the Checkout Session id (`cs_...`) recorded at
+        `create_session`. Stripe keeps a session's `url` live only while it is
+        `open` (they expire ~24h after creation); a `complete` or `expired`
+        session has no usable page. So return the url only for `open` + `unpaid`,
+        and None otherwise — the reminder skips anything that cannot be paid from
+        the link. Never raises: any Stripe error reads as "not resumable"."""
+        sid = order.payment_id or ""
+        if not sid.startswith("cs_"):
+            return None
+        self._configure()
+        try:
+            session = stripe.checkout.Session.retrieve(sid)
+        except StripeError as e:
+            logger.warning("Stripe resume lookup failed for %s: %s", order.order_number, e)
+            return None
+        if getattr(session, "status", None) != "open":
+            return None
+        if getattr(session, "payment_status", None) == "paid":
+            return None
+        return getattr(session, "url", None)
+
     async def create_payment_intent(self, order: Order, *, idempotency_key: str):
         """
         A PaymentIntent for an in-page wallet payment (Apple Pay via Stripe.js).

@@ -246,6 +246,20 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
                     )
                 )
 
+            # Abandoned-cart recovery. Same lifespan reasons as its neighbours —
+            # no cron here, an advisory lock so a second copy is harmless,
+            # storefront only. Own flag so the customer-facing mail can be turned
+            # off without stopping dispatch; when off, the loop never starts.
+            if settings.ABANDONED_CART_EMAIL_ENABLED:
+                from app.services.orders import abandoned_checkout_service
+
+                background.append(
+                    spawn_tracked(
+                        abandoned_checkout_service.run_forever(),
+                        name="abandoned_cart",
+                    )
+                )
+
             # The business-day sweeper. Same lifespan reasons as its neighbours —
             # no cron here, an advisory lock so a second copy is harmless. Hourly
             # it closes any trading day that rolled past its cut-off without an

@@ -224,6 +224,24 @@ class Settings(BaseSettings):
     #: "send report" endpoint is unaffected.
     DAILY_SALES_EMAIL_ENABLED: bool = True
 
+    #: Abandoned-cart recovery email. A customer who started checkout (a card
+    #: session was created) but never paid leaves the order at `created` with no
+    #: money taken; this sweep mails them once, after
+    #: `ABANDONED_CART_AFTER_MINUTES`, with the cart contents and a link straight
+    #: to the gateway's still-live hosted payment page (Stripe/Ziina). Rides in the
+    #: storefront scheduler, own switch. Skips any order whose session has expired
+    #: or is older than `ABANDONED_CART_MAX_AGE_HOURS` (a Stripe session dies at
+    #: ~24h, so the link would be dead). Once-only, guarded by the email journal.
+    ABANDONED_CART_EMAIL_ENABLED: bool = True
+    #: How long after checkout was started to wait before the reminder — long
+    #: enough that it reads as a nudge, not a race with the customer still paying.
+    ABANDONED_CART_AFTER_MINUTES: int = 60
+    #: Upper bound on an order's age to still remind: past this the gateway session
+    #: has usually expired, so the link would 404. Kept under Stripe's ~24h expiry.
+    ABANDONED_CART_MAX_AGE_HOURS: int = 23
+    #: How often the sweep looks for newly-abandoned carts. `0` disables the loop.
+    ABANDONED_CART_SWEEP_MINUTES: int = 15
+
     # ── noon Send / Rider-on-Demand (courier) ────────────────────────────────
     #: Same contract as Lalamove above: an empty key means a `noon_send` zone
     #: prices and sells exactly as it does today and simply dispatches through

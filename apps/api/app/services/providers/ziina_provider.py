@@ -95,6 +95,14 @@ _REFUND_STATUSES: dict[str, PaymentEventType] = {
     "completed": PaymentEventType.REFUNDED,
 }
 
+#: The intent statuses whose hosted page can still take a payment — the same
+#: "middle of a payment" trio deliberately absent from `_INTENT_STATUSES`. Only
+#: these are worth re-offering in an abandoned-cart reminder; a `completed`,
+#: `failed` or `canceled` intent has nothing left to pay.
+_RESUMABLE_STATUSES = frozenset(
+    {"requires_payment_instrument", "requires_user_action", "pending"}
+)
+
 
 class ZiinaProvider(PaymentGatewayProvider):
     """Ziina hosted payment pages + webhook handler."""
@@ -237,6 +245,45 @@ class ZiinaProvider(PaymentGatewayProvider):
             payment_id=intent_id,
             raw_status=body.get("status"),
         )
+
+    async def resume_url(self, order: Order) -> str | None:
+        """The hosted Ziina page for a started-but-unpaid order, or None.
+
+        `order.payment_id` is the payment-intent id. Re-fetch it and return its
+        `redirect_url` only while the intent is still mid-payment (one of
+        `_RESUMABLE_STATUSES`); a `completed`/`failed`/`canceled` intent has
+        nothing left to pay, so the reminder is skipped. Never raises — any error
+        or unusable body reads as "not resumable"."""
+        intent_id = order.payment_id or ""
+        if not intent_id or not settings.ZIINA_API_KEY:
+            return None
+        try:
+            async with httpx.AsyncClient(
+                timeout=settings.ZIINA_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.get(
+                    f"{self._base_url()}/payment_intent/{intent_id}",
+                    headers=self._headers(),
+                )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Ziina resume lookup failed for %s: %s", order.order_number, exc
+            )
+            return None
+        if response.status_code >= 400:
+            logger.warning(
+                "Ziina resume lookup for %s returned %s",
+                order.order_number,
+                response.status_code,
+            )
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if body.get("status") not in _RESUMABLE_STATUSES:
+            return None
+        return body.get("redirect_url") or None
 
     def parse_webhook(self, payload: bytes, headers: Mapping[str, str]) -> GatewayEvent:
         """Verify `X-Hmac-Signature` and translate `{event, data}` into ours."""
