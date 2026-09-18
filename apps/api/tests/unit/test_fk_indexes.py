@@ -40,6 +40,14 @@ _INVENTORY_LOWER_TRAFFIC = (
     "mostly by id from the parent side. Pre-existing gap, out of F-OPS-23's "
     "scope; add a real index the day a query needs one."
 )
+_COST_LAYER_NOT_QUERIED = (
+    "FIFO cost-layer FK that no query filters on: consumption.warehouse_id and "
+    "layer.purchase_order_id are denormalised for reporting, and "
+    "transaction_items.reverses_line_id is only ever fetched by primary key "
+    "(the original line, via db.get) when a reversal restores its layers. The "
+    "hot paths lead with ix_inventory_cost_layers_fifo and _source_line_id. Add "
+    "a real index the day a report drives a query from one of these."
+)
 _RAW_MIGRATION_INDEX = (
     "Indexed in the database by a bare op.create_index in a migration (041 "
     "for order_items.course_id, 102 for order_items.product_id, 210 for the "
@@ -93,6 +101,9 @@ ALLOW_LIST: dict[tuple[str, str], str] = {
     ("external_item_map", "product_id"): _SMALL_LOOKUP,
     ("grubops_sync_state", "external_item_map_id"): _SMALL_LOOKUP,
     ("inventory_categories", "parent_id"): _SMALL_LOOKUP,
+    ("inventory_cost_layer_consumptions", "warehouse_id"): _COST_LAYER_NOT_QUERIED,
+    ("inventory_cost_layers", "purchase_order_id"): _COST_LAYER_NOT_QUERIED,
+    ("inventory_transaction_items", "reverses_line_id"): _COST_LAYER_NOT_QUERIED,
     ("inventory_lots", "item_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_report_template_items", "item_id"): _INVENTORY_LOWER_TRAFFIC,
     ("inventory_source_events", "transaction_id"): _INVENTORY_LOWER_TRAFFIC,

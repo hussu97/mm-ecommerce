@@ -21,6 +21,7 @@ from .categories import router as categories_router
 from .devices import printers_router
 from .devices import router as devices_router
 from .inventory import pos_manager_read_router as inventory_manager_read_router
+from .inventory import pos_purchase_orders_router
 from .inventory_v2 import pos_inventory_router, pos_recipes_router
 from .inventory_v2 import pos_manager_read_router as inventory_v2_manager_read_router
 from .marketing import (
@@ -112,6 +113,13 @@ pos_api_router.include_router(
 # Create and receive transfers/returns from the till.
 pos_api_router.include_router(
     pos_transfers_router, prefix="/pos/inventory", tags=["POS Inventory"]
+)
+# Raise a purchase order at the till (create-and-receive) or receive an
+# admin-raised one.
+pos_api_router.include_router(
+    pos_purchase_orders_router,
+    prefix="/pos/purchase-orders",
+    tags=["POS Purchasing"],
 )
 # Manager inventory screens use the same POS hostname as every other terminal.
 # Mount only the three read endpoints the companion consumes; report entry and

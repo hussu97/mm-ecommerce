@@ -53,60 +53,30 @@ class ProjectionDrift:
 async def reconcile_levels(
     db: AsyncSession, *, branch_id: uuid.UUID, apply: bool = False
 ) -> list[ProjectionDrift]:
+    """
+    Rebuild the FIFO cost layers from the ledger and report/repair level drift.
+
+    Costing is FIFO, so both the layers and each level's derived average come
+    from replaying the immutable closed lines in ``posting_sequence`` order
+    through the live costing primitives (`inventory_service.rebuild_cost_layers`).
+    A dry run does the same rebuild inside a savepoint it rolls back, so the
+    preview and the apply can never use different arithmetic.
+    """
     branch = await db.get(Branch, branch_id)
     if branch is None:
         raise NotFoundError("Branch not found")
     await source_event_service.lock_branch_inventory(db, branch_id)
     warehouse = await inventory_service.default_warehouse(db, branch_id)
 
-    stmt = (
-        select(InventoryTransaction, InventoryTransactionItem)
-        .join(
-            InventoryTransactionItem,
-            InventoryTransactionItem.transaction_id == InventoryTransaction.id,
+    max_sequence = (
+        await db.execute(
+            select(func.max(InventoryTransaction.posting_sequence)).where(
+                InventoryTransaction.branch_id == branch_id,
+                InventoryTransaction.warehouse_id == warehouse.id,
+                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+            )
         )
-        .where(
-            InventoryTransaction.branch_id == branch_id,
-            InventoryTransaction.warehouse_id == warehouse.id,
-            InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
-        )
-        .order_by(
-            InventoryTransaction.posting_sequence,
-            InventoryTransactionItem.id,
-        )
-    )
-    quantities: dict[uuid.UUID, Decimal] = {}
-    averages: dict[uuid.UUID, Decimal] = {}
-    sequences: dict[uuid.UUID, int | None] = {}
-    # Rebuilds are allowed to cover years of history. A server-side cursor
-    # keeps memory bounded while preserving the one canonical sequence order.
-    result = await db.stream(stmt.execution_options(yield_per=1000))
-    async for transaction, line in result:
-        delta = quantity(line.signed_quantity or 0)
-        previous_quantity = quantity(quantities.get(line.item_id, Decimal("0")))
-        previous_average = unit_cost(averages.get(line.item_id, Decimal("0")))
-        incoming = inventory_service.line_cost_in_storage_unit(line)
-        if transaction.type == InventoryTransactionTypeEnum.COST_ADJUSTMENT.value:
-            previous_average = incoming
-        elif transaction.reverses_transaction_id is not None and delta < 0:
-            new_quantity = previous_quantity + delta
-            if previous_quantity > 0 and new_quantity > 0:
-                remaining_value = (
-                    previous_quantity * previous_average + delta * incoming
-                )
-                if remaining_value >= 0:
-                    previous_average = unit_cost(remaining_value / new_quantity)
-        elif delta > 0:
-            if previous_quantity <= 0:
-                previous_average = unit_cost(incoming)
-            else:
-                previous_average = unit_cost(
-                    (previous_quantity * previous_average + delta * incoming)
-                    / (previous_quantity + delta)
-                )
-        quantities[line.item_id] = quantity(previous_quantity + delta)
-        averages[line.item_id] = unit_cost(previous_average)
-        sequences[line.item_id] = transaction.posting_sequence
+    ).scalar()
 
     levels = {
         level.item_id: level
@@ -120,14 +90,40 @@ async def reconcile_levels(
         .scalars()
         .all()
     }
-    item_ids = set(levels) | set(quantities)
+    cached = {
+        item_id: (
+            Decimal(str(level.quantity or 0)),
+            Decimal(str(level.average_cost or 0)),
+        )
+        for item_id, level in levels.items()
+    }
+
+    if apply:
+        ledger = await inventory_service.rebuild_cost_layers(
+            db, branch_id=branch_id, warehouse_id=warehouse.id
+        )
+    else:
+        # Preview: rebuild in a savepoint so the layers are real enough to price
+        # from, then discard every change.
+        savepoint = await db.begin_nested()
+        try:
+            ledger = await inventory_service.rebuild_cost_layers(
+                db, branch_id=branch_id, warehouse_id=warehouse.id
+            )
+        finally:
+            await savepoint.rollback()
+
+    item_ids = set(levels) | set(ledger)
     drifts: list[ProjectionDrift] = []
     for item_id in sorted(item_ids, key=str):
-        level = levels.get(item_id)
-        cached_quantity = Decimal(str(level.quantity if level else 0))
-        cached_average = Decimal(str(level.average_cost if level else 0))
-        ledger_quantity = quantity(quantities.get(item_id, Decimal("0")))
-        ledger_average = unit_cost(averages.get(item_id, Decimal("0")))
+        cached_quantity, cached_average = cached.get(
+            item_id, (Decimal("0"), Decimal("0"))
+        )
+        ledger_quantity, ledger_average = ledger.get(
+            item_id, (Decimal("0"), Decimal("0"))
+        )
+        ledger_quantity = quantity(ledger_quantity)
+        ledger_average = unit_cost(ledger_average)
         if cached_quantity != ledger_quantity or cached_average != ledger_average:
             drifts.append(
                 ProjectionDrift(
@@ -137,10 +133,11 @@ async def reconcile_levels(
                     ledger_quantity=ledger_quantity,
                     cached_average_cost=cached_average,
                     ledger_average_cost=ledger_average,
-                    through_sequence=sequences.get(item_id),
+                    through_sequence=max_sequence,
                 )
             )
         if apply:
+            level = levels.get(item_id)
             if level is None:
                 level = InventoryLevel(
                     item_id=item_id,
@@ -152,7 +149,7 @@ async def reconcile_levels(
             else:
                 level.quantity = ledger_quantity
                 level.average_cost = ledger_average
-            level.projected_through_sequence = sequences.get(item_id)
+            level.projected_through_sequence = max_sequence
             level.reconciled_at = utcnow()
     if apply:
         await db.flush()
@@ -217,6 +214,9 @@ async def reverse_transaction(
         reversal.items.append(
             InventoryTransactionItem(
                 item_id=line.item_id,
+                # Link to the line being undone so the FIFO engine restores (or
+                # removes) exactly the layers the original movement touched.
+                reverses_line_id=line.id,
                 # signed_quantity is in storage units, so the reversal is a
                 # storage movement; keep the original line's factor snapshot.
                 quantity=quantity(-Decimal(str(line.signed_quantity))),

@@ -436,16 +436,39 @@ export interface InventoryLevel {
   warehouse_name: string | null;
 }
 
+export interface SupplierContact {
+  id?: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  is_primary: boolean;
+}
+
 export interface Supplier {
   id: string;
   name: string;
   reference: string | null;
-  contact_name: string | null;
-  phone: string | null;
-  email: string | null;
+  is_vat_deductible: boolean;
+  address: string | null;
+  tax_number: string | null;
   payment_terms_days: number;
+  notes: string | null;
   is_active: boolean;
   deleted_at: string | null;
+  contacts: SupplierContact[];
+}
+
+export interface SupplierItem {
+  id: string;
+  supplier_id: string;
+  item_id: string;
+  supplier_sku: string | null;
+  default_unit_cost: number;
+  lead_time_days: number;
+  is_preferred: boolean;
+  item_name: string | null;
+  item_sku: string | null;
+  storage_unit: string | null;
 }
 
 export type PurchaseOrderStatus =
@@ -458,6 +481,9 @@ export interface PurchaseOrderItem {
   received_quantity: number;
   outstanding_quantity: number;
   unit: string;
+  entered_total: number;
+  vat_amount: number;
+  net_total: number;
   unit_cost: number;
   total_cost: number;
   item_name: string | null;
@@ -468,14 +494,45 @@ export interface PurchaseOrder {
   id: string;
   reference: string;
   status: PurchaseOrderStatus;
+  origin: string;
   supplier_id: string;
   supplier_name: string | null;
   branch_id: string;
+  warehouse_id: string | null;
   business_date: string;
   delivery_date: string | null;
+  supplier_reference: string | null;
+  invoice_object_key: string | null;
+  invoice_url: string | null;
+  additional_cost: number;
+  subtotal_net: number;
+  vat_total: number;
+  total_gross: number;
   total_cost: number;
+  notes: string | null;
   items: PurchaseOrderItem[];
   created_at: string;
+}
+
+export interface CostLayer {
+  id: string;
+  warehouse_id: string;
+  warehouse_name: string | null;
+  source_kind: string;
+  posting_sequence: number;
+  purchase_order_id: string | null;
+  original_quantity: number;
+  remaining_quantity: number;
+  unit_cost: number;
+  received_at: string;
+}
+
+export interface ItemCostLayers {
+  item_id: string;
+  total_quantity: number;
+  total_value: number;
+  average_cost: number;
+  layers: CostLayer[];
 }
 
 export interface InventoryTransaction {

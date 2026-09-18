@@ -7329,6 +7329,84 @@
         "title": "CostAdjustmentResponse",
         "type": "object"
       },
+      "CostLayerResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "original_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Original Quantity",
+            "type": "string"
+          },
+          "posting_sequence": {
+            "title": "Posting Sequence",
+            "type": "integer"
+          },
+          "purchase_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purchase Order Id"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "remaining_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Remaining Quantity",
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          },
+          "warehouse_id": {
+            "format": "uuid",
+            "title": "Warehouse Id",
+            "type": "string"
+          },
+          "warehouse_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warehouse Name"
+          }
+        },
+        "required": [
+          "id",
+          "warehouse_id",
+          "source_kind",
+          "posting_sequence",
+          "purchase_order_id",
+          "original_quantity",
+          "remaining_quantity",
+          "unit_cost",
+          "received_at"
+        ],
+        "title": "CostLayerResponse",
+        "type": "object"
+      },
       "CountLine": {
         "properties": {
           "counted_quantity": {
@@ -12967,6 +13045,47 @@
           "updated_at"
         ],
         "title": "InventoryTransactionResponse",
+        "type": "object"
+      },
+      "ItemCostLayersResponse": {
+        "description": "The surviving FIFO layers for an item, and the valuation they imply.",
+        "properties": {
+          "average_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Average Cost",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "layers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CostLayerResponse"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "total_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Quantity",
+            "type": "string"
+          },
+          "total_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "total_quantity",
+          "total_value",
+          "average_cost"
+        ],
+        "title": "ItemCostLayersResponse",
         "type": "object"
       },
       "ItemMappingList": {
@@ -24702,6 +24821,18 @@
             "title": "Supplier Id",
             "type": "string"
           },
+          "supplier_reference": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Reference"
+          },
           "warehouse_id": {
             "anyOf": [
               {
@@ -24724,7 +24855,22 @@
         "type": "object"
       },
       "PurchaseOrderLineInput": {
+        "description": "One PO line. The user keys the quantity and the line's total cost.\n\n``entered_total`` is VAT-inclusive money for the whole line; the server\nderives the per-unit cost and, for a VAT-deductible supplier, the recoverable\nVAT slice.",
         "properties": {
+          "entered_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Entered Total"
+          },
           "item_id": {
             "format": "uuid",
             "title": "Item Id",
@@ -24751,20 +24897,6 @@
             ],
             "title": "Unit",
             "type": "string"
-          },
-          "unit_cost": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              }
-            ],
-            "default": "0",
-            "title": "Unit Cost"
           }
         },
         "required": [
@@ -24779,6 +24911,11 @@
           "conversion_factor": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Conversion Factor",
+            "type": "string"
+          },
+          "entered_total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Entered Total",
             "type": "string"
           },
           "id": {
@@ -24813,6 +24950,11 @@
             ],
             "title": "Item Sku"
           },
+          "net_total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Total",
+            "type": "string"
+          },
           "outstanding_quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Outstanding Quantity",
@@ -24841,6 +24983,11 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Unit Cost",
             "type": "string"
+          },
+          "vat_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vat Amount",
+            "type": "string"
           }
         },
         "required": [
@@ -24851,6 +24998,9 @@
           "outstanding_quantity",
           "unit",
           "conversion_factor",
+          "entered_total",
+          "vat_amount",
+          "net_total",
           "unit_cost",
           "total_cost"
         ],
@@ -24931,6 +25081,28 @@
             "title": "Id",
             "type": "string"
           },
+          "invoice_object_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Object Key"
+          },
+          "invoice_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Url"
+          },
           "items": {
             "default": [],
             "items": {
@@ -24949,6 +25121,10 @@
               }
             ],
             "title": "Notes"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
           },
           "reference": {
             "title": "Reference",
@@ -24982,6 +25158,11 @@
             ],
             "title": "Submitter Id"
           },
+          "subtotal_net": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Subtotal Net",
+            "type": "string"
+          },
           "supplier_id": {
             "format": "uuid",
             "title": "Supplier Id",
@@ -24998,14 +25179,35 @@
             ],
             "title": "Supplier Name"
           },
+          "supplier_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Reference"
+          },
           "total_cost": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Total Cost",
             "type": "string"
           },
+          "total_gross": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total Gross",
+            "type": "string"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
+            "type": "string"
+          },
+          "vat_total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vat Total",
             "type": "string"
           },
           "warehouse_id": {
@@ -25025,12 +25227,18 @@
           "id",
           "reference",
           "status",
+          "origin",
           "supplier_id",
           "branch_id",
           "warehouse_id",
           "business_date",
           "delivery_date",
+          "supplier_reference",
+          "invoice_object_key",
           "additional_cost",
+          "subtotal_net",
+          "vat_total",
+          "total_gross",
           "total_cost",
           "notes",
           "creator_id",
@@ -25110,6 +25318,18 @@
               }
             ],
             "title": "Supplier Id"
+          },
+          "supplier_reference": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Reference"
           },
           "warehouse_id": {
             "anyOf": [
@@ -29253,6 +29473,100 @@
         "title": "StockAuditRowInput",
         "type": "object"
       },
+      "SupplierContactInput": {
+        "additionalProperties": false,
+        "description": "One contact. Must carry an email or a phone \u2014 a name alone is refused.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "is_primary": {
+            "default": false,
+            "title": "Is Primary",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SupplierContactInput",
+        "type": "object"
+      },
+      "SupplierContactResponse": {
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_primary": {
+            "title": "Is Primary",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "phone",
+          "is_primary"
+        ],
+        "title": "SupplierContactResponse",
+        "type": "object"
+      },
       "SupplierCreate": {
         "properties": {
           "address": {
@@ -29266,33 +29580,21 @@
             ],
             "title": "Address"
           },
-          "contact_name": {
-            "anyOf": [
-              {
-                "maxLength": 150,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Contact Name"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "maxLength": 255,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
+          "contacts": {
+            "items": {
+              "$ref": "#/components/schemas/SupplierContactInput"
+            },
+            "title": "Contacts",
+            "type": "array"
           },
           "is_active": {
             "default": true,
             "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_vat_deductible": {
+            "default": true,
+            "title": "Is Vat Deductible",
             "type": "boolean"
           },
           "name": {
@@ -29331,18 +29633,6 @@
             "title": "Payment Terms Days",
             "type": "integer"
           },
-          "phone": {
-            "anyOf": [
-              {
-                "maxLength": 30,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
-          },
           "reference": {
             "anyOf": [
               {
@@ -29376,9 +29666,9 @@
       },
       "SupplierItemResponse": {
         "properties": {
-          "cost": {
+          "default_unit_cost": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Cost",
+            "title": "Default Unit Cost",
             "type": "string"
           },
           "id": {
@@ -29395,9 +29685,42 @@
             "title": "Item Id",
             "type": "string"
           },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "item_sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Sku"
+          },
           "lead_time_days": {
             "title": "Lead Time Days",
             "type": "integer"
+          },
+          "storage_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Unit"
           },
           "supplier_id": {
             "format": "uuid",
@@ -29421,7 +29744,7 @@
           "supplier_id",
           "item_id",
           "supplier_sku",
-          "cost",
+          "default_unit_cost",
           "lead_time_days",
           "is_preferred"
         ],
@@ -29430,7 +29753,7 @@
       },
       "SupplierItemUpsert": {
         "properties": {
-          "cost": {
+          "default_unit_cost": {
             "anyOf": [
               {
                 "minimum": 0.0,
@@ -29442,7 +29765,7 @@
               }
             ],
             "default": "0",
-            "title": "Cost"
+            "title": "Default Unit Cost"
           },
           "is_preferred": {
             "default": false,
@@ -29493,32 +29816,18 @@
             ],
             "title": "Address"
           },
-          "contact_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Contact Name"
+          "contacts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SupplierContactResponse"
+            },
+            "title": "Contacts",
+            "type": "array"
           },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
           },
           "id": {
             "format": "uuid",
@@ -29527,6 +29836,10 @@
           },
           "is_active": {
             "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_vat_deductible": {
+            "title": "Is Vat Deductible",
             "type": "boolean"
           },
           "name": {
@@ -29558,17 +29871,6 @@
           "payment_terms_days": {
             "title": "Payment Terms Days",
             "type": "integer"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
           },
           "reference": {
             "anyOf": [
@@ -29603,9 +29905,7 @@
           "name",
           "name_localized",
           "reference",
-          "contact_name",
-          "phone",
-          "email",
+          "is_vat_deductible",
           "address",
           "tax_number",
           "payment_terms_days",
@@ -29630,29 +29930,19 @@
             ],
             "title": "Address"
           },
-          "contact_name": {
+          "contacts": {
             "anyOf": [
               {
-                "maxLength": 150,
-                "type": "string"
+                "items": {
+                  "$ref": "#/components/schemas/SupplierContactInput"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Contact Name"
-          },
-          "email": {
-            "anyOf": [
-              {
-                "maxLength": 255,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Email"
+            "title": "Contacts"
           },
           "is_active": {
             "anyOf": [
@@ -29664,6 +29954,17 @@
               }
             ],
             "title": "Is Active"
+          },
+          "is_vat_deductible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Vat Deductible"
           },
           "name": {
             "anyOf": [
@@ -29713,18 +30014,6 @@
               }
             ],
             "title": "Payment Terms Days"
-          },
-          "phone": {
-            "anyOf": [
-              {
-                "maxLength": 30,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Phone"
           },
           "reference": {
             "anyOf": [
@@ -47761,6 +48050,72 @@
         ]
       }
     },
+    "/api/v1/inventory/items/{item_id}/cost-layers": {
+      "get": {
+        "description": "The surviving FIFO layers for an item \u2014 so its valuation is legible.\n\nEach layer is a quantity still on the shelf at a known cost, oldest first\n(the order the next issue will consume them). The weighted average is what\nthose layers imply, which is exactly ``InventoryLevel.average_cost``.",
+        "operationId": "get_item_cost_layers_api_v1_inventory_items__item_id__cost_layers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCostLayersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Item Cost Layers",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
     "/api/v1/inventory/levels": {
       "get": {
         "description": "The inventory levels report: what is on hand and what needs reordering.\n\n`search` (item name or SKU), `category_id` and `below_minimum_only` filter in\nSQL, before the `limit`, so a search matches across the whole estate rather\nthan only whichever rows fit the first page \u2014 the On-Hand tab's search and\ncategory filter, and the below-minimum view, are all correct past 500 items.",
@@ -48387,6 +48742,55 @@
           }
         ],
         "summary": "Decline Purchase Order",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/purchase-orders/{po_id}/invoice": {
+      "post": {
+        "description": "Attach an invoice image/PDF to a PO in the private finance bucket.\n\nThe body is the raw file bytes; the content type comes from the request\nheader. Stored under a deterministic key and signed on read \u2014 never public.",
+        "operationId": "upload_purchase_order_invoice_api_v1_inventory_purchase_orders__po_id__invoice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "po_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Po Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Upload Purchase Order Invoice",
         "tags": [
           "Inventory"
         ]
@@ -49842,44 +50246,16 @@
     },
     "/api/v1/inventory/suppliers": {
       "get": {
-        "operationId": "list_items_api_v1_inventory_suppliers_get",
+        "operationId": "list_suppliers_api_v1_inventory_suppliers_get",
         "parameters": [
-          {
-            "in": "query",
-            "name": "include_deleted",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Include Deleted",
-              "type": "boolean"
-            }
-          },
           {
             "in": "query",
             "name": "include_inactive",
             "required": false,
             "schema": {
-              "default": true,
+              "default": false,
               "title": "Include Inactive",
               "type": "boolean"
-            }
-          },
-          {
-            "description": "Filter by type where supported",
-            "in": "query",
-            "name": "type",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Filter by type where supported",
-              "title": "Type"
             }
           }
         ],
@@ -49891,7 +50267,7 @@
                   "items": {
                     "$ref": "#/components/schemas/SupplierResponse"
                   },
-                  "title": "Response List Items Api V1 Inventory Suppliers Get",
+                  "title": "Response List Suppliers Api V1 Inventory Suppliers Get",
                   "type": "array"
                 }
               }
@@ -49914,13 +50290,13 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "List Items",
+        "summary": "List Suppliers",
         "tags": [
           "Inventory"
         ]
       },
       "post": {
-        "operationId": "create_item_api_v1_inventory_suppliers_post",
+        "operationId": "create_supplier_api_v1_inventory_suppliers_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -49958,23 +50334,23 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Create Item",
+        "summary": "Create Supplier",
         "tags": [
           "Inventory"
         ]
       }
     },
-    "/api/v1/inventory/suppliers/{item_id}": {
+    "/api/v1/inventory/suppliers/{supplier_id}": {
       "delete": {
-        "operationId": "delete_item_api_v1_inventory_suppliers__item_id__delete",
+        "operationId": "delete_supplier_api_v1_inventory_suppliers__supplier_id__delete",
         "parameters": [
           {
             "in": "path",
-            "name": "item_id",
+            "name": "supplier_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Item Id",
+              "title": "Supplier Id",
               "type": "string"
             }
           }
@@ -49999,21 +50375,21 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Delete Item",
+        "summary": "Delete Supplier",
         "tags": [
           "Inventory"
         ]
       },
       "get": {
-        "operationId": "get_item_api_v1_inventory_suppliers__item_id__get",
+        "operationId": "get_supplier_api_v1_inventory_suppliers__supplier_id__get",
         "parameters": [
           {
             "in": "path",
-            "name": "item_id",
+            "name": "supplier_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Item Id",
+              "title": "Supplier Id",
               "type": "string"
             }
           }
@@ -50045,21 +50421,21 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Get Item",
+        "summary": "Get Supplier",
         "tags": [
           "Inventory"
         ]
       },
       "put": {
-        "operationId": "update_item_api_v1_inventory_suppliers__item_id__put",
+        "operationId": "update_supplier_api_v1_inventory_suppliers__supplier_id__put",
         "parameters": [
           {
             "in": "path",
-            "name": "item_id",
+            "name": "supplier_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Item Id",
+              "title": "Supplier Id",
               "type": "string"
             }
           }
@@ -50101,55 +50477,7 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Update Item",
-        "tags": [
-          "Inventory"
-        ]
-      }
-    },
-    "/api/v1/inventory/suppliers/{item_id}/restore": {
-      "post": {
-        "operationId": "restore_item_api_v1_inventory_suppliers__item_id__restore_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "item_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Item Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SupplierResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "summary": "Restore Item",
+        "summary": "Update Supplier",
         "tags": [
           "Inventory"
         ]

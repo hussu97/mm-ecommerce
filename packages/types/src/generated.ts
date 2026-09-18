@@ -3863,6 +3863,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/items/{item_id}/cost-layers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Item Cost Layers
+         * @description The surviving FIFO layers for an item — so its valuation is legible.
+         *
+         *     Each layer is a quantity still on the shelf at a known cost, oldest first
+         *     (the order the next issue will consume them). The weighted average is what
+         *     those layers imply, which is exactly ``InventoryLevel.average_cost``.
+         */
+        get: operations["get_item_cost_layers_api_v1_inventory_items__item_id__cost_layers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/levels": {
         parameters: {
             query?: never;
@@ -4008,6 +4032,29 @@ export interface paths {
         put?: never;
         /** Decline Purchase Order */
         post: operations["decline_purchase_order_api_v1_inventory_purchase_orders__po_id__decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/purchase-orders/{po_id}/invoice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Purchase Order Invoice
+         * @description Attach an invoice image/PDF to a PO in the private finance bucket.
+         *
+         *     The body is the raw file bytes; the content type comes from the request
+         *     header. Stored under a deterministic key and signed on read — never public.
+         */
+        post: operations["upload_purchase_order_invoice_api_v1_inventory_purchase_orders__po_id__invoice_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4446,48 +4493,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Items */
-        get: operations["list_items_api_v1_inventory_suppliers_get"];
+        /** List Suppliers */
+        get: operations["list_suppliers_api_v1_inventory_suppliers_get"];
         put?: never;
-        /** Create Item */
-        post: operations["create_item_api_v1_inventory_suppliers_post"];
+        /** Create Supplier */
+        post: operations["create_supplier_api_v1_inventory_suppliers_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/inventory/suppliers/{item_id}": {
+    "/api/v1/inventory/suppliers/{supplier_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Item */
-        get: operations["get_item_api_v1_inventory_suppliers__item_id__get"];
-        /** Update Item */
-        put: operations["update_item_api_v1_inventory_suppliers__item_id__put"];
+        /** Get Supplier */
+        get: operations["get_supplier_api_v1_inventory_suppliers__supplier_id__get"];
+        /** Update Supplier */
+        put: operations["update_supplier_api_v1_inventory_suppliers__supplier_id__put"];
         post?: never;
-        /** Delete Item */
-        delete: operations["delete_item_api_v1_inventory_suppliers__item_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/inventory/suppliers/{item_id}/restore": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restore Item */
-        post: operations["restore_item_api_v1_inventory_suppliers__item_id__restore_post"];
-        delete?: never;
+        /** Delete Supplier */
+        delete: operations["delete_supplier_api_v1_inventory_suppliers__supplier_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -11177,6 +11207,38 @@ export interface components {
             /** Warehouse Id */
             warehouse_id: string | null;
         };
+        /** CostLayerResponse */
+        CostLayerResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Original Quantity */
+            original_quantity: string;
+            /** Posting Sequence */
+            posting_sequence: number;
+            /** Purchase Order Id */
+            purchase_order_id: string | null;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+            /** Remaining Quantity */
+            remaining_quantity: string;
+            /** Source Kind */
+            source_kind: string;
+            /** Unit Cost */
+            unit_cost: string;
+            /**
+             * Warehouse Id
+             * Format: uuid
+             */
+            warehouse_id: string;
+            /** Warehouse Name */
+            warehouse_name?: string | null;
+        };
         /** CountLine */
         CountLine: {
             /** Counted Quantity */
@@ -13034,6 +13096,28 @@ export interface components {
             updated_at: string;
             /** Warehouse Id */
             warehouse_id: string | null;
+        };
+        /**
+         * ItemCostLayersResponse
+         * @description The surviving FIFO layers for an item, and the valuation they imply.
+         */
+        ItemCostLayersResponse: {
+            /** Average Cost */
+            average_cost: string;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /**
+             * Layers
+             * @default []
+             */
+            layers: components["schemas"]["CostLayerResponse"][];
+            /** Total Quantity */
+            total_quantity: string;
+            /** Total Value */
+            total_value: string;
         };
         /** ItemMappingList */
         ItemMappingList: {
@@ -16936,11 +17020,25 @@ export interface components {
              * Format: uuid
              */
             supplier_id: string;
+            /** Supplier Reference */
+            supplier_reference?: string | null;
             /** Warehouse Id */
             warehouse_id?: string | null;
         };
-        /** PurchaseOrderLineInput */
+        /**
+         * PurchaseOrderLineInput
+         * @description One PO line. The user keys the quantity and the line's total cost.
+         *
+         *     ``entered_total`` is VAT-inclusive money for the whole line; the server
+         *     derives the per-unit cost and, for a VAT-deductible supplier, the recoverable
+         *     VAT slice.
+         */
         PurchaseOrderLineInput: {
+            /**
+             * Entered Total
+             * @default 0
+             */
+            entered_total: number | string;
             /**
              * Item Id
              * Format: uuid
@@ -16954,16 +17052,13 @@ export interface components {
              * @enum {string}
              */
             unit: "storage" | "ingredient";
-            /**
-             * Unit Cost
-             * @default 0
-             */
-            unit_cost: number | string;
         };
         /** PurchaseOrderLineResponse */
         PurchaseOrderLineResponse: {
             /** Conversion Factor */
             conversion_factor: string;
+            /** Entered Total */
+            entered_total: string;
             /**
              * Id
              * Format: uuid
@@ -16978,6 +17073,8 @@ export interface components {
             item_name?: string | null;
             /** Item Sku */
             item_sku?: string | null;
+            /** Net Total */
+            net_total: string;
             /** Outstanding Quantity */
             outstanding_quantity: string;
             /** Quantity */
@@ -16990,6 +17087,8 @@ export interface components {
             unit: string;
             /** Unit Cost */
             unit_cost: string;
+            /** Vat Amount */
+            vat_amount: string;
         };
         /** PurchaseOrderResponse */
         PurchaseOrderResponse: {
@@ -17020,6 +17119,10 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Invoice Object Key */
+            invoice_object_key: string | null;
+            /** Invoice Url */
+            invoice_url?: string | null;
             /**
              * Items
              * @default []
@@ -17027,6 +17130,8 @@ export interface components {
             items: components["schemas"]["PurchaseOrderLineResponse"][];
             /** Notes */
             notes: string | null;
+            /** Origin */
+            origin: string;
             /** Reference */
             reference: string;
             /** Status */
@@ -17035,6 +17140,8 @@ export interface components {
             submitted_at: string | null;
             /** Submitter Id */
             submitter_id: string | null;
+            /** Subtotal Net */
+            subtotal_net: string;
             /**
              * Supplier Id
              * Format: uuid
@@ -17042,13 +17149,19 @@ export interface components {
             supplier_id: string;
             /** Supplier Name */
             supplier_name?: string | null;
+            /** Supplier Reference */
+            supplier_reference: string | null;
             /** Total Cost */
             total_cost: string;
+            /** Total Gross */
+            total_gross: string;
             /**
              * Updated At
              * Format: date-time
              */
             updated_at: string;
+            /** Vat Total */
+            vat_total: string;
             /** Warehouse Id */
             warehouse_id: string | null;
         };
@@ -17064,6 +17177,8 @@ export interface components {
             notes?: string | null;
             /** Supplier Id */
             supplier_id?: string | null;
+            /** Supplier Reference */
+            supplier_reference?: string | null;
             /** Warehouse Id */
             warehouse_id?: string | null;
         };
@@ -18543,19 +18658,55 @@ export interface components {
              */
             unit: "storage" | "ingredient";
         };
+        /**
+         * SupplierContactInput
+         * @description One contact. Must carry an email or a phone — a name alone is refused.
+         */
+        SupplierContactInput: {
+            /** Email */
+            email?: string | null;
+            /**
+             * Is Primary
+             * @default false
+             */
+            is_primary: boolean;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone?: string | null;
+        };
+        /** SupplierContactResponse */
+        SupplierContactResponse: {
+            /** Email */
+            email: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Primary */
+            is_primary: boolean;
+            /** Name */
+            name: string;
+            /** Phone */
+            phone: string | null;
+        };
         /** SupplierCreate */
         SupplierCreate: {
             /** Address */
             address?: string | null;
-            /** Contact Name */
-            contact_name?: string | null;
-            /** Email */
-            email?: string | null;
+            /** Contacts */
+            contacts?: components["schemas"]["SupplierContactInput"][];
             /**
              * Is Active
              * @default true
              */
             is_active: boolean;
+            /**
+             * Is Vat Deductible
+             * @default true
+             */
+            is_vat_deductible: boolean;
             /** Name */
             name: string;
             /** Name Localized */
@@ -18567,8 +18718,6 @@ export interface components {
              * @default 0
              */
             payment_terms_days: number;
-            /** Phone */
-            phone?: string | null;
             /** Reference */
             reference?: string | null;
             /** Tax Number */
@@ -18576,8 +18725,8 @@ export interface components {
         };
         /** SupplierItemResponse */
         SupplierItemResponse: {
-            /** Cost */
-            cost: string;
+            /** Default Unit Cost */
+            default_unit_cost: string;
             /**
              * Id
              * Format: uuid
@@ -18590,8 +18739,14 @@ export interface components {
              * Format: uuid
              */
             item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Item Sku */
+            item_sku?: string | null;
             /** Lead Time Days */
             lead_time_days: number;
+            /** Storage Unit */
+            storage_unit?: string | null;
             /**
              * Supplier Id
              * Format: uuid
@@ -18603,10 +18758,10 @@ export interface components {
         /** SupplierItemUpsert */
         SupplierItemUpsert: {
             /**
-             * Cost
+             * Default Unit Cost
              * @default 0
              */
-            cost: number | string;
+            default_unit_cost: number | string;
             /**
              * Is Preferred
              * @default false
@@ -18629,15 +18784,16 @@ export interface components {
         SupplierResponse: {
             /** Address */
             address: string | null;
-            /** Contact Name */
-            contact_name: string | null;
+            /**
+             * Contacts
+             * @default []
+             */
+            contacts: components["schemas"]["SupplierContactResponse"][];
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
-            /** Email */
-            email: string | null;
             /**
              * Id
              * Format: uuid
@@ -18645,6 +18801,8 @@ export interface components {
             id: string;
             /** Is Active */
             is_active: boolean;
+            /** Is Vat Deductible */
+            is_vat_deductible: boolean;
             /** Name */
             name: string;
             /** Name Localized */
@@ -18653,8 +18811,6 @@ export interface components {
             notes: string | null;
             /** Payment Terms Days */
             payment_terms_days: number;
-            /** Phone */
-            phone: string | null;
             /** Reference */
             reference: string | null;
             /** Tax Number */
@@ -18669,12 +18825,12 @@ export interface components {
         SupplierUpdate: {
             /** Address */
             address?: string | null;
-            /** Contact Name */
-            contact_name?: string | null;
-            /** Email */
-            email?: string | null;
+            /** Contacts */
+            contacts?: components["schemas"]["SupplierContactInput"][] | null;
             /** Is Active */
             is_active?: boolean | null;
+            /** Is Vat Deductible */
+            is_vat_deductible?: boolean | null;
             /** Name */
             name?: string | null;
             /** Name Localized */
@@ -18683,8 +18839,6 @@ export interface components {
             notes?: string | null;
             /** Payment Terms Days */
             payment_terms_days?: number | null;
-            /** Phone */
-            phone?: string | null;
             /** Reference */
             reference?: string | null;
             /** Tax Number */
@@ -27851,6 +28005,39 @@ export interface operations {
             };
         };
     };
+    get_item_cost_layers_api_v1_inventory_items__item_id__cost_layers_get: {
+        parameters: {
+            query?: {
+                branch_id?: string | null;
+            };
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemCostLayersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_levels_api_v1_inventory_levels_get: {
         parameters: {
             query?: {
@@ -28147,6 +28334,37 @@ export interface operations {
         };
     };
     decline_purchase_order_api_v1_inventory_purchase_orders__po_id__decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                po_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_purchase_order_invoice_api_v1_inventory_purchase_orders__po_id__invoice_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -29014,13 +29232,10 @@ export interface operations {
             };
         };
     };
-    list_items_api_v1_inventory_suppliers_get: {
+    list_suppliers_api_v1_inventory_suppliers_get: {
         parameters: {
             query?: {
-                include_deleted?: boolean;
                 include_inactive?: boolean;
-                /** @description Filter by type where supported */
-                type?: string | null;
             };
             header?: never;
             path?: never;
@@ -29048,7 +29263,7 @@ export interface operations {
             };
         };
     };
-    create_item_api_v1_inventory_suppliers_post: {
+    create_supplier_api_v1_inventory_suppliers_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -29081,12 +29296,12 @@ export interface operations {
             };
         };
     };
-    get_item_api_v1_inventory_suppliers__item_id__get: {
+    get_supplier_api_v1_inventory_suppliers__supplier_id__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                item_id: string;
+                supplier_id: string;
             };
             cookie?: never;
         };
@@ -29112,12 +29327,12 @@ export interface operations {
             };
         };
     };
-    update_item_api_v1_inventory_suppliers__item_id__put: {
+    update_supplier_api_v1_inventory_suppliers__supplier_id__put: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                item_id: string;
+                supplier_id: string;
             };
             cookie?: never;
         };
@@ -29147,12 +29362,12 @@ export interface operations {
             };
         };
     };
-    delete_item_api_v1_inventory_suppliers__item_id__delete: {
+    delete_supplier_api_v1_inventory_suppliers__supplier_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                item_id: string;
+                supplier_id: string;
             };
             cookie?: never;
         };
@@ -29164,37 +29379,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restore_item_api_v1_inventory_suppliers__item_id__restore_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                item_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SupplierResponse"];
-                };
             };
             /** @description Validation Error */
             422: {
