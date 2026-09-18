@@ -272,10 +272,12 @@ function CostLayersModal({ item, onClose }: { item: InventoryItem; onClose: () =
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     inventoryApi
       .itemCostLayers(item.id)
-      .then(setData)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load cost layers.'));
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.message : 'Failed to load cost layers.'); });
+    return () => { cancelled = true; };
   }, [item.id]);
 
   return (

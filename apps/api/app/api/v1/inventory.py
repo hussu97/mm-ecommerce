@@ -344,7 +344,7 @@ async def get_item_cost_layers(
     item_id: uuid.UUID,
     branch_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require("inventory.read")),
+    user: User = Depends(require("inventory.read")),
 ):
     """The surviving FIFO layers for an item — so its valuation is legible.
 
@@ -363,8 +363,15 @@ async def get_item_cost_layers(
         .order_by(InventoryCostLayer.posting_sequence, InventoryCostLayer.layer_index)
     )
     if branch_id:
-        await access_service.assert_branch_access(db, _, branch_id)
+        await access_service.assert_branch_access(db, user, branch_id)
         stmt = stmt.where(InventoryCostLayer.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        # No branch filter: a branch-restricted user must not read every branch's
+        # purchase costs, so scope to the branches they can see (mirrors
+        # list_levels). Admins/super-admins see all.
+        stmt = stmt.where(
+            InventoryCostLayer.branch_id.in_(access_service.branch_ids_for(user))
+        )
     rows = list((await db.execute(stmt)).all())
 
     layers: list[CostLayerResponse] = []
@@ -1010,6 +1017,7 @@ async def _serialise_po(
     *,
     items_lookup: dict[uuid.UUID, InventoryItem] | None = None,
     suppliers_lookup: dict[uuid.UUID, Supplier] | None = None,
+    sign_invoice: bool = False,
 ) -> PurchaseOrderResponse:
     """Serialise one purchase order, resolving its line items and supplier.
 
@@ -1018,6 +1026,10 @@ async def _serialise_po(
     query per order — the N+1 that `list_purchase_orders` had at up to 1,000 rows
     (F-INV-24). The single-order write paths pass neither and it fetches its own,
     exactly as before.
+
+    ``sign_invoice`` mints the invoice's signed URL — a per-order IAM signBlob
+    round-trip, so lists leave it off (they set ``has_invoice`` instead) and only
+    the single-order read pays for it.
     """
     payload = PurchaseOrderResponse.model_validate(purchase_order)
     if items_lookup is None:
@@ -1041,7 +1053,8 @@ async def _serialise_po(
     else:
         supplier = suppliers_lookup.get(purchase_order.supplier_id)
     payload.supplier_name = supplier.name if supplier else None
-    if purchase_order.invoice_object_key:
+    payload.has_invoice = bool(purchase_order.invoice_object_key)
+    if sign_invoice and purchase_order.invoice_object_key:
         payload.invoice_url = object_storage.signed_url(
             bucket=settings.GCS_INVOICE_BUCKET,
             key=purchase_order.invoice_object_key,
@@ -1160,7 +1173,7 @@ async def get_purchase_order(
 ):
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
-    return await _serialise_po(db, purchase_order)
+    return await _serialise_po(db, purchase_order, sign_invoice=True)
 
 
 @purchase_orders_router.put("/{po_id}", response_model=PurchaseOrderResponse)
@@ -1363,6 +1376,9 @@ _INVOICE_EXT = {
     "application/pdf": ".pdf",
 }
 
+#: Cap an invoice upload at 10 MB so a large body cannot exhaust worker memory.
+_INVOICE_MAX_BYTES = 10 * 1024 * 1024
+
 
 @purchase_orders_router.post("/{po_id}/invoice", response_model=PurchaseOrderResponse)
 async def upload_purchase_order_invoice(
@@ -1382,10 +1398,19 @@ async def upload_purchase_order_invoice(
     ext = _INVOICE_EXT.get(content_type)
     if ext is None:
         raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
+    # Reject an oversized upload before reading the body into memory.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > _INVOICE_MAX_BYTES:
+        raise BadRequestError("Invoice file is too large (max 10 MB)")
     body = await request.body()
     if not body:
         raise BadRequestError("No invoice file was uploaded")
+    if len(body) > _INVOICE_MAX_BYTES:
+        raise BadRequestError("Invoice file is too large (max 10 MB)")
     key = _invoice_object_key(po_id, purchase_order.branch_id, ext)
+    # A re-upload with a different extension writes a new key; delete the old
+    # object so it does not orphan in the bucket.
+    previous_key = purchase_order.invoice_object_key
     object_storage.upload_object(
         bucket=settings.GCS_INVOICE_BUCKET,
         key=key,
@@ -1393,10 +1418,14 @@ async def upload_purchase_order_invoice(
         content_type=content_type,
         cache_control="private, no-store",
     )
+    if previous_key and previous_key != key:
+        object_storage.delete_object(
+            bucket=settings.GCS_INVOICE_BUCKET, key=previous_key
+        )
     purchase_order.invoice_object_key = key
     purchase_order.invoice_content_type = content_type
     await db.flush()
-    return await _serialise_po(db, await _load_po(db, po_id))
+    return await _serialise_po(db, await _load_po(db, po_id), sign_invoice=True)
 
 
 # ─── Purchase orders on the till ───────────────────────────────────────────────

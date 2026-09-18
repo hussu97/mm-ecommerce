@@ -17115,6 +17115,11 @@ export interface components {
             /** Delivery Date */
             delivery_date: string | null;
             /**
+             * Has Invoice
+             * @default false
+             */
+            has_invoice: boolean;
+            /**
              * Id
              * Format: uuid
              */

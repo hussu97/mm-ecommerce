@@ -25076,6 +25076,11 @@
             ],
             "title": "Delivery Date"
           },
+          "has_invoice": {
+            "default": false,
+            "title": "Has Invoice",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",

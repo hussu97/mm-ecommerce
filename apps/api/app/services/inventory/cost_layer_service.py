@@ -263,7 +263,9 @@ async def consume_fifo(
 
     layers = await _active_layers(db, item.id, warehouse_id, for_update=True)
     total_cost = Decimal("0")
-    last_cost = fallback_cost
+    # A never-costed item has a 0 fallback (its level average is 0); an over-issue
+    # of it should still book COGS at the catalogue cost, not nothing.
+    last_cost = fallback_cost if fallback_cost > 0 else _c(item.cost or 0)
     for layer in layers:
         if outstanding <= 0:
             break
@@ -453,8 +455,11 @@ async def rescale_layers_to_average(
     Revalue surviving layers so their weighted average becomes *new_average*.
 
     A cost adjustment restates what stock is worth without moving any of it.
-    Rescaling every layer by the same ratio keeps FIFO order intact while hitting
-    the target valuation. Returns the value change (new − old).
+    Rescaling every layer by the same ratio hits the target valuation while
+    keeping each layer's *relative* cost — so the FIFO spread survives a
+    revaluation rather than being flattened to one price. When the layers hold no
+    value to scale (all at 0), the target is applied absolutely instead. Returns
+    the value change (new − old).
     """
     layers = await _active_layers(db, item.id, warehouse_id, for_update=True)
     total_qty = sum((_q(layer.remaining_quantity) for layer in layers), Decimal("0"))
@@ -465,19 +470,28 @@ async def rescale_layers_to_average(
     if total_qty <= 0:
         return Decimal("0.00")
     target_average = _c(new_average)
-    for layer in layers:
-        layer.unit_cost = target_average
+    target_value = target_average * total_qty
+    if old_value > 0:
+        factor = target_value / old_value
+        for layer in layers:
+            layer.unit_cost = _c(Decimal(str(layer.unit_cost)) * factor)
+    else:
+        for layer in layers:
+            layer.unit_cost = target_average
     await db.flush()
-    new_value = target_average * total_qty
-    return _money(new_value - old_value)
+    return _money(target_value - old_value)
 
 
-async def delete_branch_layers(db: AsyncSession, branch_id: uuid.UUID) -> None:
-    """Drop all layers + consumptions for a branch, for a deterministic rebuild.
+async def delete_branch_layers(
+    db: AsyncSession, branch_id: uuid.UUID, warehouse_id: uuid.UUID
+) -> None:
+    """Drop layers + consumptions for one (branch, warehouse), for a rebuild.
 
-    Consumptions are scoped by the branch of the transaction that wrote them (so
-    shortfall rows, which carry no ``layer_id``, are cleared too); layers by
-    their own denormalised branch.
+    Scoped to the warehouse being rebuilt — a branch may hold several, and a
+    rebuild replays only the one it was asked for, so it must never wipe another
+    warehouse's layers. Consumptions are matched by the warehouse the consuming
+    line moved (so shortfall rows, which carry no ``layer_id``, are cleared too);
+    layers by their own denormalised branch + warehouse.
     """
     consuming_lines = (
         select(InventoryTransactionItem.id)
@@ -485,7 +499,10 @@ async def delete_branch_layers(db: AsyncSession, branch_id: uuid.UUID) -> None:
             InventoryTransaction,
             InventoryTransaction.id == InventoryTransactionItem.transaction_id,
         )
-        .where(InventoryTransaction.branch_id == branch_id)
+        .where(
+            InventoryTransaction.branch_id == branch_id,
+            InventoryTransaction.warehouse_id == warehouse_id,
+        )
     )
     await db.execute(
         InventoryCostLayerConsumption.__table__.delete().where(
@@ -494,7 +511,8 @@ async def delete_branch_layers(db: AsyncSession, branch_id: uuid.UUID) -> None:
     )
     await db.execute(
         InventoryCostLayer.__table__.delete().where(
-            InventoryCostLayer.branch_id == branch_id
+            InventoryCostLayer.branch_id == branch_id,
+            InventoryCostLayer.warehouse_id == warehouse_id,
         )
     )
     await db.flush()

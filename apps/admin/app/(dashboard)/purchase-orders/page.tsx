@@ -43,6 +43,7 @@ export default function PurchaseOrdersPage() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [creating, setCreating] = useState(false);
   const [receiving, setReceiving] = useState<PurchaseOrder | null>(null);
   // Client-side paging: the list is fetched whole (server cap 1,000) and sliced
@@ -103,6 +104,12 @@ export default function PurchaseOrdersPage() {
         </div>
         <Button onClick={() => setCreating(true)}>New Order</Button>
       </header>
+
+      {notice && (
+        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {notice}
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -192,8 +199,9 @@ export default function PurchaseOrdersPage() {
           branches={branches}
           items={items}
           onClose={() => setCreating(false)}
-          onSaved={() => {
+          onSaved={(message) => {
             setCreating(false);
+            setNotice(message ?? '');
             void load();
           }}
         />
@@ -224,7 +232,7 @@ function CreateOrder({
   branches: Branch[];
   items: InventoryItem[];
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (message?: string) => void;
 }) {
   const [supplierId, setSupplierId] = useState('');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
@@ -271,20 +279,28 @@ function CreateOrder({
     const mapped = (supplierItems ?? []).find((r) => r.item_id === itemId);
     const qty = Number(lines[index].quantity || 0);
     const patch: Partial<DraftLine> = { item_id: itemId };
-    if (mapped && qty > 0) patch.entered_total = String(mapped.default_unit_cost * qty);
+    if (mapped && qty > 0) {
+      // Round to cents so the field shows a clean total, not a float artifact.
+      patch.entered_total = (mapped.default_unit_cost * qty).toFixed(2);
+    }
     updateLine(index, patch);
   }
 
   async function save() {
-    const valid = lines.filter((l) => l.item_id && Number(l.quantity) > 0);
+    // A line counts only with an item, a positive quantity AND a positive,
+    // numeric total — otherwise it would post a zero-cost FIFO layer on receive.
+    const valid = lines.filter(
+      (l) => l.item_id && Number(l.quantity) > 0 && Number(l.entered_total) > 0,
+    );
     if (!supplierId || !branchId || valid.length === 0) {
-      setError('Supplier, branch and at least one line are required.');
+      setError('Each line needs an item, a quantity and a total cost above zero.');
       return;
     }
     setSaving(true);
     setError('');
+    let po;
     try {
-      const po = await inventoryApi.createPurchaseOrder({
+      po = await inventoryApi.createPurchaseOrder({
         supplier_id: supplierId,
         branch_id: branchId,
         delivery_date: deliveryDate || null,
@@ -296,12 +312,20 @@ function CreateOrder({
           unit: 'storage',
         })),
       });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Save failed.');
+      setSaving(false);
+      return;
+    }
+    // The PO now exists. An invoice-upload failure must not strand the modal for
+    // a retry that would mint a second PO — finish, and tell them to re-attach.
+    try {
       if (invoiceFile) {
         await inventoryApi.uploadPurchaseOrderInvoice(po.id, invoiceFile);
       }
       onSaved();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Save failed.');
+    } catch {
+      onSaved(`Purchase order ${po.reference} created, but the invoice upload failed — edit it to re-attach.`);
     } finally {
       setSaving(false);
     }

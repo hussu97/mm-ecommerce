@@ -381,6 +381,62 @@ async def test_void_restores_the_exact_layers_it_consumed(engine, env):
         assert level.average_cost == D("8.000000")
 
 
+async def test_receipt_onto_negative_stock_keeps_layers_matching_quantity(engine, env):
+    """Over-issue then receive: the incoming stock first cancels the shortfall, so
+    Σ(remaining layers) tracks the level quantity instead of laying a phantom
+    layer over a still-negative balance."""
+    branch_id, warehouse_id, user_id, item_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        P = InventoryTransactionTypeEnum.PURCHASING
+        C = InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS
+        # Issue with nothing on hand → negative balance, no layers.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=C,
+            quantity="10",
+        )
+        level = await _level(db, item_id, warehouse_id)
+        assert level.quantity == D("-10.0000")
+        assert await _remaining_layers(db, item_id, warehouse_id) == []
+
+        # Receive 4 — still net negative (-6): no layer is laid.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=P,
+            quantity="4",
+            unit_cost="5",
+        )
+        level = await _level(db, item_id, warehouse_id)
+        assert level.quantity == D("-6.0000")
+        assert await _remaining_layers(db, item_id, warehouse_id) == []
+
+        # Receive 10 — now net +4: exactly the surplus becomes a layer.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=P,
+            quantity="10",
+            unit_cost="5",
+        )
+        level = await _level(db, item_id, warehouse_id)
+        assert level.quantity == D("4.0000")
+        layers = await _remaining_layers(db, item_id, warehouse_id)
+        assert sum((q for q, _ in layers), D("0")) == D("4.000000")
+
+
 async def test_first_purchase_backfills_uncosted_opening_stock(engine, env):
     branch_id, warehouse_id, user_id, item_id = env
     Session = async_sessionmaker(engine, expire_on_commit=False)

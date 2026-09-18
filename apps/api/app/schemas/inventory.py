@@ -495,7 +495,9 @@ class PosPurchaseOrderCreate(BaseModel):
     warehouse_id: UUID | None = None
     supplier_reference: str | None = Field(None, max_length=100)
     notes: str | None = None
-    invoice_image_base64: str | None = None
+    # ~14M base64 chars ≈ a 10 MB file. Bounded so a huge payload cannot exhaust
+    # worker memory when decoded.
+    invoice_image_base64: str | None = Field(None, max_length=14_000_000)
     invoice_content_type: str | None = Field(None, max_length=100)
     items: list[PurchaseOrderLineInput] = Field(min_length=1)
 
@@ -544,7 +546,11 @@ class PurchaseOrderResponse(ORMModel):
     updated_at: datetime
     items: list[PurchaseOrderLineResponse] = []
     supplier_name: str | None = None
-    #: A short-lived signed URL for the invoice image, when one is attached.
+    #: Whether an invoice image is attached — cheap for list rows to render an
+    #: indicator without signing a URL for every row.
+    has_invoice: bool = False
+    #: A short-lived signed URL for the invoice image. Filled only on the
+    #: single-order read, never in a list (signing is a per-row IAM round-trip).
     invoice_url: str | None = None
 
 

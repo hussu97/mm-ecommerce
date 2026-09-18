@@ -614,6 +614,11 @@ class InventoryTransaction(Base, UUIDMixin, TimestampMixin):
         back_populates="transaction",
         cascade="all, delete-orphan",
         lazy="selectin",
+        # Deterministic order by primary key, so the live posting path iterates
+        # lines in the same order the ledger rebuild replays them (which orders by
+        # this id). Two lines for the same item in one transaction then lay/consume
+        # layers identically live and on rebuild.
+        order_by="InventoryTransactionItem.id",
     )
 
     @property

@@ -364,17 +364,26 @@ async def _forward_line_costing(
                 unit_cost=unit_cost_canonical,
                 layer_index=line_index * 2,
             )
-            await cost_layer_service.create_layer(
-                db,
-                transaction=transaction,
-                line=line,
-                item=item,
-                warehouse_id=warehouse_id,
-                quantity=delta,
-                unit_cost=unit_cost_canonical,
-                source_kind=kind,
-                layer_index=line_index * 2 + 1,
-            )
+            # Receiving onto a negative balance (stock was issued before the
+            # delivery was keyed) first cancels the outstanding shortfall: only
+            # the quantity that survives above zero becomes a layer, so
+            # Σ(remaining layers) keeps tracking the level's quantity instead of
+            # laying a phantom layer over a still-negative balance.
+            layer_qty = delta
+            if on_hand_before < 0:
+                layer_qty = max(Decimal("0"), _q(Decimal(str(on_hand_before)) + delta))
+            if layer_qty > 0:
+                await cost_layer_service.create_layer(
+                    db,
+                    transaction=transaction,
+                    line=line,
+                    item=item,
+                    warehouse_id=warehouse_id,
+                    quantity=layer_qty,
+                    unit_cost=unit_cost_canonical,
+                    source_kind=kind,
+                    layer_index=line_index * 2 + 1,
+                )
             return _money(delta * unit_cost_canonical)
 
         # A positive count/adjustment tops stock up at the earliest surviving
@@ -423,6 +432,7 @@ async def _forward_line_costing(
 async def _reverse_line_costing(
     db: AsyncSession,
     *,
+    transaction: InventoryTransaction,
     line: InventoryTransactionItem,
     item: InventoryItem,
     warehouse_id: uuid.UUID,
@@ -434,11 +444,41 @@ async def _reverse_line_costing(
     """FIFO cost of one reversal line.
 
     Undoing an issue restores the exact layers it drew from; undoing a receipt
-    removes stock from the layers it created. Older reversals with no line link
-    fall back to the line's stated cost.
+    removes stock from the layers it created.
+
+    A reversal predating this feature has no ``reverses_line_id``, so the exact
+    layers cannot be found. Rather than touch nothing (which would let a rebuild's
+    Σ remaining drift from the running quantity), treat it as a plain movement in
+    the reversal's own direction: a positive reversal lays a fresh layer at the
+    prior cost, a negative one consumes FIFO. Quantity and valuation stay
+    consistent even though the original provenance is lost.
     """
     if line.reverses_line_id is None:
-        return _money(abs(delta) * unit_cost_canonical)
+        if delta > 0:
+            price = fallback_cost if fallback_cost > 0 else _c(item.cost or 0)
+            await cost_layer_service.create_layer(
+                db,
+                transaction=transaction,
+                line=line,
+                item=item,
+                warehouse_id=warehouse_id,
+                quantity=delta,
+                unit_cost=price,
+                source_kind=CostLayerSourceKindEnum.POSITIVE_ADJUSTMENT,
+                layer_index=0,
+            )
+            return _money(delta * price)
+        if delta < 0:
+            return await cost_layer_service.consume_fifo(
+                db,
+                line=line,
+                item=item,
+                warehouse_id=warehouse_id,
+                quantity=-delta,
+                posting_sequence=posting_sequence,
+                fallback_cost=fallback_cost,
+            )
+        return Decimal("0.00")
     if delta > 0:
         return await cost_layer_service.restore_consumed_line(
             db,
@@ -473,7 +513,7 @@ async def rebuild_cost_layers(
     detect drift and restate levels. Deletes and rewrites layers, so callers
     that only want a preview run it inside a savepoint they roll back.
     """
-    await cost_layer_service.delete_branch_layers(db, branch_id)
+    await cost_layer_service.delete_branch_layers(db, branch_id, warehouse_id)
     rows = (
         await db.execute(
             select(InventoryTransaction, InventoryTransactionItem)
@@ -515,6 +555,7 @@ async def rebuild_cost_layers(
         elif transaction.reverses_transaction_id is not None:
             await _reverse_line_costing(
                 db,
+                transaction=transaction,
                 line=line,
                 item=item,
                 warehouse_id=warehouse_id,
@@ -697,6 +738,15 @@ async def post_transaction(
                 new_average=unit_cost_canonical,
             )
             await cost_layer_service.refresh_level_average(db, level, item)
+            # With no surviving layers there is nothing to rescale, so the entered
+            # cost would otherwise be lost. Record it on the level directly so the
+            # revaluation is not silently discarded (a receipt onto empty resets
+            # the average from its own layer, so this only holds until then).
+            layer_qty, _ = await cost_layer_service.remaining_totals(
+                db, item.id, warehouse_id
+            )
+            if layer_qty <= 0:
+                level.average_cost = unit_cost_canonical
             line.total_cost = value_change
             line.balance_after_quantity = _q(level.quantity)
             line.balance_after_value = _money(
@@ -720,6 +770,7 @@ async def post_transaction(
             apply_reversal_movement(level, delta, unit_cost_canonical)
             line.total_cost = await _reverse_line_costing(
                 db,
+                transaction=transaction,
                 line=line,
                 item=item,
                 warehouse_id=warehouse_id,
