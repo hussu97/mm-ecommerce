@@ -2274,6 +2274,47 @@ async def sweep_reconcile_once() -> int:
         return touched
 
 
+#: "mmBATCH" + 10 (after sales/finance/promote/reconcile/range) — the stale-order
+#: safety net serialises on its own lock like the other sweeps.
+_AUTODELIVER_LOCK_KEY = 0x6D6D_4241_5443_480A
+
+
+async def sweep_autodeliver_stale_once() -> int:
+    """Book aggregator orders stranded in `out_for_delivery` past the configured
+    threshold to `delivered`. Returns the number moved.
+
+    The backstop for the one-source delivered rung: an aggregator order's
+    `delivered` comes only from the channel scrape (`promote._drive_status`), so an
+    order the scrape never carries sits `out_for_delivery` forever with no self-heal
+    (see `AGGREGATOR_AUTODELIVER_STALE_HOURS`). Runs after promotion in every pass,
+    so an order the scrape DID just carry is already delivered and this no-ops it.
+    Its own advisory lock, DB-only, on the lock's own connection (`held_session`)
+    like promote/reconcile.
+    """
+    if not is_enabled():
+        return 0
+    hours = settings.AGGREGATOR_AUTODELIVER_STALE_HOURS
+    if hours <= 0:
+        return 0
+    from app.services.aggregators import promote
+
+    async with advisory_lock.held_session(
+        _AUTODELIVER_LOCK_KEY, name="aggregator auto-deliver"
+    ) as db:
+        if db is None:
+            return 0
+        try:
+            moved = await promote.autodeliver_stale_out_for_delivery(
+                db, older_than_hours=hours
+            )
+            await db.commit()
+            return moved
+        except Exception:  # noqa: BLE001 — the safety net must not fail a pass
+            await db.rollback()
+            logger.exception("aggregator auto-deliver sweep failed")
+            return 0
+
+
 def _window_business_dates(since: datetime, until: datetime) -> tuple[date, date]:
     """The Dubai business-date range a sweep window covers, so a scheduled run's
     coverage is scoped the same way the backfill scopes its range."""
@@ -2344,6 +2385,11 @@ async def run_daily_once() -> tuple[int, int]:
     reconciled = await sweep_reconcile_once()
     if reconciled:
         logger.info("aggregator reconciliation wrote %s row(s)", reconciled)
+    autodelivered = await sweep_autodeliver_stale_once()
+    if autodelivered:
+        logger.info(
+            "aggregator auto-deliver booked %s stale order(s) delivered", autodelivered
+        )
     # Now that promote has run, fill each sweep run row's promotion split (and finance
     # totals) from the same coverage functions the backfill uses, so the Runs table
     # shows the same figures for a scheduled pass as for a manual backfill.
@@ -2385,6 +2431,11 @@ async def run_sales_refresh_once() -> int:
     reconciled = await sweep_reconcile_once()
     if reconciled:
         logger.info("aggregator rolling refresh reconciled %s row(s)", reconciled)
+    autodelivered = await sweep_autodeliver_stale_once()
+    if autodelivered:
+        logger.info(
+            "aggregator rolling refresh auto-delivered %s stale order(s)", autodelivered
+        )
     # Fill the sales run rows' promotion split from the shared coverage functions,
     # now that promote has run — same figures as a backfill (see run_daily_once).
     await _finalize_run_coverage(RUN_MODE_SALES, since, until, not_before=started)

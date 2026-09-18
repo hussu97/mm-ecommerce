@@ -521,6 +521,19 @@ class Settings(BaseSettings):
     #: the re-pull is idempotent, so hourly is ample. `0` disables it — the safety
     #: valve for this autonomous re-scrape.
     AGGREGATOR_COVERAGE_BACKFILL_MINUTES: int = 60
+    #: Safety net for orders stranded in `out_for_delivery`. The `delivered` rung
+    #: for an aggregator order comes ONLY from the channel scrape (the GrubOps live
+    #: push stops at `out_for_delivery` — GrubTech emits no delivered signal); so if
+    #: the scrape never carries the order — e.g. Talabat's Report Builder export
+    #: silently dropped a contiguous block of real orders (2026-09-17) — the order
+    #: sits `out_for_delivery` forever with no self-heal. This sweep books any
+    #: aggregator order that has been `out_for_delivery` longer than N hours to
+    #: `delivered` through the same lifecycle door the scrape uses. 8h is well past
+    #: any real delivery (they complete in 1-2h), so a still-open order that old was
+    #: delivered and never carried. `0` disables it. A channel that later scrapes a
+    #: `cancelled` for such an order cannot walk it back (delivered→cancelled is not
+    #: in `VALID_TRANSITIONS`), but a post-dispatch cancellation is vanishingly rare.
+    AGGREGATOR_AUTODELIVER_STALE_HOURS: int = 8
     AGGREGATOR_TIMEOUT_SECONDS: float = 20.0
     #: Ceiling on outbound calls to each marketplace. PerimeterX/Akamai score
     #: bursts; the sales sweep is hourly so 1 req/s is ample. 0 disables it.

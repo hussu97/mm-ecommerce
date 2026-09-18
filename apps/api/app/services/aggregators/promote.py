@@ -52,6 +52,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import Integer, and_, cast, delete, func, or_, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.config import settings
@@ -65,7 +66,11 @@ from app.models.aggregator import (
 from app.models.base import utcnow
 from app.models.modifier import ModifierOption, ProductModifier
 from app.models.order import Order, OrderItem, OrderStatusEnum
-from app.models.order_status_event import StatusSourceEnum, acting_as
+from app.models.order_status_event import (
+    OrderStatusEvent,
+    StatusSourceEnum,
+    acting_as,
+)
 from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
 from app.services.aggregators import (
@@ -1394,3 +1399,104 @@ async def promote_channel(
                 "promote %s order %s failed", channel, agg.external_order_id
             )
     return count
+
+
+async def autodeliver_stale_out_for_delivery(
+    db: AsyncSession, *, older_than_hours: int
+) -> int:
+    """Book any aggregator order stranded in `out_for_delivery` past
+    `older_than_hours` to `delivered`. Returns the number moved.
+
+    The `delivered` rung for an aggregator order has ONE source — the channel
+    scrape, via `_drive_status` — because the GrubOps live push climbs an order
+    only to `out_for_delivery` and GrubTech emits no delivered signal. So an order
+    the scrape never carries (Talabat's Report Builder export silently dropped a
+    contiguous block of real orders on 2026-09-17; a channel dead through the whole
+    settlement window) sits `out_for_delivery` forever — the re-promote cursor
+    can't heal it because there is no `aggregator_order` row to re-promote.
+
+    This is the backstop. Real marketplace deliveries complete in 1-2h, so an order
+    still open after 8h was delivered and simply never carried; book it delivered.
+    Driven through `order_lifecycle.transition` under `acting_as(AGGREGATOR)` — the
+    exact door `_drive_status` uses — so it is idempotent with a later scrape
+    (delivered→delivered is a no-op), fires no POS/Foodics echo, and takes the same
+    register-close consequence. The delivered event is stamped ~1h after the order
+    entered `out_for_delivery` (a best-effort delivery moment that keeps the order
+    on its own business day rather than the sweep's), never in the future.
+
+    `older_than_hours <= 0` disables it (returns 0). Per-order SAVEPOINT so one
+    order's failure cannot abort the rest, mirroring `promote_channel`.
+    """
+    if older_than_hours <= 0:
+        return 0
+    now = utcnow()
+    cutoff = now - timedelta(hours=older_than_hours)
+    # When each still-open order ENTERED out_for_delivery: the latest such status
+    # event's timestamp. Measuring from the rung (not `created_at`, the placed time)
+    # is the honest "how long has it been out for delivery" — an order can reach the
+    # rung hours after it was placed.
+    ofd_at = (
+        select(
+            OrderStatusEvent.order_id,
+            func.max(OrderStatusEvent.at).label("ofd_at"),
+        )
+        .where(OrderStatusEvent.status == OrderStatusEnum.OUT_FOR_DELIVERY.value)
+        .group_by(OrderStatusEvent.order_id)
+        .subquery()
+    )
+    orders = (
+        await db.scalars(
+            select(Order)
+            .join(ofd_at, ofd_at.c.order_id == Order.id)
+            .where(
+                Order.source == OrderSourceEnum.AGGREGATOR.value,
+                Order.status == OrderStatusEnum.OUT_FOR_DELIVERY,
+                ofd_at.c.ofd_at < cutoff,
+            )
+            # A cancellation walks items in `_move_stock`; delivered does not, but
+            # load them so the transition never lazy-loads under asyncpg.
+            .options(selectinload(Order.items))
+        )
+    ).all()
+    moved = 0
+    for order in orders:
+        # The rung time again, per order, to date the delivered event ~1h later —
+        # clamped below `now` so a very recent rung never stamps the future.
+        entered = await db.scalar(
+            select(func.max(OrderStatusEvent.at)).where(
+                OrderStatusEvent.order_id == order.id,
+                OrderStatusEvent.status == OrderStatusEnum.OUT_FOR_DELIVERY.value,
+            )
+        )
+        at = min(entered + timedelta(hours=1), now) if entered else now
+        try:
+            async with db.begin_nested():
+                with acting_as(
+                    StatusSourceEnum.AGGREGATOR,
+                    actor_label="auto-deliver",
+                    note=(
+                        f"safety net: stranded in out_for_delivery > {older_than_hours}h "
+                        "with no delivered signal from the channel scrape"
+                    ),
+                    at=at,
+                ):
+                    booked = await order_lifecycle.transition(
+                        db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"
+                    )
+            if booked:
+                moved += 1
+                logger.info(
+                    "auto-deliver: %s (%s %s) booked delivered after > %dh "
+                    "out_for_delivery",
+                    order.order_number,
+                    order.aggregator_channel,
+                    order.aggregator_display_code or order.external_reference or "?",
+                    older_than_hours,
+                )
+        except _isolation._SYSTEMIC_DB_ERRORS:
+            raise
+        except Exception:  # noqa: BLE001 — one order must not stop the sweep
+            logger.exception(
+                "auto-deliver: failed to book %s delivered", order.order_number
+            )
+    return moved
