@@ -346,10 +346,15 @@ async def test_run_sales_refresh_once_sweeps_rolling_window_then_promotes(monkey
     async def fake_finalize(mode, since, until, *, not_before):
         calls["finalized"] = mode
 
+    async def fake_autodeliver():
+        calls["autodelivered"] = True
+        return 0
+
     monkeypatch.setattr(ingest, "is_enabled", lambda: True)
     monkeypatch.setattr(ingest, "_sweep_all", fake_sweep_all)
     monkeypatch.setattr(ingest, "sweep_promote_once", fake_promote)
     monkeypatch.setattr(ingest, "sweep_reconcile_once", fake_reconcile)
+    monkeypatch.setattr(ingest, "sweep_autodeliver_stale_once", fake_autodeliver)
     monkeypatch.setattr(ingest, "_finalize_run_coverage", fake_finalize)
     monkeypatch.setattr("app.core.config.settings.AGGREGATOR_SALES_ROLLING_HOURS", 36)
 
@@ -358,6 +363,7 @@ async def test_run_sales_refresh_once_sweeps_rolling_window_then_promotes(monkey
     assert written == 7
     assert calls["sweep"] == (ingest.RUN_MODE_SALES, ingest._SALES_LOCK_KEY, 36)
     assert calls["promoted"] and calls["reconciled"]
+    assert calls["autodelivered"]  # the stale-order safety net runs each pass
     # After promote, the sweep run rows get their promotion split filled in.
     assert calls["finalized"] == ingest.RUN_MODE_SALES
 
