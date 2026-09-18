@@ -61,6 +61,7 @@ from app.schemas.order import (
     OrderListResponse,
     OrderResponse,
     OrderStatusStamp,
+    PickupContactCreate,
 )
 from app.schemas.order_preview import (
     OrderPreviewPromo,
@@ -897,6 +898,58 @@ def _is_client_request_id_conflict(error: IntegrityError) -> bool:
     return "uq_orders_client_request_id" in str(error.orig)
 
 
+def _resolve_contact(
+    data: OrderCreate,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """
+    The customer's name and number, and where to read them from.
+
+    Returns `(customer_name, phone, phone_country, phone_type)` for the order
+    row. The number the customer gave is written on the order itself rather than
+    left to the best-effort register attach — a till that cannot open a business
+    day must not lose the sale, so a phone written only there is sometimes
+    missing, and it is now an identity the new-customer coupon keys on. Stored
+    canonical (E.164) where it parses so two spellings of one handset do not read
+    as two customers, and verbatim where it does not — a number nobody can
+    normalise is still a number the counter has to ring.
+
+    Which field carries the contact is decided by the fulfilment **method**, not
+    by which field happens to be present. A pickup's name and number arrive on
+    `pickup_contact`; a delivery's on the address. Keying off
+    `shipping_address is not None` first was a latent trap: a checkout that sent
+    a `shipping_address` alongside a pickup's `pickup_contact` — an older web
+    bundle did exactly this — took the delivery branch, left `customer_name`
+    null, and read the phone off an address that was empty, so the counter had
+    no name and no number for a customer walking in to collect
+    (MM-20260918-004). Reading the method makes a stray address on a pickup
+    harmless.
+    """
+    if data.delivery_method == DeliveryMethodEnum.PICKUP and (
+        data.pickup_contact is not None
+    ):
+        return _from_pickup_contact(data.pickup_contact)
+    if data.shipping_address is not None:
+        given = (data.shipping_address.phone or "").strip()
+        parts = describe_phone(given)
+        # A delivery's name is read off the address snapshot by the admin, so it
+        # is deliberately not lifted onto `customer_name` here.
+        return None, parts.e164 or given or None, parts.country, parts.type
+    if data.pickup_contact is not None:
+        # A pickup contact carried on a non-pickup order, or a pickup missing its
+        # method — still the best number we have for the customer.
+        return _from_pickup_contact(data.pickup_contact)
+    return None, None, None, None
+
+
+def _from_pickup_contact(
+    contact: PickupContactCreate,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    given = (contact.phone or "").strip()
+    parts = describe_phone(given)
+    name = f"{contact.first_name} {contact.last_name}".strip()
+    return name or None, parts.e164 or given or None, parts.country, parts.type
+
+
 async def _persist_order(
     db: AsyncSession,
     data: OrderCreate,
@@ -967,32 +1020,9 @@ async def _persist_order(
     # of one handset must not read as two customers. Falls back to whatever was
     # given when it cannot be parsed — a number nobody can normalise is still a
     # number the driver has to ring.
-    contact_phone = None
-    contact_phone_country = None
-    contact_phone_type = None
-    customer_name = None
-    if data.shipping_address is not None:
-        given = (data.shipping_address.phone or "").strip()
-        parts = describe_phone(given)
-        contact_phone = parts.e164 or given or None
-        contact_phone_country = parts.country
-        contact_phone_type = parts.type
-    elif data.pickup_contact is not None:
-        # A pickup order has no address, so its name and number arrive on their
-        # own field (`OrderCreate.pickup_contact`, required for pickup). They
-        # land on `customer_name`/`customer_phone` exactly as a delivery's
-        # address-phone would — so the counter can reach the customer, and the
-        # per-customer coupon check below keys on the customer's own number
-        # rather than the nothing a pickup used to carry. Same normalisation
-        # policy: canonical E.164 where parseable, the given number otherwise.
-        given = (data.pickup_contact.phone or "").strip()
-        parts = describe_phone(given)
-        contact_phone = parts.e164 or given or None
-        contact_phone_country = parts.country
-        contact_phone_type = parts.type
-        customer_name = (
-            f"{data.pickup_contact.first_name} {data.pickup_contact.last_name}".strip()
-        )
+    customer_name, contact_phone, contact_phone_country, contact_phone_type = (
+        _resolve_contact(data)
+    )
 
     # The per-customer coupon rules, re-checked here under a row lock — the
     # authoritative test, where `validate` in the checkout was only advisory.

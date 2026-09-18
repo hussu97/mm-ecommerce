@@ -234,6 +234,23 @@ async def create_session(
     if _is_paid(order):
         raise BadRequestError("Order has already been paid")
 
+    # A cash order — including a zero-total one — is confirmed and emailed by
+    # `create_order`, and for a pickup that confirmation has already carried it
+    # to `arrived_at_pos`. `_is_paid` does not catch it (cash leaves no gateway
+    # payment id), so a COD checkout's `create_session` call arrives here with
+    # the order confirmed-or-beyond. Neither branch below may re-confirm it: the
+    # transition is illegal from `arrived_at_pos` and the emails would be a
+    # duplicate. The register was already told; publishing again no-ops.
+    if order.status in _ALREADY_PAID_FOR:
+        await order_service.publish_to_register(db, order)
+        await db.flush()
+        return {
+            "provider": order.payment_provider or COD,
+            "session_id": None,
+            "checkout_url": None,
+            "confirmed": True,
+        }
+
     # Zero-total orders (100% discount) are confirmed immediately — no payment needed.
     order_total = (
         Decimal(str(order.total))
@@ -267,9 +284,9 @@ async def create_session(
                 "Cash payment is only available for store pickup orders"
             )
         # `create_order` already confirms a cash order and sends its
-        # confirmation, so the usual path arrives here with the work done and
-        # must not mail the customer a second time. This branch remains for a
-        # cash order that reached `created` some other way.
+        # confirmation, and the confirmed-or-beyond guard above has already
+        # returned for that usual path — so this branch is only reached by a
+        # cash order still at `created`, which it confirms here.
         already_confirmed = order.status == OrderStatusEnum.CONFIRMED
         if not already_confirmed:
             # Confirms and publishes in one move. An order that has gone past
