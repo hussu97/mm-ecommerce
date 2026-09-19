@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import uuid
 from decimal import Decimal
 
@@ -89,6 +90,8 @@ from app.services.inventory import (
 from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1369,9 +1372,33 @@ async def receive_purchase_order(
     transaction = await inventory_service.receive_purchase_order(
         db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
-    await _email_po_receiving_variance(db, await _load_po(db, po_id), user)
+    reloaded = await _load_po(db, po_id)
+    await _email_po_receiving_variance(db, reloaded, user)
+    await _refresh_vat_ledger_for_po(db, reloaded)
     transaction = await inventory_service.load_transaction(db, transaction.id)
     return await _serialise_one_transaction(db, transaction)
+
+
+async def _refresh_vat_ledger_for_po(
+    db: AsyncSession, purchase_order: PurchaseOrder
+) -> None:
+    """Rebuild the VAT-ledger cache for the received PO's business day, so its
+    recoverable VAT shows on the reclaim report immediately rather than waiting
+    for the hourly sweep (the reason a just-received PO's VAT looked missing).
+    Never fails the receive — a cache miss self-heals on the next sweep."""
+    from app.services import vat_ledger
+
+    try:
+        await vat_ledger.compute_window(
+            db, purchase_order.business_date, purchase_order.business_date
+        )
+    except Exception:  # noqa: BLE001 — the cache is derived; the sweep re-runs it
+        logger.warning(
+            "vat_ledger refresh failed for PO %s (%s); the hourly sweep will retry",
+            purchase_order.reference,
+            purchase_order.business_date,
+            exc_info=True,
+        )
 
 
 async def _email_po_receiving_variance(
@@ -1672,8 +1699,10 @@ async def pos_receive_purchase_order(
     await inventory_service.receive_purchase_order(
         db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
-    await _email_po_receiving_variance(db, await _load_po(db, po_id), user)
-    return await _serialise_po(db, await _load_po(db, po_id))
+    reloaded = await _load_po(db, po_id)
+    await _email_po_receiving_variance(db, reloaded, user)
+    await _refresh_vat_ledger_for_po(db, reloaded)
+    return await _serialise_po(db, reloaded)
 
 
 @pos_purchase_orders_router.post(
@@ -1724,7 +1753,9 @@ async def pos_create_purchase_order(
         invoice_object_key=invoice_key,
         invoice_content_type=data.invoice_content_type if invoice_key else None,
     )
-    return await _serialise_po(db, await _load_po(db, purchase_order.id))
+    reloaded = await _load_po(db, purchase_order.id)
+    await _refresh_vat_ledger_for_po(db, reloaded)
+    return await _serialise_po(db, reloaded)
 
 
 # ─── Recipes ──────────────────────────────────────────────────────────────────
