@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 const TABS = [
   { href: '/inventory/submissions', label: 'Shift reports' },
   { href: '/inventory/submissions/transfers', label: 'Transfers & returns' },
+  { href: '/inventory/submissions/production', label: 'Production report' },
   { href: '/inventory/submissions/counts', label: 'Manual stock counts' },
 ];
 

@@ -261,8 +261,8 @@ export const reportVariance = (row: ShiftInventoryReport) =>
 // legs (pending, sent, closed, cancelled). Terminal-good is green, in-flight is
 // amber, cancelled is red.
 export const transferStatusVariant = (status: string): 'success' | 'warning' | 'danger' | 'neutral' => {
-  if (status === 'closed' || status === 'received' || status === 'sent' || status === 'completed' || status === 'approved') return 'success';
-  if (status === 'pending' || status === 'partially_sent' || status === 'partially_received' || status === 'submitted' || status === 'in_transit') return 'warning';
+  if (status === 'closed' || status === 'received' || status === 'sent' || status === 'completed' || status === 'approved' || status === 'produced') return 'success';
+  if (status === 'pending' || status === 'partially_sent' || status === 'partially_received' || status === 'submitted' || status === 'in_transit' || status === 'partially_produced') return 'warning';
   if (status === 'cancelled' || status === 'declined' || status === 'rejected') return 'danger';
   return 'neutral';
 };

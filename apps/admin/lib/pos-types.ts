@@ -632,3 +632,116 @@ export interface BusinessSettings {
   order_number_reset_daily: boolean;
   enable_tips: boolean;
 }
+
+// ─── VAT ledger report ──────────────────────────────────────────────────────────
+//
+// The VAT report reads the derived `vat_ledger_entries` cache: per legal entity,
+// output VAT collected (sales) versus input VAT recoverable (costs). Mirrors the
+// API's `VatLedgerResponse` in `app/schemas/reports.py`.
+
+export type VatDirection = 'output' | 'input';
+
+/** One (legal entity, category, direction) total for the report window. */
+export interface VatLedgerRow {
+  legal_entity_id: string;
+  legal_entity_name: string;
+  vat_registered: boolean;
+  category: string;
+  direction: VatDirection;
+  net_value: number;
+  vat_amount: number;
+  gross_value: number;
+  // False on an input row whose entity is not VAT-registered — the cost is
+  // visible but its VAT is not reclaimable.
+  vat_recoverable: boolean;
+  source_count: number;
+}
+
+/** Rolled-up VAT position for one legal entity over the window. */
+export interface VatLedgerEntitySummary {
+  legal_entity_id: string;
+  legal_entity_name: string;
+  vat_registered: boolean;
+  output_vat: number;
+  input_vat_recoverable: number;
+  // output_vat − input_vat_recoverable: owed to the FTA (positive) or reclaimed
+  // (negative).
+  net_vat_position: number;
+}
+
+export interface VatLedgerResponse {
+  date_from: string | null;
+  date_to: string | null;
+  rows: VatLedgerRow[];
+  summary: VatLedgerEntitySummary[];
+}
+
+// ─── Production orders (transfer & production) ──────────────────────────────────
+//
+// An admin raises production lines at a source branch (alongside a transfer, or
+// on their own). No stock moves at create; the source till produces each line
+// later (posting its PRODUCTION movement) or cancels it with a note. The admin
+// Production Report reads these back. Mirrors `app/schemas/production.py`.
+
+export type ProductionLineStatus = 'pending' | 'produced' | 'cancelled';
+
+export interface ProductionLine {
+  id: string;
+  item_id: string;
+  item_name: string | null;
+  item_sku: string | null;
+  planned_quantity: number;
+  produced_quantity: number | null;
+  unit: string;
+  status: ProductionLineStatus;
+  cancel_note: string | null;
+  production_transaction_id: string | null;
+  // The posted PRODUCTION movement's reference, backfilled for the report.
+  production_reference: string | null;
+  produced_at: string | null;
+  category_name: string | null;
+  category_order: number | null;
+}
+
+/** The full production order, with its lines — the detail view. */
+export interface ProductionOrder {
+  id: string;
+  reference: string;
+  status: string;
+  source_branch_id: string;
+  source_branch_name: string | null;
+  transfer_order_id: string | null;
+  business_date: string;
+  notes: string | null;
+  created_at: string;
+  lines: ProductionLine[];
+}
+
+/** One row of the admin Production Report list. */
+export interface ProductionOrderSummary {
+  id: string;
+  reference: string;
+  status: string;
+  source_branch_id: string;
+  source_branch_name: string | null;
+  business_date: string;
+  created_at: string;
+  line_count: number;
+  produced_count: number;
+  cancelled_count: number;
+  pending_count: number;
+}
+
+export interface ProductionOrderItemInput {
+  item_id: string;
+  quantity: number;
+  unit: string;
+}
+
+/** Body for POST /inventory/production-orders (production-only). */
+export interface ProductionOrderCreate {
+  source_branch_id: string;
+  notes?: string | null;
+  client_request_id?: string | null;
+  items: ProductionOrderItemInput[];
+}

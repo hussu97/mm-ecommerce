@@ -53,6 +53,11 @@ export default function NewTransferOrderPage() {
   // itemId → branchId → typed quantity; and itemId → override toggle.
   const [cells, setCells] = useState<Record<string, Record<string, string>>>({});
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  // itemId → typed "qty to produce"; only meaningful for items with a recipe.
+  const [produce, setProduce] = useState<Record<string, string>>({});
+  // The set of items that produce something (have a recipe) — the produce input
+  // is gated on membership; a non-recipe item shows "—".
+  const [producibleIds, setProducibleIds] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -71,12 +76,14 @@ export default function NewTransferOrderPage() {
       inventoryApi.items().catch(() => [] as InventoryItem[]),
       inventoryApi.categories().catch(() => [] as InventoryCategory[]),
       inventoryApi.levels({ limit: 5000 }).catch(() => [] as InventoryLevel[]),
-    ]).then(([b, i, c, l]) => {
+      inventoryApi.producibleItemIds().catch(() => [] as string[]),
+    ]).then(([b, i, c, l, p]) => {
       if (cancelled) return;
       setBranches(b);
       setItems(i);
       setCategories(c);
       setLevels(l);
+      setProducibleIds(new Set(p));
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -135,6 +142,10 @@ export default function NewTransferOrderPage() {
   const setCell = (itemId: string, branchId: string, value: string) =>
     setCells((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [branchId]: value } }));
 
+  const setProduceQty = (itemId: string, value: string) =>
+    setProduce((prev) => ({ ...prev, [itemId]: value }));
+  const produceQty = (itemId: string): number => parseNum(produce[itemId]);
+
   const rowTotal = (itemId: string): number => {
     const row = cells[itemId];
     if (!row) return 0;
@@ -164,6 +175,20 @@ export default function NewTransferOrderPage() {
     [activeItemIds, cells, destinationBranches],
   );
 
+  // Recipe items with a positive "qty to produce" — the production lines to raise.
+  // The unit matches the transfer unit the row uses ("storage").
+  const productionItems = useMemo(
+    () =>
+      Object.keys(produce)
+        .filter((id) => producibleIds.has(id) && parseNum(produce[id]) > 0)
+        .map((id) => ({ item_id: id, quantity: parseNum(produce[id]), unit: 'storage' as const })),
+    [produce, producibleIds],
+  );
+  // Only production was filled in — no destination got a positive quantity, but at
+  // least one recipe item has a produce qty. The transfer create needs ≥1 transfer
+  // line, so this case posts a production order instead.
+  const productionOnly = activeItemIds.length === 0 && productionItems.length > 0;
+
   // Rows over the source's on-hand that have NOT been overridden — the create is
   // refused until each is toggled (or the quantity dropped).
   const unresolvedShortfalls = useMemo(
@@ -179,9 +204,9 @@ export default function NewTransferOrderPage() {
 
   const itemName = (id: string) => items.find((i) => i.id === id)?.name ?? id;
 
-  const canSubmit = sourceBranchId
+  const canSubmit = !!sourceBranchId
     && destinationBranches.length > 0
-    && activeItemIds.length > 0
+    && (activeItemIds.length > 0 || productionItems.length > 0)
     && unresolvedShortfalls.length === 0
     && (overridingItems.length === 0 || canOverride);
 
@@ -189,45 +214,60 @@ export default function NewTransferOrderPage() {
     if (!canSubmit) return;
     setSubmitting(true);
     setBanner(null);
-    const body: TransferOrderCreate = {
-      source_branch_id: sourceBranchId,
-      kind,
-      required_date: requiredDate || null,
-      notes: notes.trim() || null,
-      client_request_id: requestId.current,
-      items: activeItemIds.map((itemId) => {
-        const row = cells[itemId] ?? {};
-        return {
-          item_id: itemId,
-          unit: 'storage' as const,
-          override: shortfall(itemId) > 0 ? !!overrides[itemId] : false,
-          allocations: destinationBranches
-            .filter((b) => parseNum(row[b.id]) > 0)
-            .map((b) => ({ branch_id: b.id, quantity: parseNum(row[b.id]) })),
-        };
-      }),
-    };
     try {
+      // Production-only: no destination got a quantity, so a transfer order (which
+      // needs ≥1 transfer line) cannot be raised — post a production order instead.
+      if (productionOnly) {
+        const created = await inventoryApi.createProductionOrder({
+          source_branch_id: sourceBranchId,
+          notes: notes.trim() || null,
+          client_request_id: requestId.current,
+          items: productionItems,
+        });
+        toast.success(`Production order ${created.reference} raised.`);
+        router.push(`/inventory/submissions/production/${created.id}`);
+        return;
+      }
+      const body: TransferOrderCreate = {
+        source_branch_id: sourceBranchId,
+        kind,
+        required_date: requiredDate || null,
+        notes: notes.trim() || null,
+        client_request_id: requestId.current,
+        items: activeItemIds.map((itemId) => {
+          const row = cells[itemId] ?? {};
+          return {
+            item_id: itemId,
+            unit: 'storage' as const,
+            override: shortfall(itemId) > 0 ? !!overrides[itemId] : false,
+            allocations: destinationBranches
+              .filter((b) => parseNum(row[b.id]) > 0)
+              .map((b) => ({ branch_id: b.id, quantity: parseNum(row[b.id]) })),
+          };
+        }),
+        production_items: productionItems.length ? productionItems : undefined,
+      };
       const created = await inventoryApi.createTransferOrder(body);
-      toast.success(`Transfer order ${created.reference} raised.`);
+      toast.success(`Transfer and production order ${created.reference} raised.`);
       router.push(`/inventory/transfers/${created.id}`);
     } catch (err) {
-      setBanner({ text: err instanceof ApiError ? err.message : 'Could not raise the transfer order.', error: true });
+      setBanner({ text: err instanceof ApiError ? err.message : 'Could not raise the transfer and production order.', error: true });
       setSubmitting(false);
     }
   };
 
-  const colCount = 2 + destinationBranches.length + 2; // item, on-hand, branches…, total, override
+  // item, on-hand, branches…, row total, after transfer, qty to produce, resulting stock, override
+  const colCount = 2 + destinationBranches.length + 5;
 
   return (
     <div className="max-w-[var(--content-max)] space-y-5">
       <div>
         <Link href="/inventory/submissions/transfers" className="text-xs text-gray-400 hover:text-primary">← Transfers &amp; returns</Link>
-        <h1 className="font-display text-xl text-primary tracking-wide">New transfer order</h1>
+        <h1 className="font-display text-xl text-primary tracking-wide">New transfer and production order</h1>
       </div>
 
       <p className="text-sm text-gray-500">
-        Pick a source branch, then allocate quantities to the other branches. Nothing moves yet — creating the order fans it out into one pending transfer per destination for the source&apos;s POS to send.
+        Pick a source branch, then allocate quantities to the other branches and set any &quot;qty to produce&quot; for items with a recipe. Nothing moves yet — creating the order fans it out into one pending transfer per destination for the source&apos;s POS to send, and raises the production lines for the source till to produce. Filling in only produce quantities raises a production order on its own.
       </p>
 
       <div className="grid gap-3 border border-gray-200 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -280,6 +320,9 @@ export default function NewTransferOrderPage() {
                   <th className="px-2 py-1 text-right">On hand</th>
                   {destinationBranches.map((b) => <th key={b.id} className="px-2 py-1 text-right whitespace-nowrap">{b.name}</th>)}
                   <th className="px-2 py-1 text-right">Row total</th>
+                  <th className="px-2 py-1 text-right">After transfer</th>
+                  <th className="px-2 py-1 text-right">Qty to produce</th>
+                  <th className="px-2 py-1 text-right">Resulting stock</th>
                   <th className="px-2 py-1">Override</th>
                 </tr>
               </thead>
@@ -313,6 +356,25 @@ export default function NewTransferOrderPage() {
                             </td>
                           ))}
                           <td className={`px-2 py-1 text-right tabular-nums ${total > 0 ? 'font-medium text-gray-800' : 'text-gray-300'}`}>{formatQuantity(total)}</td>
+                          <td className="px-2 py-1 text-right tabular-nums text-gray-500">
+                            {kind === 'return' ? '—' : formatQuantity((onHand ?? 0) - total)}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            {producibleIds.has(item.id) ? (
+                              <input
+                                inputMode="decimal"
+                                value={produce[item.id] ?? ''}
+                                onChange={(e) => setProduceQty(item.id, e.target.value)}
+                                className="w-16 border border-gray-300 px-1 py-0.5 text-right"
+                                placeholder="0"
+                              />
+                            ) : (
+                              <span className="text-gray-300">—</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1 text-right tabular-nums text-gray-500">
+                            {kind === 'return' ? '—' : formatQuantity((onHand ?? 0) - total + produceQty(item.id))}
+                          </td>
                           <td className="px-2 py-1">
                             {overThreshold ? (
                               <label className="flex items-center gap-1.5 text-xs">
@@ -353,7 +415,7 @@ export default function NewTransferOrderPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={() => void submit()} loading={submitting} disabled={!canSubmit}>
-              {submitting ? 'Raising…' : 'Raise transfer order'}
+              {submitting ? 'Raising…' : productionOnly ? 'Raise production order' : 'Raise transfer and production order'}
             </Button>
             <Link href="/inventory/submissions/transfers" className="text-sm text-gray-500 hover:text-primary">Cancel</Link>
           </div>

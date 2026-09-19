@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 
+import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 
 /**
@@ -23,16 +24,25 @@ import { cn } from '@/lib/utils';
  * specific* href that covers the path. (`/pos-reports` itself only ever
  * redirects to `/pos-reports/sales`.)
  */
-const TABS = [
+// `requires` gates a tab on a permission slug of its own (the VAT report needs
+// `reports.vat`, a different slug from the `reports.sales` that opens the section)
+// — a `null`/absent requirement rides the section's own gate. A tab a user cannot
+// use is not offered, matching how the sidebar hides screens the API would 403.
+const TABS: { href: string; label: string; requires?: string }[] = [
   { href: '/pos-reports/sales', label: 'Sales' },
   { href: '/pos-reports/email', label: 'Email Report' },
+  { href: '/pos-reports/vat', label: 'VAT', requires: 'reports.vat' },
 ];
 
 export function PosReportsTabs() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
   const query = searchParams.toString();
-  const activeHref = [...TABS]
+  const tabs = TABS.filter(
+    (t) => !t.requires || !!user?.is_superadmin || (user?.permissions ?? []).includes(t.requires),
+  );
+  const activeHref = [...tabs]
     .sort((a, b) => b.href.length - a.href.length)
     .find(t => pathname === t.href || pathname.startsWith(`${t.href}/`))?.href;
   return (
@@ -43,7 +53,7 @@ export function PosReportsTabs() {
       className="flex border-b border-gray-200 overflow-x-auto snap-x scrollbar-none mb-6"
       role="tablist"
     >
-      {TABS.map(tab => {
+      {tabs.map(tab => {
         const active = tab.href === activeHref;
         return (
           <Link

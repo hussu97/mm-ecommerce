@@ -13,10 +13,11 @@ import type {
   LegalEntity, LegalEntityWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
-  PermissionCatalogue, Printer, PurchaseOrder,
+  PermissionCatalogue, Printer, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
+  PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
   Supplier, SupplierItem, ItemCostLayers, Tax,
-  TaxGroup, Till, Warehouse, WeeklyHours, WeeklyHoursWrite,
+  TaxGroup, Till, VatLedgerResponse, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
 export type VersionedRecipe = Schemas['VersionedRecipeResponse'];
@@ -40,7 +41,14 @@ export type TransferTemplateWrite = Schemas['TransferTemplateUpsert'];
 // rolls up `total_by_item` across its `children`, each a `Transfer`.
 export type TransferOrder = Schemas['TransferOrderResponse'];
 export type Transfer = Schemas['TransferResponse'];
-export type TransferOrderCreate = Schemas['TransferOrderCreate'];
+// A produced-good line raised alongside a transfer. The generated contract does
+// not yet carry `production_items` (types are regenerated separately), so it is
+// added here by intersection — a produced item, a positive quantity and the same
+// transfer unit the row uses ("storage").
+export type TransferOrderProductionItem = { item_id: string; quantity: number; unit: string };
+export type TransferOrderCreate = Schemas['TransferOrderCreate'] & {
+  production_items?: TransferOrderProductionItem[];
+};
 export type TransferOrderReport = Schemas['TransferOrderReport'];
 
 // ─── Branches & floor plan ────────────────────────────────────────────────────
@@ -350,6 +358,21 @@ export const inventoryApi = {
     api.post<TransferOrder>('/inventory/transfer-orders', body),
   transferOrderReport: (id: string) =>
     api.get<TransferOrderReport>(`/inventory/transfer-orders/${id}/report`),
+
+  // Every inventory item that produces something (has a recipe). The transfer-
+  // and-production grid gates its "qty to produce" input on this set.
+  producibleItemIds: () => api.get<string[]>('/inventory/producible-item-ids'),
+
+  // Production ORDERS: produced-good work raised at a source branch, either
+  // alongside a transfer (on the transfer order) or on their own (here). Creating
+  // one moves no stock; the source's till produces or cancels each line. The
+  // admin Production Report reads these back.
+  createProductionOrder: (body: ProductionOrderCreate) =>
+    api.post<ProductionOrder>('/inventory/production-orders', body),
+  productionOrders: (params?: { source_branch_id?: string; status?: string; date_from?: string; date_to?: string }) =>
+    api.get<ProductionOrderSummary[]>(`/inventory/production-orders${buildQs(params)}`),
+  productionOrder: (id: string) =>
+    api.get<ProductionOrder>(`/inventory/production-orders/${id}`),
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -368,6 +391,8 @@ export const posReportsApi = {
     api.get<SalesBreakdownRow[]>(`/pos/reports/sales/by${buildQs({ dimension, limit, ...w })}`),
   sendDailyEmail: (body: { date_from: string; date_to: string; recipients: string[] }) =>
     api.post<DailySalesEmailResult>('/pos/reports/sales/daily-email', body),
+  vatLedger: (params: { date_from?: string; date_to?: string; legal_entity_id?: string }) =>
+    api.get<VatLedgerResponse>(`/pos/reports/vat-ledger${buildQs(params)}`),
   voidsReturns: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/voids-returns${buildQs(w)}`),
   tills: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/tills${buildQs(w)}`),
   drawerOperations: (w: Window) => api.get<Record<string, unknown>[]>(`/pos/reports/drawer-operations${buildQs(w)}`),
