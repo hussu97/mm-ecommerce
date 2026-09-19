@@ -555,6 +555,7 @@ jobs:
           NOON_SEND_BASE=${{ secrets.NOON_SEND_BASE || '12' }}
           NOON_SEND_BULKY_BASE=${{ secrets.NOON_SEND_BULKY_BASE || '25' }}
           NOON_SEND_SURGE_AED=${{ secrets.NOON_SEND_SURGE_AED || '1' }}
+          NOON_SEND_SMS_AED=${{ secrets.NOON_SEND_SMS_AED || '0.5' }}
           APNS_KEY_P8=${{ secrets.APNS_KEY_P8 }}
           APNS_KEY_ID=${{ secrets.APNS_KEY_ID }}
           APNS_TEAM_ID=${{ secrets.APNS_TEAM_ID }}

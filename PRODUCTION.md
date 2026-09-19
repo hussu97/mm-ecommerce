@@ -921,6 +921,7 @@ The rest fall back in the deploy workflow:
 | `NOON_SEND_BASE` | `12` | **A fare in dirhams, not a URL.** The bike rate off the published card, and the reason this courier is worth having — on a bike they beat Lalamove at every distance in range |
 | `NOON_SEND_BULKY_BASE` | `25` | The car tier, in dirhams. Standard cakes go by bike, so this is the exception price |
 | `NOON_SEND_SURGE_AED` | `1` | Added across all bands during 12:00–15:00 and 19:00–22:00 Dubai time |
+| `NOON_SEND_SMS_AED` | `0.5` | Flat per-order SMS fee noon Send bills **us** on top of carriage. Folded into our courier cost for the live noon-vs-Slider-bike routing decision and the margin figure; never a customer charge |
 | `NOON_SEND_TIMEOUT_SECONDS` | `8` | |
 
 ```bash

@@ -197,6 +197,7 @@ x-api-environment: &api-environment
   NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
   NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
   NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
+  NOON_SEND_SMS_AED: ${NOON_SEND_SMS_AED:-0.5}
   # ── Sessions and the rest ───────────────────────────────────────────
   ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
   REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-30}
@@ -328,6 +329,7 @@ x-pos-environment: &pos-environment
   NOON_SEND_BASE: ${NOON_SEND_BASE:-12}
   NOON_SEND_BULKY_BASE: ${NOON_SEND_BULKY_BASE:-25}
   NOON_SEND_SURGE_AED: ${NOON_SEND_SURGE_AED:-1}
+  NOON_SEND_SMS_AED: ${NOON_SEND_SMS_AED:-0.5}
   # The register marks things out of stock, so it needs the credentials to
   # tell GrubOps about it. GRUBOPS_SYNC_ENABLED is here too because the
   # immediate push honours the same flag — but the reconcile *loop* is

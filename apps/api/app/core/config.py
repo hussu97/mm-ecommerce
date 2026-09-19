@@ -328,6 +328,12 @@ class Settings(BaseSettings):
     NOON_SEND_BULKY_BASE: float = 25.0
     #: Added across all bands during 12:00–15:00 and 19:00–22:00 Dubai time.
     NOON_SEND_SURGE_AED: float = 1.0
+    #: A flat per-order add-on for noon Send's customer SMS, an extra service they
+    #: bill on top of the carriage rate card. It is a real cost of every noon Send
+    #: run, so it is folded into the cost the live noon-vs-Slider-bike comparison
+    #: ranks on (Slider carries no such fee) and into the recorded margin figure —
+    #: never into the customer's delivery fee, which is polygon-level.
+    NOON_SEND_SMS_AED: float = 0.50
     #: The key noon Send presents on the status and tracking webhooks. They have
     #: no request signing, so this shared secret is the only thing separating a
     #: real status update from anyone who guesses the URL.

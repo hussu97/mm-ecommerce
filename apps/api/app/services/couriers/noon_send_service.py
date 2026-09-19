@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.money import money
 from app.core.trading_hours import DELIVERY_TIMEZONE
 from app.models.delivery_polygon import FulfilmentProviderEnum
 from app.models.order import Order, OrderStatusEnum
@@ -93,6 +94,7 @@ __all__ = [
     "may_serve",
     "rate_card_cost",
     "road_distance_km",
+    "sms_surcharge",
 ]
 
 PROVIDER = FulfilmentProviderEnum.NOON_SEND.value
@@ -181,6 +183,18 @@ def rate_card_cost(
     if is_surge(at):
         total += float(settings.NOON_SEND_SURGE_AED)
     return Decimal(f"{total:.2f}")
+
+
+def sms_surcharge() -> Decimal:
+    """noon Send's flat per-order SMS fee, in AED.
+
+    An add-on service they bill on top of the carriage rate card — kept out of
+    `rate_card_cost` (which is pure distance carriage) and added once where the
+    full cost of a run is assembled, in `estimate_for_point`. Slider carries no
+    equivalent, so it is exactly the sort of real cost the live comparison must
+    see to rank the two couriers honestly.
+    """
+    return money(settings.NOON_SEND_SMS_AED)
 
 
 async def pickup_for(db: AsyncSession, order: Order) -> PickupPoint | None:
@@ -295,7 +309,13 @@ async def estimate_for_point(
 
     return (
         Estimate(
-            cost=rate_card_cost(distance),
+            # Carriage plus noon Send's per-order SMS. The SMS is an add-on
+            # service they bill on top of the rate card — a real cost of the run
+            # and one Slider does not charge — so it belongs in the cost the live
+            # noon-vs-Slider-bike comparison ranks on and in the recorded margin,
+            # not in the distance card (`rate_card_cost` stays pure carriage) and
+            # not in the customer's fee (polygon-level, untouched by this).
+            cost=money(rate_card_cost(distance) + sms_surcharge()),
             currency="AED",
             distance_m=distance_m,
             # No quotation exists to reference. Left empty rather than filled
@@ -640,6 +660,10 @@ async def dispatch_order(db: AsyncSession, order: Order) -> OrderDelivery | None
         delivery.price_breakdown = {
             "source": "noon_send_rate_card",
             "distance_km": round((estimate.distance_m or 0) / 1000, 2),
+            # `total` is carriage + the flat SMS add-on; the SMS line is broken
+            # out so the margin report can see the add-on rather than reading it
+            # as a heavier rate card.
+            "sms": str(sms_surcharge()),
             "total": str(estimate.cost),
             "currency": "AED",
             "is_estimate": True,
