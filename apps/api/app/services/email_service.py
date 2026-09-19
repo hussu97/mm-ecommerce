@@ -228,6 +228,14 @@ def _money(value: Any) -> str:
 
 
 def _customer_name(order: OrderResponse) -> str:
+    # A pickup order carries no address snapshot — its name is on the order
+    # itself (`customer_name`, from `pickup_contact`), so reading only the
+    # snapshot greeted every collection customer as "there". Prefer the order's
+    # own name; fall back to the delivery snapshot's first name.
+    if order.customer_name:
+        first = order.customer_name.strip().split(" ")[0]
+        if first:
+            return first
     snapshot = order.shipping_address_snapshot or {}
     name = str(snapshot.get("first_name") or "").strip()
     return name or "there"
@@ -871,8 +879,18 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
                 recipient_email=recipient,
                 locale="en",
                 admin_order_url=_admin_order_url(order.order_number),
-                customer_name=address_format.recipient_name(snapshot) or "—",
-                customer_phone=snapshot.get("phone"),
+                # Prefer the order's own contact. A pickup has no snapshot, so
+                # reading only it left the owners' "new order" email showing
+                # "—" and no number for every collection order — the one email
+                # whose whole job is to tell the shop who to call. The order now
+                # carries the pickup contact (`customer_name`/`customer_phone`,
+                # from `pickup_contact`); the snapshot is the delivery fallback.
+                customer_name=(
+                    order.customer_name
+                    or address_format.recipient_name(snapshot)
+                    or "—"
+                ),
+                customer_phone=order.customer_phone or snapshot.get("phone"),
                 maps_url=maps_url(snapshot),
                 **context,
             )
