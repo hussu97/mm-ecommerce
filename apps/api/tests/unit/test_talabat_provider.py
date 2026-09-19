@@ -127,6 +127,21 @@ def test_extract_item_modifiers_keeps_size_suffix():
     assert mods == ["Large"]
 
 
+def test_extract_item_modifiers_piece_count_stays_a_modifier():
+    # A count like "(3 Pieces)" is a genuine quantity MODIFIER that carries its own
+    # recipe (Eggless Fudge Brownies 3/6/9 Pieces) — it must be extracted, NOT kept
+    # in the name. Only WEIGHT suffixes are product identity. Volume too stays a
+    # modifier.
+    for name_in, exp_name, exp_mod in (
+        ("Eggless Fudge Brownies (3 Pieces)", "Eggless Fudge Brownies", "3 Pieces"),
+        ("Brownies (6 pcs)", "Brownies", "6 pcs"),
+        ("Soft Drink (500 ml)", "Soft Drink", "500 ml"),
+    ):
+        name, mods = _extract_item_modifiers(name_in)
+        assert name == exp_name
+        assert mods == [exp_mod]
+
+
 def test_extract_item_modifiers_trailing_whitespace():
     name, mods = _extract_item_modifiers("  Burger (No onion)  ")
     assert name == "Burger"
