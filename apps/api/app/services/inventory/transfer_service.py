@@ -44,7 +44,7 @@ from app.models.inventory import (
     InventoryTransactionTypeEnum,
     TransactionStatusEnum,
 )
-from app.models.inventory_v2 import BranchInventorySettings
+from app.models.inventory_v2 import BranchInventorySettings, RecipeBasisEnum
 from app.models.operations import (
     InventoryTransferTemplate,
     ProductionLine,
@@ -1381,8 +1381,13 @@ async def _build_production_order(
 
     made_a_line = False
     for entry in production_items:
-        qty = _q(entry.quantity)
-        if qty <= 0:
+        # ``entry.quantity`` is in the item's recipe basis — batches for a
+        # batch-basis recipe, units otherwise. Snapshot the basis/yield from the
+        # item's *current active* recipe version (so a later change flows into the
+        # next order, not this one) and derive the owner-unit ``planned_quantity``
+        # the ledger and every inventory report keep speaking.
+        basis_qty = _q(entry.quantity)
+        if basis_qty <= 0:
             continue
         item = await db.get(InventoryItem, entry.item_id)
         if item is None:
@@ -1391,6 +1396,12 @@ async def _build_production_order(
             raise BadRequestError(
                 f"{item.name} has no recipe, so it cannot be produced"
             )
+        basis, batch_yield = await recipe_service.item_production_basis(
+            db, entry.item_id
+        )
+        owner_qty = (
+            _q(basis_qty * batch_yield) if batch_yield is not None else basis_qty
+        )
         unit = getattr(entry, "unit", "storage")
         factor = (
             Decimal("1")
@@ -1401,7 +1412,10 @@ async def _build_production_order(
             ProductionLine(
                 production_order_id=order.id,
                 item_id=entry.item_id,
-                planned_quantity=qty,
+                planned_quantity=owner_qty,
+                planned_basis_quantity=basis_qty,
+                basis=basis,
+                batch_yield=batch_yield,
                 unit=unit,
                 conversion_factor=factor,
                 status=ProductionLineStatusEnum.PENDING.value,
@@ -1466,8 +1480,22 @@ async def produce_line(
     branch = await db.get(Branch, order.source_branch_id)
     if branch is None:
         raise NotFoundError("Source branch not found")
-    qty = _q(quantity) if quantity is not None else _q(line.planned_quantity)
-    if qty <= 0:
+    # The override (and the produced count we record) is in the line's recipe
+    # basis; convert to owner units for the movement, which the ledger keeps.
+    is_batch = line.basis == RecipeBasisEnum.BATCH.value and line.batch_yield
+    if quantity is not None:
+        qty_basis = _q(quantity)
+        owner_qty = (
+            _q(qty_basis * Decimal(str(line.batch_yield))) if is_batch else qty_basis
+        )
+    else:
+        owner_qty = _q(line.planned_quantity)
+        qty_basis = (
+            _q(line.planned_basis_quantity)
+            if line.planned_basis_quantity is not None
+            else owner_qty
+        )
+    if owner_qty <= 0:
         raise BadRequestError("Production quantity must be positive")
 
     production, _consumption = await produce(
@@ -1475,13 +1503,14 @@ async def produce_line(
         branch=branch,
         user=user,
         item_id=line.item_id,
-        quantity=qty,
+        quantity=owner_qty,
         warehouse_id=order.source_warehouse_id,
         notes=notes or f"Production order {order.reference} · line {line.id}",
         source_type="production_line",
         source_id=str(line.id),
     )
-    line.produced_quantity = qty
+    line.produced_quantity = owner_qty
+    line.produced_basis_quantity = qty_basis
     line.status = ProductionLineStatusEnum.PRODUCED.value
     line.production_transaction_id = production.id
     line.produced_at = utcnow()

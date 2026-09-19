@@ -59,6 +59,7 @@ from app.schemas.inventory_v2 import (
     StockAuditRowInput,
     VersionedRecipeResponse,
 )
+from app.schemas.production import ProducibleItemBasis
 from app.services import audit_service
 from app.services.inventory import (
     access_service,
@@ -112,6 +113,23 @@ async def producible_item_ids(
     """Every inventory item that produces something (has a recipe). The admin
     transfer-and-production grid gates its "qty to produce" input on this set."""
     return sorted(await recipe_service.producible_item_ids(db), key=str)
+
+
+@control_router.get("/producible-item-bases", response_model=list[ProducibleItemBasis])
+async def producible_item_bases(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("inventory.transfers.manage")),
+):
+    """The recipe basis (unit/batch + batch_yield) of every item with an active
+    v2 recipe, so the transfer-and-production grid can render the "qty to produce"
+    cell in batches and show the live unit conversion."""
+    bases = await recipe_service.producible_item_bases(db)
+    return [
+        ProducibleItemBasis(item_id=item_id, basis=basis, batch_yield=batch_yield)
+        for item_id, (basis, batch_yield) in sorted(
+            bases.items(), key=lambda kv: str(kv[0])
+        )
+    ]
 
 
 @control_router.get("/recipe-owners/{owner_kind}", response_model=PaginatedRecipeOwners)
