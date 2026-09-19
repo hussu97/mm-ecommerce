@@ -395,6 +395,7 @@ class ProductionOrder(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("warehouses.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     #: The sibling transfer order raised in the same admin action; null when this
     #: is a production-only order.
@@ -416,7 +417,10 @@ class ProductionOrder(Base, UUIDMixin, TimestampMixin):
     )
 
     creator_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     lines: Mapped[list[ProductionLine]] = relationship(
@@ -476,12 +480,16 @@ class ProductionLine(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True),
         ForeignKey("inventory_transactions.id", ondelete="SET NULL"),
         nullable=True,
+        index=True,
     )
     produced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     produced_by_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     production_order: Mapped[ProductionOrder] = relationship(

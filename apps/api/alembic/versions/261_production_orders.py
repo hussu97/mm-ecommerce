@@ -97,6 +97,17 @@ def upgrade() -> None:
         "production_orders",
         ["business_date"],
     )
+    # Every FK column leads an index (test_fk_indexes guard).
+    op.create_index(
+        "ix_production_orders_source_warehouse_id",
+        "production_orders",
+        ["source_warehouse_id"],
+    )
+    op.create_index(
+        "ix_production_orders_creator_id",
+        "production_orders",
+        ["creator_id"],
+    )
     op.create_index(
         "uq_production_orders_client_request_id",
         "production_orders",
@@ -172,6 +183,16 @@ def upgrade() -> None:
         "ix_production_order_items_status",
         "production_order_items",
         ["status"],
+    )
+    op.create_index(
+        "ix_production_order_items_production_transaction_id",
+        "production_order_items",
+        ["production_transaction_id"],
+    )
+    op.create_index(
+        "ix_production_order_items_produced_by_id",
+        "production_order_items",
+        ["produced_by_id"],
     )
 
     # Grant the new permission to every role that already manages transfers, so

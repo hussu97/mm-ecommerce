@@ -69,6 +69,10 @@ CROSS_CUTTING = {
     "redirect_service",
     "reference_integrity",
     "turnstile_service",
+    # The VAT ledger cache sweep: aggregates output VAT from orders and input VAT
+    # from order fees, order deliveries and purchase orders — spans orders,
+    # couriers/delivery and inventory/purchasing, so it belongs to no one domain.
+    "vat_ledger",
     "webhook_log_service",
 }
 
