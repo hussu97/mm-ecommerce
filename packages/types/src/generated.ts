@@ -3912,6 +3912,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/producible-item-ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Producible Item Ids
+         * @description Every inventory item that produces something (has a recipe). The admin
+         *     transfer-and-production grid gates its "qty to produce" input on this set.
+         */
+        get: operations["producible_item_ids_api_v1_inventory_producible_item_ids_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/production": {
         parameters: {
             query?: never;
@@ -3928,6 +3949,48 @@ export interface paths {
          *     rather than the loss disappearing.
          */
         post: operations["produce_api_v1_inventory_production_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/production-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Production Orders
+         * @description The Production Report list — one summary row per order.
+         */
+        get: operations["list_production_orders_api_v1_inventory_production_orders_get"];
+        put?: never;
+        /**
+         * Create Production Order
+         * @description Raise a production-only order (no transfers) at a source branch. No stock
+         *     moves until each line is produced at the till.
+         */
+        post: operations["create_production_order_api_v1_inventory_production_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/production-orders/{order_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Production Order */
+        get: operations["get_production_order_api_v1_inventory_production_orders__order_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7064,6 +7127,29 @@ export interface paths {
          * @description Stock moved between branches, both legs.
          */
         get: operations["transfers_report_api_v1_pos_reports_transfers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/reports/vat-ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Vat Ledger Report
+         * @description VAT collected vs. recoverable per legal entity, from the derived cache.
+         *
+         *     Reads `vat_ledger_entries` only — never recomputes on request. The sweep
+         *     (`app.services.vat_ledger`) keeps it fresh.
+         */
+        get: operations["vat_ledger_report_api_v1_pos_reports_vat_ledger_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -16511,6 +16597,178 @@ export interface components {
                 };
             } | null;
         };
+        /**
+         * ProductionItemInput
+         * @description One item to be *produced* at the source branch, in the combined transfer
+         *     and production order. Only items that have a recipe may appear here.
+         */
+        ProductionItemInput: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Quantity */
+            quantity: number | string;
+            /**
+             * Unit
+             * @default storage
+             * @enum {string}
+             */
+            unit: "storage" | "ingredient";
+        };
+        /** ProductionLineResponse */
+        ProductionLineResponse: {
+            /** Cancel Note */
+            cancel_note?: string | null;
+            /** Category Name */
+            category_name?: string | null;
+            /** Category Order */
+            category_order?: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Item Name */
+            item_name?: string | null;
+            /** Item Sku */
+            item_sku?: string | null;
+            /** Planned Quantity */
+            planned_quantity: string;
+            /** Produced At */
+            produced_at?: string | null;
+            /** Produced Quantity */
+            produced_quantity: string | null;
+            /** Production Reference */
+            production_reference?: string | null;
+            /** Production Transaction Id */
+            production_transaction_id?: string | null;
+            /** Status */
+            status: string;
+            /** Unit */
+            unit: string;
+        };
+        /** ProductionOrderCreate */
+        ProductionOrderCreate: {
+            /** Client Request Id */
+            client_request_id?: string | null;
+            /** Items */
+            items: components["schemas"]["ProductionOrderItemInput"][];
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+        };
+        /** ProductionOrderItemInput */
+        ProductionOrderItemInput: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            /** Quantity */
+            quantity: number | string;
+            /**
+             * Unit
+             * @default storage
+             */
+            unit: string;
+        };
+        /** ProductionOrderResponse */
+        ProductionOrderResponse: {
+            /** Auto Printed At */
+            auto_printed_at?: string | null;
+            /** Business Date */
+            business_date: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["ProductionLineResponse"][];
+            /** Notes */
+            notes: string | null;
+            /** Reference */
+            reference: string;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+            /** Source Branch Name */
+            source_branch_name?: string | null;
+            /** Status */
+            status: string;
+            /** Transfer Order Id */
+            transfer_order_id?: string | null;
+        };
+        /**
+         * ProductionOrderSummary
+         * @description One row of the admin Production Report list.
+         */
+        ProductionOrderSummary: {
+            /** Business Date */
+            business_date: string;
+            /**
+             * Cancelled Count
+             * @default 0
+             */
+            cancelled_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Line Count
+             * @default 0
+             */
+            line_count: number;
+            /**
+             * Pending Count
+             * @default 0
+             */
+            pending_count: number;
+            /**
+             * Produced Count
+             * @default 0
+             */
+            produced_count: number;
+            /** Reference */
+            reference: string;
+            /**
+             * Source Branch Id
+             * Format: uuid
+             */
+            source_branch_id: string;
+            /** Source Branch Name */
+            source_branch_name?: string | null;
+            /** Status */
+            status: string;
+        };
         /** ProjectionDriftResponse */
         ProjectionDriftResponse: {
             /** Cached Average Cost */
@@ -19810,6 +20068,8 @@ export interface components {
             kind: "transfer" | "return";
             /** Notes */
             notes?: string | null;
+            /** Production Items */
+            production_items?: components["schemas"]["ProductionItemInput"][];
             /** Required Date */
             required_date?: string | null;
             /**
@@ -20239,6 +20499,67 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * VatLedgerEntitySummary
+         * @description Rolled-up VAT position for one legal entity over the window.
+         */
+        VatLedgerEntitySummary: {
+            /** Input Vat Recoverable */
+            input_vat_recoverable: string;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
+            /** Legal Entity Name */
+            legal_entity_name: string;
+            /** Net Vat Position */
+            net_vat_position: string;
+            /** Output Vat */
+            output_vat: string;
+            /** Vat Registered */
+            vat_registered: boolean;
+        };
+        /** VatLedgerResponse */
+        VatLedgerResponse: {
+            /** Date From */
+            date_from?: string | null;
+            /** Date To */
+            date_to?: string | null;
+            /** Rows */
+            rows: components["schemas"]["VatLedgerRow"][];
+            /** Summary */
+            summary: components["schemas"]["VatLedgerEntitySummary"][];
+        };
+        /**
+         * VatLedgerRow
+         * @description One (legal entity, category, direction) total for the report window.
+         */
+        VatLedgerRow: {
+            /** Category */
+            category: string;
+            /** Direction */
+            direction: string;
+            /** Gross Value */
+            gross_value: string;
+            /**
+             * Legal Entity Id
+             * Format: uuid
+             */
+            legal_entity_id: string;
+            /** Legal Entity Name */
+            legal_entity_name: string;
+            /** Net Value */
+            net_value: string;
+            /** Source Count */
+            source_count: number;
+            /** Vat Amount */
+            vat_amount: string;
+            /** Vat Recoverable */
+            vat_recoverable: boolean;
+            /** Vat Registered */
+            vat_registered: boolean;
         };
         /** VersionCreate */
         VersionCreate: {
@@ -28092,6 +28413,26 @@ export interface operations {
             };
         };
     };
+    producible_item_ids_api_v1_inventory_producible_item_ids_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
     produce_api_v1_inventory_production_post: {
         parameters: {
             query?: never;
@@ -28112,6 +28453,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProduceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_production_orders_api_v1_inventory_production_orders_get: {
+        parameters: {
+            query?: {
+                source_branch_id?: string | null;
+                status?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionOrderSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_production_order_api_v1_inventory_production_orders_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductionOrderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_production_order_api_v1_inventory_production_orders__order_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductionOrderResponse"];
                 };
             };
             /** @description Validation Error */
@@ -34045,6 +34484,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    vat_ledger_report_api_v1_pos_reports_vat_ledger_get: {
+        parameters: {
+            query?: {
+                date_from?: string | null;
+                date_to?: string | null;
+                legal_entity_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VatLedgerResponse"];
                 };
             };
             /** @description Validation Error */

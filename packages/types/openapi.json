@@ -23117,6 +23117,431 @@
         "title": "ProductUpdate",
         "type": "object"
       },
+      "ProductionItemInput": {
+        "description": "One item to be *produced* at the source branch, in the combined transfer\nand production order. Only items that have a recipe may appear here.",
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "unit": {
+            "default": "storage",
+            "enum": [
+              "storage",
+              "ingredient"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "quantity"
+        ],
+        "title": "ProductionItemInput",
+        "type": "object"
+      },
+      "ProductionLineResponse": {
+        "properties": {
+          "cancel_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Note"
+          },
+          "category_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Name"
+          },
+          "category_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Order"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Name"
+          },
+          "item_sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Sku"
+          },
+          "planned_quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Planned Quantity",
+            "type": "string"
+          },
+          "produced_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced At"
+          },
+          "produced_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced Quantity"
+          },
+          "production_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Reference"
+          },
+          "production_transaction_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production Transaction Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "planned_quantity",
+          "produced_quantity",
+          "unit",
+          "status"
+        ],
+        "title": "ProductionLineResponse",
+        "type": "object"
+      },
+      "ProductionOrderCreate": {
+        "properties": {
+          "client_request_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Request Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProductionOrderItemInput"
+            },
+            "minItems": 1,
+            "title": "Items",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_branch_id",
+          "items"
+        ],
+        "title": "ProductionOrderCreate",
+        "type": "object"
+      },
+      "ProductionOrderItemInput": {
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "unit": {
+            "default": "storage",
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "quantity"
+        ],
+        "title": "ProductionOrderItemInput",
+        "type": "object"
+      },
+      "ProductionOrderResponse": {
+        "properties": {
+          "auto_printed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Printed At"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProductionLineResponse"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          },
+          "source_branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Branch Name"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "transfer_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer Order Id"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "source_branch_id",
+          "business_date",
+          "notes",
+          "created_at"
+        ],
+        "title": "ProductionOrderResponse",
+        "type": "object"
+      },
+      "ProductionOrderSummary": {
+        "description": "One row of the admin Production Report list.",
+        "properties": {
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "cancelled_count": {
+            "default": 0,
+            "title": "Cancelled Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "line_count": {
+            "default": 0,
+            "title": "Line Count",
+            "type": "integer"
+          },
+          "pending_count": {
+            "default": 0,
+            "title": "Pending Count",
+            "type": "integer"
+          },
+          "produced_count": {
+            "default": 0,
+            "title": "Produced Count",
+            "type": "integer"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "source_branch_id": {
+            "format": "uuid",
+            "title": "Source Branch Id",
+            "type": "string"
+          },
+          "source_branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Branch Name"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "status",
+          "source_branch_id",
+          "business_date",
+          "created_at"
+        ],
+        "title": "ProductionOrderSummary",
+        "type": "object"
+      },
       "ProjectionDriftResponse": {
         "properties": {
           "cached_average_cost": {
@@ -32819,6 +33244,13 @@
             ],
             "title": "Notes"
           },
+          "production_items": {
+            "items": {
+              "$ref": "#/components/schemas/ProductionItemInput"
+            },
+            "title": "Production Items",
+            "type": "array"
+          },
           "required_date": {
             "anyOf": [
               {
@@ -33851,6 +34283,158 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VatLedgerEntitySummary": {
+        "description": "Rolled-up VAT position for one legal entity over the window.",
+        "properties": {
+          "input_vat_recoverable": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Input Vat Recoverable",
+            "type": "string"
+          },
+          "legal_entity_id": {
+            "format": "uuid",
+            "title": "Legal Entity Id",
+            "type": "string"
+          },
+          "legal_entity_name": {
+            "title": "Legal Entity Name",
+            "type": "string"
+          },
+          "net_vat_position": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Vat Position",
+            "type": "string"
+          },
+          "output_vat": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Output Vat",
+            "type": "string"
+          },
+          "vat_registered": {
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "legal_entity_id",
+          "legal_entity_name",
+          "vat_registered",
+          "output_vat",
+          "input_vat_recoverable",
+          "net_vat_position"
+        ],
+        "title": "VatLedgerEntitySummary",
+        "type": "object"
+      },
+      "VatLedgerResponse": {
+        "properties": {
+          "date_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date From"
+          },
+          "date_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date To"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/VatLedgerRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "summary": {
+            "items": {
+              "$ref": "#/components/schemas/VatLedgerEntitySummary"
+            },
+            "title": "Summary",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "summary"
+        ],
+        "title": "VatLedgerResponse",
+        "type": "object"
+      },
+      "VatLedgerRow": {
+        "description": "One (legal entity, category, direction) total for the report window.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "gross_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Gross Value",
+            "type": "string"
+          },
+          "legal_entity_id": {
+            "format": "uuid",
+            "title": "Legal Entity Id",
+            "type": "string"
+          },
+          "legal_entity_name": {
+            "title": "Legal Entity Name",
+            "type": "string"
+          },
+          "net_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Value",
+            "type": "string"
+          },
+          "source_count": {
+            "title": "Source Count",
+            "type": "integer"
+          },
+          "vat_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vat Amount",
+            "type": "string"
+          },
+          "vat_recoverable": {
+            "title": "Vat Recoverable",
+            "type": "boolean"
+          },
+          "vat_registered": {
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "legal_entity_id",
+          "legal_entity_name",
+          "vat_registered",
+          "category",
+          "direction",
+          "net_value",
+          "vat_amount",
+          "gross_value",
+          "vat_recoverable",
+          "source_count"
+        ],
+        "title": "VatLedgerRow",
         "type": "object"
       },
       "VersionCreate": {
@@ -48278,6 +48862,38 @@
         ]
       }
     },
+    "/api/v1/inventory/producible-item-ids": {
+      "get": {
+        "description": "Every inventory item that produces something (has a recipe). The admin\ntransfer-and-production grid gates its \"qty to produce\" input on this set.",
+        "operationId": "producible_item_ids_api_v1_inventory_producible_item_ids_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "title": "Response Producible Item Ids Api V1 Inventory Producible Item Ids Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Producible Item Ids",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/production": {
       "post": {
         "description": "Produce a batch, consuming its bill of materials in the same step.\nYield loss is applied to the output, so cost per unit rises with waste\nrather than the loss disappearing.",
@@ -48320,6 +48936,209 @@
           }
         ],
         "summary": "Produce",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/production-orders": {
+      "get": {
+        "description": "The Production Report list \u2014 one summary row per order.",
+        "operationId": "list_production_orders_api_v1_inventory_production_orders_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source_branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProductionOrderSummary"
+                  },
+                  "title": "Response List Production Orders Api V1 Inventory Production Orders Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Production Orders",
+        "tags": [
+          "Inventory"
+        ]
+      },
+      "post": {
+        "description": "Raise a production-only order (no transfers) at a source branch. No stock\nmoves until each line is produced at the till.",
+        "operationId": "create_production_order_api_v1_inventory_production_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductionOrderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductionOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Create Production Order",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/production-orders/{order_id}": {
+      "get": {
+        "operationId": "get_production_order_api_v1_inventory_production_orders__order_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductionOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Production Order",
         "tags": [
           "Inventory"
         ]
@@ -58926,6 +59745,96 @@
           }
         ],
         "summary": "Transfers Report",
+        "tags": [
+          "POS Reports"
+        ]
+      }
+    },
+    "/api/v1/pos/reports/vat-ledger": {
+      "get": {
+        "description": "VAT collected vs. recoverable per legal entity, from the derived cache.\n\nReads `vat_ledger_entries` only \u2014 never recomputes on request. The sweep\n(`app.services.vat_ledger`) keeps it fresh.",
+        "operationId": "vat_ledger_report_api_v1_pos_reports_vat_ledger_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "legal_entity_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Legal Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VatLedgerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Vat Ledger Report",
         "tags": [
           "POS Reports"
         ]
