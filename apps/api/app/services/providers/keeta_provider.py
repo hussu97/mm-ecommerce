@@ -821,6 +821,36 @@ def _item_modifier_sources(item: dict[str, Any]) -> list[Any]:
         for group in groups:
             if not isinstance(group, dict):
                 continue
+            # Keeta's live order shape wraps a group's chosen options in
+            # `shopProductGroupSkuList` (a "Box of N" flavour pick, or a quantity
+            # option like "3 Pieces"). Each leaf is a product SPU
+            # ({spuName, spuId, count, unitPrice, ...}). We take only name + ref +
+            # qty and DELIBERATELY drop the leaf price: for box contents it is 0,
+            # and for a quantity option it is the WHOLE line price in MINOR units
+            # (e.g. 5000 for "AED 50.00", while the line's own unitPrice is "50"),
+            # so feeding it into options_price would double-count and mix
+            # minor/major units. The line's gross/unit price already carries it.
+            picks = _get_value(group, "shopProductGroupSkuList")
+            if isinstance(picks, list) and picks:
+                for leaf in picks:
+                    if not isinstance(leaf, dict):
+                        continue
+                    name = _first_text(leaf, ("spuName", "name", "skuName"))
+                    ref = _first_text(leaf, ("spuId", "groupSkuId", "skuId", "id"))
+                    if not name and not ref:
+                        continue
+                    sources.append(
+                        {
+                            "name": name or ref,
+                            "external_ref": ref,
+                            "quantity": (
+                                _get_value(leaf, "count")
+                                or _get_value(leaf, "groupSkuCount")
+                                or 1
+                            ),
+                        }
+                    )
+                continue
             nested: list[Any] | None = None
             for key in ("foods", "spus", "skus", "products", "items", "options"):
                 value = _get_value(group, key)
