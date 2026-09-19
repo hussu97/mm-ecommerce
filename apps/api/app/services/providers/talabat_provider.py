@@ -418,10 +418,13 @@ def _split_balanced(value: str) -> list[str]:
 #: A trailing "(250 grams)" / "(500 g)" / "(1 kg)" is a SIZE, part of the product
 #: identity — not a modifier. Talabat splits a product into distinct sized SKUs
 #: (Cookie Melt 250g vs 500g) and the catalogue map keys on the sized name.
+#: WEIGHT units only, deliberately: MM splits *products* by weight. A count like
+#: "(3 Pieces)" / "(6 pcs)" is a genuine quantity MODIFIER that carries its own
+#: recipe (Eggless Fudge Brownies 3/6/9 Pieces), so it must still be extracted as
+#: a modifier — never folded into the product name. Volume (ml/l) is likewise left
+#: as a modifier (drink sizes, which are untracked anyway).
 _SIZE_SUFFIX_RE = re.compile(
-    r"^\s*\d+(?:\.\d+)?\s*"
-    r"(?:g|gm|gms|gr|gram|grams|kg|kgs|ml|l|ltr|litre|liter|oz|pc|pcs|piece|pieces)"
-    r"\s*$",
+    r"^\s*\d+(?:\.\d+)?\s*(?:g|gm|gms|gr|gram|grams|kg|kgs)\s*$",
     re.IGNORECASE,
 )
 
