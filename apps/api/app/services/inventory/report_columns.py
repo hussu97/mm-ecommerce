@@ -144,10 +144,18 @@ _ADJUSTMENTS = ColumnSpec("adjustment_quantity", "Adjustments", ROLE_IN, SOURCE_
 # (ins then outs, sales/consumption sitting with the outs), then the derived tail.
 _COLUMNS: dict[str, list[ColumnSpec]] = {
     # The combined Production & Finished Goods reconciliation: produced goods, with
-    # Production entered (and posting produce()) alongside the count.
+    # Production entered (and posting produce()) alongside the count. A finished
+    # good is not only produced — it can be bought and resold as the same stock
+    # (water, a can of coke: the sellable product *is* the inventory item) or
+    # transferred in from another branch (Barsha stocks finished goods by transfer,
+    # not production). Without Received / Transfer in those inflows land in no
+    # column at all — not even Adjustments, since purchasing and transfer-receive
+    # are columned types — so the sheet silently fails to reconcile.
     "finished_goods": [
         _OPENING,
         _PRODUCED,
+        _RECEIVED,
+        _TRANSFER_IN,
         _SOLD,
         _INTERNAL,
         _TRANSFER_OUT,
@@ -162,6 +170,8 @@ _COLUMNS: dict[str, list[ColumnSpec]] = {
     "production": [
         _OPENING,
         _PRODUCED,
+        _RECEIVED,
+        _TRANSFER_IN,
         _SOLD,
         _INTERNAL,
         _TRANSFER_OUT,

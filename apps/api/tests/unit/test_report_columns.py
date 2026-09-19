@@ -30,6 +30,26 @@ def test_finished_goods_is_the_combined_production_sheet() -> None:
     assert cols["production_quantity"].editable is True
     # Sales are filled by the ledger, never typed.
     assert cols["sales_consumption_quantity"].source == rc.SOURCE_LEDGER
+
+
+def test_finished_goods_and_production_carry_received_and_transfer_in() -> None:
+    # A finished good is not only produced: it can be bought and resold as the same
+    # stock (water, coke — the product IS the inventory item) or transferred in
+    # (Barsha stocks finished goods by transfer). Both inflows need a column, or
+    # they reconcile against nothing on the grid.
+    for report_type in ("finished_goods", "production"):
+        cols = _by_key(report_type)
+        # Received is typed and posts a purchase, exactly as on the raw-materials
+        # sheet, so a directly-bought finished good can be entered.
+        assert cols["purchasing_quantity"].role == rc.ROLE_IN
+        assert cols["purchasing_quantity"].source == rc.SOURCE_ENTERED
+        assert cols["purchasing_quantity"].posts == TX.PURCHASING.value
+        assert cols["purchasing_quantity"].editable is True
+        # Transfer in is ledger-filled (the transfer document posts it) and read-only.
+        assert cols["transfer_in_quantity"].role == rc.ROLE_IN
+        assert cols["transfer_in_quantity"].source == rc.SOURCE_LEDGER
+        assert cols["transfer_in_quantity"].editable is False
+        assert cols["transfer_in_quantity"].posts is None
     assert cols["sales_consumption_quantity"].editable is False
 
 
