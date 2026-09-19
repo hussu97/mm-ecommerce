@@ -469,6 +469,91 @@ async def test_override_writes_a_shortfall_adjustment_to_cover_the_fan_out(env):
         assert order.adjustment_group_id is not None
 
 
+async def test_unshipped_override_topup_is_reversed_on_send(env):
+    """The bug behind ADJ-003147/003148: a shortfall top-up covers the requested
+    fan-out at create, but the picker then ships less than was topped up. The
+    unshipped remainder must be put back, not left as phantom stock on the
+    source."""
+    _engine, Session, ids = env
+    async with Session() as db:
+        order = await _order(db, ids, 120, override=True)
+        await db.commit()
+        order_id = order.id
+        child_id = order.children[0].id
+
+    async with Session() as db:
+        # 100 on hand, topped up by 20 to cover the 120 fan-out.
+        assert await _level(db, ids.item, ids.source_wh) == Decimal("120")
+
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        line_id = child.items[0].id
+        # Picker ships only 5 of the 120 requested, so 15 of the +20 top-up
+        # never leaves.
+        await transfer_service.mark_transfer_sent(
+            db, transfer=child, user=user, sent={line_id: Decimal("5")}
+        )
+        await db.commit()
+
+    async with Session() as db:
+        # 100 real + 20 topped up - 5 shipped = 115, then the 15 of the top-up
+        # that never shipped is reversed: back to the real 100, no phantom left.
+        assert await _level(db, ids.item, ids.source_wh) == Decimal("100")
+        reversal = (
+            (
+                await db.execute(
+                    select(InventoryTransaction).where(
+                        InventoryTransaction.source_type
+                        == "transfer_shortfall_reversal",
+                        InventoryTransaction.source_id == str(order_id),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(reversal) == 1
+        order = await transfer_service.load_transfer_order(db, order_id)
+        # Reversal is grouped with the top-up so the report reads them together.
+        assert reversal[0].correction_group_id == order.adjustment_group_id
+
+
+async def test_fully_shipped_override_topup_is_not_reversed(env):
+    """When the send ships the whole topped-up fan-out, the top-up was consumed
+    by the shipment — nothing is left to reverse."""
+    _engine, Session, ids = env
+    async with Session() as db:
+        order = await _order(db, ids, 120, override=True)
+        await db.commit()
+        order_id = order.id
+        child_id = order.children[0].id
+
+    async with Session() as db:
+        user = await db.get(User, ids.user)
+        child = await transfer_service.load_transfer(db, child_id)
+        await transfer_service.mark_transfer_sent(db, transfer=child, user=user)
+        await db.commit()
+
+    async with Session() as db:
+        # 100 + 20 topped up - 120 shipped = 0, and no reversal was written.
+        assert await _level(db, ids.item, ids.source_wh) == Decimal("0")
+        reversals = (
+            (
+                await db.execute(
+                    select(InventoryTransaction).where(
+                        InventoryTransaction.source_type
+                        == "transfer_shortfall_reversal",
+                        InventoryTransaction.source_id == str(order_id),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert reversals == []
+
+
 async def test_return_ships_from_source_immediately(env):
     _engine, Session, ids = env
     async with Session() as db:
