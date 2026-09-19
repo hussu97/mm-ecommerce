@@ -744,3 +744,129 @@ async def test_unresolved_first_close_report_carries_to_next_close(engine, env):
         assert [r.id for r in reports2] == [first_id]
 
         await db.rollback()
+
+
+async def _receive(db, *, branch_id, warehouse_id, item_id, user, qty):
+    """Post a PURCHASING receipt so stock and a posting sequence exist, the way a
+    PO receive would — used to land a movement between report snapshots."""
+    txn = InventoryTransaction(
+        reference=await inventory_service.next_reference(
+            db, InventoryTransactionTypeEnum.PURCHASING.value
+        ),
+        type=InventoryTransactionTypeEnum.PURCHASING.value,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=branch_id,
+        warehouse_id=warehouse_id,
+        business_date=BUSINESS_DATE,
+        creator_id=user.id,
+        source_type="test",
+        idempotency_key=f"test-receive:{uuid.uuid4()}",
+        items=[],
+    )
+    db.add(txn)
+    await db.flush()
+    txn.items.append(
+        InventoryTransactionItem(
+            item_id=item_id,
+            quantity=Decimal(str(qty)),
+            unit="storage",
+            conversion_factor=Decimal("1"),
+            unit_cost=Decimal("1"),
+        )
+    )
+    await db.flush()
+    return await inventory_service.post_transaction(db, transaction=txn, user=user)
+
+
+async def test_a_receipt_after_the_snapshot_is_recomputed_into_the_report_at_post(
+    engine, env
+):
+    """A PO received after a report's snapshot (during the submit->post approval
+    delay) lands in that report's Received column at post — not as a phantom
+    variance — and the window opens at the previous report's closing (tiling).
+
+    This is the movement-window bug: before the fix the receipt showed nowhere in
+    the columns, Opening was inflated, and the count read as a spurious difference.
+    """
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        # Opening stock of 100 from an earlier receipt.
+        await _receive(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            qty=100,
+        )
+
+        # A PRIOR report posts, counting the branch to 100 — it stamps the cutoff
+        # the next report's window must open after.
+        prior = _report(branch_id, template_id, report_type="raw_materials")
+        prior.lines = [
+            _line(
+                item_id,
+                opening_quantity=100,
+                expected_quantity=100,
+                entered_quantity=100,
+            )
+        ]
+        db.add(prior)
+        await db.flush()
+        await report_service.post_report(db, report=prior, user=user)
+        assert prior.posting_cutoff_sequence is not None
+        prior_cutoff = prior.posting_cutoff_sequence
+        assert Decimal(str(prior.lines[0].closing_quantity)) == Decimal("100")
+
+        # The next count sheet is snapshotted (Received still 0, expected 100). Then
+        # a +50 PO is received DURING the approval delay, before this report posts.
+        current = _report(branch_id, template_id, report_type="raw_materials")
+        current.status = ShiftInventoryReportStatusEnum.APPROVED.value
+        current.lines = [
+            _line(
+                item_id,
+                opening_quantity=100,
+                purchasing_quantity=0,
+                expected_quantity=100,
+                entered_quantity=150,
+                source_summary={"prefilled": {"purchasing_quantity": "0"}},
+            )
+        ]
+        db.add(current)
+        await db.flush()
+        await _receive(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            qty=50,
+        )
+
+        await report_service.post_report(db, report=current, user=user)
+        await db.commit()
+        cur_id = current.id
+
+    async with Session() as db:
+        line = (
+            await db.execute(
+                select(ShiftInventoryReportLine).where(
+                    ShiftInventoryReportLine.report_id == cur_id
+                )
+            )
+        ).scalar_one()
+        report = await db.get(ShiftInventoryReport, cur_id)
+        # The +50 PO was recomputed into Received — and ONLY the +50, because the
+        # window opened at the prior report's cutoff (the opening 100 is not double
+        # counted).
+        assert Decimal(str(line.purchasing_quantity)) == Decimal("50")
+        # Opening ties to the prior report's closing, not an inflated figure.
+        assert Decimal(str(line.opening_quantity)) == Decimal("100")
+        # System closing = 100 + 50 = 150 == the physical count, so no phantom variance.
+        assert Decimal(str(line.expected_quantity)) == Decimal("150")
+        assert Decimal(str(line.variance_quantity)) == Decimal("0")
+        # Closing stamped, cutoff advanced past the prior report's.
+        assert Decimal(str(line.closing_quantity)) == Decimal("150")
+        assert report.posting_cutoff_sequence > prior_cutoff

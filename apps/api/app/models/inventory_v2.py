@@ -542,7 +542,18 @@ class ShiftInventoryReport(Base, UUIDMixin, TimestampMixin):
     template_snapshot: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default="{}"
     )
+    #: The provisional movement cutoff frozen at prefill/refresh — what the
+    #: register edits and submits against (see ``save_report``'s optimistic check).
     base_posting_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: The AUTHORITATIVE closing boundary, stamped at post: the branch's
+    #: posting-sequence high-water immediately BEFORE this report posted its own
+    #: reconciliation transactions. A report's movement window is
+    #: ``(previous report's posting_cutoff_sequence, this posting_cutoff_sequence]``,
+    #: so every closed movement lands in exactly one report and a report's own
+    #: postings (which sit above this cutoff) land in none. NULL until posted.
+    posting_cutoff_sequence: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     deferred_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     submitted_by: Mapped[uuid.UUID | None] = mapped_column(
@@ -644,6 +655,10 @@ class ShiftInventoryReportLine(Base, UUIDMixin):
     expected_quantity: Mapped[Any] = mapped_column(
         Numeric(20, 6), nullable=False, server_default="0"
     )
+    #: The on-hand level stamped at post, so the NEXT report's Opening is this
+    #: stored Closing rather than a re-derivation of ``expected − net_movement``.
+    #: NULL until the report posts (and on legacy pre-migration rows).
+    closing_quantity: Mapped[Any | None] = mapped_column(Numeric(20, 6), nullable=True)
     entered_quantity: Mapped[Any | None] = mapped_column(Numeric(20, 6), nullable=True)
     confirmed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"

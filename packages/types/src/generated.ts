@@ -18840,6 +18840,8 @@ export interface components {
         ShiftReportLineResponse: {
             /** Adjustment Quantity */
             adjustment_quantity: string;
+            /** Closing Quantity */
+            closing_quantity?: string | null;
             /** Confirmed */
             confirmed: boolean;
             /** Entered Quantity */
@@ -18937,6 +18939,8 @@ export interface components {
             lines: components["schemas"]["ShiftReportLineResponse"][];
             /** Notes */
             notes: string | null;
+            /** Posting Cutoff Sequence */
+            posting_cutoff_sequence?: number | null;
             /** Status */
             status: string;
             /** Submitted At */
