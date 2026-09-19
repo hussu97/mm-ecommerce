@@ -58,6 +58,9 @@ export default function NewTransferOrderPage() {
   // The set of items that produce something (have a recipe) — the produce input
   // is gated on membership; a non-recipe item shows "—".
   const [producibleIds, setProducibleIds] = useState<Set<string>>(new Set());
+  // itemId → its recipe basis (unit/batch + units-per-batch). Drives whether the
+  // "qty to produce" cell means units or batches, and the live unit conversion.
+  const [bases, setBases] = useState<Map<string, { basis: 'unit' | 'batch'; batchYield: number | null }>>(new Map());
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -77,13 +80,15 @@ export default function NewTransferOrderPage() {
       inventoryApi.categories().catch(() => [] as InventoryCategory[]),
       inventoryApi.levels({ limit: 5000 }).catch(() => [] as InventoryLevel[]),
       inventoryApi.producibleItemIds().catch(() => [] as string[]),
-    ]).then(([b, i, c, l, p]) => {
+      inventoryApi.producibleItemBases().catch(() => []),
+    ]).then(([b, i, c, l, p, pb]) => {
       if (cancelled) return;
       setBranches(b);
       setItems(i);
       setCategories(c);
       setLevels(l);
       setProducibleIds(new Set(p));
+      setBases(new Map(pb.map((row) => [row.item_id, { basis: row.basis, batchYield: row.batch_yield }])));
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -144,7 +149,15 @@ export default function NewTransferOrderPage() {
 
   const setProduceQty = (itemId: string, value: string) =>
     setProduce((prev) => ({ ...prev, [itemId]: value }));
+  // The number the admin typed, in the item's recipe basis (batches or units).
   const produceQty = (itemId: string): number => parseNum(produce[itemId]);
+  // The same amount converted to owner units (batches × batch_yield for a batch
+  // recipe) — what actually lands in stock, used for the resulting-stock preview.
+  const produceUnits = (itemId: string): number => {
+    const meta = bases.get(itemId);
+    const qty = produceQty(itemId);
+    return meta?.basis === 'batch' && meta.batchYield ? qty * meta.batchYield : qty;
+  };
 
   const rowTotal = (itemId: string): number => {
     const row = cells[itemId];
@@ -267,7 +280,7 @@ export default function NewTransferOrderPage() {
       </div>
 
       <p className="text-sm text-gray-500">
-        Pick a source branch, then allocate quantities to the other branches and set any &quot;qty to produce&quot; for items with a recipe. Nothing moves yet — creating the order fans it out into one pending transfer per destination for the source&apos;s POS to send, and raises the production lines for the source till to produce. Filling in only produce quantities raises a production order on its own.
+        Pick a source branch, then allocate quantities to the other branches and set any &quot;qty to produce&quot; for items with a recipe. <strong>Transfer quantities are in storage units; production is in the recipe basis</strong> — a batch-basis item is produced in batches, with the unit conversion shown beside the input. Nothing moves yet — creating the order fans it out into one pending transfer per destination for the source&apos;s POS to send, and raises the production lines for the source till to produce. Filling in only produce quantities raises a production order on its own.
       </p>
 
       <div className="grid gap-3 border border-gray-200 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -314,15 +327,28 @@ export default function NewTransferOrderPage() {
 
           <div className="overflow-x-auto border border-gray-200">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
-                <tr>
+              <thead className="text-left text-xs uppercase tracking-wider text-gray-500">
+                {/* Two blocks with different units: transfer allocations are in
+                    storage units, production is in the recipe's basis (batches or
+                    units). The grouping row makes that split explicit. */}
+                <tr className="bg-gray-100 text-[10px]">
+                  <th className="px-2 py-1 sticky left-0 bg-gray-100" />
+                  <th className="px-2 py-1 text-center font-semibold text-gray-600" colSpan={destinationBranches.length + 3}>
+                    Transfer — storage units
+                  </th>
+                  <th className="px-2 py-1 text-center font-semibold text-primary bg-primary/5" colSpan={2}>
+                    Production — recipe basis
+                  </th>
+                  <th className="px-2 py-1" />
+                </tr>
+                <tr className="bg-gray-50">
                   <th className="px-2 py-1 sticky left-0 bg-gray-50">Item</th>
                   <th className="px-2 py-1 text-right">On hand</th>
                   {destinationBranches.map((b) => <th key={b.id} className="px-2 py-1 text-right whitespace-nowrap">{b.name}</th>)}
-                  <th className="px-2 py-1 text-right">Row total</th>
-                  <th className="px-2 py-1 text-right">After transfer</th>
+                  <th className="px-2 py-1 text-right bg-gray-100 font-semibold text-gray-700">Row total</th>
+                  <th className="px-2 py-1 text-right bg-gray-100 font-semibold text-gray-700">After transfer</th>
                   <th className="px-2 py-1 text-right">Qty to produce</th>
-                  <th className="px-2 py-1 text-right">Resulting stock</th>
+                  <th className="px-2 py-1 text-right bg-gray-100 font-semibold text-gray-700">Resulting stock</th>
                   <th className="px-2 py-1">Override</th>
                 </tr>
               </thead>
@@ -355,25 +381,41 @@ export default function NewTransferOrderPage() {
                               />
                             </td>
                           ))}
-                          <td className={`px-2 py-1 text-right tabular-nums ${total > 0 ? 'font-medium text-gray-800' : 'text-gray-300'}`}>{formatQuantity(total)}</td>
-                          <td className="px-2 py-1 text-right tabular-nums text-gray-500">
+                          <td className={`px-2 py-1 text-right tabular-nums bg-gray-50 ${total > 0 ? 'font-semibold text-gray-900' : 'text-gray-300'}`}>{formatQuantity(total)}</td>
+                          <td className="px-2 py-1 text-right tabular-nums bg-gray-50 font-medium text-gray-700">
                             {kind === 'return' ? '—' : formatQuantity((onHand ?? 0) - total)}
                           </td>
                           <td className="px-2 py-1 text-right">
                             {producibleIds.has(item.id) ? (
-                              <input
-                                inputMode="decimal"
-                                value={produce[item.id] ?? ''}
-                                onChange={(e) => setProduceQty(item.id, e.target.value)}
-                                className="w-16 border border-gray-300 px-1 py-0.5 text-right"
-                                placeholder="0"
-                              />
+                              <div className="flex items-center justify-end gap-1.5">
+                                <input
+                                  inputMode="decimal"
+                                  value={produce[item.id] ?? ''}
+                                  onChange={(e) => setProduceQty(item.id, e.target.value)}
+                                  className="w-16 border border-gray-300 px-1 py-0.5 text-right"
+                                  placeholder="0"
+                                />
+                                {(() => {
+                                  const meta = bases.get(item.id);
+                                  const isBatch = meta?.basis === 'batch' && !!meta.batchYield;
+                                  const qty = produceQty(item.id);
+                                  return (
+                                    <span className="text-[10px] normal-case text-gray-400 whitespace-nowrap">
+                                      {isBatch
+                                        ? (qty > 0
+                                          ? `batch → ${formatQuantity(produceUnits(item.id))} ${item.storage_unit}`
+                                          : 'batch')
+                                        : item.storage_unit}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
                             ) : (
                               <span className="text-gray-300">—</span>
                             )}
                           </td>
-                          <td className="px-2 py-1 text-right tabular-nums text-gray-500">
-                            {kind === 'return' ? '—' : formatQuantity((onHand ?? 0) - total + produceQty(item.id))}
+                          <td className="px-2 py-1 text-right tabular-nums bg-gray-50 font-medium text-gray-700">
+                            {kind === 'return' ? '—' : formatQuantity((onHand ?? 0) - total + produceUnits(item.id))}
                           </td>
                           <td className="px-2 py-1">
                             {overThreshold ? (

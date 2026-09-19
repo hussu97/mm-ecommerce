@@ -19,6 +19,18 @@ import { transferStatusLabel, transferStatusVariant } from '../../../_shared';
 
 const num = (value: unknown): number => Number(value ?? 0);
 
+// A line's quantity in its recipe basis: batches show "N batches (= M units)",
+// units show "M units". Falls back to owner units on legacy rows with no basis
+// count. `unitQty` is the owner-unit truth; `basisQty` is the entered basis count.
+const basisText = (line: ProductionLine, basisQty: number | null, unitQty: number | null): string => {
+  if (unitQty == null) return '—';
+  if (line.basis === 'batch') {
+    const b = basisQty ?? unitQty;
+    return `${formatQuantity(b)} batch${b === 1 ? '' : 'es'} (= ${formatQuantity(unitQty)} ${line.unit})`;
+  }
+  return `${formatQuantity(unitQty)} ${line.unit}`;
+};
+
 export default function ProductionOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [order, setOrder] = useState<ProductionOrder | null>(null);
@@ -110,10 +122,10 @@ export default function ProductionOrderDetailPage() {
                         {line.item_name ?? line.item_id}
                         {line.item_sku && <span className="ml-1 text-xs text-gray-400">{line.item_sku}</span>}
                       </td>
-                      <td className="px-2 py-1 text-gray-500">{line.unit}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(line.planned_quantity)}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">
-                        {produced == null ? <span className="text-gray-300">—</span> : formatQuantity(produced)}
+                      <td className="px-2 py-1 text-gray-500">{line.basis === 'batch' ? 'batch' : line.unit}</td>
+                      <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{basisText(line, line.planned_basis_quantity, line.planned_quantity)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
+                        {produced == null ? <span className="text-gray-300">—</span> : basisText(line, line.produced_basis_quantity, produced)}
                         {modified && <Badge variant="warning" className="ml-2">Modified</Badge>}
                       </td>
                       <td className="px-2 py-1"><Badge variant={transferStatusVariant(line.status)}>{transferStatusLabel(line.status)}</Badge></td>

@@ -13,7 +13,7 @@ import type {
   LegalEntity, LegalEntityWrite,
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
-  PermissionCatalogue, Printer, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
+  PermissionCatalogue, Printer, ProducibleItemBasis, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
   PurchaseOrder,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
   Supplier, SupplierItem, ItemCostLayers, Tax,
@@ -362,6 +362,11 @@ export const inventoryApi = {
   // Every inventory item that produces something (has a recipe). The transfer-
   // and-production grid gates its "qty to produce" input on this set.
   producibleItemIds: () => api.get<string[]>('/inventory/producible-item-ids'),
+
+  // The recipe basis (unit/batch + batch_yield) of every producible item, so the
+  // grid can key production in batches and show the live "= N units" conversion.
+  producibleItemBases: () =>
+    api.get<ProducibleItemBasis[]>('/inventory/producible-item-bases'),
 
   // Production ORDERS: produced-good work raised at a source branch, either
   // alongside a transfer (on the transfer order) or on their own (here). Creating

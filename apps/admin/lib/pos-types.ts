@@ -690,8 +690,15 @@ export interface ProductionLine {
   item_id: string;
   item_name: string | null;
   item_sku: string | null;
+  // Owner-unit truth (what the ledger and inventory reports show).
   planned_quantity: number;
   produced_quantity: number | null;
+  // Recipe basis this line was raised in, and (for a batch line) owner units per
+  // batch. The report shows the basis count with the unit conversion.
+  basis: 'unit' | 'batch';
+  batch_yield: number | null;
+  planned_basis_quantity: number | null;
+  produced_basis_quantity: number | null;
   unit: string;
   status: ProductionLineStatus;
   cancel_note: string | null;
@@ -734,8 +741,16 @@ export interface ProductionOrderSummary {
 
 export interface ProductionOrderItemInput {
   item_id: string;
+  // In the item's recipe basis — batches for a batch recipe, units otherwise.
   quantity: number;
   unit: string;
+}
+
+/** One producible item's recipe basis, for the transfer-and-production grid. */
+export interface ProducibleItemBasis {
+  item_id: string;
+  basis: 'unit' | 'batch';
+  batch_yield: number | null;
 }
 
 /** Body for POST /inventory/production-orders (production-only). */
