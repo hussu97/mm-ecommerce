@@ -472,8 +472,25 @@ async def reconsume_order(
     )
 
 
-async def record_order_cancellation(db: AsyncSession, order: Order) -> None:
-    """Cancel an unposted source event or require a posted-return disposition."""
+async def record_order_cancellation(
+    db: AsyncSession, order: Order, *, pre_packing: bool
+) -> None:
+    """Reverse a pre-packing cancellation's consumption, or (post-packing) require
+    a return disposition.
+
+    Consumption is posted when MM accepts the order (``accept_order``), which is
+    well before the goods are boxed. If the order is cancelled while still
+    pre-packing — the customer bailed, a store-pickup order voided before anyone
+    made it — the goods were never actually consumed, so the sale movement is
+    reversed in full with a RETURN_FROM_ORDERS referencing the same order, and it
+    stops counting as Sold on the count sheet. Once packed the goods are assumed
+    consumed, so the cancellation instead logs an exception for a person to choose
+    restock / waste / no effect.
+
+    ``pre_packing`` is decided by the caller from the status the order is leaving
+    (see ``order_lifecycle``): true for created/confirmed/arrived_at_pos, false
+    once it has reached packed or beyond.
+    """
     # Legacy/provider test doubles and orders not yet routed to a branch have no
     # inventory scope. There cannot be an accepted inventory event to cancel.
     if getattr(order, "branch_id", None) is None:
@@ -507,6 +524,30 @@ async def record_order_cancellation(db: AsyncSession, order: Order) -> None:
         accepted.status != InventorySourceEventStatusEnum.POSTED.value
         or accepted.transaction_id is None
     ):
+        return
+    if pre_packing:
+        # Never reverse twice: a counter void (``restock_for_void``) may already
+        # have unwound this order's consumption, and the FIFO return cap would
+        # raise if asked to return more than was consumed. If nothing has been
+        # returned yet, reverse the whole sale automatically.
+        already_returned = await db.scalar(
+            select(InventoryTransaction.id).where(
+                InventoryTransaction.order_id == order.id,
+                InventoryTransaction.type
+                == InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
+                InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+            )
+        )
+        if already_returned is None:
+            await record_return(
+                db,
+                order=order,
+                user=None,
+                disposition="restock",
+                proportion=Decimal("1"),
+                idempotency_key=f"order-cancel:{order.id}",
+                notes="Cancelled before packing — sale reversed",
+            )
         return
     key = f"order-cancel:{order.id}:1"
     exists = await db.scalar(
@@ -570,13 +611,17 @@ async def record_return(
     db: AsyncSession,
     *,
     order: Order,
-    user: User,
+    user: User | None,
     disposition: str,
     proportion: Decimal,
     idempotency_key: str,
     notes: str | None = None,
 ) -> list[InventoryTransaction]:
-    """Apply a partial historical return from the original frozen movement."""
+    """Apply a partial historical return from the original frozen movement.
+
+    ``user`` is optional: an automatic system reversal (a pre-packing cancellation
+    unwinding its own consumption) has no acting user, exactly as ``accept_order``
+    posts the consumption with no user."""
     if disposition not in {"restock", "waste", "no_inventory_effect"}:
         raise BadRequestError("Unknown inventory return disposition")
     if proportion <= 0 or proportion > 1:
@@ -721,7 +766,7 @@ async def record_return(
             warehouse_id=original.warehouse_id,
             business_date=business_date,
             order_id=order.id,
-            creator_id=user.id,
+            creator_id=user.id if user else None,
             source_type="order_return",
             source_id=str(order.id),
             idempotency_key=f"{idempotency_key}:{suffix}",
