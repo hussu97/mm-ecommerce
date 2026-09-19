@@ -32,13 +32,17 @@ def test_policies_cover_exactly_the_real_channels():
     assert set(policy.POLICIES) == _ALL
 
 
-def test_cookie_expiry_advisory_only_talabat():
-    """Talabat's rotating PerimeterX cookie is advisory; every other channel's
-    cookie expiry is authoritative — the exact behaviour of the retired
-    `_COOKIE_EXPIRY_ADVISORY_CHANNELS = {talabat}`."""
+def test_cookie_expiry_advisory_is_talabat_and_noon():
+    """Advisory cookie expiry for the rotating-anti-bot-cookie channels: Talabat's
+    PerimeterX `_px3` and Noon's Akamai `bm_sv`/`_abck` (which IS noon's gate — it
+    has no token). Both rotate on replay and outlive their short nominal TTL, so
+    treating that TTL as authoritative re-drove a headed Chrome hourly on a still-
+    usable session (2026-09-19). Careem (bearer in the header profile) and
+    Deliveroo (JWT/bearer) carry a real token expiry, so their cookie stays
+    authoritative; Keeta has no replay."""
+    advisory = {CHANNEL_TALABAT, CHANNEL_NOON}
     for ch in _ALL:
-        expected = ch == CHANNEL_TALABAT
-        assert policy.policy_for(ch).cookie_expiry_advisory is expected, ch
+        assert policy.policy_for(ch).cookie_expiry_advisory is (ch in advisory), ch
 
 
 def test_health_stale_after_matches_the_retired_constants():

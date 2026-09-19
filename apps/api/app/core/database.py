@@ -50,8 +50,8 @@ __all__ = [
 #     ITS pool and go quiet, but can no longer touch the request pool.
 #
 # Connection budget (Postgres max_connections=30, 3 reserved for a superuser, so
-# 27 usable): api request 5+5=10, scheduler 5+1=6, pos-api request 2+3=5, the
-# green slot's steady overlap during a cutover ~2, a migration ~1 → 24 ≤ 27. The
+# 27 usable): api request 5+5=10, scheduler 7+1=8, pos-api request 2+3=5, the
+# green slot's steady overlap during a cutover ~2, a migration ~1 → 26 ≤ 27. The
 # arithmetic is asserted by `tests/unit/test_pool_budget.py` so a pool change
 # that would overrun `max_connections` fails CI rather than the VM.
 #
@@ -71,6 +71,21 @@ __all__ = [
 # secret-tunable knob (DATABASE_MAX_OVERFLOW) that can be raised back in one
 # redeploy if the storefront ever needs it. The durable fix for the loops is
 # finishing the per-tick session discipline, not growing this pool.
+#
+# 2026-09-19: the timeouts never went away — the QueuePool 5s wait still fired
+# 6-86×/day (steady state, not just at boot), starving whichever of the delivery,
+# grubops-orders/reconcile and inventory sweeps happened to reach for a
+# connection while the others held theirs across their per-tick HTTP calls (the
+# F-OPS-5 restructure is still only partly landed) AND the aggregator leader kept
+# one of the six pinned for the whole of leadership — so only five served every
+# sweep. The per-tick restructure remains the durable fix; until it lands, the
+# scheduler pool is grown 5+1=6 → 7+1=8 (+2 connections for the sweeps, a ~40%
+# headroom bump on the five they actually shared). This time the slots are NOT
+# taken off the request overflow — that stays 5+5=10 — so the whole budget rises
+# 24 → 26, still ≤ 27 with a one-slot margin. Growing the request pool back with
+# DATABASE_MAX_OVERFLOW now has only that one slot of room; a materially larger
+# pool needs the VM/Postgres bump (e2-medium + higher max_connections) the note
+# above describes.
 #
 # The scheduler pool is HARDCODED (not from Settings) on purpose: only the
 # storefront `api` slot runs the loops, its size must not track the request
@@ -115,8 +130,12 @@ def _connect_args(url: str) -> dict[str, object]:
 #: The scheduler pool. Small and fixed — the loops are few and each holds a
 #: connection only briefly (a sweep) or exactly once (a leader lock). See the
 #: budget note above; kept a module constant, not a Setting, so it cannot be
-#: enlarged by the same secret that raises the request pool.
-_SCHEDULER_POOL_SIZE = 5
+#: enlarged by the same secret that raises the request pool. 7+1=8 since
+#: 2026-09-19 (was 5+1=6): the leader pins one for its whole tenure, so the
+#: sweeps shared only five and hit the 5s QueuePool wait 6-86×/day; the extra two
+#: are headroom until the per-tick session restructure lands. The total budget
+#: rose to 26 ≤ 27 rather than borrowing from the request overflow.
+_SCHEDULER_POOL_SIZE = 7
 _SCHEDULER_MAX_OVERFLOW = 1
 
 engine = create_async_engine(

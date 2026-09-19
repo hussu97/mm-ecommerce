@@ -134,6 +134,19 @@ _DEFAULT_POLICY = ChannelPolicy()
 #: a typo is an import error, not a silent miss.
 POLICIES: dict[str, ChannelPolicy] = {
     CHANNEL_NOON: ChannelPolicy(
+        # Noon has NO token — the Akamai bm_sv/_abck cookie IS the gate, and that
+        # cookie rotates on replay and keeps working well past its short nominal
+        # TTL (the same Bot-Manager behaviour that makes Talabat's PerimeterX
+        # `_px3` advisory). Honouring the nominal cookie expiry as authoritative
+        # made the heal poll re-drive a headed Chrome the moment it lapsed: ~24
+        # noon re-logins/day in production (2026-09-12..18), roughly hourly,
+        # against Talabat's ~6-9/day once its cookie was made advisory. The token
+        # expiry is still honoured everywhere; noon simply has none, so with the
+        # cookie advisory a noon session is unusable only on a real status flip (a
+        # 401 marks it `needs_bootstrap`, exactly Talabat's path) — bounded
+        # downside: at worst one idempotent rolling scrape 401s and triggers the
+        # same re-login proactive expiry would have, never silent data loss.
+        cookie_expiry_advisory=True,
         login_method=LOGIN_EMAIL_OTP,
         refresh_strategy=REFRESH_HEADED_ONLY,
         token_shape=TOKEN_AKAMAI_COOKIE,
