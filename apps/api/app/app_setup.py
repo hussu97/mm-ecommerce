@@ -237,6 +237,16 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(business_day_service.run_forever(), name="business_day_sweeper")
     )
 
+    # The settled-order sweeper. Same lifespan reasons as its neighbours — no cron
+    # here, an advisory lock so a second copy is harmless. Closes any counter
+    # check left paid-but-open when the register's pay pipeline dropped between the
+    # payment and the close (POS-K001-2026-09-19-0063).
+    from app.services.pos import settled_order_service
+
+    background.append(
+        spawn_tracked(settled_order_service.run_forever(), name="settled_order_sweeper")
+    )
+
     # The VAT ledger refresh. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy across blue/green is
     # harmless, storefront only. Own flag so the derived VAT cache can be
