@@ -8,6 +8,7 @@ import { PhoneInput, isValidPhone } from '@/components/ui/PhoneInput';
 import { Turnstile, isTurnstileEnabled } from '@/components/ui/Turnstile';
 import { Icon } from '@/components/ui/Icon';
 import { enquiryApi, ApiError } from '@/lib/api';
+import { useTranslation } from '@/lib/i18n/TranslationProvider';
 
 /**
  * Copy for the enquiry form, from the CMS `cater.form` block. Every field is
@@ -43,6 +44,7 @@ interface Picked {
 
 export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; locale: string }) {
   const c = copy ?? {};
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [description, setDescription] = useState('');
@@ -96,8 +98,10 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
   function validate() {
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = locale === 'ar' ? 'الاسم مطلوب' : 'Your name is required';
-    if (!phone || !isValidPhone(phone))
-      e.phone = locale === 'ar' ? 'رقم هاتف صحيح مطلوب' : 'A valid phone number is required';
+    // Same validation as checkout's phone field: required + a real number, with
+    // the same message. No Firebase OTP step here — this is an enquiry, not an
+    // account or a delivery address.
+    if (!phone.trim() || !isValidPhone(phone)) e.phone = t('checkout.valid_phone_required');
     if (!description.trim())
       e.description = locale === 'ar' ? 'الوصف مطلوب' : 'Please describe what you’d like';
     if (approxKg && !(Number(approxKg) > 0)) e.approxKg = 'Enter a valid weight';
@@ -178,8 +182,10 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
         autoComplete="name"
       />
 
+      {/* Exactly the checkout phone field — same PhoneInput, same label and
+          validation message — minus the Firebase verification panel. */}
       <PhoneInput
-        label={c.phone_label ?? (locale === 'ar' ? 'رقم الهاتف' : 'Phone number')}
+        label={c.phone_label ?? t('common.phone')}
         value={phone}
         onChange={setPhone}
         error={errors.phone}
