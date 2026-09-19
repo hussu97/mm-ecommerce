@@ -7,16 +7,23 @@ e2-small runs `max_connections=30` and reserves 3 for a superuser, so 27 are
 available to the app. The budget the audit fixed:
 
     api request pool     5 + 5 = 10   (this process's `engine`)
-    scheduler pool       5 + 1 =  6   (this process's `scheduler_engine`)
+    scheduler pool       7 + 1 =  8   (this process's `scheduler_engine`)
     pos-api request pool 2 + 3 =  5   (the register, from compose)
     warming colour overlap    ~  2    (its lazy pool during the handoff)
     a migration               ~  1
     ────────────────────────────────
-    total                       24  ≤ 27
+    total                       26  ≤ 27
 
     2026-09-07: 3 slots moved from the storefront request overflow (8→5) to the
     scheduler pool (2+1=3 → 5+1=6). Both engines live in the same api process, so
-    the total is unchanged — the loops, not the request path, are the real load.
+    the total was unchanged — the loops, not the request path, are the real load.
+
+    2026-09-19: the scheduler pool grew 5+1=6 → 7+1=8 to clear the QueuePool
+    timeouts that were still firing 6-86×/day (the aggregator leader pins one of
+    the six for its whole tenure, so the sweeps shared only five). This time the
+    two slots came from growing the TOTAL (24→26) rather than the request
+    overflow, which stays 5+5=10 — so the one-slot margin under 27 is the new
+    headroom until the per-tick session restructure lands.
 
 The request/scheduler numbers are read from the live engines so a code change to
 either pool is caught here; pos-api's pool and `max_connections` are read from
@@ -57,12 +64,16 @@ def test_the_request_pool_is_five_plus_five():
     assert _engine_max(database.engine) == 10
 
 
-def test_the_scheduler_pool_is_five_plus_one_and_hardcoded():
-    assert database.scheduler_engine.pool.size() == 5
+def test_the_scheduler_pool_is_seven_plus_one_and_hardcoded():
+    # 7+1=8 since 2026-09-19 (was 5+1=6): the aggregator leader pins one for its
+    # whole tenure, so the sweeps shared only five and hit the 5s QueuePool wait
+    # 6-86×/day. The two extra slots came from growing the total (24→26), NOT
+    # from the request overflow — see database.py's budget note.
+    assert database.scheduler_engine.pool.size() == 7
     assert database.scheduler_engine.pool._max_overflow == 1
-    assert _engine_max(database.scheduler_engine) == 6
+    assert _engine_max(database.scheduler_engine) == 8
     # Hardcoded, not tracking the request-pool settings a secret can raise.
-    assert database._SCHEDULER_POOL_SIZE == 5
+    assert database._SCHEDULER_POOL_SIZE == 7
     assert database._SCHEDULER_MAX_OVERFLOW == 1
 
 
@@ -100,11 +111,11 @@ def test_the_register_pool_from_compose_is_five():
 
 def test_the_total_budget_fits_under_max_connections():
     request = _engine_max(database.engine)  # 10
-    scheduler = _engine_max(database.scheduler_engine)  # 6
+    scheduler = _engine_max(database.scheduler_engine)  # 8
     pos = _pos_pool_max()  # 5
     total = request + scheduler + pos + _CUTOVER_AND_MIGRATION_RESERVE
     available = _max_connections() - _SUPERUSER_RESERVED
-    assert total == 24
+    assert total == 26
     assert available == 27
     assert total <= available, (
         f"pool budget {total} exceeds the {available} usable Postgres "

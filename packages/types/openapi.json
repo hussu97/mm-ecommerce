@@ -3165,6 +3165,20 @@
         "title": "Body_preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post",
         "type": "object"
       },
+      "Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post",
+        "type": "object"
+      },
       "Body_upload_image_api_v1_uploads_image_post": {
         "properties": {
           "file": {
@@ -8090,6 +8104,176 @@
         "title": "CustomOrderCreate",
         "type": "object"
       },
+      "CustomOrderEnquiryAdminResponse": {
+        "description": "The whole lead, for the admin Enquiries list.",
+        "properties": {
+          "approx_kg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approx Kg"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "customer_name": {
+            "title": "Customer Name",
+            "type": "string"
+          },
+          "customer_phone": {
+            "title": "Customer Phone",
+            "type": "string"
+          },
+          "delivery_by": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery By"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reference_image_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reference Image Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "customer_name",
+          "customer_phone",
+          "description",
+          "approx_kg",
+          "reference_image_urls",
+          "delivery_by",
+          "created_at"
+        ],
+        "title": "CustomOrderEnquiryAdminResponse",
+        "type": "object"
+      },
+      "CustomOrderEnquiryCreate": {
+        "description": "A custom-order request from the \"We cater to\" section. A lead, not an order.",
+        "properties": {
+          "approx_kg": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approx Kg"
+          },
+          "customer_name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Customer Name",
+            "type": "string"
+          },
+          "customer_phone": {
+            "maxLength": 30,
+            "minLength": 3,
+            "title": "Customer Phone",
+            "type": "string"
+          },
+          "delivery_by": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery By"
+          },
+          "description": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "reference_image_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Reference Image Urls",
+            "type": "array"
+          },
+          "turnstile_token": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Token"
+          }
+        },
+        "required": [
+          "customer_name",
+          "customer_phone",
+          "description"
+        ],
+        "title": "CustomOrderEnquiryCreate",
+        "type": "object"
+      },
+      "CustomOrderEnquiryResponse": {
+        "description": "What the storefront gets back: enough to confirm receipt, nothing more.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "CustomOrderEnquiryResponse",
+        "type": "object"
+      },
       "CustomOrderResponse": {
         "properties": {
           "admin_notes": {
@@ -8769,6 +8953,13 @@
             "title": "By Branch",
             "type": "array"
           },
+          "by_category": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Category",
+            "type": "array"
+          },
           "by_channel": {
             "items": {
               "$ref": "#/components/schemas/BreakdownRow"
@@ -8854,6 +9045,7 @@
           "by_courier",
           "by_branch",
           "by_legal_entity",
+          "by_category",
           "by_channel",
           "by_fulfillment",
           "by_payment",
@@ -19174,6 +19366,42 @@
           "pages"
         ],
         "title": "PaginatedAuditLogs",
+        "type": "object"
+      },
+      "PaginatedCustomOrderEnquiries": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderEnquiryAdminResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "PaginatedCustomOrderEnquiries",
         "type": "object"
       },
       "PaginatedCustomers": {
@@ -31551,6 +31779,31 @@
         "title": "TillCloseRequest",
         "type": "object"
       },
+      "TillCloseTasksResponse": {
+        "description": "The at-close report bundle handed to the register when a till closes.\n\n``reports`` are the ones to fill now (mandatory at the first close of the\ntrading day, as before). ``first_close`` tells the register this is the day's\nfirst close so it presents them by default; on a later close it is false and,\nwhen ``optional_reports_available`` is true, the register offers the choice to\nclose directly or fill fresh reports first (see ``/pos/inventory/tasks/adhoc``).",
+        "properties": {
+          "first_close": {
+            "default": true,
+            "title": "First Close",
+            "type": "boolean"
+          },
+          "optional_reports_available": {
+            "default": false,
+            "title": "Optional Reports Available",
+            "type": "boolean"
+          },
+          "reports": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ShiftReportResponse"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "title": "TillCloseTasksResponse",
+        "type": "object"
+      },
       "TillOpenRequest": {
         "properties": {
           "branch_id": {
@@ -36414,6 +36667,68 @@
           }
         ],
         "summary": "Get Calendar",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/enquiries": {
+      "get": {
+        "description": "The custom-order enquiries sent from the storefront, newest first.\n\nRead-only: these are leads someone answers by phone or email, not bookings on\nthe calendar. Same permission as the custom-order diary, since the same people\nhandle both.",
+        "operationId": "list_enquiries_api_v1_admin_custom_orders_enquiries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedCustomOrderEnquiries"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Enquiries",
         "tags": [
           "Custom Orders"
         ]
@@ -44369,6 +44684,88 @@
         ]
       }
     },
+    "/api/v1/custom-orders/enquiry": {
+      "post": {
+        "description": "Take a custom-order request from the \"We cater to\" section of the home page.\n\nThis stores a lead and emails the shop \u2014 it does **not** create an order or a\n`CustomOrder`, and holds no slot on the custom-cake calendar. A human reads it\nand decides whether it becomes a booking, which is why the form tells the\ncustomer their delivery date is confirmed only after review.",
+        "operationId": "submit_enquiry_api_v1_custom_orders_enquiry_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderEnquiryCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderEnquiryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Enquiry",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/custom-orders/enquiry/image": {
+      "post": {
+        "description": "Upload one inspiration photo for a custom-order enquiry, returning its URL.\n\nPublic because the person filling in the enquiry form has no account \u2014 the\nadmin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot\nbe reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is\nsingle-use, and one enquiry uploads up to four photos before it submits, so a\ntoken spent on the first upload would fail the rest. The human check lives on\n`/enquiry` \u2014 the request that actually stores a lead and sends mail. This\nendpoint only puts a re-encoded, downscaled, size- and type-capped image in\nthe bucket, and a rate limit bounds the rest.",
+        "operationId": "upload_enquiry_image_api_v1_custom_orders_enquiry_image_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Enquiry Image",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
     "/api/v1/dashboard/today": {
       "get": {
         "description": "The trading day \u2014 or any date range \u2014 at a glance, over every channel.\n\nNo dates \u2192 the live current day (unchanged). A `date_from`/`date_to` pair \u2192\nthat range. An optional `statuses` selection narrows the headline figures and\nthe channel/fulfilment/payment mix to those statuses; `by_status` always\nreports the full spread so it can drive the selector.",
@@ -44494,6 +44891,28 @@
               ],
               "description": "Narrow every figure to these legal entities (multi)",
               "title": "Legal Entity Ids"
+            }
+          },
+          {
+            "description": "Narrow every figure to orders holding a line in these product categories (multi)",
+            "in": "query",
+            "name": "category_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow every figure to orders holding a line in these product categories (multi)",
+              "title": "Category Ids"
             }
           }
         ],
@@ -55001,6 +55420,28 @@
             }
           },
           {
+            "description": "Multi-select product categories; matches orders holding at least one line in any of them (the OR of them).",
+            "in": "query",
+            "name": "category_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-select product categories; matches orders holding at least one line in any of them (the OR of them).",
+              "title": "Category Ids"
+            }
+          },
+          {
             "in": "query",
             "name": "page",
             "required": false,
@@ -57362,11 +57803,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ShiftReportResponse"
-                  },
-                  "title": "Response Inventory Tasks For Till Api V1 Pos Inventory Tasks Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/TillCloseTasksResponse"
                 }
               }
             },
@@ -57389,6 +57826,59 @@
           }
         ],
         "summary": "Inventory Tasks For Till",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/tasks/adhoc": {
+      "post": {
+        "description": "Fill reports on a subsequent close: raise a fresh set of at-till-close\nreports for this till so the shop can complete them before closing directly.",
+        "operationId": "inventory_adhoc_tasks_for_till_api_v1_pos_inventory_tasks_adhoc_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "till_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Till Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShiftReportResponse"
+                  },
+                  "title": "Response Inventory Adhoc Tasks For Till Api V1 Pos Inventory Tasks Adhoc Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Inventory Adhoc Tasks For Till",
         "tags": [
           "POS Inventory"
         ]

@@ -487,13 +487,6 @@ async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) ->
         db, branch.id, day.business_date, settings.order_number_reset_daily
     )
 
-    address = order.shipping_address_snapshot or {}
-    customer_name = " ".join(
-        str(part).strip()
-        for part in (address.get("first_name"), address.get("last_name"))
-        if part
-    ).strip()
-
     order.is_pos = True
     order.branch_id = branch.id
     # `source` is stamped at creation, not here — an order that never reaches a
@@ -513,15 +506,34 @@ async def attach_online_order(db: AsyncSession, order: Order, branch: Branch) ->
     order.business_date = day.business_date
     order.check_number = check_number
     order.opened_at = utcnow()
-    # The counter needs somebody to call, and the storefront's snapshot is the
-    # only place a guest's name and number exist. Normalised the same way the
-    # order's own `customer_phone` already was, so landing on the register does
-    # not un-normalise it — the snapshot carries the E.164 `PhoneInput` emitted.
-    order.customer_name = customer_name or None
-    _phone = describe_phone(str(address.get("phone") or ""))
-    order.customer_phone = _phone.e164 or (str(address.get("phone") or "") or None)
-    order.customer_phone_country = _phone.country
-    order.customer_phone_type = _phone.type
+    # The counter needs somebody to call. For a DELIVERY order the customer's
+    # name lives only on the address snapshot (`_resolve_contact` deliberately
+    # leaves `customer_name` null for a delivery, since the admin reads it off
+    # the snapshot), so it is lifted onto the order here for the register.
+    #
+    # A PICKUP order has no address snapshot — its name and number arrive on
+    # `pickup_contact` and were already written to `customer_name`/
+    # `customer_phone` at creation (`_resolve_contact`). This block used to run
+    # unconditionally and re-derive both from the (empty) snapshot, so every
+    # website pickup order reached the register with `customer_name` and
+    # `customer_phone` nulled — the counter had nobody to call (MM-20260919-002,
+    # -003, -004, -005). It now only fills contact from a snapshot that exists;
+    # a pickup keeps the contact it already carries.
+    address = order.shipping_address_snapshot
+    if address:
+        customer_name = " ".join(
+            str(part).strip()
+            for part in (address.get("first_name"), address.get("last_name"))
+            if part
+        ).strip()
+        # Normalised the same way the order's own `customer_phone` already was,
+        # so landing on the register does not un-normalise it — the snapshot
+        # carries the E.164 `PhoneInput` emitted.
+        order.customer_name = customer_name or None
+        _phone = describe_phone(str(address.get("phone") or ""))
+        order.customer_phone = _phone.e164 or (str(address.get("phone") or "") or None)
+        order.customer_phone_country = _phone.country
+        order.customer_phone_type = _phone.type
     return order
 
 

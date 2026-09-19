@@ -131,6 +131,36 @@ async def test_the_counter_gets_somebody_to_call(attach):
 
 
 @pytest.mark.asyncio
+async def test_a_pickup_keeps_the_contact_it_arrived_with(attach):
+    """
+    A pickup order has no shipping snapshot — its name and number arrive on
+    `pickup_contact` and are written to `customer_name`/`customer_phone` at
+    creation by `_resolve_contact`. Landing on the register must not touch them.
+
+    It used to: the attach re-derived both from `shipping_address_snapshot`,
+    which is null for a pickup, so `customer_name` and `customer_phone` were
+    nulled on every website pickup order and the counter had nobody to call
+    (MM-20260919-002, -003, -004, -005). The Sep-18 create-side fix set the
+    contact correctly; this path then clobbered it one second later.
+    """
+    order = _order(
+        delivery_method=DeliveryMethodEnum.PICKUP,
+        shipping_address_snapshot=None,
+        customer_name="Aisha Khan",
+        customer_phone="+971509998877",
+        customer_phone_country="AE",
+        customer_phone_type="mobile",
+    )
+    await pos_order_service.attach_online_order(None, order, BRANCH)
+    assert order.customer_name == "Aisha Khan"
+    assert order.customer_phone == "+971509998877"
+    assert order.customer_phone_country == "AE"
+    # And it is still wired to the register.
+    assert order.is_pos is True
+    assert order.order_type == OrderTypeEnum.PICKUP.value
+
+
+@pytest.mark.asyncio
 async def test_the_storefront_order_number_is_kept(attach):
     """
     It is on the customer's confirmation email and it is what they will say on

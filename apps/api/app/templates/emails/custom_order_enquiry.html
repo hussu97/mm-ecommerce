@@ -1,0 +1,86 @@
+{#
+  A customer sent a custom-order enquiry from the "We cater to" section.
+
+  This is a lead, not an order — nothing is booked and there is no admin page to
+  link to. It carries everything the customer typed, their inspiration photos and
+  the time it arrived, so it can be answered straight from the inbox. Always
+  English: it reaches the one person who quotes custom cakes.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}New custom-order enquiry — {{ customer_name }}{% endblock %}
+{% block preheader %}{{ customer_phone }}{% if delivery_by %} &middot; wants it by {{ delivery_by }}{% endif %}{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Custom-order enquiry</p>
+    <h2 class="hero-title">{{ customer_name }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>
+      A customer asked about a custom order through the website. Nothing has been
+      booked — this is a request to review and reply to.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 140px; padding: 5px 0;">Name</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="auto">{{ customer_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Phone</td>
+            <td class="kv-value" style="padding: 5px 0;">
+              <a href="tel:{{ customer_phone }}" style="color: inherit;">{{ customer_phone }}</a>
+            </td>
+          </tr>
+          {% if approx_kg %}
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Approx. size</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ approx_kg }}</td>
+          </tr>
+          {% endif %}
+          {% if delivery_by %}
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Wanted by</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ delivery_by }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Received</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ submitted_at }}</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <p class="kv-label" style="margin: 22px 0 6px;">What they asked for</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <p class="kv-value" style="margin: 0; white-space: pre-wrap;" dir="auto">{{ description }}</p>
+      </td></tr>
+    </table>
+
+    {% if image_urls %}
+    <p class="kv-label" style="margin: 22px 0 6px;">Inspiration photos</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {% for url in image_urls %}
+      <tr><td style="padding: 4px 0;">
+        <a href="{{ url }}" style="color: #8a5a64; word-break: break-all;">Photo {{ loop.index }}</a>
+      </td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    <p style="margin-top: 22px;">
+      Delivery date is confirmed only after you review this — the customer was
+      told the date they picked is a preference, not a confirmation.
+    </p>
+  </td></tr>
+</table>
+{% endblock %}

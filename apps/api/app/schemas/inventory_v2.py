@@ -390,6 +390,21 @@ class ShiftReportResponse(ORMModel):
         return [column.to_dict() for column in columns_for(report_type)]
 
 
+class TillCloseTasksResponse(BaseModel):
+    """The at-close report bundle handed to the register when a till closes.
+
+    ``reports`` are the ones to fill now (mandatory at the first close of the
+    trading day, as before). ``first_close`` tells the register this is the day's
+    first close so it presents them by default; on a later close it is false and,
+    when ``optional_reports_available`` is true, the register offers the choice to
+    close directly or fill fresh reports first (see ``/pos/inventory/tasks/adhoc``).
+    """
+
+    reports: list[ShiftReportResponse] = []
+    first_close: bool = True
+    optional_reports_available: bool = False
+
+
 class OrderInventoryMovementLine(BaseModel):
     item_id: UUID
     item_name: str

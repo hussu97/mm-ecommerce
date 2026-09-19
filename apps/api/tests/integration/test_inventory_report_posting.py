@@ -623,3 +623,124 @@ async def test_overlapping_till_does_not_chain(engine, env):
         engine, env, prior_close=now, till_open=till_open
     )
     assert opened == till_open
+
+
+# ── Cadence: at-till-close reports fire at the FIRST close of the business day ──
+
+
+def _closed_till(branch_id, user_id, *, opened_at, closed_at):
+    return Till(
+        branch_id=branch_id,
+        user_id=user_id,
+        business_date=BUSINESS_DATE,
+        status=TillStatusEnum.CLOSED.value,
+        opened_at=opened_at,
+        closed_at=closed_at,
+    )
+
+
+async def test_per_till_report_raised_only_at_first_close(engine, env):
+    """The at-till-close report is raised once, at the day's first close. A later
+    close raises nothing mandatory (once the first is resolved) but offers the
+    optional step, and opting in mints a fresh ad-hoc report keyed to that till."""
+    branch_id, _warehouse_id, user_id, _item_id, _template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        now = report_service.utcnow()
+        t1 = _closed_till(
+            branch_id,
+            user_id,
+            opened_at=now - timedelta(hours=6),
+            closed_at=now - timedelta(hours=3),
+        )
+        db.add(t1)
+        await db.flush()
+
+        reports, first_close, optional = await report_service.till_close_tasks(
+            db, till=t1
+        )
+        assert first_close is True
+        assert optional is False
+        assert len(reports) == 1
+        assert reports[0].idempotency_key.endswith(":day")
+        first_id = reports[0].id
+
+        # Resolve it so it no longer surfaces as a pending mandatory report.
+        resolved = await db.get(ShiftInventoryReport, first_id)
+        resolved.status = ShiftInventoryReportStatusEnum.APPROVED.value
+        await db.flush()
+
+        u2 = User(
+            email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.com", hashed_password="x"
+        )
+        db.add(u2)
+        await db.flush()
+        t2 = _closed_till(
+            branch_id,
+            u2.id,
+            opened_at=now - timedelta(hours=2),
+            closed_at=now,
+        )
+        db.add(t2)
+        await db.flush()
+
+        reports2, first_close2, optional2 = await report_service.till_close_tasks(
+            db, till=t2
+        )
+        assert first_close2 is False
+        assert reports2 == []
+        assert optional2 is True
+
+        adhoc = await report_service.create_adhoc_tasks_for_till(db, till=t2)
+        assert len(adhoc) == 1
+        assert adhoc[0].idempotency_key.startswith("shift-inventory-adhoc:")
+        assert str(t2.id) in adhoc[0].idempotency_key
+        assert adhoc[0].id != first_id
+
+        await db.rollback()
+
+
+async def test_unresolved_first_close_report_carries_to_next_close(engine, env):
+    """An unresolved first-close report keeps surfacing as mandatory on the next
+    close — the optional step is not offered while something is still pending."""
+    branch_id, _warehouse_id, user_id, _item_id, _template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        now = report_service.utcnow()
+        t1 = _closed_till(
+            branch_id,
+            user_id,
+            opened_at=now - timedelta(hours=6),
+            closed_at=now - timedelta(hours=3),
+        )
+        db.add(t1)
+        await db.flush()
+        reports, first_close, _optional = await report_service.till_close_tasks(
+            db, till=t1
+        )
+        assert first_close is True
+        assert len(reports) == 1
+        first_id = reports[0].id
+
+        u2 = User(
+            email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.com", hashed_password="x"
+        )
+        db.add(u2)
+        await db.flush()
+        t2 = _closed_till(
+            branch_id,
+            u2.id,
+            opened_at=now - timedelta(hours=2),
+            closed_at=now,
+        )
+        db.add(t2)
+        await db.flush()
+
+        reports2, first_close2, optional2 = await report_service.till_close_tasks(
+            db, till=t2
+        )
+        assert first_close2 is False
+        assert optional2 is False
+        assert [r.id for r in reports2] == [first_id]
+
+        await db.rollback()

@@ -9,8 +9,8 @@ An item's cost is now derived from its surviving cost layers
 (``cost_layer_service.item_average_cost`` / ``InventoryLevel.average_cost``) — 0
 until its first receipt or production. These columns have no readers left.
 
-Revision ID: 264_drop_inventory_item_cost
-Revises: 263_po_receiving_variance
+Revision ID: 267_drop_inventory_item_cost
+Revises: 266_po_receiving_variance
 Create Date: 2026-09-19
 """
 
@@ -22,8 +22,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "264_drop_inventory_item_cost"
-down_revision: Union[str, None] = "263_po_receiving_variance"
+revision: str = "267_drop_inventory_item_cost"
+down_revision: Union[str, None] = "266_po_receiving_variance"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -18,10 +18,10 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { ordersApi, exportApi } from '@/lib/api';
+import { ordersApi, exportApi, categoriesApi } from '@/lib/api';
 import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
 import type { Branch, LegalEntity } from '@/lib/pos-types';
-import type { Order, OrderStatus } from '@/lib/types';
+import type { Category, Order, OrderStatus } from '@/lib/types';
 import { Badge, Button, Pagination, LoadError, Spinner } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { CourierLogo } from '@/components/orders/CourierLogo';
@@ -126,11 +126,13 @@ export default function OrdersPage() {
     toggleCourier,
     toggleBranch,
     toggleLegalEntity,
+    toggleCategory,
     clearAll,
   } = useOrderFilters();
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [legalEntities, setLegalEntities] = useState<LegalEntity[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [exportError, setExportError] = useState('');
   // The search box is responsive while typing; the committed value lives in the
   // URL (so it persists and is shareable), written after a short debounce.
@@ -151,6 +153,10 @@ export default function OrdersPage() {
       .list()
       .then(setLegalEntities)
       .catch(() => setLegalEntities([]));
+    void categoriesApi
+      .list()
+      .then(rows => setCategories(rows.filter(c => c.is_active)))
+      .catch(() => setCategories([]));
   }, []);
 
   const orderParams = toOrdersParams(filters);
@@ -206,6 +212,7 @@ export default function OrdersPage() {
         onToggleCourier={toggleCourier}
         onToggleBranch={toggleBranch}
         onToggleLegalEntity={toggleLegalEntity}
+        onToggleCategory={toggleCategory}
         onClearAll={() => {
           setSearchInput('');
           clearAll();
@@ -217,6 +224,10 @@ export default function OrdersPage() {
         legalEntityOptions={legalEntities.map(e => ({
           value: e.id,
           label: e.brand_name,
+        }))}
+        categoryOptions={categories.map(c => ({
+          value: c.id,
+          label: c.name,
         }))}
       />
 

@@ -581,6 +581,26 @@ export interface PaginatedCustomers {
   pages: number;
 }
 
+// ─── Custom-order enquiries (storefront leads, not bookings) ─────────────────
+export interface CustomOrderEnquiry {
+  id: string;
+  customer_name: string;
+  customer_phone: string;
+  description: string;
+  approx_kg: number | null;
+  reference_image_urls: string[];
+  delivery_by: string | null;
+  created_at: string;
+}
+
+export interface PaginatedCustomOrderEnquiries {
+  items: CustomOrderEnquiry[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
 // ─── Dashboard (home) ───────────────────────────────────────────────────────
 
 /** One slice of the day — a status, channel, fulfilment or payment method. */
@@ -657,6 +677,10 @@ export interface DashboardToday {
   /** By legal entity billed under (a selector, like by_branch); null-entity
    *  orders fall in an "Unknown" bucket with no code. */
   by_legal_entity: DashboardBreakdownRow[];
+  /** By product category, item-level (revenue = sum of matching lines, orders =
+   *  distinct orders touching it). A selector, like by_branch; a line with no
+   *  category falls in an "Uncategorised" bucket with no code. */
+  by_category: DashboardBreakdownRow[];
   by_channel: DashboardBreakdownRow[];
   by_fulfillment: DashboardBreakdownRow[];
   by_payment: DashboardBreakdownRow[];

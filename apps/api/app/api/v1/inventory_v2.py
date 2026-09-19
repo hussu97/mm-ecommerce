@@ -57,6 +57,7 @@ from app.schemas.inventory_v2 import (
     StockAuditPreviewResponse,
     StockAuditRequest,
     StockAuditRowInput,
+    TillCloseTasksResponse,
     VersionedRecipeResponse,
 )
 from app.schemas.production import ProducibleItemBasis
@@ -796,7 +797,7 @@ async def add_shift_report_comment(
     return report
 
 
-@pos_inventory_router.get("/tasks", response_model=list[ShiftReportResponse])
+@pos_inventory_router.get("/tasks", response_model=TillCloseTasksResponse)
 async def inventory_tasks_for_till(
     till_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -806,7 +807,29 @@ async def inventory_tasks_for_till(
     if till is None:
         raise NotFoundError("Till not found")
     await _assert_branch_access(db, user, till.branch_id)
-    return await report_service.ensure_tasks_for_till(db, till=till)
+    reports, first_close, optional_available = await report_service.till_close_tasks(
+        db, till=till
+    )
+    return TillCloseTasksResponse(
+        reports=reports,
+        first_close=first_close,
+        optional_reports_available=optional_available,
+    )
+
+
+@pos_inventory_router.post("/tasks/adhoc", response_model=list[ShiftReportResponse])
+async def inventory_adhoc_tasks_for_till(
+    till_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.reports.submit")),
+):
+    """Fill reports on a subsequent close: raise a fresh set of at-till-close
+    reports for this till so the shop can complete them before closing directly."""
+    till = await db.get(Till, till_id)
+    if till is None:
+        raise NotFoundError("Till not found")
+    await _assert_branch_access(db, user, till.branch_id)
+    return await report_service.create_adhoc_tasks_for_till(db, till=till)
 
 
 @pos_inventory_router.post(

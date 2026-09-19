@@ -262,7 +262,7 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
     # There is no per-item cost column: cost is FIFO, held in the item's cost
     # layers and summarised on ``InventoryLevel.average_cost`` per warehouse. The
     # redundant, never-updated ``cost``/``costing_method`` columns were dropped
-    # (migration 264) — an item's cost is derived via
+    # (migration 267) — an item's cost is derived via
     # ``cost_layer_service.item_average_cost`` (0 until its first receipt).
     # Produced items lose weight in the process; 0.9 means 10% is lost.
     yield_percentage: Mapped[Any] = mapped_column(

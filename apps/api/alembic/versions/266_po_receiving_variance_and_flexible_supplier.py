@@ -8,8 +8,8 @@ receiver's note when what arrived differs from what was ordered.
 supplier may then add any active purchasable inventory item, not only the mapped
 ones (default false: strict, mapped-only).
 
-Revision ID: 263_po_receiving_variance
-Revises: 262_production_line_basis
+Revision ID: 266_po_receiving_variance
+Revises: 265_production_line_basis
 Create Date: 2026-09-19
 """
 
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "263_po_receiving_variance"
-down_revision: Union[str, None] = "262_production_line_basis"
+revision: str = "266_po_receiving_variance"
+down_revision: Union[str, None] = "265_production_line_basis"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

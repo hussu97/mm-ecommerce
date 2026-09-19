@@ -54,9 +54,23 @@ interface GalleryItem {
   alt?: string;
 }
 
-interface Occasion {
-  icon: string;
-  label: string;
+/** Copy for the storefront's custom-order enquiry form (the "We cater to"
+ *  section). Every field is optional; the storefront falls back to English. */
+interface CaterForm {
+  heading?: string;
+  intro?: string;
+  name_label?: string;
+  phone_label?: string;
+  description_label?: string;
+  description_placeholder?: string;
+  kg_label?: string;
+  images_label?: string;
+  images_hint?: string;
+  delivery_label?: string;
+  delivery_note?: string;
+  submit_label?: string;
+  success_title?: string;
+  success_body?: string;
 }
 
 interface HomeContent {
@@ -91,7 +105,8 @@ interface HomeContent {
     subtitle?: string;
     cta_text?: string;
     cta_href?: string;
-    occasions?: Occasion[];
+    gallery?: GalleryItem[];
+    form?: CaterForm;
   };
   seo?: { title?: string; description?: string };
 }
@@ -542,19 +557,68 @@ export function HomeEditor({ content, onChange }: Props) {
         />
       </div>
 
-      <Repeatable<Occasion>
-        items={c.cater?.occasions ?? []}
-        onChange={occasions => setBlock('cater', { occasions })}
-        blank={() => ({ icon: '🎉', label: '' })}
-        addLabel="Add occasion"
-      >
-        {(occasion, set) => (
-          <div className="grid grid-cols-[100px_1fr] gap-3">
-            <Field label="Emoji" value={occasion.icon} onChange={icon => set({ icon })} />
-            <Field label="Label" value={occasion.label} onChange={label => set({ label })} />
-          </div>
-        )}
-      </Repeatable>
+      <div className="mt-4">
+        <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
+          Custom-cake gallery
+        </p>
+        <Repeatable<GalleryItem>
+          items={c.cater?.gallery ?? []}
+          onChange={gallery => setBlock('cater', { gallery })}
+          blank={() => ({})}
+          addLabel="Add cake photo"
+          max={24}
+        >
+          {(shot, set) => (
+            <div className="grid sm:grid-cols-2 gap-4">
+              <ImageField
+                label="Photo"
+                value={shot.image ?? ''}
+                onChange={image => set({ image })}
+                suggestions={BUNDLED_PHOTOS}
+                folder="cater"
+                aspect="aspect-[3/4]"
+              />
+              <Field
+                label="Caption / occasion"
+                value={shot.alt ?? ''}
+                onChange={alt => set({ alt })}
+              />
+            </div>
+          )}
+        </Repeatable>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">
+          Enquiry form
+        </p>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Form heading" value={c.cater?.form?.heading ?? ''} onChange={heading => setBlock('cater', { form: { ...c.cater?.form, heading } })} />
+          <Field label="Submit button" value={c.cater?.form?.submit_label ?? ''} onChange={submit_label => setBlock('cater', { form: { ...c.cater?.form, submit_label } })} />
+        </div>
+        <div className="mt-4">
+          <TextArea label="Intro" value={c.cater?.form?.intro ?? ''} onChange={intro => setBlock('cater', { form: { ...c.cater?.form, intro } })} />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <Field label="Name label" value={c.cater?.form?.name_label ?? ''} onChange={name_label => setBlock('cater', { form: { ...c.cater?.form, name_label } })} />
+          <Field label="Phone label" value={c.cater?.form?.phone_label ?? ''} onChange={phone_label => setBlock('cater', { form: { ...c.cater?.form, phone_label } })} />
+          <Field label="Description label" value={c.cater?.form?.description_label ?? ''} onChange={description_label => setBlock('cater', { form: { ...c.cater?.form, description_label } })} />
+          <Field label="Description placeholder" value={c.cater?.form?.description_placeholder ?? ''} onChange={description_placeholder => setBlock('cater', { form: { ...c.cater?.form, description_placeholder } })} />
+          <Field label="Weight (kg) label" value={c.cater?.form?.kg_label ?? ''} onChange={kg_label => setBlock('cater', { form: { ...c.cater?.form, kg_label } })} />
+          <Field label="Photos label" value={c.cater?.form?.images_label ?? ''} onChange={images_label => setBlock('cater', { form: { ...c.cater?.form, images_label } })} />
+          <Field label="Photos hint" value={c.cater?.form?.images_hint ?? ''} onChange={images_hint => setBlock('cater', { form: { ...c.cater?.form, images_hint } })} />
+          <Field label="Delivery-by label" value={c.cater?.form?.delivery_label ?? ''} onChange={delivery_label => setBlock('cater', { form: { ...c.cater?.form, delivery_label } })} />
+        </div>
+        <div className="mt-4">
+          <TextArea label="Delivery-by note" value={c.cater?.form?.delivery_note ?? ''} onChange={delivery_note => setBlock('cater', { form: { ...c.cater?.form, delivery_note } })} />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4">
+          <Field label="Success title" value={c.cater?.form?.success_title ?? ''} onChange={success_title => setBlock('cater', { form: { ...c.cater?.form, success_title } })} />
+        </div>
+        <div className="mt-4">
+          <TextArea label="Success message" value={c.cater?.form?.success_body ?? ''} onChange={success_body => setBlock('cater', { form: { ...c.cater?.form, success_body } })} />
+        </div>
+      </div>
 
       {/* ── SEO ────────────────────────────────────────────────────────────── */}
       <Section title="SEO" />

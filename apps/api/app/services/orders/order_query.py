@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from sqlalchemy import and_, exists, or_
 
-from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
+from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
-from app.models.pos_order import OrderSourceEnum
+from app.models.pos_order import OrderItemStatusEnum, OrderSourceEnum
+from app.models.product import Product
 from app.services.couriers import courier_catalog
 
 #: The synthetic code for a counter sale — it is not a real carrier, but the
@@ -131,6 +132,27 @@ def courier_clause(codes: list[str] | None):
     """An OR over `courier_predicate` for a multi-select, or None for no filter."""
     preds = [courier_predicate(c) for c in (codes or []) if c]
     return or_(*preds) if preds else None
+
+
+def category_clause(category_ids: list | None):
+    """Select orders holding at least one line in one of `category_ids`, or None.
+
+    Unlike the courier/branch/legal-entity filters — each a column on the order —
+    a category lives on the *line*: an order can span several categories, so this
+    is an EXISTS over its `order_items`, joined to the product that carries the
+    category. Voided counter lines (`status = 'void'`) do not make an order
+    belong to a category; an off-counter line has a NULL status, so the match is
+    `is_distinct_from('void')`, never `!= 'void'` (which NULL would fail).
+    """
+    ids = [c for c in (category_ids or []) if c]
+    if not ids:
+        return None
+    return exists().where(
+        OrderItem.order_id == Order.id,
+        OrderItem.product_id == Product.id,
+        Product.category_id.in_(ids),
+        OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+    )
 
 
 def courier_code_for(

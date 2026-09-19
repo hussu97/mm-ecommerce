@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
-from app.core import receipt_token
+from app.core import background, receipt_token
 from app.core import search as search_text
 from app.core.exceptions import (
     BadRequestError,
@@ -1567,15 +1568,20 @@ async def create_order(
     result = await db.execute(stmt)
     response = await to_response(db, result.scalar_one())
 
-    # 11. And tell the customer, here rather than later. The confirmation used
-    #    to be sent only by `payment_service.create_session`, one HTTP call
-    #    further on — so a browser that closed, timed out or lost signal in
-    #    between left a confirmed order printing in the kitchen while the
-    #    customer had been told nothing at all. Cash is the only method that
-    #    confirms at creation; a card order is still announced by the Stripe
-    #    webhook.
+    # 11. And tell the customer — but off the request's critical path. The
+    #    confirmation used to be sent only by `payment_service.create_session`,
+    #    one HTTP call further on, so a browser that closed in between left a
+    #    confirmed order printing in the kitchen with the customer told nothing;
+    #    sending it here fixed that. Sending it *inline* then cost every cash
+    #    checkout three sequential Resend round-trips — ~2s the customer spent
+    #    watching a spinner after the order was already written, confirmed and on
+    #    the register. It is fired as a tracked background task instead: the send
+    #    still happens server-side regardless of the browser (so the original bug
+    #    stays fixed), and the response returns as soon as the order exists.
+    #    Cash is the only method that confirms at creation; a card order is still
+    #    announced by the Stripe webhook.
     if confirmed_as_cash:
-        await _send_confirmation_emails(response)
+        _dispatch_confirmation_emails(response)
 
     return response
 
@@ -1766,14 +1772,43 @@ async def preview_order(
     )
 
 
+def _dispatch_confirmation_emails(order: OrderResponse) -> None:
+    """
+    Send the confirmation emails without making the checkout wait for them.
+
+    Fired as a tracked background task rather than awaited inline: the three
+    Resend round-trips (customer confirmation + two owner notifications) are
+    ~2s of network the customer would otherwise spend watching a spinner after
+    the order is already written, confirmed and on the register. Nothing in the
+    response depends on them, and `order` is a fully materialised
+    `OrderResponse` carrying no session, so the task is safe to outlive the
+    request. `spawn_tracked` holds a reference so the loop's weak one cannot let
+    it be collected mid-send, and reports a task that dies to Sentry (the
+    convention-5 helper; a bare `create_task` would drop an escaping exception).
+    """
+    background.spawn_tracked(
+        _send_confirmation_emails(order),
+        name=f"confirmation-emails:{order.order_number}",
+    )
+
+
 async def _send_confirmation_emails(order: OrderResponse) -> None:
     """
     Best-effort: a confirmed order is not un-confirmed by a mail provider
     having a bad minute, and the failure is logged rather than raised.
+
+    The customer's confirmation and the owners' notification are independent, so
+    they go out concurrently rather than one after the other — the send is off
+    the request path now (`_dispatch_confirmation_emails`), but a task that holds
+    the event loop for three sequential round-trips still delays every other
+    request sharing this single-worker process. `gather` lets each `email_service`
+    call (itself never-raising and journalled) run without waiting on the other.
     """
     try:
-        await email_service.send_order_confirmation(order)
-        await email_service.send_owner_order_notification(order)
+        await asyncio.gather(
+            email_service.send_order_confirmation(order),
+            email_service.send_owner_order_notification(order),
+        )
     except Exception:
         logger.exception(
             "Could not send confirmation emails for %s", order.order_number
@@ -2191,6 +2226,7 @@ async def get_all_admin(
     branch_id: uuid.UUID | None = None,
     branch_ids: list[uuid.UUID] | None = None,
     legal_entity_ids: list[uuid.UUID] | None = None,
+    category_ids: list[uuid.UUID] | None = None,
     statuses: list[str] | None = None,
     couriers: list[str] | None = None,
     date_from: str | None = None,
@@ -2237,6 +2273,13 @@ async def get_all_admin(
 
     if legal_entity_ids:
         base_stmt = base_stmt.where(Order.legal_entity_id.in_(legal_entity_ids))
+
+    # Category is a line-level filter (an order can span several), so it is an
+    # EXISTS over the order's items rather than a column `IN` — the same clause
+    # the dashboard's "Sales by Category" selector narrows by.
+    category_filter = order_query.category_clause(category_ids)
+    if category_filter is not None:
+        base_stmt = base_stmt.where(category_filter)
 
     bounds = await business_day_service.range_bounds(db, date_from, date_to)
     if bounds is not None:

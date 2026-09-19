@@ -42,6 +42,11 @@ BRANCH = PickupBranchResponse(
 )
 
 
+# Distinguishes "caller said nothing" (use the default delivery snapshot) from
+# "caller passed None" (a pickup order, which genuinely has no snapshot).
+_UNSET: dict = {}
+
+
 def _order(
     *,
     status: OrderStatusEnum = OrderStatusEnum.CONFIRMED,
@@ -57,6 +62,9 @@ def _order(
     payment_method: str | None = "stripe",
     source: str | None = "online",
     refunded_amount: float = 0.0,
+    customer_name: str | None = None,
+    customer_phone: str | None = None,
+    shipping_address_snapshot: dict | None = _UNSET,
     **stamps,
 ) -> OrderResponse:
     return OrderResponse(
@@ -64,6 +72,8 @@ def _order(
         order_number="MM-20260804-014",
         user_id=None,
         email="customer@example.com",
+        customer_name=customer_name,
+        customer_phone=customer_phone,
         delivery_method=method,
         delivery_fee=15.0,
         subtotal=250.0,
@@ -71,13 +81,17 @@ def _order(
         total=240.0,
         status=status,
         promo_code_used="WELCOME10",
-        shipping_address_snapshot={
-            "first_name": "Layla",
-            "last_name": "Al Nuaimi",
-            "address_line_1": "Villa 14, Al Majaz 3",
-            "city": "Sharjah",
-            "phone": "+971501234567",
-        },
+        shipping_address_snapshot=(
+            {
+                "first_name": "Layla",
+                "last_name": "Al Nuaimi",
+                "address_line_1": "Villa 14, Al Majaz 3",
+                "city": "Sharjah",
+                "phone": "+971501234567",
+            }
+            if shipping_address_snapshot is _UNSET
+            else shipping_address_snapshot
+        ),
         payment_method=payment_method,
         payment_provider="stripe",
         payment_id=payment_id,
@@ -550,6 +564,50 @@ async def test_the_owner_email_names_the_kitchen_for_a_delivery_order(
     text = body(sent[0])
     assert "Melting Moments · Barsha" in text, "the fulfilling branch must be named"
     assert "Dubai" in text, "the branch city should follow the name"
+
+
+@pytest.mark.asyncio
+async def test_the_owner_email_gives_the_counter_the_pickup_customer_to_call(sent):
+    """
+    A store-pickup order has no address snapshot — its name and number live on
+    the order itself (`customer_name`/`customer_phone`, from `pickup_contact`).
+    The owners' "new order" email read only the snapshot, so every collection
+    order reached the two people who run the shop as customer "—" with no
+    number: the one email whose job is to say who to call, unable to.
+    """
+    order = _order(
+        method=DeliveryMethodEnum.PICKUP,
+        branch=BRANCH,
+        shipping_address_snapshot=None,
+        customer_name="Aisha Khan",
+        customer_phone="+971509998877",
+    )
+    await email_service.send_owner_order_notification(order)
+
+    assert sent, "owner notification should send for an online pickup order"
+    text = body(sent[0])
+    assert "Aisha Khan" in text, "the collector's name must reach the owners"
+    assert "+971509998877" in text, "the number to call must reach the owners"
+
+
+@pytest.mark.asyncio
+async def test_a_collection_order_greets_the_customer_by_name(sent):
+    """The greeting read the snapshot's first name, so a pickup customer — who
+    has no snapshot — was greeted "Hi there". It now reads the order's own
+    name."""
+    order = _order(
+        status=OrderStatusEnum.CONFIRMED,
+        method=DeliveryMethodEnum.PICKUP,
+        branch=BRANCH,
+        shipping_address_snapshot=None,
+        customer_name="Aisha Khan",
+        customer_phone="+971509998877",
+    )
+    await email_service.send_order_confirmation(order)
+
+    assert sent, "a confirmed collection order sends a confirmation"
+    text = body(sent[0])
+    assert "Aisha" in text and "Hi there" not in text
 
 
 @pytest.mark.asyncio

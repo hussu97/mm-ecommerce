@@ -136,6 +136,12 @@ class DashboardTodayResponse(BaseModel):
     #: nullable, so a non-registered counter sale falls in an "Unknown" bucket
     #: with a null `code`.
     by_legal_entity: list[BreakdownRow]
+    #: By product category, over the orders' lines (item-level): revenue is the
+    #: sum of the matching lines' `total_price` and `orders` the distinct count of
+    #: orders touching the category, so an order spanning categories is counted in
+    #: each. A selector, like `by_branch`; a line with no category (or no product)
+    #: falls in an "Uncategorised" bucket with a null `code`.
+    by_category: list[BreakdownRow]
     #: By order source — storefront, cashier, aggregator.
     by_channel: list[BreakdownRow]
     #: Delivery vs pickup.

@@ -432,6 +432,7 @@ export default function DashboardPage() {
     toggleCourier,
     toggleBranch,
     toggleLegalEntity,
+    toggleCategory,
     clearAll,
   } = useOrderFilters();
 
@@ -677,6 +678,122 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* Filters — the clickable breakdowns that narrow every figure and the
+          orders list. Kept together above the charts so the whole page reads as
+          "pick your slice, then see it": status, courier, category, branch and
+          legal entity, each a multi-select. */}
+      {data && data.by_status.length > 0 && (
+        <Section title="Orders by Status">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_status.map((row) => {
+              const key = statusKey(row.label);
+              const on = filters.statuses.includes(key);
+              return (
+                <button
+                  key={row.label}
+                  onClick={() => toggleStatus(key)}
+                  aria-pressed={on}
+                  title={on ? 'Remove from filter' : 'Filter to this status'}
+                  className={cn(
+                    'flex items-center gap-2 border px-3 py-1.5 transition-colors',
+                    on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
+                  )}
+                >
+                  <Badge variant={STATUS_BADGE[key] ?? 'neutral'}>{row.label}</Badge>
+                  <span className="font-display text-sm text-gray-800">{row.orders}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* Delivered by courier — every carrier's completed orders and revenue.
+          Click to narrow every figure and the list below to that carrier. */}
+      {data?.by_courier && data.by_courier.length > 0 && (
+        <Section title="Delivered by Courier">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_courier.map((row) => {
+              const on = filters.couriers.includes(row.code);
+              return (
+                <button
+                  key={row.code}
+                  onClick={() => toggleCourier(row.code)}
+                  aria-pressed={on}
+                  title={on ? 'Remove from filter' : 'Filter to this courier'}
+                  className={cn(
+                    'flex items-center gap-2.5 border px-3 py-2 transition-colors',
+                    on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
+                  )}
+                >
+                  <CourierMark code={row.code} logoUrl={row.logo_url} size={22} />
+                  <div className="text-left leading-tight">
+                    <div className="text-xs font-body text-gray-600">{row.label}</div>
+                    <div className="font-display text-sm text-gray-800">
+                      {row.orders} · <span className="text-gray-500">{formatCurrency(row.revenue)}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </Section>
+      )}
+
+      {/* Sales by category — item-level: an order can span categories, so the
+          revenue here is the matching lines' value, not the whole order total.
+          Click to narrow every figure and the list to that category; an
+          "Uncategorised" bucket (a line with no product/category) can't toggle. */}
+      {data?.by_category && data.by_category.length > 0 && (
+        <Section title="Sales by Category">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_category.map((row) => (
+              <BreakdownCard
+                key={row.code ?? row.label}
+                row={row}
+                on={row.code ? filters.categories.includes(row.code) : false}
+                onToggle={row.code ? () => toggleCategory(row.code!) : undefined}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Sales by branch — every order resolves to a branch. Click a branch to
+          narrow every figure and the list below to it (multi-select). */}
+      {data?.by_branch && data.by_branch.length > 0 && (
+        <Section title="Sales by Branch">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_branch.map((row) => (
+              <BreakdownCard
+                key={row.code ?? row.label}
+                row={row}
+                on={row.code ? filters.branches.includes(row.code) : false}
+                onToggle={row.code ? () => toggleBranch(row.code!) : undefined}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Sales by legal entity — the registered identity each sale was billed
+          under. Click to narrow (multi-select); a non-registered counter sale
+          groups under an un-clickable "Unknown". */}
+      {data?.by_legal_entity && data.by_legal_entity.length > 0 && (
+        <Section title="Sales by Legal Entity">
+          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
+            {data.by_legal_entity.map((row) => (
+              <BreakdownCard
+                key={row.code ?? row.label}
+                row={row}
+                on={row.code ? filters.legalEntities.includes(row.code) : false}
+                onToggle={row.code ? () => toggleLegalEntity(row.code!) : undefined}
+              />
+            ))}
+          </div>
+        </Section>
+      )}
+
       {/* Sales & orders over time — hourly for a single day, daily for a range.
           Moves with every filter above (dates, statuses, couriers). */}
       {!loading && data && (
@@ -738,73 +855,6 @@ export default function DashboardPage() {
         </div>
       </Section>
 
-      {/* Delivered by courier — every carrier's completed orders and revenue.
-          Click to narrow every figure and the list below to that carrier. */}
-      {data?.by_courier && data.by_courier.length > 0 && (
-        <Section title="Delivered by Courier">
-          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
-            {data.by_courier.map((row) => {
-              const on = filters.couriers.includes(row.code);
-              return (
-                <button
-                  key={row.code}
-                  onClick={() => toggleCourier(row.code)}
-                  aria-pressed={on}
-                  title={on ? 'Remove from filter' : 'Filter to this courier'}
-                  className={cn(
-                    'flex items-center gap-2.5 border px-3 py-2 transition-colors',
-                    on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
-                  )}
-                >
-                  <CourierMark code={row.code} logoUrl={row.logo_url} size={22} />
-                  <div className="text-left leading-tight">
-                    <div className="text-xs font-body text-gray-600">{row.label}</div>
-                    <div className="font-display text-sm text-gray-800">
-                      {row.orders} · <span className="text-gray-500">{formatCurrency(row.revenue)}</span>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </Section>
-      )}
-
-      {/* Sales by branch — every order resolves to a branch. Click a branch to
-          narrow every figure and the list below to it (multi-select). */}
-      {data?.by_branch && data.by_branch.length > 0 && (
-        <Section title="Sales by Branch">
-          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
-            {data.by_branch.map((row) => (
-              <BreakdownCard
-                key={row.code ?? row.label}
-                row={row}
-                on={row.code ? filters.branches.includes(row.code) : false}
-                onToggle={row.code ? () => toggleBranch(row.code!) : undefined}
-              />
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {/* Sales by legal entity — the registered identity each sale was billed
-          under. Click to narrow (multi-select); a non-registered counter sale
-          groups under an un-clickable "Unknown". */}
-      {data?.by_legal_entity && data.by_legal_entity.length > 0 && (
-        <Section title="Sales by Legal Entity">
-          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
-            {data.by_legal_entity.map((row) => (
-              <BreakdownCard
-                key={row.code ?? row.label}
-                row={row}
-                on={row.code ? filters.legalEntities.includes(row.code) : false}
-                onToggle={row.code ? () => toggleLegalEntity(row.code!) : undefined}
-              />
-            ))}
-          </div>
-        </Section>
-      )}
-
       {/* Today's mix — where the orders and money came from */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
         <div className="bg-white border border-gray-200 p-4">
@@ -820,33 +870,6 @@ export default function DashboardPage() {
           <BreakdownBars rows={data?.by_payment ?? []} empty="No orders yet today" />
         </div>
       </div>
-
-      {/* Orders by status — click a status to narrow every figure above to it */}
-      {data && data.by_status.length > 0 && (
-        <Section title="Orders by Status">
-          <div className="bg-white border border-gray-200 p-4 flex flex-wrap gap-2">
-            {data.by_status.map((row) => {
-              const key = statusKey(row.label);
-              const on = filters.statuses.includes(key);
-              return (
-                <button
-                  key={row.label}
-                  onClick={() => toggleStatus(key)}
-                  aria-pressed={on}
-                  title={on ? 'Remove from filter' : 'Filter to this status'}
-                  className={cn(
-                    'flex items-center gap-2 border px-3 py-1.5 transition-colors',
-                    on ? 'border-primary bg-primary/5' : 'border-gray-100 hover:border-gray-300',
-                  )}
-                >
-                  <Badge variant={STATUS_BADGE[key] ?? 'neutral'}>{row.label}</Badge>
-                  <span className="font-display text-sm text-gray-800">{row.orders}</span>
-                </button>
-              );
-            })}
-          </div>
-        </Section>
-      )}
 
       {/* Quick Actions */}
       <Section title="Quick Actions">

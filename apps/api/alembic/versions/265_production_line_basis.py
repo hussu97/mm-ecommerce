@@ -11,8 +11,8 @@ and the basis-unit quantities to ``production_order_items``. All nullable/defaul
 so existing pending lines (raised in owner units) stay valid — they read as unit
 basis, and their ``planned_basis_quantity`` falls back to ``planned_quantity``.
 
-Revision ID: 262_production_line_basis
-Revises: 261_production_orders
+Revision ID: 265_production_line_basis
+Revises: 264_cater_form_heading
 Create Date: 2026-09-19
 """
 
@@ -24,8 +24,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "262_production_line_basis"
-down_revision: Union[str, None] = "261_production_orders"
+revision: str = "265_production_line_basis"
+down_revision: Union[str, None] = "264_cater_form_heading"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

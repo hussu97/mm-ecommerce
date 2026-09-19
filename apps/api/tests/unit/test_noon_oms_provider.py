@@ -497,6 +497,41 @@ class TestNoonModifierExpansion:
         assert mod.name == "I087324445B"
         assert mod.quantity == Decimal("1")
 
+    def test_coded_pick_gets_human_name_from_menu_info(self):
+        """A box's chosen picks arrive as bare item codes in the modifier map; when
+        menuInfo carries the pick's own item, the code is translated to its human
+        name so it can match a catalogue option (code kept as external_ref).
+        Regression for noon box contents that drew no stock because the option
+        name was an unmatchable code."""
+        order = {
+            "orderNr": "FG9GNNBOX01A",
+            "createdAt": "2026-09-16T12:00:00",
+            "outletInfo": {"outletCode": "MLTNGM1GBF"},
+            "items": [
+                {
+                    "itemCode": "IBOX3A",
+                    "price": 55.0,
+                    "qty": 1,
+                    "totalPrice": 55.0,
+                    "modifiers": {"MDPICKS": {"I926940603A": 1}},
+                }
+            ],
+            "menuInfo": {
+                "categories": [],
+                "items": [
+                    {"itemCode": "IBOX3A", "name": "Mix Brownies and Cookies Box of 3"},
+                    {
+                        "itemCode": "I926940603A",
+                        "name": "Dark Chocolate and Walnut Brownie",
+                    },
+                ],
+                "modifiers": [{"modifierCode": "MDPICKS", "name": "Options (Max 3)"}],
+            },
+        }
+        mod = _CLIENT._items_from_oms(order)[0].modifiers[0]
+        assert mod.name == "Dark Chocolate and Walnut Brownie"
+        assert mod.external_ref == "I926940603A"
+
     def test_multiple_options_correct_qty(self):
         items = _CLIENT._items_from_oms(_OMS_ORDER_MULTI_MOD)
         mods = items[0].modifiers

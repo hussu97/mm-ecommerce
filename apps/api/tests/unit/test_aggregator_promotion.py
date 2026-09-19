@@ -1602,3 +1602,77 @@ async def test_reconcile_noon_keeps_net_and_records_the_discount():
     assert order.discount_amount == Decimal("20.00")  # gross − net
     # subtotal − discount == total (the invariant migration 198 encodes)
     assert order.subtotal - order.discount_amount == order.total
+
+
+# ── modifier snapshot: count-prefixed option names (Talabat) ──────────────────
+
+
+def test_split_leading_count():
+    assert promote._split_leading_count("1 Nutella Cookie") == (1, "Nutella Cookie")
+    assert promote._split_leading_count("2 x Fudge Brownie") == (2, "Fudge Brownie")
+    assert promote._split_leading_count("1 3 Pieces") == (1, "3 Pieces")
+    assert promote._split_leading_count("Fudge Brownie") == (None, "Fudge Brownie")
+    assert promote._split_leading_count("") == (None, "")
+
+
+async def test_build_modifier_snapshot_strips_leading_count_after_verbatim_miss():
+    """A Talabat pick arrives as "1 Nutella Cookie"; the verbatim name matches no
+    option, so the count is stripped, the option resolves, and its quantity is
+    taken from the stripped count. Regression for box contents that never
+    consumed because the qty prefix broke the name match."""
+    opt = uuid.uuid4()
+
+    async def fake_match(_db, _pid, name):
+        return opt if name == "Nutella Cookie" else None
+
+    with (
+        patch.object(
+            promote.external_item_map_service,
+            "resolve_option",
+            AsyncMock(return_value=(None, None, None)),
+        ),
+        patch.object(promote, "_match_product_option", side_effect=fake_match),
+        patch.object(
+            promote.external_item_map_service,
+            "record_option_proposal",
+            AsyncMock(),
+        ) as proposal,
+    ):
+        mods = [StandardModifier(name="2 Nutella Cookie", quantity=Decimal("1"))]
+        snap, _ = await promote._build_modifier_snapshot(
+            _FakeDB(), "talabat", mods, product_id=uuid.uuid4()
+        )
+    assert snap[0]["modifier_option_id"] == str(opt)
+    assert snap[0]["option_name"] == "Nutella Cookie"
+    assert snap[0]["quantity"] == 2
+    proposal.assert_not_called()
+
+
+async def test_build_modifier_snapshot_keeps_verbatim_numeric_option_name():
+    """ "3 Pieces" is a real option name — the count-strip must not fire when the
+    verbatim name already matches, so it is never mangled to "Pieces"."""
+    opt = uuid.uuid4()
+
+    async def fake_match(_db, _pid, name):
+        return opt if name == "3 Pieces" else None
+
+    with (
+        patch.object(
+            promote.external_item_map_service,
+            "resolve_option",
+            AsyncMock(return_value=(None, None, None)),
+        ),
+        patch.object(promote, "_match_product_option", side_effect=fake_match),
+        patch.object(
+            promote.external_item_map_service,
+            "record_option_proposal",
+            AsyncMock(),
+        ),
+    ):
+        mods = [StandardModifier(name="3 Pieces", quantity=Decimal("1"))]
+        snap, _ = await promote._build_modifier_snapshot(
+            _FakeDB(), "careem", mods, product_id=uuid.uuid4()
+        )
+    assert snap[0]["option_name"] == "3 Pieces"
+    assert snap[0]["modifier_option_id"] == str(opt)
+    assert snap[0]["quantity"] == 1

@@ -17,7 +17,11 @@ _NOW = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
 
 
 def _sess(**over) -> LoadedSession:
-    base = dict(channel="noon", account_ref="", status=SESSION_LIVE)
+    # Default to deliveroo: a channel whose cookie expiry is authoritative (has a
+    # real token too), so the generic liveness tests below exercise the ordinary
+    # path. Noon and Talabat are the advisory-cookie special cases, named
+    # explicitly where they are tested.
+    base = dict(channel="deliveroo", account_ref="", status=SESSION_LIVE)
     base.update(over)
     return LoadedSession(**base)
 
@@ -53,15 +57,22 @@ def test_expired_cookie_is_not_usable():
     assert session_store.session_unusable_reason(s, now=_NOW) == "cookie expired"
 
 
-def test_talabat_expired_cookie_is_advisory_and_still_usable():
-    """Talabat's PerimeterX cookie has a ~5-minute nominal TTL but rotates on
-    replay, so its expiry must NOT reject the session — that starved every intraday
-    sweep. Only Talabat is exempt; the same expired cookie on Noon is still fatal."""
-    talabat = _sess(channel="talabat", cookie_expires_at=_NOW - timedelta(minutes=1))
-    assert session_store.session_unusable_reason(talabat, now=_NOW) is None
-    assert session_store.is_session_usable(talabat, now=_NOW)
-    noon = _sess(channel="noon", cookie_expires_at=_NOW - timedelta(minutes=1))
-    assert session_store.session_unusable_reason(noon, now=_NOW) == "cookie expired"
+def test_advisory_cookie_channels_stay_usable_past_cookie_expiry():
+    """Talabat's PerimeterX and Noon's Akamai cookies have short nominal TTLs but
+    rotate on replay, so their expiry must NOT reject the session — honouring it
+    re-drove a headed Chrome hourly on a still-usable session. A channel whose
+    cookie IS authoritative (Deliveroo) is still rejected on the same expiry."""
+    for channel in ("talabat", "noon"):
+        s = _sess(channel=channel, cookie_expires_at=_NOW - timedelta(minutes=1))
+        assert session_store.session_unusable_reason(s, now=_NOW) is None, channel
+        assert session_store.is_session_usable(s, now=_NOW), channel
+    authoritative = _sess(
+        channel="deliveroo", cookie_expires_at=_NOW - timedelta(minutes=1)
+    )
+    assert (
+        session_store.session_unusable_reason(authoritative, now=_NOW)
+        == "cookie expired"
+    )
 
 
 def test_talabat_expired_token_is_still_honoured():
@@ -201,22 +212,24 @@ def test_unusable_reason_for_matches_the_loaded_session_path():
                 )
 
 
-def test_unusable_reason_for_skips_talabats_advisory_cookie():
+def test_unusable_reason_for_skips_advisory_cookies():
     expired = _NOW - timedelta(minutes=5)
+    # Talabat (PerimeterX) and Noon (Akamai) both rotate their cookie on replay.
+    for channel in ("talabat", "noon"):
+        assert (
+            session_store.unusable_reason_for(
+                channel=channel,
+                status=SESSION_LIVE,
+                token_expires_at=None,
+                cookie_expires_at=expired,
+                now=_NOW,
+            )
+            is None
+        ), channel
+    # …and a channel whose cookie is authoritative still honours it.
     assert (
         session_store.unusable_reason_for(
-            channel="talabat",
-            status=SESSION_LIVE,
-            token_expires_at=None,
-            cookie_expires_at=expired,
-            now=_NOW,
-        )
-        is None
-    )
-    # …and every other channel still honours it.
-    assert (
-        session_store.unusable_reason_for(
-            channel="noon",
+            channel="deliveroo",
             status=SESSION_LIVE,
             token_expires_at=None,
             cookie_expires_at=expired,

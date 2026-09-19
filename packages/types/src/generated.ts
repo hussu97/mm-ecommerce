@@ -159,6 +159,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/custom-orders/enquiries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Enquiries
+         * @description The custom-order enquiries sent from the storefront, newest first.
+         *
+         *     Read-only: these are leads someone answers by phone or email, not bookings on
+         *     the calendar. Same permission as the custom-order diary, since the same people
+         *     handle both.
+         */
+        get: operations["list_enquiries_api_v1_admin_custom_orders_enquiries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/custom-orders/{custom_order_id}": {
         parameters: {
             query?: never;
@@ -2548,6 +2572,60 @@ export interface paths {
         get: operations["get_availability_api_v1_custom_orders_availability_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/custom-orders/enquiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Enquiry
+         * @description Take a custom-order request from the "We cater to" section of the home page.
+         *
+         *     This stores a lead and emails the shop — it does **not** create an order or a
+         *     `CustomOrder`, and holds no slot on the custom-cake calendar. A human reads it
+         *     and decides whether it becomes a booking, which is why the form tells the
+         *     customer their delivery date is confirmed only after review.
+         */
+        post: operations["submit_enquiry_api_v1_custom_orders_enquiry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/custom-orders/enquiry/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Enquiry Image
+         * @description Upload one inspiration photo for a custom-order enquiry, returning its URL.
+         *
+         *     Public because the person filling in the enquiry form has no account — the
+         *     admin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot
+         *     be reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is
+         *     single-use, and one enquiry uploads up to four photos before it submits, so a
+         *     token spent on the first upload would fail the rest. The human check lives on
+         *     `/enquiry` — the request that actually stores a lead and sends mail. This
+         *     endpoint only puts a re-encoded, downscaled, size- and type-capped image in
+         *     the bucket, and a rate limit bounds the rest.
+         */
+        post: operations["upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6355,6 +6433,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/inventory/tasks/adhoc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inventory Adhoc Tasks For Till
+         * @description Fill reports on a subsequent close: raise a fresh set of at-till-close
+         *     reports for this till so the shop can complete them before closing directly.
+         */
+        post: operations["inventory_adhoc_tasks_for_till_api_v1_pos_inventory_tasks_adhoc_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/kitchen/open-checks": {
         parameters: {
             query?: never;
@@ -9953,6 +10052,11 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post */
+        Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_image_api_v1_uploads_image_post */
         Body_upload_image_api_v1_uploads_image_post: {
             /** File */
@@ -11628,6 +11732,70 @@ export interface components {
              */
             status: string;
         };
+        /**
+         * CustomOrderEnquiryAdminResponse
+         * @description The whole lead, for the admin Enquiries list.
+         */
+        CustomOrderEnquiryAdminResponse: {
+            /** Approx Kg */
+            approx_kg: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Customer Phone */
+            customer_phone: string;
+            /** Delivery By */
+            delivery_by: string | null;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Reference Image Urls */
+            reference_image_urls: string[];
+        };
+        /**
+         * CustomOrderEnquiryCreate
+         * @description A custom-order request from the "We cater to" section. A lead, not an order.
+         */
+        CustomOrderEnquiryCreate: {
+            /** Approx Kg */
+            approx_kg?: number | string | null;
+            /** Customer Name */
+            customer_name: string;
+            /** Customer Phone */
+            customer_phone: string;
+            /** Delivery By */
+            delivery_by?: string | null;
+            /** Description */
+            description: string;
+            /** Reference Image Urls */
+            reference_image_urls?: string[];
+            /** Turnstile Token */
+            turnstile_token?: string | null;
+        };
+        /**
+         * CustomOrderEnquiryResponse
+         * @description What the storefront gets back: enough to confirm receipt, nothing more.
+         */
+        CustomOrderEnquiryResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /** CustomOrderResponse */
         CustomOrderResponse: {
             /** Admin Notes */
@@ -11829,6 +11997,8 @@ export interface components {
             business_date_to?: string | null;
             /** By Branch */
             by_branch: components["schemas"]["BreakdownRow"][];
+            /** By Category */
+            by_category: components["schemas"]["BreakdownRow"][];
             /** By Channel */
             by_channel: components["schemas"]["BreakdownRow"][];
             /** By Courier */
@@ -15329,6 +15499,19 @@ export interface components {
         PaginatedAuditLogs: {
             /** Items */
             items: components["schemas"]["AuditLogItem"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /** PaginatedCustomOrderEnquiries */
+        PaginatedCustomOrderEnquiries: {
+            /** Items */
+            items: components["schemas"]["CustomOrderEnquiryAdminResponse"][];
             /** Page */
             page: number;
             /** Pages */
@@ -19533,6 +19716,33 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
+        /**
+         * TillCloseTasksResponse
+         * @description The at-close report bundle handed to the register when a till closes.
+         *
+         *     ``reports`` are the ones to fill now (mandatory at the first close of the
+         *     trading day, as before). ``first_close`` tells the register this is the day's
+         *     first close so it presents them by default; on a later close it is false and,
+         *     when ``optional_reports_available`` is true, the register offers the choice to
+         *     close directly or fill fresh reports first (see ``/pos/inventory/tasks/adhoc``).
+         */
+        TillCloseTasksResponse: {
+            /**
+             * First Close
+             * @default true
+             */
+            first_close: boolean;
+            /**
+             * Optional Reports Available
+             * @default false
+             */
+            optional_reports_available: boolean;
+            /**
+             * Reports
+             * @default []
+             */
+            reports: components["schemas"]["ShiftReportResponse"][];
+        };
         /** TillOpenRequest */
         TillOpenRequest: {
             /**
@@ -21442,6 +21652,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CalendarDay"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_enquiries_api_v1_admin_custom_orders_enquiries_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedCustomOrderEnquiries"];
                 };
             };
             /** @description Validation Error */
@@ -25889,6 +26131,72 @@ export interface operations {
             };
         };
     };
+    submit_enquiry_api_v1_custom_orders_enquiry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderEnquiryCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderEnquiryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_enquiry_image_api_v1_custom_orders_enquiry_image_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     dashboard_today_api_v1_dashboard_today_get: {
         parameters: {
             query?: {
@@ -25904,6 +26212,8 @@ export interface operations {
                 branch_ids?: string[] | null;
                 /** @description Narrow every figure to these legal entities (multi) */
                 legal_entity_ids?: string[] | null;
+                /** @description Narrow every figure to orders holding a line in these product categories (multi) */
+                category_ids?: string[] | null;
             };
             header?: never;
             path?: never;
@@ -31863,6 +32173,8 @@ export interface operations {
                 branch_ids?: string[] | null;
                 /** @description Multi-select legal entities the order was billed under. */
                 legal_entity_ids?: string[] | null;
+                /** @description Multi-select product categories; matches orders holding at least one line in any of them (the OR of them). */
+                category_ids?: string[] | null;
                 page?: number;
                 per_page?: number;
             };
@@ -33318,6 +33630,37 @@ export interface operations {
         };
     };
     inventory_tasks_for_till_api_v1_pos_inventory_tasks_get: {
+        parameters: {
+            query: {
+                till_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TillCloseTasksResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inventory_adhoc_tasks_for_till_api_v1_pos_inventory_tasks_adhoc_post: {
         parameters: {
             query: {
                 till_id: string;

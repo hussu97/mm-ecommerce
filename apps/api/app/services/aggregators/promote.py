@@ -44,6 +44,7 @@ convention nothing here commits — the caller's sweep does.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -555,21 +556,41 @@ async def _build_modifier_snapshot(
     snapshot: list[dict] = []
     options_price = Decimal("0")
     for mod in mods:
+        name = mod.name
+        quantity = int(mod.quantity)
         opt_id, _, _ = await external_item_map_service.resolve_option(
-            db, channel, mod.name, ref=mod.external_ref
+            db, channel, name, ref=mod.external_ref
         )
         if opt_id is None:
-            opt_id = await _match_product_option(db, product_id, mod.name)
+            opt_id = await _match_product_option(db, product_id, name)
+        if opt_id is None:
+            # Some channels glue the chosen quantity onto the option name
+            # ("1 Nutella Cookie", "2 x Fudge Brownie", "1 3 Pieces" — Talabat's
+            # CSV export in particular). Only strip it AFTER the verbatim name has
+            # failed, so a legitimate option that begins with a number
+            # ("3 Pieces") is matched as-is and never mangled, and adopt the
+            # stripped form only when it actually resolves.
+            stripped_qty, stripped_name = _split_leading_count(name)
+            if stripped_name and stripped_name != name:
+                retry = await _match_product_option(db, product_id, stripped_name)
+                if retry is None:
+                    retry, _, _ = await external_item_map_service.resolve_option(
+                        db, channel, stripped_name, ref=mod.external_ref
+                    )
+                if retry is not None:
+                    opt_id = retry
+                    name = stripped_name
+                    if stripped_qty:
+                        quantity = stripped_qty
         if opt_id is None:
             await external_item_map_service.record_option_proposal(
                 db, channel, mod.name, ref=mod.external_ref
             )
         unit_price = mod.unit_price if mod.unit_price is not None else Decimal("0")
-        quantity = int(mod.quantity)
         options_price += unit_price * quantity
         snapshot.append(
             {
-                "option_name": mod.name,
+                "option_name": name,
                 "option_price": float(unit_price),
                 "option_id": str(opt_id) if opt_id is not None else None,
                 "modifier_option_id": str(opt_id) if opt_id is not None else None,
@@ -579,6 +600,29 @@ async def _build_modifier_snapshot(
             }
         )
     return snapshot, options_price
+
+
+_LEADING_COUNT_RE = re.compile(r"^\s*(\d+)\s*(?:x|×)?\s+(.+\S)\s*$", re.IGNORECASE)
+
+
+def _split_leading_count(name: str | None) -> tuple[int | None, str | None]:
+    """Split a leading selection count off a modifier name.
+
+    ``"1 Nutella Cookie" -> (1, "Nutella Cookie")``,
+    ``"2 x Fudge Brownie" -> (2, "Fudge Brownie")``,
+    ``"1 3 Pieces" -> (1, "3 Pieces")``. Returns ``(None, name)`` when there is
+    no leading count. Callers use this only AFTER a verbatim match fails, so an
+    option whose real name starts with a number ("3 Pieces") is never stripped.
+    """
+    if not name:
+        return None, name
+    match = _LEADING_COUNT_RE.match(name)
+    if not match:
+        return None, name
+    try:
+        return int(match.group(1)), match.group(2).strip()
+    except ValueError:
+        return None, name
 
 
 async def _add_lines(db: AsyncSession, order: Order, agg: AggregatorOrder) -> int:

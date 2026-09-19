@@ -69,9 +69,11 @@ export function OrderFilterBar({
   onToggleCourier,
   onToggleBranch,
   onToggleLegalEntity,
+  onToggleCategory,
   onClearAll,
   branchOptions,
   legalEntityOptions,
+  categoryOptions,
 }: {
   filters: OrderFilters;
   /** The live search box value (debounced into the URL by the parent). */
@@ -82,9 +84,11 @@ export function OrderFilterBar({
   onToggleCourier: (v: string) => void;
   onToggleBranch: (v: string) => void;
   onToggleLegalEntity: (v: string) => void;
+  onToggleCategory: (v: string) => void;
   onClearAll: () => void;
   branchOptions: { value: string; label: string }[];
   legalEntityOptions: { value: string; label: string }[];
+  categoryOptions: { value: string; label: string }[];
 }) {
   return (
     <div className="mb-4 space-y-3">
@@ -207,6 +211,25 @@ export function OrderFilterBar({
                 onClick={() => onToggleLegalEntity(e.value)}
               >
                 {e.label}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {categoryOptions.length > 0 && (
+        <div>
+          <span className="block text-[10px] font-body uppercase tracking-widest text-gray-400 mb-1.5">
+            Category
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {categoryOptions.map(c => (
+              <Chip
+                key={c.value}
+                on={filters.categories.includes(c.value)}
+                onClick={() => onToggleCategory(c.value)}
+              >
+                {c.label}
               </Chip>
             ))}
           </div>

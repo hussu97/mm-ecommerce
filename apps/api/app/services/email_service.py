@@ -64,6 +64,7 @@ __all__ = [
     "send_order_undelivered",
     "maps_url",
     "report_failed_sends",
+    "send_custom_order_enquiry",
     "send_owner_order_notification",
     "send_password_reset",
     "send_payment_failed",
@@ -81,6 +82,10 @@ OWNER_ORDER_RECIPIENTS = (
 #: Who is told when a shift inventory report is submitted, so the count can be
 #: reviewed (and, when it needs approval, approved) from the admin console.
 INVENTORY_REPORT_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
+#: Who is told when a customer sends a custom-order enquiry from the storefront.
+#: This is a lead to answer, not an order to fulfil — it goes to the one person
+#: who quotes and books custom cakes.
+CUSTOM_ORDER_ENQUIRY_RECIPIENTS = ("fatema_f@hotmail.co.uk",)
 #: Who is told when a transfer ships with a sending variance (a picker sent more
 #: or fewer than requested). Kept separate from the report recipients so the two
 #: notifications can be routed independently later.
@@ -227,6 +232,14 @@ def _money(value: Any) -> str:
 
 
 def _customer_name(order: OrderResponse) -> str:
+    # A pickup order carries no address snapshot — its name is on the order
+    # itself (`customer_name`, from `pickup_contact`), so reading only the
+    # snapshot greeted every collection customer as "there". Prefer the order's
+    # own name; fall back to the delivery snapshot's first name.
+    if order.customer_name:
+        first = order.customer_name.strip().split(" ")[0]
+        if first:
+            return first
     snapshot = order.shipping_address_snapshot or {}
     name = str(snapshot.get("first_name") or "").strip()
     return name or "there"
@@ -870,8 +883,18 @@ async def send_owner_order_notification(order: OrderResponse) -> None:
                 recipient_email=recipient,
                 locale="en",
                 admin_order_url=_admin_order_url(order.order_number),
-                customer_name=address_format.recipient_name(snapshot) or "—",
-                customer_phone=snapshot.get("phone"),
+                # Prefer the order's own contact. A pickup has no snapshot, so
+                # reading only it left the owners' "new order" email showing
+                # "—" and no number for every collection order — the one email
+                # whose whole job is to tell the shop who to call. The order now
+                # carries the pickup contact (`customer_name`/`customer_phone`,
+                # from `pickup_contact`); the snapshot is the delivery fallback.
+                customer_name=(
+                    order.customer_name
+                    or address_format.recipient_name(snapshot)
+                    or "—"
+                ),
+                customer_phone=order.customer_phone or snapshot.get("phone"),
                 maps_url=maps_url(snapshot),
                 **context,
             )
@@ -942,6 +965,54 @@ async def send_inventory_report_submitted(
             result,
             report_id,
         )
+
+
+async def send_custom_order_enquiry(*, enquiry: Any) -> None:
+    """Tell the shop a customer sent a custom-order enquiry from the storefront.
+
+    Always English — it reaches the one person who quotes custom cakes. It links
+    to nothing (there is no order and no admin page for a lead); it simply carries
+    everything the customer typed, their photos, and the time it arrived, so the
+    reply can happen straight from the inbox.
+    """
+    name = (enquiry.customer_name or "").strip() or "—"
+    subject = f"New custom-order enquiry — {name} | Melting Moments"
+    # The "when it was sent" the shop asked for, on the clock they live on.
+    submitted_at = enquiry.created_at
+    if submitted_at is not None:
+        if submitted_at.tzinfo is None:
+            submitted_at = submitted_at.replace(tzinfo=timezone.utc)
+        submitted_str = submitted_at.astimezone(TZ).strftime("%d %b %Y, %H:%M")
+    else:
+        submitted_str = "—"
+    approx_kg = f"{_money(enquiry.approx_kg)} kg" if enquiry.approx_kg else None
+    delivery_by = (
+        enquiry.delivery_by.strftime("%d %b %Y") if enquiry.delivery_by else None
+    )
+    for recipient in CUSTOM_ORDER_ENQUIRY_RECIPIENTS:
+        try:
+            html = _render(
+                "custom_order_enquiry.html",
+                recipient_email=recipient,
+                locale="en",
+                customer_name=name,
+                customer_phone=enquiry.customer_phone,
+                description=enquiry.description,
+                approx_kg=approx_kg,
+                delivery_by=delivery_by,
+                image_urls=list(enquiry.reference_image_urls or []),
+                submitted_at=submitted_str,
+            )
+            result = await _send_async(recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "custom_order_enquiry render/send failed to %s: %s",
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log("custom_order_enquiry", recipient, subject, result)
 
 
 async def send_transfer_sending_variance(

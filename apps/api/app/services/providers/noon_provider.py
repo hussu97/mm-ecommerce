@@ -149,6 +149,33 @@ def _str_or_none(value: Any) -> str | None:
     return text or None
 
 
+def _name_noon_modifier(
+    mod: StandardModifier, item_lookup: dict[str, dict[str, Any]]
+) -> StandardModifier:
+    """Give a coded noon modifier its human name from the order's ``menuInfo``.
+
+    noon's OMS modifier map is keyed by item code, so an expanded option arrives
+    named like its ``external_ref`` ("I926940603A"). The chosen picks are menu
+    items in their own right, so their names live in ``menuInfo.items``; resolve
+    the code to that name so it can match a catalogue option. The code is kept as
+    ``external_ref``. A no-op when the code is absent from ``menuInfo`` (leaves
+    the option for an ``external_item_map`` row / proposal, as before).
+    """
+    code = mod.external_ref or mod.name
+    menu_item = item_lookup.get(str(code)) if code else None
+    if not menu_item:
+        return mod
+    human = str(
+        menu_item.get("name")
+        or menu_item.get("nameEn")
+        or menu_item.get("nameAr")
+        or ""
+    ).strip()
+    if not human or human == mod.name:
+        return mod
+    return replace(mod, name=human)
+
+
 def _agent_str(value: Any) -> str | None:
     """A delivery-agent string, or None. Like `_str_or_none`, but also treats
     noon's `UNKNOWN` placeholder as absent — the OMS panel fills an unassigned
@@ -1054,6 +1081,14 @@ class NoonClient(BaseAggregatorClient):
             mods: list[StandardModifier] = (
                 expand_modifiers(raw_mods) if raw_mods else []
             )
+            # noon's OMS modifier map is coded (`{MDxxx: {Ixxx: qty}}`), so
+            # `expand_modifiers` yields options whose NAME is the bare item code
+            # (e.g. "I926940603A"). A code matches no catalogue option name, so a
+            # box's chosen contents landed unresolved and drew no stock. The picks
+            # are themselves menu items, so translate each code to its human name
+            # via `menuInfo` here; the code is kept as `external_ref` for the map.
+            if mods:
+                mods = [_name_noon_modifier(m, item_lookup) for m in mods]
             result.append(
                 StandardOrderItem(
                     source_key=f"{order_nr}:{item_code}:{index}",
