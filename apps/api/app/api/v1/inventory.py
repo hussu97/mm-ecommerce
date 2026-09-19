@@ -1572,8 +1572,52 @@ async def pos_supplier_items(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """The items a supplier can supply — the lines the till offers to receive."""
+    """The items a PO for this supplier may add.
+
+    Normally the supplier's mapped items; with flexible item mapping on
+    (``allow_any_item``), every active purchasable inventory item, so the till can
+    order anything the supplier turned up with.
+    """
+    supplier = await crud_service.get_or_404(db, Supplier, supplier_id)
+    if supplier.allow_any_item:
+        return await _all_purchasable_items(db, supplier_id)
     return await _supplier_items(db, supplier_id)
+
+
+async def _all_purchasable_items(
+    db: AsyncSession, supplier_id: uuid.UUID
+) -> list[SupplierItemResponse]:
+    """Every active purchasable item, shaped like a supplier mapping so the till's
+    picker renders it identically — for a flexible-mapping supplier."""
+    items = (
+        (
+            await db.execute(
+                select(InventoryItem)
+                .where(
+                    InventoryItem.is_active.is_(True),
+                    InventoryItem.deleted_at.is_(None),
+                    InventoryItem.kind.in_(sorted(supplier_service.PURCHASABLE_KINDS)),
+                )
+                .order_by(InventoryItem.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        SupplierItemResponse(
+            id=item.id,
+            supplier_id=supplier_id,
+            item_id=item.id,
+            supplier_sku=None,
+            lead_time_days=0,
+            is_preferred=False,
+            item_name=item.name,
+            item_sku=item.sku,
+            storage_unit=item.storage_unit,
+        )
+        for item in items
+    ]
 
 
 @pos_purchase_orders_router.get(
