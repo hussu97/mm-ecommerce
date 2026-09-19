@@ -7,7 +7,7 @@
 // `transferOrderReport` — including the mini stock-adjustment report posted when
 // the admin overrode on-hand at create.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -76,6 +76,25 @@ export default function TransferOrderDetailPage() {
     () => (bid: string | null) => branches.find((b) => b.id === bid)?.name ?? bid ?? '—',
     [branches],
   );
+
+  // The per-item lines of each child leg, keyed by the child's id (which the
+  // movement report references as transfer_id), so the movement report can show
+  // requested/sent/received at line level under each branch's totals. Sorted the
+  // same way as everywhere else: category order, then item name.
+  const linesForTransfer = useMemo(() => {
+    const map = new Map<string, TransferOrder['children'][number]['items']>();
+    for (const child of order?.children ?? []) {
+      const itemName = (l: TransferOrder['children'][number]['items'][number]) =>
+        l.item_name ?? l.item_sku ?? l.item_id;
+      const sorted = [...child.items].sort(
+        (a, b) =>
+          (a.category_order ?? Number.MAX_SAFE_INTEGER) - (b.category_order ?? Number.MAX_SAFE_INTEGER) ||
+          itemName(a).localeCompare(itemName(b)),
+      );
+      map.set(child.id, sorted);
+    }
+    return map;
+  }, [order]);
 
   // For each child, the allocated quantity per item — so the grid can show a
   // column per destination against the item rows.
@@ -199,7 +218,7 @@ export default function TransferOrderDetailPage() {
                   <th className="px-2 py-1">Destination</th>
                   <th className="px-2 py-1">Reference</th>
                   <th className="px-2 py-1">Status</th>
-                  <th className="px-2 py-1 text-right">Qty</th>
+                  <th className="px-2 py-1 text-right">Requested</th>
                   <th className="px-2 py-1 text-right">Sent</th>
                   <th className="px-2 py-1 text-right">Received</th>
                   <th className="px-2 py-1 text-right">Sent value</th>
@@ -208,21 +227,45 @@ export default function TransferOrderDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {report.children.map((child) => (
-                  <tr key={child.transfer_id} className="border-t border-gray-100">
-                    <td className="px-2 py-1 font-medium">{child.destination_branch_name ?? branchName(child.destination_branch_id)}</td>
-                    <td className="px-2 py-1 text-gray-600">{child.reference}</td>
-                    <td className="px-2 py-1"><Badge variant={transferStatusVariant(child.status)}>{transferStatusLabel(child.status)}</Badge></td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_quantity)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_sent)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_received)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.sent_value)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.received_value)}</td>
-                    <td className="px-2 py-1">
-                      {child.has_sending_variance ? <Badge variant="danger">Sent ≠ requested</Badge> : <span className="text-gray-300">—</span>}
-                    </td>
-                  </tr>
-                ))}
+                {report.children.map((child) => {
+                  const lines = linesForTransfer.get(child.transfer_id) ?? [];
+                  return (
+                    <Fragment key={child.transfer_id}>
+                      <tr className="border-t border-gray-200 font-medium">
+                        <td className="px-2 py-1">{child.destination_branch_name ?? branchName(child.destination_branch_id)}</td>
+                        <td className="px-2 py-1 text-gray-600">{child.reference}</td>
+                        <td className="px-2 py-1"><Badge variant={transferStatusVariant(child.status)}>{transferStatusLabel(child.status)}</Badge></td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_quantity)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_sent)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_received)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.sent_value)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.received_value)}</td>
+                        <td className="px-2 py-1">
+                          {child.has_sending_variance ? <Badge variant="danger">Sent ≠ requested</Badge> : <span className="text-gray-300">—</span>}
+                        </td>
+                      </tr>
+                      {lines.map((line) => {
+                        const short = Number(line.received_quantity) !== Number(line.sent_quantity) || (Number(line.sent_quantity) !== Number(line.quantity));
+                        return (
+                          <tr key={`${child.transfer_id}:${line.id}`} className="border-t border-gray-50 bg-gray-50/40 text-xs text-gray-600">
+                            <td className="px-2 py-1 pl-6">
+                              {line.item_name ?? line.item_sku ?? line.item_id}
+                              {line.unit && <span className="ml-1 text-gray-400">{line.unit}</span>}
+                            </td>
+                            <td className="px-2 py-1" />
+                            <td className="px-2 py-1" />
+                            <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(line.quantity)}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(line.sent_quantity)}</td>
+                            <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(line.received_quantity)}</td>
+                            <td className="px-2 py-1" />
+                            <td className="px-2 py-1" />
+                            <td className="px-2 py-1">{short ? <span className="text-amber-600" title="Sent or received differs from requested">≠</span> : ''}</td>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
                 {report.children.length === 0 && (
                   <tr><td colSpan={9} className="px-2 py-2 text-center text-sm text-gray-400">No legs.</td></tr>
                 )}

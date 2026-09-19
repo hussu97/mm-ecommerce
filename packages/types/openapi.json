@@ -31513,6 +31513,31 @@
         "title": "TillCloseRequest",
         "type": "object"
       },
+      "TillCloseTasksResponse": {
+        "description": "The at-close report bundle handed to the register when a till closes.\n\n``reports`` are the ones to fill now (mandatory at the first close of the\ntrading day, as before). ``first_close`` tells the register this is the day's\nfirst close so it presents them by default; on a later close it is false and,\nwhen ``optional_reports_available`` is true, the register offers the choice to\nclose directly or fill fresh reports first (see ``/pos/inventory/tasks/adhoc``).",
+        "properties": {
+          "first_close": {
+            "default": true,
+            "title": "First Close",
+            "type": "boolean"
+          },
+          "optional_reports_available": {
+            "default": false,
+            "title": "Optional Reports Available",
+            "type": "boolean"
+          },
+          "reports": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ShiftReportResponse"
+            },
+            "title": "Reports",
+            "type": "array"
+          }
+        },
+        "title": "TillCloseTasksResponse",
+        "type": "object"
+      },
       "TillOpenRequest": {
         "properties": {
           "branch_id": {
@@ -57297,11 +57322,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ShiftReportResponse"
-                  },
-                  "title": "Response Inventory Tasks For Till Api V1 Pos Inventory Tasks Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/TillCloseTasksResponse"
                 }
               }
             },
@@ -57324,6 +57345,59 @@
           }
         ],
         "summary": "Inventory Tasks For Till",
+        "tags": [
+          "POS Inventory"
+        ]
+      }
+    },
+    "/api/v1/pos/inventory/tasks/adhoc": {
+      "post": {
+        "description": "Fill reports on a subsequent close: raise a fresh set of at-till-close\nreports for this till so the shop can complete them before closing directly.",
+        "operationId": "inventory_adhoc_tasks_for_till_api_v1_pos_inventory_tasks_adhoc_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "till_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Till Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ShiftReportResponse"
+                  },
+                  "title": "Response Inventory Adhoc Tasks For Till Api V1 Pos Inventory Tasks Adhoc Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Inventory Adhoc Tasks For Till",
         "tags": [
           "POS Inventory"
         ]

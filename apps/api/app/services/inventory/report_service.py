@@ -392,6 +392,56 @@ async def deactivate_template(
     return template
 
 
+# Reports still awaiting the shop's action — an open task, a saved draft, one
+# deferred to later, or one bounced back for a redo. A report in any of these
+# keeps surfacing at close until it is submitted or skipped.
+_OPEN_REPORT_STATUSES = {
+    ShiftInventoryReportStatusEnum.OUTSTANDING.value,
+    ShiftInventoryReportStatusEnum.DRAFT.value,
+    ShiftInventoryReportStatusEnum.DEFERRED.value,
+    ShiftInventoryReportStatusEnum.REJECTED.value,
+}
+
+
+async def _is_first_close(db: AsyncSession, till: Till) -> bool:
+    """Whether this is the first till close of the branch's business date.
+
+    `close_till` flips the till to CLOSED before the register pulls its at-close
+    tasks, so this till is excluded and we look only for a *prior* close on the
+    same trading day. First close ⇒ the at-till-close reports are raised and
+    filled by default; a later close only offers them optionally.
+    """
+    prior_close = await db.scalar(
+        select(func.count())
+        .select_from(Till)
+        .where(
+            Till.branch_id == till.branch_id,
+            Till.business_date == till.business_date,
+            Till.status == TillStatusEnum.CLOSED.value,
+            Till.id != till.id,
+        )
+    )
+    return not bool(prior_close)
+
+
+async def _per_till_templates_configured(
+    db: AsyncSession, branch_id: uuid.UUID
+) -> bool:
+    """Whether the branch runs any active at-till-close template — decides
+    whether a subsequent close is even offered the optional report step."""
+    count = await db.scalar(
+        select(func.count())
+        .select_from(InventoryReportTemplate)
+        .where(
+            InventoryReportTemplate.branch_id == branch_id,
+            InventoryReportTemplate.cadence
+            == InventoryReportCadenceEnum.PER_TILL.value,
+            InventoryReportTemplate.is_active.is_(True),
+        )
+    )
+    return bool(count)
+
+
 async def ensure_tasks_for_till(
     db: AsyncSession, *, till: Till
 ) -> list[ShiftInventoryReport]:
@@ -433,18 +483,104 @@ async def ensure_tasks_for_till(
             )
         )
     )
+    is_first_close = await _is_first_close(db, till)
     for template in templates:
-        if (
+        is_per_day = (
             template.cadence == InventoryReportCadenceEnum.PER_BUSINESS_DAY.value
-            and has_other_open_tills
-        ):
-            continue
-        till_id = (
-            None
-            if template.cadence == InventoryReportCadenceEnum.PER_BUSINESS_DAY.value
-            else till.id
         )
-        key = f"shift-inventory:{template.id}:{till.business_date}:{till_id or 'day'}"
+        # A per-business-day report settles once, at the last close of the day, so
+        # it is held back while any other till is still open. An at-till-close
+        # (per_till) report is now also once-per-trading-day — raised at the FIRST
+        # close — so both are keyed per day, and per_till no longer multiplies
+        # across the day's tills.
+        if is_per_day and has_other_open_tills:
+            continue
+        key = f"shift-inventory:{template.id}:{till.business_date}:day"
+        report = (
+            (
+                await db.execute(
+                    select(ShiftInventoryReport)
+                    .where(ShiftInventoryReport.idempotency_key == key)
+                    .options(selectinload(ShiftInventoryReport.lines))
+                )
+            )
+            .scalars()
+            .unique()
+            .one_or_none()
+        )
+        if report is None:
+            # The at-till-close report is materialised only at the first close of
+            # the trading day. On a later close the shop tops up further reports
+            # on demand (`create_adhoc_tasks_for_till`) rather than being handed a
+            # fresh mandatory one, so an already-done day is never reopened here.
+            if not is_per_day and not is_first_close:
+                continue
+            report = await _create_report(
+                db, template=template, till=till, idempotency_key=key
+            )
+        elif (
+            report.status in _OPEN_REPORT_STATUSES
+            and await current_sequence(db, report.branch_id)
+            != report.base_posting_sequence
+        ):
+            report = await refresh_report(db, report)
+        if report.status in _OPEN_REPORT_STATUSES:
+            reports.append(report)
+    return reports
+
+
+async def till_close_tasks(
+    db: AsyncSession, *, till: Till
+) -> tuple[list[ShiftInventoryReport], bool, bool]:
+    """The at-close report bundle for a till: the reports to fill now, whether
+    this is the first close of the trading day, and — on a subsequent close —
+    whether the shop may optionally fill reports before closing.
+
+    First close: the reports come back mandatory, exactly as before. Later close:
+    nothing mandatory (unless an earlier report was left unresolved), but the
+    register offers the optional step when the branch runs at-till-close reports.
+    """
+    reports = await ensure_tasks_for_till(db, till=till)
+    first_close = await _is_first_close(db, till)
+    optional_reports_available = (
+        not first_close
+        and not reports
+        and await _per_till_templates_configured(db, till.branch_id)
+    )
+    return reports, first_close, optional_reports_available
+
+
+async def create_adhoc_tasks_for_till(
+    db: AsyncSession, *, till: Till
+) -> list[ShiftInventoryReport]:
+    """Fresh at-till-close reports the shop chose to fill on a subsequent close.
+
+    Keyed per till, so each opt-in close gets its own set, distinct from the
+    day's first-close report. Only at-till-close (per_till) templates apply —
+    a per-business-day report already has its once-a-day slot at the last close.
+    """
+    await source_event_service.lock_branch_inventory(db, till.branch_id)
+    template_revisions = list(
+        (
+            await db.execute(
+                select(InventoryReportTemplate)
+                .where(
+                    InventoryReportTemplate.branch_id == till.branch_id,
+                    InventoryReportTemplate.cadence
+                    == InventoryReportCadenceEnum.PER_TILL.value,
+                )
+                .options(selectinload(InventoryReportTemplate.items))
+                .order_by(InventoryReportTemplate.name)
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    templates = latest_active_templates(template_revisions)
+    reports: list[ShiftInventoryReport] = []
+    for template in templates:
+        key = f"shift-inventory-adhoc:{template.id}:{till.business_date}:{till.id}"
         report = (
             (
                 await db.execute(
@@ -462,23 +598,12 @@ async def ensure_tasks_for_till(
                 db, template=template, till=till, idempotency_key=key
             )
         elif (
-            report.status
-            in {
-                ShiftInventoryReportStatusEnum.OUTSTANDING.value,
-                ShiftInventoryReportStatusEnum.DRAFT.value,
-                ShiftInventoryReportStatusEnum.DEFERRED.value,
-                ShiftInventoryReportStatusEnum.REJECTED.value,
-            }
+            report.status in _OPEN_REPORT_STATUSES
             and await current_sequence(db, report.branch_id)
             != report.base_posting_sequence
         ):
             report = await refresh_report(db, report)
-        if report.status in {
-            ShiftInventoryReportStatusEnum.OUTSTANDING.value,
-            ShiftInventoryReportStatusEnum.DRAFT.value,
-            ShiftInventoryReportStatusEnum.DEFERRED.value,
-            ShiftInventoryReportStatusEnum.REJECTED.value,
-        }:
+        if report.status in _OPEN_REPORT_STATUSES:
             reports.append(report)
     return reports
 

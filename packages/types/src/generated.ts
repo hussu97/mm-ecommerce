@@ -6325,6 +6325,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/inventory/tasks/adhoc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inventory Adhoc Tasks For Till
+         * @description Fill reports on a subsequent close: raise a fresh set of at-till-close
+         *     reports for this till so the shop can complete them before closing directly.
+         */
+        post: operations["inventory_adhoc_tasks_for_till_api_v1_pos_inventory_tasks_adhoc_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/kitchen/open-checks": {
         parameters: {
             query?: never;
@@ -19470,6 +19491,33 @@ export interface components {
             closing_amount: number | string;
             /** Notes */
             notes?: string | null;
+        };
+        /**
+         * TillCloseTasksResponse
+         * @description The at-close report bundle handed to the register when a till closes.
+         *
+         *     ``reports`` are the ones to fill now (mandatory at the first close of the
+         *     trading day, as before). ``first_close`` tells the register this is the day's
+         *     first close so it presents them by default; on a later close it is false and,
+         *     when ``optional_reports_available`` is true, the register offers the choice to
+         *     close directly or fill fresh reports first (see ``/pos/inventory/tasks/adhoc``).
+         */
+        TillCloseTasksResponse: {
+            /**
+             * First Close
+             * @default true
+             */
+            first_close: boolean;
+            /**
+             * Optional Reports Available
+             * @default false
+             */
+            optional_reports_available: boolean;
+            /**
+             * Reports
+             * @default []
+             */
+            reports: components["schemas"]["ShiftReportResponse"][];
         };
         /** TillOpenRequest */
         TillOpenRequest: {
@@ -33237,6 +33285,37 @@ export interface operations {
         };
     };
     inventory_tasks_for_till_api_v1_pos_inventory_tasks_get: {
+        parameters: {
+            query: {
+                till_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TillCloseTasksResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inventory_adhoc_tasks_for_till_api_v1_pos_inventory_tasks_adhoc_post: {
         parameters: {
             query: {
                 till_id: string;

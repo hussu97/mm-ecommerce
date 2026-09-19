@@ -91,8 +91,9 @@ export default function ProductionOrderDetailPage() {
             <tr>
               <th className="px-2 py-1">Item</th>
               <th className="px-2 py-1">Unit</th>
-              <th className="px-2 py-1 text-right">Planned</th>
+              <th className="px-2 py-1 text-right">Requested</th>
               <th className="px-2 py-1 text-right">Produced</th>
+              <th className="px-2 py-1 text-right">Difference</th>
               <th className="px-2 py-1">Status</th>
               <th className="px-2 py-1">Ledger reference</th>
               <th className="px-2 py-1">Note</th>
@@ -100,10 +101,11 @@ export default function ProductionOrderDetailPage() {
           </thead>
           <tbody>
             {grouped.map((group) => (
-              <GroupRows key={group.name} name={group.name} span={7}>
+              <GroupRows key={group.name} name={group.name} span={8}>
                 {group.lines.map((line) => {
                   const produced = line.produced_quantity;
                   const modified = line.status === 'produced' && produced != null && num(produced) !== num(line.planned_quantity);
+                  const diff = produced == null ? null : num(produced) - num(line.planned_quantity);
                   return (
                     <tr key={line.id} className="border-t border-gray-100">
                       <td className="px-2 py-1 font-medium">
@@ -116,6 +118,9 @@ export default function ProductionOrderDetailPage() {
                         {produced == null ? <span className="text-gray-300">—</span> : formatQuantity(produced)}
                         {modified && <Badge variant="warning" className="ml-2">Modified</Badge>}
                       </td>
+                      <td className={`px-2 py-1 text-right tabular-nums ${diff != null && diff !== 0 ? 'text-amber-700' : 'text-gray-500'}`}>
+                        {diff == null ? <span className="text-gray-300">—</span> : `${diff > 0 ? '+' : ''}${formatQuantity(diff)}`}
+                      </td>
                       <td className="px-2 py-1"><Badge variant={transferStatusVariant(line.status)}>{transferStatusLabel(line.status)}</Badge></td>
                       <td className="px-2 py-1 text-xs text-gray-600">{line.production_reference ?? <span className="text-gray-300">—</span>}</td>
                       <td className="px-2 py-1 text-xs text-gray-600">{line.cancel_note ?? ''}</td>
@@ -124,6 +129,20 @@ export default function ProductionOrderDetailPage() {
                 })}
               </GroupRows>
             ))}
+            {(() => {
+              const requested = order.lines.reduce((s, l) => s + num(l.planned_quantity), 0);
+              const produced = order.lines.reduce((s, l) => s + num(l.produced_quantity), 0);
+              const diff = produced - requested;
+              return (
+                <tr className="border-t-2 border-gray-300 bg-gray-50 font-medium">
+                  <td className="px-2 py-1" colSpan={2}>Branch total</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(requested)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(produced)}</td>
+                  <td className={`px-2 py-1 text-right tabular-nums ${diff !== 0 ? 'text-amber-700' : ''}`}>{`${diff > 0 ? '+' : ''}${formatQuantity(diff)}`}</td>
+                  <td className="px-2 py-1" colSpan={3} />
+                </tr>
+              );
+            })()}
           </tbody>
         </table>
       </div>
