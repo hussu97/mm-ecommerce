@@ -49,10 +49,13 @@ from app.models import (
     User,
 )
 from app.models.base import utcnow
+from app.models.category import Category
 from app.models.legal_entity import LegalEntity
+from app.models.order import OrderItem
 from app.models.order_delivery import OrderDelivery
 from app.models.payment_method import PaymentMethod
-from app.models.pos_order import OrderPayment
+from app.models.pos_order import OrderItemStatusEnum, OrderPayment
+from app.models.product import Product
 from app.schemas.dashboard import (
     BreakdownRow,
     CourierBreakdownRow,
@@ -132,15 +135,19 @@ def _legal_entity_clause(legal_entity_ids):
     return Order.legal_entity_id.in_(legal_entity_ids) if legal_entity_ids else None
 
 
-def _filters(statuses, couriers, branch_ids=None, legal_entity_ids=None):
-    """The status, courier, branch and legal-entity where-clauses shared by every
-    windowed figure. Branch and legal entity are the newer multi-selects; each is
-    a plain `IN` over a column on the order, applied only when a set is picked."""
+def _filters(
+    statuses, couriers, branch_ids=None, legal_entity_ids=None, category_ids=None
+):
+    """The status, courier, branch, legal-entity and category where-clauses shared
+    by every windowed figure. Branch and legal entity are plain `IN`s over a
+    column on the order; category is an EXISTS over the order's lines (an order
+    can span several), applied only when a set is picked."""
     clauses = [_status_clause(statuses)]
     for extra in (
         order_query.courier_clause(couriers),
         _branch_clause(branch_ids),
         _legal_entity_clause(legal_entity_ids),
+        order_query.category_clause(category_ids),
     ):
         if extra is not None:
             clauses.append(extra)
@@ -158,6 +165,7 @@ async def _breakdown(
     couriers=None,
     branch_ids=None,
     legal_entity_ids=None,
+    category_ids=None,
 ) -> list[BreakdownRow]:
     """Orders and revenue grouped by `column` over the window, revenue-eligible only."""
     rows = (
@@ -170,7 +178,9 @@ async def _breakdown(
             .where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+                *_filters(
+                    statuses, couriers, branch_ids, legal_entity_ids, category_ids
+                ),
             )
             .group_by(column)
             .order_by(func.count(Order.id).desc())
@@ -217,6 +227,7 @@ async def _payment_breakdown(
     couriers=None,
     branch_ids=None,
     legal_entity_ids=None,
+    category_ids=None,
 ) -> list[BreakdownRow]:
     """Orders and revenue by payment method, with split counter sales expanded.
 
@@ -240,7 +251,9 @@ async def _payment_breakdown(
                 # NULL-safe: a plain `!= "mixed"` is NULL for an order with no
                 # payment_method and would drop it; is_distinct_from keeps it.
                 Order.payment_method.is_distinct_from("mixed"),
-                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+                *_filters(
+                    statuses, couriers, branch_ids, legal_entity_ids, category_ids
+                ),
             )
             .group_by(Order.payment_method)
         )
@@ -261,7 +274,9 @@ async def _payment_breakdown(
                 Order.created_at <= end,
                 Order.payment_method == "mixed",
                 OrderPayment.is_refund.is_(False),
-                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+                *_filters(
+                    statuses, couriers, branch_ids, legal_entity_ids, category_ids
+                ),
             )
             .group_by(PaymentMethod.type)
         )
@@ -296,6 +311,7 @@ async def _window_totals(
     couriers=None,
     branch_ids=None,
     legal_entity_ids=None,
+    category_ids=None,
 ) -> tuple[int, float]:
     """(orders, revenue) for revenue-eligible orders created in the window."""
     result = (
@@ -306,7 +322,9 @@ async def _window_totals(
             ).where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+                *_filters(
+                    statuses, couriers, branch_ids, legal_entity_ids, category_ids
+                ),
             )
         )
     ).one()
@@ -324,6 +342,7 @@ async def _series(
     couriers=None,
     branch_ids=None,
     legal_entity_ids=None,
+    category_ids=None,
 ) -> list[SeriesPoint]:
     """Orders and revenue over time, one point per interval across the window.
 
@@ -349,7 +368,9 @@ async def _series(
             .where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+                *_filters(
+                    statuses, couriers, branch_ids, legal_entity_ids, category_ids
+                ),
             )
             .group_by("b")
             .order_by("b")
@@ -387,6 +408,7 @@ async def _heatmap(
     couriers=None,
     branch_ids=None,
     legal_entity_ids=None,
+    category_ids=None,
 ) -> list[HeatmapCell]:
     """Orders and revenue by shop-local day-of-week × hour-of-day over the window.
 
@@ -412,7 +434,9 @@ async def _heatmap(
             .where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+                *_filters(
+                    statuses, couriers, branch_ids, legal_entity_ids, category_ids
+                ),
             )
             .group_by("d", "h")
             .order_by("d", "h")
@@ -432,6 +456,7 @@ async def _by_branch(
     statuses=None,
     couriers=None,
     legal_entity_ids=None,
+    category_ids=None,
 ) -> list[BreakdownRow]:
     """Orders and revenue per branch over the window, revenue-eligible only.
 
@@ -458,6 +483,7 @@ async def _by_branch(
         statuses=statuses,
         couriers=couriers,
         legal_entity_ids=legal_entity_ids,
+        category_ids=category_ids,
     )
 
 
@@ -469,6 +495,7 @@ async def _by_legal_entity(
     statuses=None,
     couriers=None,
     branch_ids=None,
+    category_ids=None,
 ) -> list[BreakdownRow]:
     """Orders and revenue per legal entity over the window, revenue-eligible only.
 
@@ -493,11 +520,78 @@ async def _by_legal_entity(
         statuses=statuses,
         couriers=couriers,
         branch_ids=branch_ids,
+        category_ids=category_ids,
     )
 
 
+async def _by_category(
+    db: AsyncSession,
+    *,
+    start,
+    end,
+    statuses=None,
+    couriers=None,
+    branch_ids=None,
+    legal_entity_ids=None,
+) -> list[BreakdownRow]:
+    """Orders and revenue per product category over the window, item-level.
+
+    Unlike the order-level selectors, a category lives on the *line*: an order
+    can span several categories, so revenue here is the sum of the matching
+    order lines' `total_price` (VAT-inclusive, like `Order.total`) and `orders`
+    is the distinct count of orders that touched the category — the two do not
+    add up to the headline the way the order-level mixes do, by design. Voided
+    counter lines (`status = 'void'`) are excluded; an off-counter line has a
+    NULL status, so the guard is `is_distinct_from('void')`. A line whose product
+    has no category — or no product at all (an open item, a deleted product) —
+    groups into an un-clickable "Uncategorised" bucket with a null code.
+
+    A selector like the others: it shows the full category spread (never applies
+    its own `category_ids`) but follows status, carrier, branch and legal entity,
+    so a filtered dashboard narrows the category menu the same way.
+    """
+    revenue = func.coalesce(func.sum(OrderItem.total_price), 0)
+    rows = (
+        await db.execute(
+            select(
+                Category.id,
+                Category.name,
+                func.count(func.distinct(Order.id)),
+                revenue,
+            )
+            .select_from(OrderItem)
+            .join(Order, Order.id == OrderItem.order_id)
+            .outerjoin(Product, Product.id == OrderItem.product_id)
+            .outerjoin(Category, Category.id == Product.category_id)
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+                *_filters(statuses, couriers, branch_ids, legal_entity_ids),
+            )
+            .group_by(Category.id, Category.name)
+            .order_by(revenue.desc())
+        )
+    ).all()
+    return [
+        BreakdownRow(
+            label=name or "Uncategorised",
+            orders=int(count),
+            revenue=float(money(rev)),
+            code=str(cid) if cid is not None else None,
+        )
+        for cid, name, count, rev in rows
+    ]
+
+
 async def _by_courier(
-    db: AsyncSession, *, start, end, branch_ids=None, legal_entity_ids=None
+    db: AsyncSession,
+    *,
+    start,
+    end,
+    branch_ids=None,
+    legal_entity_ids=None,
+    category_ids=None,
 ) -> list[CourierBreakdownRow]:
     """Delivered orders and revenue per carrier over the window.
 
@@ -533,6 +627,7 @@ async def _by_courier(
                     for c in (
                         _branch_clause(branch_ids),
                         _legal_entity_clause(legal_entity_ids),
+                        order_query.category_clause(category_ids),
                     )
                     if c is not None
                 ),
@@ -647,6 +742,11 @@ async def dashboard_today(
     legal_entity_ids: list[uuid.UUID] | None = Query(
         None, description="Narrow every figure to these legal entities (multi)"
     ),
+    category_ids: list[uuid.UUID] | None = Query(
+        None,
+        description="Narrow every figure to orders holding a line in these "
+        "product categories (multi)",
+    ),
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require("dashboard.access")),
 ):
@@ -670,11 +770,17 @@ async def dashboard_today(
     carriers = couriers or None
     branches = branch_ids or None
     entities = legal_entity_ids or None
-    # Branch + legal-entity where-clauses, reused by the figures that build their
-    # own query (delivered, by_status) rather than going through `_filters`.
+    cats = category_ids or None
+    # Branch, legal-entity + category where-clauses, reused by the figures that
+    # build their own query (delivered, by_status) rather than going through
+    # `_filters`.
     dim_clauses = [
         c
-        for c in (_branch_clause(branches), _legal_entity_clause(entities))
+        for c in (
+            _branch_clause(branches),
+            _legal_entity_clause(entities),
+            order_query.category_clause(cats),
+        )
         if c is not None
     ]
 
@@ -686,6 +792,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
     orders_prev, revenue_prev = await _window_totals(
         db,
@@ -695,6 +802,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
 
     delivered_clause = order_query.courier_clause(carriers)
@@ -750,7 +858,12 @@ async def dashboard_today(
     ]
 
     by_courier = await _by_courier(
-        db, start=start, end=end, branch_ids=branches, legal_entity_ids=entities
+        db,
+        start=start,
+        end=end,
+        branch_ids=branches,
+        legal_entity_ids=entities,
+        category_ids=cats,
     )
 
     # The branch selector: full branch spread, following every other dimension.
@@ -761,6 +874,7 @@ async def dashboard_today(
         statuses=picked,
         couriers=carriers,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
 
     # The legal-entity selector: full entity spread, following every other dimension.
@@ -771,6 +885,18 @@ async def dashboard_today(
         statuses=picked,
         couriers=carriers,
         branch_ids=branches,
+        category_ids=cats,
+    )
+
+    # The category selector: full category spread, following every other dimension.
+    by_category = await _by_category(
+        db,
+        start=start,
+        end=end,
+        statuses=picked,
+        couriers=carriers,
+        branch_ids=branches,
+        legal_entity_ids=entities,
     )
 
     by_channel = await _breakdown(
@@ -783,6 +909,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
     by_fulfillment = await _breakdown(
         db,
@@ -797,6 +924,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
     by_payment = await _payment_breakdown(
         db,
@@ -806,6 +934,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
 
     # Hourly for a single day (the live day or a from==to range), daily otherwise.
@@ -820,6 +949,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
 
     heatmap = await _heatmap(
@@ -831,6 +961,7 @@ async def dashboard_today(
         couriers=carriers,
         branch_ids=branches,
         legal_entity_ids=entities,
+        category_ids=cats,
     )
 
     ops = await _operational_snapshot(db, start=start, end=end, today=from_date)
@@ -845,6 +976,7 @@ async def dashboard_today(
         by_courier=by_courier,
         by_branch=by_branch,
         by_legal_entity=by_legal_entity,
+        by_category=by_category,
         by_channel=by_channel,
         by_fulfillment=by_fulfillment,
         by_payment=by_payment,

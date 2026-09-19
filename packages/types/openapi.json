@@ -8769,6 +8769,13 @@
             "title": "By Branch",
             "type": "array"
           },
+          "by_category": {
+            "items": {
+              "$ref": "#/components/schemas/BreakdownRow"
+            },
+            "title": "By Category",
+            "type": "array"
+          },
           "by_channel": {
             "items": {
               "$ref": "#/components/schemas/BreakdownRow"
@@ -8854,6 +8861,7 @@
           "by_courier",
           "by_branch",
           "by_legal_entity",
+          "by_category",
           "by_channel",
           "by_fulfillment",
           "by_payment",
@@ -44449,6 +44457,28 @@
               "description": "Narrow every figure to these legal entities (multi)",
               "title": "Legal Entity Ids"
             }
+          },
+          {
+            "description": "Narrow every figure to orders holding a line in these product categories (multi)",
+            "in": "query",
+            "name": "category_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Narrow every figure to orders holding a line in these product categories (multi)",
+              "title": "Category Ids"
+            }
           }
         ],
         "responses": {
@@ -54881,6 +54911,28 @@
               ],
               "description": "Multi-select legal entities the order was billed under.",
               "title": "Legal Entity Ids"
+            }
+          },
+          {
+            "description": "Multi-select product categories; matches orders holding at least one line in any of them (the OR of them).",
+            "in": "query",
+            "name": "category_ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Multi-select product categories; matches orders holding at least one line in any of them (the OR of them).",
+              "title": "Category Ids"
             }
           },
           {

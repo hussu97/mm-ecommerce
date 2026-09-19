@@ -190,6 +190,29 @@ async def test_by_branch_labels_each_id_with_its_branch_name():
     ]
 
 
+async def test_by_category_labels_ids_and_buckets_the_uncategorised():
+    # `_by_category` groups order lines by their product's category. Each row is
+    # (category_id, category_name, distinct-order-count, line-revenue); a line
+    # with no category comes back with a NULL id/name and must land in an
+    # un-clickable "Uncategorised" bucket (null code), not the raw "None" string.
+    import uuid
+
+    cakes, drinks = uuid.uuid4(), uuid.uuid4()
+    rows = _Result(
+        [
+            (cakes, "Cakes", 4, "220.00"),
+            (drinks, "Drinks", 2, "35.00"),
+            (None, None, 1, "12.00"),
+        ]
+    )
+    out = await mod._by_category(_DB([rows]), start=_A, end=_B)
+    assert [(r.label, r.orders, r.revenue, r.code) for r in out] == [
+        ("Cakes", 4, 220.0, str(cakes)),
+        ("Drinks", 2, 35.0, str(drinks)),
+        ("Uncategorised", 1, 12.0, None),
+    ]
+
+
 async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
     # (source, aggregator_channel, total, delivery_method, dispatch provider) for
     # delivered orders.

@@ -657,6 +657,10 @@ export interface DashboardToday {
   /** By legal entity billed under (a selector, like by_branch); null-entity
    *  orders fall in an "Unknown" bucket with no code. */
   by_legal_entity: DashboardBreakdownRow[];
+  /** By product category, item-level (revenue = sum of matching lines, orders =
+   *  distinct orders touching it). A selector, like by_branch; a line with no
+   *  category falls in an "Uncategorised" bucket with no code. */
+  by_category: DashboardBreakdownRow[];
   by_channel: DashboardBreakdownRow[];
   by_fulfillment: DashboardBreakdownRow[];
   by_payment: DashboardBreakdownRow[];

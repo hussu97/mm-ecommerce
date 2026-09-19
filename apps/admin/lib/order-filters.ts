@@ -29,6 +29,9 @@ export interface OrderFilters {
   branches: string[];
   /** Legal entities billed under (ids); multi-select, shared by both. */
   legalEntities: string[];
+  /** Product categories (ids); an order matches if it holds a line in any.
+   *  Multi-select, shared by dashboard + list. */
+  categories: string[];
 }
 
 export const EMPTY_FILTERS: OrderFilters = {
@@ -39,6 +42,7 @@ export const EMPTY_FILTERS: OrderFilters = {
   search: '',
   branches: [],
   legalEntities: [],
+  categories: [],
 };
 
 export function parseFilters(params: URLSearchParams): OrderFilters {
@@ -50,6 +54,7 @@ export function parseFilters(params: URLSearchParams): OrderFilters {
     search: params.get('q') ?? '',
     branches: params.getAll('branch'),
     legalEntities: params.getAll('legal_entity'),
+    categories: params.getAll('category'),
   };
 }
 
@@ -63,6 +68,7 @@ export function filtersToQuery(f: OrderFilters): string {
   if (f.search) p.set('q', f.search);
   for (const b of f.branches) p.append('branch', b);
   for (const e of f.legalEntities) p.append('legal_entity', e);
+  for (const c of f.categories) p.append('category', c);
   return p.toString();
 }
 
@@ -75,7 +81,8 @@ export function hasAnyFilter(f: OrderFilters): boolean {
       f.couriers.length ||
       f.search ||
       f.branches.length ||
-      f.legalEntities.length,
+      f.legalEntities.length ||
+      f.categories.length,
   );
 }
 
@@ -89,6 +96,7 @@ export function toDashboardParams(f: OrderFilters) {
     couriers: f.couriers.length ? f.couriers : undefined,
     branch_ids: f.branches.length ? f.branches : undefined,
     legal_entity_ids: f.legalEntities.length ? f.legalEntities : undefined,
+    category_ids: f.categories.length ? f.categories : undefined,
   };
 }
 
@@ -103,6 +111,7 @@ export function toOrdersParams(f: OrderFilters) {
     search: f.search || undefined,
     branch_ids: f.branches.length ? f.branches : undefined,
     legal_entity_ids: f.legalEntities.length ? f.legalEntities : undefined,
+    category_ids: f.categories.length ? f.categories : undefined,
   };
 }
 
@@ -237,7 +246,10 @@ export function useOrderFilters() {
   );
 
   const toggleIn = useCallback(
-    (key: 'statuses' | 'couriers' | 'branches' | 'legalEntities', value: string) => {
+    (
+      key: 'statuses' | 'couriers' | 'branches' | 'legalEntities' | 'categories',
+      value: string,
+    ) => {
       const set = filters[key];
       patch({
         [key]: set.includes(value)
@@ -255,6 +267,7 @@ export function useOrderFilters() {
     (v: string) => toggleIn('legalEntities', v),
     [toggleIn],
   );
+  const toggleCategory = useCallback((v: string) => toggleIn('categories', v), [toggleIn]);
   const clearAll = useCallback(() => commit(EMPTY_FILTERS), [commit]);
 
   return {
@@ -264,6 +277,7 @@ export function useOrderFilters() {
     toggleCourier,
     toggleBranch,
     toggleLegalEntity,
+    toggleCategory,
     clearAll,
   };
 }

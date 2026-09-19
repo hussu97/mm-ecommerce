@@ -430,6 +430,8 @@ export const ordersApi = {
     branch_ids?: string[];
     /** Multi-select legal entities the order was billed under. */
     legal_entity_ids?: string[];
+    /** Multi-select product categories; orders holding a line in any of them. */
+    category_ids?: string[];
     page?: number;
     per_page?: number;
   }) => api.get<PaginatedOrders>(`/orders/admin/all${buildQs(params)}`),
@@ -657,6 +659,8 @@ export const dashboardApi = {
     couriers?: string[];
     branch_ids?: string[];
     legal_entity_ids?: string[];
+    /** Multi-select product categories; orders holding a line in any of them. */
+    category_ids?: string[];
   }) => api.get<DashboardToday>(`/dashboard/today${buildQs(params)}`),
 };
 

@@ -11799,6 +11799,8 @@ export interface components {
             business_date_to?: string | null;
             /** By Branch */
             by_branch: components["schemas"]["BreakdownRow"][];
+            /** By Category */
+            by_category: components["schemas"]["BreakdownRow"][];
             /** By Channel */
             by_channel: components["schemas"]["BreakdownRow"][];
             /** By Courier */
@@ -25840,6 +25842,8 @@ export interface operations {
                 branch_ids?: string[] | null;
                 /** @description Narrow every figure to these legal entities (multi) */
                 legal_entity_ids?: string[] | null;
+                /** @description Narrow every figure to orders holding a line in these product categories (multi) */
+                category_ids?: string[] | null;
             };
             header?: never;
             path?: never;
@@ -31776,6 +31780,8 @@ export interface operations {
                 branch_ids?: string[] | null;
                 /** @description Multi-select legal entities the order was billed under. */
                 legal_entity_ids?: string[] | null;
+                /** @description Multi-select product categories; matches orders holding at least one line in any of them (the OR of them). */
+                category_ids?: string[] | null;
                 page?: number;
                 per_page?: number;
             };

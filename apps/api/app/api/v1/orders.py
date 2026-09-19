@@ -432,6 +432,11 @@ async def list_all_orders(
     legal_entity_ids: list[uuid.UUID] | None = Query(
         None, description="Multi-select legal entities the order was billed under."
     ),
+    category_ids: list[uuid.UUID] | None = Query(
+        None,
+        description="Multi-select product categories; matches orders holding at "
+        "least one line in any of them (the OR of them).",
+    ),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
@@ -449,6 +454,7 @@ async def list_all_orders(
         branch_id=branch_id,
         branch_ids=branch_ids,
         legal_entity_ids=legal_entity_ids,
+        category_ids=category_ids,
         statuses=statuses,
         couriers=couriers,
         date_from=date_from,

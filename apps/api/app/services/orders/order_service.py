@@ -2191,6 +2191,7 @@ async def get_all_admin(
     branch_id: uuid.UUID | None = None,
     branch_ids: list[uuid.UUID] | None = None,
     legal_entity_ids: list[uuid.UUID] | None = None,
+    category_ids: list[uuid.UUID] | None = None,
     statuses: list[str] | None = None,
     couriers: list[str] | None = None,
     date_from: str | None = None,
@@ -2237,6 +2238,13 @@ async def get_all_admin(
 
     if legal_entity_ids:
         base_stmt = base_stmt.where(Order.legal_entity_id.in_(legal_entity_ids))
+
+    # Category is a line-level filter (an order can span several), so it is an
+    # EXISTS over the order's items rather than a column `IN` — the same clause
+    # the dashboard's "Sales by Category" selector narrows by.
+    category_filter = order_query.category_clause(category_ids)
+    if category_filter is not None:
+        base_stmt = base_stmt.where(category_filter)
 
     bounds = await business_day_service.range_bounds(db, date_from, date_to)
     if bounds is not None:
