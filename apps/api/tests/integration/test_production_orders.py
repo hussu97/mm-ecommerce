@@ -271,9 +271,9 @@ async def test_create_moves_no_stock_then_produce_posts(env):
 
 
 async def test_batch_basis_line_stores_basis_and_moves_owner_units(env):
-    """A batch-basis recipe: the admin enters batches, the line snapshots the
-    basis + yield and stores the owner-unit truth (batches * batch_yield); the
-    ledger moves owner units and the produced count is recorded in batches."""
+    """A batch-basis recipe: the client sends OWNER units (24 = 2 batches × 12);
+    the line snapshots the basis + yield and derives the basis count (2) for
+    display, and the ledger moves owner units."""
     ids, Session = env
     # Re-activate cookie as a batch recipe: 1 batch = 12 cookies, 6g flour/batch.
     async with Session() as db:
@@ -294,8 +294,9 @@ async def test_batch_basis_line_stores_basis_and_moves_owner_units(env):
             source_branch=ids.source,
             user=ids.user,
             production_items=[
+                # 2 batches, sent as 24 owner units (the client converts).
                 SimpleNamespace(
-                    item_id=ids.cookie, quantity=Decimal("2"), unit="storage"
+                    item_id=ids.cookie, quantity=Decimal("24"), unit="storage"
                 )
             ],
         )
@@ -304,7 +305,7 @@ async def test_batch_basis_line_stores_basis_and_moves_owner_units(env):
         line_id = line.id
         assert line.basis == "batch"
         assert line.batch_yield == Decimal("12.00000000")
-        # The admin asked for 2 batches; the owner-unit truth is 2 * 12 = 24.
+        # Owner-unit truth 24; basis count derived as 24 / 12 = 2.
         assert line.planned_basis_quantity == Decimal("2.0000")
         assert line.planned_quantity == Decimal("24.0000")
 
@@ -321,9 +322,9 @@ async def test_batch_basis_line_stores_basis_and_moves_owner_units(env):
         assert await _on_hand(db, ids.flour, ids.source_wh) == Decimal("988.0000")
 
 
-async def test_batch_basis_produce_override_is_in_batches(env):
-    """An override at produce time is entered in batches too, and converts to
-    owner units for the movement."""
+async def test_batch_basis_produce_override_is_in_owner_units(env):
+    """An override at produce time is in owner units (the till converts a batch
+    count to units before sending); the basis count is derived for display."""
     ids, Session = env
     async with Session() as db:
         draft = await recipe_service.create_draft(
@@ -343,8 +344,9 @@ async def test_batch_basis_produce_override_is_in_batches(env):
             source_branch=ids.source,
             user=ids.user,
             production_items=[
+                # 3 batches planned, sent as 36 owner units.
                 SimpleNamespace(
-                    item_id=ids.cookie, quantity=Decimal("3"), unit="storage"
+                    item_id=ids.cookie, quantity=Decimal("36"), unit="storage"
                 )
             ],
         )
@@ -352,13 +354,13 @@ async def test_batch_basis_produce_override_is_in_batches(env):
         line_id = order.lines[0].id
 
     async with Session() as db:
-        # The till made only 1 batch, not the 3 planned.
+        # The till made only 1 batch (12 units), not the 3 planned.
         line = await transfer_service.produce_line(
-            db, line_id=line_id, user=ids.user, quantity=Decimal("1")
+            db, line_id=line_id, user=ids.user, quantity=Decimal("12")
         )
         await db.commit()
-        assert line.produced_basis_quantity == Decimal("1.0000")
-        assert line.produced_quantity == Decimal("12.0000")  # 1 batch * 12
+        assert line.produced_quantity == Decimal("12.0000")  # owner units
+        assert line.produced_basis_quantity == Decimal("1.0000")  # 12 / 12 = 1 batch
 
     async with Session() as db:
         assert await _on_hand(db, ids.cookie, ids.source_wh) == Decimal("12.0000")

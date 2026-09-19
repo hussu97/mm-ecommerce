@@ -49,11 +49,6 @@ if TYPE_CHECKING:
     from .branch import Branch
 
 
-class CostingMethodEnum(str, enum.Enum):
-    FIXED = "fixed"
-    FROM_INGREDIENTS = "from_ingredients"
-
-
 class InventoryTransactionTypeEnum(str, enum.Enum):
     """The ways stock moves, mirroring Foodics' transaction types.
 

@@ -40,11 +40,11 @@ class ProducibleItemBasis(BaseModel):
 
 
 class ProductionOrderItemInput(BaseModel):
-    #: ``quantity`` is in the item's *recipe basis* — batches for a batch-basis
-    #: recipe, units otherwise. The service reads the item's active recipe version,
-    #: snapshots the basis/yield onto the line, and stores the owner-unit truth on
-    #: ``planned_quantity``. For a unit-basis item the two are identical, so an
-    #: owner-unit caller is unaffected.
+    #: ``quantity`` is in **owner units** — the unit the ledger keeps and this
+    #: field's historical meaning. A basis-aware client (the admin grid) converts a
+    #: batch count to units before sending, so the wire is never ambiguous and an
+    #: older client still books correctly. The service snapshots the recipe basis
+    #: for display and derives the basis count from this quantity.
     item_id: UUID
     quantity: Decimal = Field(gt=0)
     unit: str = "storage"
@@ -62,9 +62,9 @@ class ProductionOrderCreate(BaseModel):
 
 class ProduceLineRequest(BaseModel):
     """Mark a line produced. ``quantity`` overrides the planned amount when the
-    till adjusts it, in the line's *recipe basis* (batches for a batch line);
-    omitted, the planned quantity is produced. The service converts to owner units
-    before posting the movement."""
+    till adjusts it, in **owner units** (the till converts a batch count to units
+    before sending); omitted, the planned quantity is produced. Owner units are
+    this field's historical meaning, so a version skew cannot mis-book."""
 
     quantity: Decimal | None = Field(default=None, gt=0)
     notes: str | None = None

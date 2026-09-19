@@ -1118,38 +1118,12 @@ async def _serialise_po(
     return payload
 
 
-async def _load_po(db: AsyncSession, po_id: uuid.UUID) -> PurchaseOrder:
-    return await crud_service.get_or_404(
-        db, PurchaseOrder, po_id, options=[selectinload(PurchaseOrder.items)]
-    )
-
-
-@purchase_orders_router.get("", response_model=list[PurchaseOrderResponse])
-async def list_purchase_orders(
-    branch_id: uuid.UUID | None = None,
-    supplier_id: uuid.UUID | None = None,
-    status_filter: str | None = Query(None, alias="status"),
-    limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.purchase_orders.manage")),
-):
-    stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
-    if branch_id:
-        await access_service.assert_branch_access(db, user, branch_id)
-        stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.where(
-            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
-        )
-    if supplier_id:
-        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
-    if status_filter:
-        stmt = stmt.where(PurchaseOrder.status == status_filter)
-    stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
-    orders = list((await db.execute(stmt)).scalars().unique().all())
-
-    # Resolve every page's line items and suppliers in one query each, rather
-    # than two per order — the N+1 that scaled with the page (F-INV-24).
+async def _serialise_po_list(
+    db: AsyncSession, orders: list[PurchaseOrder]
+) -> list[PurchaseOrderResponse]:
+    """Serialise many POs with their line items and suppliers resolved in one
+    query each, not two per order — the N+1 that scaled with the page (F-INV-24).
+    Shared by every list endpoint so none re-derives the batching."""
     item_ids = {line.item_id for o in orders for line in o.items}
     items_lookup: dict[uuid.UUID, InventoryItem] = {}
     if item_ids:
@@ -1180,6 +1154,39 @@ async def list_purchase_orders(
         )
         for o in orders
     ]
+
+
+async def _load_po(db: AsyncSession, po_id: uuid.UUID) -> PurchaseOrder:
+    return await crud_service.get_or_404(
+        db, PurchaseOrder, po_id, options=[selectinload(PurchaseOrder.items)]
+    )
+
+
+@purchase_orders_router.get("", response_model=list[PurchaseOrderResponse])
+async def list_purchase_orders(
+    branch_id: uuid.UUID | None = None,
+    supplier_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
+    if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
+        stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
+        )
+    if supplier_id:
+        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
+    if status_filter:
+        stmt = stmt.where(PurchaseOrder.status == status_filter)
+    stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+
+    return await _serialise_po_list(db, orders)
 
 
 @purchase_orders_router.post(
@@ -1678,7 +1685,15 @@ async def pos_purchase_orders_to_receive(
                 ]
             ),
         )
-        .order_by(PurchaseOrder.created_at.desc())
+        # Ordered by supplier first so the till's supplier-grouped list stays
+        # contiguous across pages (a supplier can't reappear in a later page and
+        # fragment its section), then newest-first, with `id` as the stable
+        # tiebreaker so offset paging cannot skip or repeat a row.
+        .order_by(
+            PurchaseOrder.supplier_id,
+            PurchaseOrder.created_at.desc(),
+            PurchaseOrder.id.desc(),
+        )
         .offset(offset)
         .limit(limit)
     )
@@ -1694,7 +1709,7 @@ async def pos_purchase_orders_to_receive(
             )
         )
     orders = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_po(db, o) for o in orders]
+    return await _serialise_po_list(db, orders)
 
 
 @pos_purchase_orders_router.post(

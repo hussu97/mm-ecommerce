@@ -805,7 +805,7 @@ async def pos_incoming_transfers(
             Transfer.received_transaction_id.is_(None),
         )
         .options(selectinload(Transfer.items))
-        .order_by(Transfer.created_at.desc())
+        .order_by(Transfer.created_at.desc(), Transfer.id.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -836,7 +836,7 @@ async def pos_outgoing_transfers(
             Transfer.status == TransferStatusEnum.PENDING.value,
         )
         .options(selectinload(Transfer.items))
-        .order_by(Transfer.created_at.desc())
+        .order_by(Transfer.created_at.desc(), Transfer.id.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -877,7 +877,7 @@ async def pos_completed_transfers(
             )
         )
         .options(selectinload(Transfer.items))
-        .order_by(Transfer.updated_at.desc())
+        .order_by(Transfer.updated_at.desc(), Transfer.id.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -1357,7 +1357,7 @@ async def pos_pending_production(
             ),
         )
         .options(selectinload(ProductionOrder.lines))
-        .order_by(ProductionOrder.created_at.desc())
+        .order_by(ProductionOrder.created_at.desc(), ProductionOrder.id.desc())
         .offset(offset)
         .limit(limit)
     )

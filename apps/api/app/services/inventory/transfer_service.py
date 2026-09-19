@@ -1381,13 +1381,15 @@ async def _build_production_order(
 
     made_a_line = False
     for entry in production_items:
-        # ``entry.quantity`` is in the item's recipe basis — batches for a
-        # batch-basis recipe, units otherwise. Snapshot the basis/yield from the
-        # item's *current active* recipe version (so a later change flows into the
-        # next order, not this one) and derive the owner-unit ``planned_quantity``
-        # the ledger and every inventory report keep speaking.
-        basis_qty = _q(entry.quantity)
-        if basis_qty <= 0:
+        # ``entry.quantity`` is in **owner units** — the unit the ledger and every
+        # inventory report speak, and the historical meaning of this field, so a
+        # client that predates the recipe-basis UI still books correctly (no
+        # ambiguous basis-on-the-wire that a version skew could misread). The basis
+        # is a *display* projection: snapshot basis/yield from the item's current
+        # active recipe (so a later change flows into the next order, not this one)
+        # and derive the basis count from the owner quantity for the UI/printout.
+        owner_qty = _q(entry.quantity)
+        if owner_qty <= 0:
             continue
         item = await db.get(InventoryItem, entry.item_id)
         if item is None:
@@ -1399,8 +1401,10 @@ async def _build_production_order(
         basis, batch_yield = await recipe_service.item_production_basis(
             db, entry.item_id
         )
-        owner_qty = (
-            _q(basis_qty * batch_yield) if batch_yield is not None else basis_qty
+        basis_qty = (
+            _q(owner_qty / batch_yield)
+            if batch_yield is not None and batch_yield > 0
+            else owner_qty
         )
         unit = getattr(entry, "unit", "storage")
         factor = (
@@ -1480,13 +1484,15 @@ async def produce_line(
     branch = await db.get(Branch, order.source_branch_id)
     if branch is None:
         raise NotFoundError("Source branch not found")
-    # The override (and the produced count we record) is in the line's recipe
-    # basis; convert to owner units for the movement, which the ledger keeps.
+    # The override is in **owner units** (the ledger's unit and this field's
+    # historical meaning) — the client converts a batch count to units before
+    # sending, so a version skew can never turn "2 batches" into 2 units. The
+    # basis count we record for display is derived back from the owner quantity.
     is_batch = line.basis == RecipeBasisEnum.BATCH.value and line.batch_yield
     if quantity is not None:
-        qty_basis = _q(quantity)
-        owner_qty = (
-            _q(qty_basis * Decimal(str(line.batch_yield))) if is_batch else qty_basis
+        owner_qty = _q(quantity)
+        qty_basis = (
+            _q(owner_qty / Decimal(str(line.batch_yield))) if is_batch else owner_qty
         )
     else:
         owner_qty = _q(line.planned_quantity)

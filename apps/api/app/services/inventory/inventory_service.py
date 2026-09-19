@@ -936,10 +936,11 @@ PURCHASE_ORDER_MOVES: dict[PurchaseOrderStatusEnum, _Move] = {
         sources=frozenset({PurchaseOrderStatusEnum.PENDING}),
         refusal="Only submitted orders can be declined",
     ),
-    # Receiving reaches one of two states from the same two sources: a short
-    # delivery leaves the order partially received and a complete one closes
-    # it. Which of the two is decided by what actually arrived, not by the
-    # caller — see `receive_purchase_order`.
+    # Receiving is now one-shot: `receive_purchase_order` always closes the order
+    # (whatever was short is recorded on the line), so PARTIALLY_RECEIVED is no
+    # longer reached from a receive. The transition is kept so an order left
+    # `partially_received` by the old multi-delivery flow can still be received to
+    # CLOSED, and its status stays a legal move source below.
     PurchaseOrderStatusEnum.PARTIALLY_RECEIVED: _Move(
         sources=frozenset(
             {

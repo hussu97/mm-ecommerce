@@ -703,7 +703,10 @@ async def list_shift_reports(
     reports = list(
         (
             await db.execute(
-                stmt.order_by(ShiftInventoryReport.created_at.desc())
+                stmt.order_by(
+                    ShiftInventoryReport.created_at.desc(),
+                    ShiftInventoryReport.id.desc(),
+                )
                 .offset(offset)
                 .limit(limit)
             )

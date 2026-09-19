@@ -189,13 +189,16 @@ export default function NewTransferOrderPage() {
   );
 
   // Recipe items with a positive "qty to produce" — the production lines to raise.
-  // The unit matches the transfer unit the row uses ("storage").
+  // The user types the recipe basis (batches for a batch item); we send OWNER
+  // units (batches × yield, via produceUnits) so the wire always speaks the
+  // ledger's unit and the backend never has to guess the basis from a bare number.
   const productionItems = useMemo(
     () =>
       Object.keys(produce)
         .filter((id) => producibleIds.has(id) && parseNum(produce[id]) > 0)
-        .map((id) => ({ item_id: id, quantity: parseNum(produce[id]), unit: 'storage' as const })),
-    [produce, producibleIds],
+        .map((id) => ({ item_id: id, quantity: produceUnits(id), unit: 'storage' as const })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [produce, producibleIds, bases],
   );
   // Only production was filled in — no destination got a positive quantity, but at
   // least one recipe item has a produce qty. The transfer create needs ≥1 transfer

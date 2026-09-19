@@ -129,9 +129,12 @@ def test_active_or_fulfilled_excludes_only_the_terminal_set():
             compile_kwargs={"literal_binds": True}
         )
     )
-    # It is a NOT IN over exactly the terminal set.
+    # It is a NOT IN over the terminal set.
     for terminal in order_query.TERMINAL_STATUSES:
         assert terminal in sql
+    # ...plus `created`: an unpaid/abandoned checkout must not count on the
+    # courier scorecard's revenue.
+    assert "created" in sql
     # A live/completed status is not named — it is included by exclusion, so a
     # delivered or still-in-flight order counts against its carrier.
     assert "delivered" not in sql
