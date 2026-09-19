@@ -78,7 +78,7 @@ from app.schemas.inventory import (
     WarehouseUpdate,
     WasteRequest,
 )
-from app.services import audit_service, crud_service
+from app.services import audit_service, crud_service, email_service
 from app.services.inventory import (
     access_service,
     inventory_service,
@@ -1175,9 +1175,13 @@ async def create_purchase_order(
     supplier = await crud_service.get_or_404(db, Supplier, data.supplier_id)
     business_date = await business_day_service.current_business_date(db, branch)
 
+    # Born submitted (pending), not draft: there is no separate draft step any
+    # more — an unapproved (pending) PO stays fully editable, and approval is the
+    # one gate. The creator is stamped as the submitter; approval still needs a
+    # different person (separation of duties on the approve transition).
     purchase_order = PurchaseOrder(
         reference=await inventory_service.next_inventory_reference(db, "PO"),
-        status=PurchaseOrderStatusEnum.DRAFT.value,
+        status=PurchaseOrderStatusEnum.PENDING.value,
         origin="admin",
         supplier_id=data.supplier_id,
         branch_id=data.branch_id,
@@ -1188,6 +1192,8 @@ async def create_purchase_order(
         additional_cost=data.additional_cost,
         notes=data.notes,
         creator_id=user.id,
+        submitter_id=user.id,
+        submitted_at=inventory_service.utcnow(),
     )
     db.add(purchase_order)
     await db.flush()
@@ -1315,15 +1321,63 @@ async def receive_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """Receive a delivery, in full or in part, moving stock in."""
+    """Receive a delivery in one action, closing the PO.
+
+    Whatever is not received is recorded as short; a line whose received quantity
+    differs from what was ordered carries a variance reason, and the office is
+    emailed the short/excess.
+    """
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = {line.purchase_order_item_id: line.quantity for line in data.lines}
+    reasons = {
+        line.purchase_order_item_id: line.variance_reason
+        for line in data.lines
+        if line.variance_reason
+    }
     transaction = await inventory_service.receive_purchase_order(
-        db, purchase_order=purchase_order, user=user, received=received
+        db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
+    await _email_po_receiving_variance(db, await _load_po(db, po_id), user)
     transaction = await inventory_service.load_transaction(db, transaction.id)
     return await _serialise_one_transaction(db, transaction)
+
+
+async def _email_po_receiving_variance(
+    db: AsyncSession, purchase_order: PurchaseOrder, user: User
+) -> None:
+    """Email the office the short/excess lines of a just-received PO. No-op when
+    every line arrived exactly as ordered. Mirrors the transfer sending-variance
+    notification. Read the PO *after* receiving so received/variance are set."""
+    variance_lines = []
+    for po_item in purchase_order.items:
+        ordered = Decimal(str(po_item.quantity))
+        got = Decimal(str(po_item.received_quantity or 0))
+        if got == ordered:
+            continue
+        item = await db.get(InventoryItem, po_item.item_id)
+        variance_lines.append(
+            {
+                "item_name": item.name if item else str(po_item.item_id),
+                "ordered": f"{ordered:f}",
+                "received": f"{got:f}",
+                "delta": f"{got - ordered:+f}",
+                "reason": po_item.variance_reason or "",
+            }
+        )
+    if not variance_lines:
+        return
+    supplier = await db.get(Supplier, purchase_order.supplier_id)
+    branch = await db.get(Branch, purchase_order.branch_id)
+    await email_service.send_purchase_order_receiving_variance(
+        purchase_order_id=str(purchase_order.id),
+        purchase_order_reference=purchase_order.reference,
+        supplier_name=supplier.name if supplier else "",
+        branch_name=branch.name if branch else "",
+        business_date=purchase_order.business_date,
+        received_by=user.display_name or user.email,
+        lines=variance_lines,
+    )
 
 
 # ─── Supplier catalogue ───────────────────────────────────────────────────────
@@ -1528,13 +1582,22 @@ async def pos_receive_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """Receive an admin PO at the till — posts stock and its FIFO cost."""
+    """Receive an admin PO at the till — posts stock and its FIFO cost.
+
+    One-shot: unreceived quantity is recorded short, a discrepant line needs a
+    reason, and the office is emailed any short/excess (as for a transfer)."""
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = {line.purchase_order_item_id: line.quantity for line in data.lines}
+    reasons = {
+        line.purchase_order_item_id: line.variance_reason
+        for line in data.lines
+        if line.variance_reason
+    }
     await inventory_service.receive_purchase_order(
-        db, purchase_order=purchase_order, user=user, received=received
+        db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
+    await _email_po_receiving_variance(db, await _load_po(db, po_id), user)
     return await _serialise_po(db, await _load_po(db, po_id))
 
 

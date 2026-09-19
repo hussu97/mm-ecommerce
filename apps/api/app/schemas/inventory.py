@@ -266,6 +266,9 @@ class SupplierCreate(BaseModel):
     name_localized: str | None = Field(None, max_length=200)
     reference: str | None = Field(None, max_length=50)
     is_vat_deductible: bool = True
+    #: Flexible item mapping — allow a PO for this supplier to add any active
+    #: purchasable item, not just the mapped ones.
+    allow_any_item: bool = False
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int = Field(0, ge=0, le=365)
@@ -279,6 +282,7 @@ class SupplierUpdate(BaseModel):
     name_localized: str | None = Field(None, max_length=200)
     reference: str | None = Field(None, max_length=50)
     is_vat_deductible: bool | None = None
+    allow_any_item: bool | None = None
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int | None = Field(None, ge=0, le=365)
@@ -302,6 +306,7 @@ class SupplierResponse(ORMModel):
     name_localized: str | None
     reference: str | None
     is_vat_deductible: bool
+    allow_any_item: bool = False
     address: str | None
     tax_number: str | None
     payment_terms_days: int
@@ -588,7 +593,11 @@ class ItemCostLayersResponse(BaseModel):
 
 class ReceiveLine(BaseModel):
     purchase_order_item_id: UUID
-    quantity: Decimal = Field(gt=0)
+    #: What actually arrived for this line — 0 when the line was a full no-show
+    #: (recorded as short). A line whose received quantity differs from what was
+    #: ordered must carry a ``variance_reason``, the same as a transfer receipt.
+    quantity: Decimal = Field(ge=0)
+    variance_reason: str | None = None
 
 
 class ReceivePurchaseOrderRequest(BaseModel):

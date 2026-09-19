@@ -1,0 +1,80 @@
+{#
+  A purchase order received with a short/excess variance: at least one line
+  arrived in a different quantity than was ordered. Whatever was not received is
+  recorded as short and the order is closed.
+
+  Sent to the office so the discrepancy can be reviewed against the PO in the
+  admin console. Fired only when there is a variance. Always English: it is an
+  internal notification and the admin it links to is English-only.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}Purchase order receiving variance — {{ purchase_order_reference }}{% endblock %}
+{% block preheader %}{{ supplier_name }} &rarr; {{ branch_name }} &middot; {{ business_date }} &middot; received &ne; ordered{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Purchase order receiving variance</p>
+    <h2 class="hero-title">{{ purchase_order_reference }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>
+      This purchase order was received with a <strong>variance</strong> — the
+      quantity received differs from what was ordered on one or more lines.
+      Whatever was not received has been recorded as short and the order is closed;
+      review the lines below.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 140px; padding: 5px 0;">Supplier</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="auto">{{ supplier_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Branch</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ branch_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Business date</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ business_date }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Received by</td>
+            <td class="kv-value" style="padding: 5px 0;" dir="auto">{{ received_by }}</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px;">
+      <tr>
+        <td class="kv-label" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Item</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Ordered</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Received</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Variance</td>
+      </tr>
+      {% for line in lines %}
+      <tr>
+        <td class="kv-value" style="padding: 6px 0;" dir="auto">{{ line.item_name }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.ordered }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.received }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;"><strong>{{ line.delta }}</strong></td>
+      </tr>
+      {% if line.reason %}
+      <tr>
+        <td class="kv-value" colspan="4" style="padding: 0 0 6px 0; color: #777;" dir="auto">&mdash; {{ line.reason }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </table>
+  </td></tr>
+</table>
+
+{{ parts.button(admin_purchase_order_url, 'Open the purchase order in the admin') }}
+{% endblock %}

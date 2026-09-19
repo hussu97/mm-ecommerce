@@ -188,6 +188,10 @@ def _admin_transfer_url(order_id: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/inventory/transfers/{order_id}"
 
 
+def _admin_purchase_order_url(po_id: str) -> str:
+    return f"{settings.ADMIN_URL.rstrip('/')}/purchase-orders/{po_id}"
+
+
 # ─── Building the picture an order email paints ───────────────────────────────
 
 
@@ -995,6 +999,64 @@ async def send_transfer_sending_variance(
             subject,
             result,
             transfer_reference,
+        )
+
+
+async def send_purchase_order_receiving_variance(
+    *,
+    purchase_order_id: str,
+    purchase_order_reference: str,
+    supplier_name: str,
+    branch_name: str,
+    business_date: str,
+    received_by: str,
+    lines: list[dict[str, Any]],
+) -> None:
+    """Tell the office a purchase order was received with a short/excess variance —
+    at least one line arrived in a different quantity than was ordered. Modelled on
+    ``send_transfer_sending_variance``: fired only when ``lines`` is non-empty (the
+    caller passes just the varying lines), always English, links to the PO in the
+    admin console.
+
+    Each ``lines`` entry carries ``item_name``, ``ordered`` and ``received`` (both
+    formatted strings) plus an optional ``reason``; the template shows the signed
+    delta itself."""
+    if not lines:
+        return
+    subject = (
+        f"Purchase order receiving variance — {purchase_order_reference} · "
+        f"{supplier_name} → {branch_name}"
+    )
+    for recipient in TRANSFER_VARIANCE_RECIPIENTS:
+        try:
+            html = _render(
+                "purchase_order_receiving_variance.html",
+                recipient_email=recipient,
+                locale="en",
+                purchase_order_reference=purchase_order_reference,
+                supplier_name=supplier_name,
+                branch_name=branch_name,
+                business_date=business_date,
+                received_by=received_by,
+                lines=lines,
+                admin_purchase_order_url=_admin_purchase_order_url(purchase_order_id),
+            )
+            result = await asyncio.to_thread(_send, recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "purchase_order_receiving_variance render/send failed for %s to %s: %s",
+                purchase_order_reference,
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log(
+            "purchase_order_receiving_variance",
+            recipient,
+            subject,
+            result,
+            purchase_order_reference,
         )
 
 

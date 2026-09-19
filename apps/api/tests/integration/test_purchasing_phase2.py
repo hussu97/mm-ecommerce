@@ -315,6 +315,159 @@ async def test_admin_po_splits_vat_and_receives_into_fifo_stock(engine, env):
         await db.rollback()
 
 
+async def test_short_receipt_records_variance_and_closes(engine, env):
+    """A short delivery closes the PO one-shot: the received quantity and the
+    variance reason are recorded, and only what arrived posts to stock."""
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} Short", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("100")
+                )
+            ],
+            is_vat_deductible=False,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+
+        # A short line with no reason is refused.
+        with pytest.raises(BadRequestError):
+            await inventory_service.receive_purchase_order(
+                db, purchase_order=po, user=user, received={line.id: D("6")}
+            )
+        await db.rollback()
+
+
+async def test_short_receipt_with_reason_closes_and_over_receipt_is_allowed(
+    engine, env
+):
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    # Short-with-reason closes and records the variance.
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} ShortOK", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("100")
+                )
+            ],
+            is_vat_deductible=False,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        await inventory_service.receive_purchase_order(
+            db,
+            purchase_order=po,
+            user=user,
+            received={line.id: D("6")},
+            reasons={line.id: "two cases missing"},
+        )
+        assert po.status == PurchaseOrderStatusEnum.CLOSED.value
+        assert line.received_quantity == D("6.0000")
+        assert line.variance_reason == "two cases missing"
+        level = await inventory_service.level_for(
+            db, raw_id, (await inventory_service.default_warehouse(db, branch_id)).id
+        )
+        # Only the 6 that arrived posted to stock.
+        assert level.quantity == D("6.0000")
+        await db.rollback()
+
+    # An over-receipt (more than ordered) is allowed with a reason.
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} Over", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("100")
+                )
+            ],
+            is_vat_deductible=False,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        await inventory_service.receive_purchase_order(
+            db,
+            purchase_order=po,
+            user=user,
+            received={line.id: D("12")},
+            reasons={line.id: "supplier sent two extra"},
+        )
+        assert po.status == PurchaseOrderStatusEnum.CLOSED.value
+        assert line.received_quantity == D("12.0000")
+        level = await inventory_service.level_for(
+            db, raw_id, (await inventory_service.default_warehouse(db, branch_id)).id
+        )
+        assert level.quantity == D("12.0000")
+        await db.rollback()
+
+
 async def test_pos_create_and_receive_lands_cost_in_one_call(engine, env):
     branch_id, user_id, raw_id, produced_id = env
     Session = async_sessionmaker(engine, expire_on_commit=False)

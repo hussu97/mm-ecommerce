@@ -1265,28 +1265,49 @@ async def receive_purchase_order(
     purchase_order: PurchaseOrder,
     user: User,
     received: dict[uuid.UUID, Decimal],
+    reasons: dict[uuid.UUID, str] | None = None,
 ) -> InventoryTransaction:
     """
-    Receive against an approved PO, in full or in part.
+    Receive an approved PO in one action, closing it.
 
-    `received` maps purchase-order-item id to the quantity actually delivered,
-    so a short delivery leaves the PO partially received rather than closed.
+    Receiving is a single event, mirroring how a transfer is received: `received`
+    maps each line to the quantity that actually arrived, and whatever was not
+    received is recorded as **short** (the remainder is not left outstanding for a
+    later delivery — the PO closes). A line that arrived over its ordered quantity
+    is an **excess**. Either way the difference is a variance, and — exactly as on
+    a transfer receipt — a line whose received quantity differs from what was
+    ordered must carry a `reasons[line_id]` note, or the receipt is refused.
 
-    The one move whose consequence runs *before* the assignment: which state the
-    order lands in is computed from what arrived, so the stock has to be posted
-    first. The guard is therefore asked up front, against the same map, so a
-    declined order cannot get as far as moving stock and then be refused.
+    The one move whose consequence runs *before* the assignment: the guard is
+    asked up front, against the same map, so a declined order cannot get as far as
+    moving stock and then be refused.
     """
     if purchase_order.id is not None:
         purchase_order = await _lock_purchase_order(db, purchase_order.id)
-    assert_can_transition_purchase_order(
-        purchase_order, PurchaseOrderStatusEnum.PARTIALLY_RECEIVED
-    )
+    assert_can_transition_purchase_order(purchase_order, PurchaseOrderStatusEnum.CLOSED)
 
     branch = await db.get(Branch, purchase_order.branch_id)
     if branch is None:
         raise NotFoundError("Branch not found")
     business_date = await business_day_service.current_business_date(db, branch)
+
+    reasons = reasons or {}
+
+    # A discrepant line needs a reason before anything moves — collected up front
+    # so the message names every one at once rather than failing line by line.
+    missing: list[str] = []
+    for po_item in purchase_order.items:
+        quantity = _q(received.get(po_item.id, 0))
+        if quantity != _q(po_item.quantity):
+            reason = reasons.get(po_item.id)
+            if not reason or not reason.strip():
+                item = await db.get(InventoryItem, po_item.item_id)
+                missing.append(getattr(item, "name", None) or str(po_item.item_id))
+    if missing:
+        raise BadRequestError(
+            "A reason is required where the received quantity differs from what was "
+            "ordered: " + ", ".join(missing)
+        )
 
     transaction = InventoryTransaction(
         reference=await next_reference(
@@ -1308,12 +1329,17 @@ async def receive_purchase_order(
     paid_tax = Decimal("0")
     for po_item in purchase_order.items:
         quantity = _q(received.get(po_item.id, 0))
+        # Record what arrived and the variance note (one-shot receipt: this is the
+        # final received quantity, whether short, exact or over).
+        po_item.received_quantity = quantity
+        ordered = Decimal(str(po_item.quantity or 0))
+        po_item.variance_reason = (
+            reasons.get(po_item.id, "").strip() or None
+            if quantity != _q(ordered)
+            else None
+        )
         if quantity <= 0:
             continue
-        if quantity > po_item.outstanding_quantity:
-            raise BadRequestError(
-                f"Receiving {quantity} exceeds the {po_item.outstanding_quantity} outstanding"
-            )
         any_line = True
         db.add(
             InventoryTransactionItem(
@@ -1328,14 +1354,10 @@ async def receive_purchase_order(
         # Carry the recoverable VAT for the portion received, pro rata, onto the
         # ledger transaction so the reclaim report can read it (the cost itself
         # is gross and lands in the FIFO layer via unit_cost above).
-        ordered = Decimal(str(po_item.quantity or 0))
         if ordered > 0:
             paid_tax += _money(
                 Decimal(str(po_item.vat_amount or 0)) * (quantity / ordered)
             )
-        po_item.received_quantity = _q(
-            Decimal(str(po_item.received_quantity or 0)) + quantity
-        )
 
     if not any_line:
         raise BadRequestError("Nothing was received")
@@ -1345,13 +1367,9 @@ async def receive_purchase_order(
     await db.refresh(transaction)
     posted = await post_transaction(db, transaction=transaction, user=user)
 
+    # One-shot: the receipt closes the order, whatever was short.
     await transition_purchase_order(
-        db,
-        purchase_order,
-        PurchaseOrderStatusEnum.CLOSED
-        if purchase_order.is_fully_received
-        else PurchaseOrderStatusEnum.PARTIALLY_RECEIVED,
-        user=user,
+        db, purchase_order, PurchaseOrderStatusEnum.CLOSED, user=user
     )
     await db.flush()
     return posted
