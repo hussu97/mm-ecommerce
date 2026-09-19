@@ -263,6 +263,19 @@ ONLINE_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
     {OrderStatusEnum.PACKED}
 )
 
+#: The statuses a cancellation is "pre-packing" from — the goods have been
+#: accepted (so consumption is posted) but not yet boxed. Cancelling from here
+#: reverses the consumption in full; cancelling from `packed` or later leaves it
+#: consumed. `created` is included for completeness (a cancellation there has no
+#: posted consumption to reverse, so the reversal is a no-op).
+_PRE_PACKING_STATUSES: frozenset[OrderStatusEnum] = frozenset(
+    {
+        OrderStatusEnum.CREATED,
+        OrderStatusEnum.CONFIRMED,
+        OrderStatusEnum.ARRIVED_AT_POS,
+    }
+)
+
 
 def can_transition(current: OrderStatusEnum, new: OrderStatusEnum) -> bool:
     """Whether the map allows moving from `current` to `new`."""
@@ -567,14 +580,20 @@ async def _consequences(
         # capped campaign's redemptions.
         await _release_promo_use(db, order)
 
-        # Recipe inventory has a separate immutable ledger. If consumption is
-        # already posted, cancellation cannot guess whether physical goods came
-        # back; it records a visible exception until a person chooses restock,
-        # waste, or no stock effect. If posting is still pending, the event is
-        # cancelled before it can move anything.
+        # Recipe inventory has a separate immutable ledger. Consumption is posted
+        # at acceptance (`confirmed`), long before the goods are boxed. Cancelling
+        # while still pre-packing means they were never actually made, so the sale
+        # movement is reversed in full (it stops counting as Sold). Once packed the
+        # goods are assumed consumed, so a posted consumption instead records a
+        # visible exception until a person chooses restock, waste, or no stock
+        # effect. If posting is still pending, the event is cancelled before it can
+        # move anything.
         from app.services.inventory import source_event_service
 
-        await source_event_service.record_order_cancellation(db, order)
+        pre_packing = previous in _PRE_PACKING_STATUSES
+        await source_event_service.record_order_cancellation(
+            db, order, pre_packing=pre_packing
+        )
 
     # Cancelling an order that was *delivered* is a different act, and the guard
     # above steps around all of it. The one route here is the admin refund path,

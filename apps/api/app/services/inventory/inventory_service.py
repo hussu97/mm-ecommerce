@@ -1404,10 +1404,23 @@ async def restock_for_void(db: AsyncSession, *, order: Order, user: User) -> Non
     `restock` disposition — which also resolves the disposition-required
     exception the cancellation logged against the frozen consumption. A no-op
     for an order that never consumed anything (inventory off, or no recipes),
-    because `record_return` finds no original movement to reverse.
+    because `record_return` finds no original movement to reverse — and a no-op if
+    the consumption was already reversed (e.g. a pre-packing cancellation beat the
+    void here), since the FIFO return cap would otherwise raise on a second full
+    return.
     """
     from app.services.inventory import source_event_service
 
+    already_returned = await db.scalar(
+        select(InventoryTransaction.id).where(
+            InventoryTransaction.order_id == order.id,
+            InventoryTransaction.type
+            == InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
+            InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+        )
+    )
+    if already_returned is not None:
+        return
     await source_event_service.record_return(
         db,
         order=order,
