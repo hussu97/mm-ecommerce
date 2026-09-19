@@ -324,6 +324,180 @@ class TransferLine(Base, UUIDMixin):
         return f"<TransferLine item={self.item_id} qty={self.quantity}>"
 
 
+class ProductionLineStatusEnum(str, enum.Enum):
+    """The lifecycle of one production line — one item to be made at the source.
+
+    A line is ``pending`` when the order is raised, with no stock moved. The
+    source till marks it ``produced`` (posting the PRODUCTION movement and its
+    recipe consumption then, not at create) or ``cancelled`` with a note when the
+    branch is not making it. Movement lives on ``production_transaction_id``; the
+    status is the cheap projection for list filtering.
+    """
+
+    PENDING = "pending"
+    PRODUCED = "produced"
+    CANCELLED = "cancelled"
+
+
+class ProductionOrderStatusEnum(str, enum.Enum):
+    """The *derived* status of a production order, rolled up from its lines (see
+    ``transfer_service._recompute_production_status``). Never assigned directly —
+    recomputed on every line transition."""
+
+    PENDING = "pending"
+    PARTIALLY_PRODUCED = "partially_produced"
+    PRODUCED = "produced"
+    CANCELLED = "cancelled"
+
+
+class ProductionOrder(Base, UUIDMixin, TimestampMixin):
+    """The production half of a "transfer and production order": a list of items
+    to make at the source branch, raised in the same admin action as the transfer
+    fan-out (or on its own). Creating it moves no stock — each line is produced at
+    the source till later, one at a time or all at once, at which point the
+    PRODUCTION movement posts to the ledger.
+
+    Linked to its sibling :class:`TransferOrder` by ``transfer_order_id`` when the
+    admin raised both together; null for a production-only order.
+    """
+
+    __tablename__ = "production_orders"
+    __table_args__ = (
+        status_vocabulary(
+            "production_orders", "status", ProductionOrderStatusEnum
+        ),
+        business_date_format("production_orders"),
+        # Same idempotency guard as TransferOrder: a retried admin create with the
+        # same token is refused and the existing order returned.
+        Index(
+            "uq_production_orders_client_request_id",
+            "client_request_id",
+            unique=True,
+            postgresql_where=text("client_request_id IS NOT NULL"),
+        ),
+    )
+
+    reference: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=ProductionOrderStatusEnum.PENDING.value,
+        index=True,
+    )
+    #: The branch every line is produced at (production is always at the source).
+    source_branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    source_warehouse_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("warehouses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: The sibling transfer order raised in the same admin action; null when this
+    #: is a production-only order.
+    transfer_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("transfer_orders.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    business_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Client-supplied idempotency token, unique when set (mirrors TransferOrder).
+    client_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: When the source till auto-printed this order's production sheet — stamped
+    #: once, the first time a till opens on the order's date. The manual Print
+    #: button is independent and never touches this.
+    auto_printed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    creator_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    lines: Mapped[list[ProductionLine]] = relationship(
+        "ProductionLine",
+        back_populates="production_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProductionOrder {self.reference} {self.status}>"
+
+
+class ProductionLine(Base, UUIDMixin, TimestampMixin):
+    """One item to be produced under a :class:`ProductionOrder`."""
+
+    __tablename__ = "production_order_items"
+    __table_args__ = (
+        status_vocabulary(
+            "production_order_items", "status", ProductionLineStatusEnum
+        ),
+    )
+
+    production_order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("production_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    #: The quantity the admin asked to produce.
+    planned_quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
+    #: What was actually produced (the till may adjust before marking produced).
+    #: Null until produced.
+    produced_quantity: Mapped[Any | None] = mapped_column(
+        Numeric(16, 4), nullable=True
+    )
+    unit: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="storage"
+    )
+    conversion_factor: Mapped[Any] = mapped_column(
+        Numeric(16, 6), nullable=False, server_default="1"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=ProductionLineStatusEnum.PENDING.value,
+        index=True,
+    )
+    #: Required when the line is cancelled — why the branch is not producing it.
+    cancel_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The posted PRODUCTION transaction (the ledger movement for this line). Its
+    #: recipe consumption/waste share that transaction's ``correction_group_id``.
+    #: Null until produced.
+    production_transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_transactions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    produced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    produced_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    production_order: Mapped[ProductionOrder] = relationship(
+        "ProductionOrder", back_populates="lines"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ProductionLine item={self.item_id} qty={self.planned_quantity}>"
+
+
 class InventoryTransferTemplate(Base, UUIDMixin, TimestampMixin):
     """A saved list of items a branch typically transfers, so a cashier creating a
     transfer picks a template and fills quantities rather than searching the whole

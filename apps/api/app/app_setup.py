@@ -272,6 +272,20 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
                 )
             )
 
+            # The VAT ledger refresh. Same lifespan reasons as its neighbours —
+            # no cron here, an advisory lock so a second copy across blue/green is
+            # harmless, storefront only. Own flag so the derived VAT cache can be
+            # paused without stopping dispatch; when off, the loop never starts and
+            # the report serves its last computed values.
+            if settings.VAT_LEDGER_REFRESH_ENABLED:
+                from app.services import vat_ledger
+
+                background.append(
+                    spawn_tracked(
+                        vat_ledger.run_forever(), name="vat_ledger_refresh"
+                    )
+                )
+
             # Branch hours sync. Same reasoning as its neighbours — no cron here,
             # an advisory lock so a second copy is harmless, storefront app only.
             # Hourly it mirrors each branch's weekly schedule (the source of truth)

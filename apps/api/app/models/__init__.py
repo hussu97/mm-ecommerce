@@ -162,6 +162,10 @@ from .operations import (  # noqa: F401
     InventoryTransferTemplate,
     InventoryTransferTemplateItem,
     NotificationRule,
+    ProductionLine,
+    ProductionLineStatusEnum,
+    ProductionOrder,
+    ProductionOrderStatusEnum,
     Transfer,
     TransferKindEnum,
     TransferLine,
@@ -240,6 +244,11 @@ from .till import (  # noqa: F401
 )
 from .url_redirect import UrlRedirect  # noqa: F401
 from .user import User  # noqa: F401
+from .vat_ledger import (  # noqa: F401
+    VatCategoryEnum,
+    VatDirectionEnum,
+    VatLedgerEntry,
+)
 from .webhook_event import WebhookEvent  # noqa: F401
 from .webhook_log import WebhookLog  # noqa: F401
 
@@ -360,6 +369,9 @@ __all__ = [
     "OCCUPIES_SLOT",
     # Inventory
     "InventoryCategory",
+    "VatCategoryEnum",
+    "VatDirectionEnum",
+    "VatLedgerEntry",
     "Warehouse",
     "InventoryItem",
     "InventoryLevel",
@@ -407,6 +419,10 @@ __all__ = [
     "TransferOrder",
     "TransferOrderStatusEnum",
     "TransferStatusEnum",
+    "ProductionOrder",
+    "ProductionOrderStatusEnum",
+    "ProductionLine",
+    "ProductionLineStatusEnum",
     "SpotCheck",
     "SpotCheckItem",
     "Reservation",

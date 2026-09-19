@@ -9,9 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
 from app.core.exceptions import BadRequestError
+from app.core.money import money
 from app.core.permissions import require
 from app.models.user import User
-from app.schemas.reports import DailySalesEmailRequest, DailySalesEmailResponse
+from app.models.vat_ledger import VatDirectionEnum
+from app.schemas.reports import (
+    DailySalesEmailRequest,
+    DailySalesEmailResponse,
+    VatLedgerEntitySummary,
+    VatLedgerResponse,
+    VatLedgerRow,
+)
+from app.services import vat_ledger
 from app.services.pos import daily_sales_email, pos_reports
 
 router = APIRouter()
@@ -39,6 +48,58 @@ class _Window:
             "date_from": self.date_from,
             "date_to": self.date_to,
         }
+
+
+@router.get("/vat-ledger", response_model=VatLedgerResponse)
+async def vat_ledger_report(
+    date_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    legal_entity_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("reports.vat")),
+):
+    """VAT collected vs. recoverable per legal entity, from the derived cache.
+
+    Reads `vat_ledger_entries` only — never recomputes on request. The sweep
+    (`app.services.vat_ledger`) keeps it fresh.
+    """
+    if date_from and date_to and date_from > date_to:
+        raise BadRequestError("date_from must not be after date_to")
+
+    rows = await vat_ledger.read_ledger(
+        db, date_from=date_from, date_to=date_to, legal_entity_id=legal_entity_id
+    )
+
+    summary: dict[uuid.UUID, VatLedgerEntitySummary] = {}
+    for row in rows:
+        eid = row["legal_entity_id"]
+        entry = summary.get(eid)
+        if entry is None:
+            entry = VatLedgerEntitySummary(
+                legal_entity_id=eid,
+                legal_entity_name=row["legal_entity_name"],
+                vat_registered=row["vat_registered"],
+                output_vat=money(0),
+                input_vat_recoverable=money(0),
+                net_vat_position=money(0),
+            )
+            summary[eid] = entry
+        if row["direction"] == VatDirectionEnum.OUTPUT.value:
+            entry.output_vat = money(entry.output_vat + row["vat_amount"])
+        elif row["vat_recoverable"]:
+            entry.input_vat_recoverable = money(
+                entry.input_vat_recoverable + row["vat_amount"]
+            )
+
+    for entry in summary.values():
+        entry.net_vat_position = money(entry.output_vat - entry.input_vat_recoverable)
+
+    return VatLedgerResponse(
+        date_from=date_from,
+        date_to=date_to,
+        rows=[VatLedgerRow(**row) for row in rows],
+        summary=sorted(summary.values(), key=lambda s: s.legal_entity_name),
+    )
 
 
 @router.get("/sales/summary")

@@ -232,6 +232,18 @@ class Settings(BaseSettings):
     #: storefront scheduler, own switch. Skips any order whose session has expired
     #: or is older than `ABANDONED_CART_MAX_AGE_HOURS` (a Stripe session dies at
     #: ~24h, so the link would be dead). Once-only, guarded by the email journal.
+    #: The VAT ledger refresh loop (`vat_ledger`). Rebuilds the derived
+    #: `vat_ledger_entries` cache — output VAT on sales and input VAT on fees,
+    #: courier costs and raw goods, per legal entity — as a trailing window each
+    #: hour (plus a one-time full backfill when the cache is empty). Rides in the
+    #: storefront scheduler with its own switch; when off the loop never starts and
+    #: the report shows the last computed values.
+    VAT_LEDGER_REFRESH_ENABLED: bool = True
+    #: How many trailing days each refresh tick recomputes, so a late-settling
+    #: marketplace fee is absorbed once it lands. Wide enough for monthly-settling
+    #: commissions.
+    VAT_LEDGER_WINDOW_DAYS: int = 45
+
     ABANDONED_CART_EMAIL_ENABLED: bool = True
     #: How long after checkout was started to wait before the reminder — long
     #: enough that it reads as a nudge, not a race with the customer still paying.

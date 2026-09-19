@@ -35,6 +35,10 @@ from app.models import (
     Order,
     PosOrderStatusEnum,
     PosTable,
+    ProductionLine,
+    ProductionLineStatusEnum,
+    ProductionOrder,
+    ProductionOrderStatusEnum,
     Section,
     TableStatusEnum,
     Till,
@@ -52,6 +56,14 @@ from app.schemas.inventory import (
     TransferTemplateItemResponse,
     TransferTemplateResponse,
     TransferTemplateUpsert,
+)
+from app.schemas.production import (
+    CancelLineRequest,
+    ProduceLineRequest,
+    ProductionLineResponse,
+    ProductionOrderCreate,
+    ProductionOrderResponse,
+    ProductionOrderSummary,
 )
 from app.schemas.transfers import (
     TransferLineResponse,
@@ -445,6 +457,7 @@ async def create_transfer_order(
         required_date=data.required_date,
         template_id=data.template_id,
         client_request_id=data.client_request_id,
+        production_items=data.production_items,
     )
     return await _serialise_order(db, order)
 
@@ -1096,6 +1109,336 @@ async def produce(
         unit_cost=Decimal(str(line.unit_cost)) if line else Decimal("0"),
         total_cost=Decimal(str(production.total_cost)),
     )
+
+
+# ─── Production orders ────────────────────────────────────────────────────────
+#
+# The production half of a "transfer and production order". Admin raises the lines
+# (create moves no stock); the source till produces or cancels each. The admin
+# Production Report tab lists them; the POS "To Produce" tab acts on them.
+
+production_orders_router = APIRouter()
+pos_production_router = APIRouter()
+
+
+async def _serialise_production_order(
+    db: AsyncSession, order: ProductionOrder
+) -> ProductionOrderResponse:
+    payload = ProductionOrderResponse.model_validate(order)
+    branch = await db.get(Branch, order.source_branch_id)
+    payload.source_branch_name = branch.name if branch else None
+
+    item_ids = [line.item_id for line in order.lines]
+    lookup: dict = {}
+    categories: dict = {}
+    if item_ids:
+        rows = (
+            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(item_ids))))
+            .scalars()
+            .all()
+        )
+        lookup = {r.id: r for r in rows}
+        categories = await _category_map(db, item_ids)
+
+    txn_ids = [
+        line.production_transaction_id
+        for line in order.lines
+        if line.production_transaction_id
+    ]
+    refs: dict = {}
+    if txn_ids:
+        refs = dict(
+            (
+                await db.execute(
+                    select(InventoryTransaction.id, InventoryTransaction.reference).where(
+                        InventoryTransaction.id.in_(txn_ids)
+                    )
+                )
+            ).all()
+        )
+
+    for line_payload, line in zip(payload.lines, order.lines):
+        item = lookup.get(line.item_id)
+        if item is not None:
+            line_payload.item_name = item.name
+            line_payload.item_sku = item.sku
+            category = (
+                categories.get(item.category_id) if item.category_id else None
+            )
+            if category is not None:
+                line_payload.category_name = category.name
+                line_payload.category_order = int(category.display_order or 0)
+        if line.production_transaction_id:
+            line_payload.production_reference = refs.get(line.production_transaction_id)
+    payload.lines.sort(
+        key=lambda r: (
+            r.category_order if r.category_order is not None else 9999,
+            r.item_name or "",
+        )
+    )
+    return payload
+
+
+def _summarise_production_order(
+    order: ProductionOrder, branch_name: str | None
+) -> ProductionOrderSummary:
+    counts = {"produced": 0, "cancelled": 0, "pending": 0}
+    for line in order.lines:
+        if line.status == ProductionLineStatusEnum.PRODUCED.value:
+            counts["produced"] += 1
+        elif line.status == ProductionLineStatusEnum.CANCELLED.value:
+            counts["cancelled"] += 1
+        else:
+            counts["pending"] += 1
+    return ProductionOrderSummary(
+        id=order.id,
+        reference=order.reference,
+        status=order.status,
+        source_branch_id=order.source_branch_id,
+        source_branch_name=branch_name,
+        business_date=order.business_date,
+        created_at=order.created_at,
+        line_count=len(order.lines),
+        produced_count=counts["produced"],
+        cancelled_count=counts["cancelled"],
+        pending_count=counts["pending"],
+    )
+
+
+# ── Admin: Production Report ──
+
+
+@production_orders_router.post(
+    "", response_model=ProductionOrderResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_production_order(
+    data: ProductionOrderCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """Raise a production-only order (no transfers) at a source branch. No stock
+    moves until each line is produced at the till."""
+    source = await crud_service.get_or_404(db, Branch, data.source_branch_id)
+    await access_service.assert_branch_access(db, user, data.source_branch_id)
+    order = await transfer_service.create_production_order(
+        db,
+        source_branch=source,
+        user=user,
+        production_items=data.items,
+        notes=data.notes,
+        client_request_id=data.client_request_id,
+    )
+    return await _serialise_production_order(db, order)
+
+
+@production_orders_router.get("", response_model=list[ProductionOrderSummary])
+async def list_production_orders(
+    source_branch_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    date_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    """The Production Report list — one summary row per order."""
+    stmt = (
+        select(ProductionOrder)
+        .options(selectinload(ProductionOrder.lines))
+        .order_by(ProductionOrder.created_at.desc())
+    )
+    if source_branch_id is not None:
+        await access_service.assert_branch_access(db, user, source_branch_id)
+        stmt = stmt.where(ProductionOrder.source_branch_id == source_branch_id)
+    elif not _is_super(user):
+        allowed = list(access_service.branch_ids_for(user))
+        stmt = stmt.where(ProductionOrder.source_branch_id.in_(allowed or [uuid.uuid4()]))
+    if status_filter:
+        stmt = stmt.where(ProductionOrder.status == status_filter)
+    if date_from:
+        stmt = stmt.where(ProductionOrder.business_date >= date_from)
+    if date_to:
+        stmt = stmt.where(ProductionOrder.business_date <= date_to)
+
+    orders = (await db.execute(stmt)).scalars().unique().all()
+    branch_ids = {o.source_branch_id for o in orders}
+    names: dict = {}
+    if branch_ids:
+        names = dict(
+            (
+                await db.execute(
+                    select(Branch.id, Branch.name).where(Branch.id.in_(branch_ids))
+                )
+            ).all()
+        )
+    return [
+        _summarise_production_order(o, names.get(o.source_branch_id)) for o in orders
+    ]
+
+
+@production_orders_router.get(
+    "/{order_id}", response_model=ProductionOrderResponse
+)
+async def get_production_order(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.transfers.manage")),
+):
+    order = await transfer_service.load_production_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.source_branch_id)
+    return await _serialise_production_order(db, order)
+
+
+# ── POS: To Produce ──
+
+
+@pos_production_router.get(
+    "/production/pending", response_model=list[ProductionOrderResponse]
+)
+async def pos_pending_production(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.production.manage")),
+):
+    """Production orders with work still to do at this (source) branch."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    orders = (
+        (
+            await db.execute(
+                select(ProductionOrder)
+                .where(
+                    ProductionOrder.source_branch_id == branch_id,
+                    ProductionOrder.status.in_(
+                        [
+                            ProductionOrderStatusEnum.PENDING.value,
+                            ProductionOrderStatusEnum.PARTIALLY_PRODUCED.value,
+                        ]
+                    ),
+                )
+                .options(selectinload(ProductionOrder.lines))
+                .order_by(ProductionOrder.created_at.desc())
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    return [await _serialise_production_order(db, o) for o in orders]
+
+
+@pos_production_router.post(
+    "/production/claim-autoprint", response_model=list[ProductionOrderResponse]
+)
+async def pos_claim_autoprint_production(
+    source_branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("pos.till.manage")),
+):
+    """Claim, once, the production orders due today for the source till to
+    auto-print when it opens — the production analogue of the transfer claim."""
+    await access_service.assert_branch_access(db, user, source_branch_id)
+    source = await crud_service.get_or_404(db, Branch, source_branch_id)
+    business_date = await business_day_service.current_business_date(db, source)
+    claimed_ids = list(
+        (
+            await db.execute(
+                update(ProductionOrder)
+                .where(
+                    ProductionOrder.source_branch_id == source_branch_id,
+                    ProductionOrder.status.in_(
+                        [
+                            ProductionOrderStatusEnum.PENDING.value,
+                            ProductionOrderStatusEnum.PARTIALLY_PRODUCED.value,
+                        ]
+                    ),
+                    ProductionOrder.auto_printed_at.is_(None),
+                    ProductionOrder.business_date == business_date,
+                )
+                .values(auto_printed_at=utcnow())
+                .returning(ProductionOrder.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not claimed_ids:
+        return []
+    orders = (
+        (
+            await db.execute(
+                select(ProductionOrder)
+                .where(ProductionOrder.id.in_(claimed_ids))
+                .options(selectinload(ProductionOrder.lines))
+                .order_by(ProductionOrder.created_at.desc())
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    return [await _serialise_production_order(db, o) for o in orders]
+
+
+async def _load_line_branch(db: AsyncSession, line_id: uuid.UUID) -> uuid.UUID:
+    """The source branch of a production line, for the access check."""
+    branch_id = await db.scalar(
+        select(ProductionOrder.source_branch_id)
+        .join(ProductionLine, ProductionLine.production_order_id == ProductionOrder.id)
+        .where(ProductionLine.id == line_id)
+    )
+    if branch_id is None:
+        raise NotFoundError("Production line not found")
+    return branch_id
+
+
+@pos_production_router.post(
+    "/production/lines/{line_id}/produce", response_model=ProductionOrderResponse
+)
+async def pos_produce_line(
+    line_id: uuid.UUID,
+    data: ProduceLineRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.production.manage")),
+):
+    """Mark one line produced, posting its PRODUCTION movement now."""
+    await access_service.assert_branch_access(db, user, await _load_line_branch(db, line_id))
+    line = await transfer_service.produce_line(
+        db, line_id=line_id, user=user, quantity=data.quantity, notes=data.notes
+    )
+    order = await transfer_service.load_production_order(db, line.production_order_id)
+    return await _serialise_production_order(db, order)
+
+
+@pos_production_router.post(
+    "/production/lines/{line_id}/cancel", response_model=ProductionOrderResponse
+)
+async def pos_cancel_line(
+    line_id: uuid.UUID,
+    data: CancelLineRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.production.manage")),
+):
+    """Cancel one pending line with a note. Moves no stock."""
+    await access_service.assert_branch_access(db, user, await _load_line_branch(db, line_id))
+    line = await transfer_service.cancel_production_line(
+        db, line_id=line_id, user=user, note=data.note
+    )
+    order = await transfer_service.load_production_order(db, line.production_order_id)
+    return await _serialise_production_order(db, order)
+
+
+@pos_production_router.post(
+    "/production/{order_id}/produce-all", response_model=ProductionOrderResponse
+)
+async def pos_produce_all(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.production.manage")),
+):
+    """Mark every still-pending line of an order produced."""
+    order = await transfer_service.load_production_order(db, order_id)
+    await access_service.assert_branch_access(db, user, order.source_branch_id)
+    order = await transfer_service.produce_all(db, order_id=order_id, user=user)
+    return await _serialise_production_order(db, order)
 
 
 # ─── Notification rules ───────────────────────────────────────────────────────

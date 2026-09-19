@@ -34,6 +34,7 @@ from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 # both of these files.
 from app.core.money import quantity as _q
 from app.core.money import unit_cost as _c
+from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
     InventoryItem,
@@ -46,6 +47,10 @@ from app.models.inventory import (
 from app.models.inventory_v2 import BranchInventorySettings
 from app.models.operations import (
     InventoryTransferTemplate,
+    ProductionLine,
+    ProductionLineStatusEnum,
+    ProductionOrder,
+    ProductionOrderStatusEnum,
     Transfer,
     TransferKindEnum,
     TransferLine,
@@ -67,10 +72,15 @@ __all__ = [
     "production_unit_cost",
     "create_return_order",
     "create_transfer_order",
+    "create_production_order",
     "load_transfer",
     "load_transfer_order",
+    "load_production_order",
     "mark_transfer_sent",
     "produce",
+    "produce_line",
+    "produce_all",
+    "cancel_production_line",
     "receive_transfer",
 ]
 
@@ -387,6 +397,7 @@ async def create_transfer_order(
     required_date=None,
     template_id: uuid.UUID | None = None,
     client_request_id: str | None = None,
+    production_items: list | None = None,
 ) -> TransferOrder:
     """Raise a parent order from one source branch, fanning out to many.
 
@@ -396,6 +407,14 @@ async def create_transfer_order(
     ``Transfer`` is created per destination that receives a nonzero quantity of
     any item, each with its own lines. **No stock moves here.**
 
+    ``production_items`` is the production half of a combined "transfer and
+    production order": a list of ``(item_id, quantity, unit)`` for items to be
+    *made* at the source branch. It creates a sibling :class:`ProductionOrder`
+    with one pending line per item — again moving no stock (production posts when
+    the source till marks a line produced). Each item must genuinely produce
+    something (have a recipe); a non-recipe item is refused. An order may be
+    production-only (no transfer ``items``).
+
     When the total of an item across all destinations exceeds the source's
     on-hand, the admin must set ``override=True`` on that item: a shortfall
     top-up ``QUANTITY_ADJUSTMENT`` is posted to the source at create time
@@ -404,6 +423,7 @@ async def create_transfer_order(
     the fan-out so no later send goes negative. Without the flag the create is
     refused, naming the shortfall.
     """
+    production_items = production_items or []
     if not items:
         raise BadRequestError("A transfer order needs at least one line")
 
@@ -579,6 +599,21 @@ async def create_transfer_order(
                 )
             )
     await db.flush()
+
+    if production_items:
+        await _build_production_order(
+            db,
+            source_branch=source_branch,
+            source_warehouse_id=source_warehouse.id,
+            user=user,
+            production_items=production_items,
+            business_date=order.business_date,
+            transfer_order_id=order.id,
+            notes=notes,
+            client_request_id=(
+                f"{client_request_id}:prod" if client_request_id else None
+            ),
+        )
     return await load_transfer_order(db, order.id)
 
 
@@ -922,6 +957,8 @@ async def produce(
     quantity: Decimal,
     warehouse_id: uuid.UUID | None = None,
     notes: str | None = None,
+    source_type: str = "production",
+    source_id: str | None = None,
 ) -> tuple[InventoryTransaction, InventoryTransaction | None]:
     """
     Produce a batch of an item, consuming its bill of materials.
@@ -933,10 +970,17 @@ async def produce(
     The yield percentage is applied to the *output*: a recipe that loses 10% in
     baking produces 0.9 of what its inputs suggest, so cost per unit rises
     accordingly rather than the loss being invisible.
+
+    ``source_type``/``source_id`` stamp the ledger movements' provenance. They
+    default to ``"production"`` / the item id (the shift-report caller's shape);
+    a production order passes ``"production_line"`` / the line id so the movement
+    links back to the order line as well as through the line's
+    ``production_transaction_id``.
     """
     output_quantity = _q(quantity)
     if output_quantity <= 0:
         raise BadRequestError("Production quantity must be positive")
+    sid = source_id if source_id is not None else str(item_id)
 
     branch_settings = (
         await db.execute(
@@ -1038,8 +1082,8 @@ async def produce(
             business_date=business_date,
             creator_id=user.id,
             correction_group_id=correction_group,
-            source_type="production",
-            source_id=str(item_id),
+            source_type=source_type,
+            source_id=sid,
             notes=f"Ingredients for {output_quantity} x {item.name}",
             items=[],
         )
@@ -1110,7 +1154,7 @@ async def produce(
                 creator_id=user.id,
                 correction_group_id=correction_group,
                 source_type="production_yield",
-                source_id=str(item_id),
+                source_id=sid,
                 notes=f"Planned recipe yield loss for {output_quantity} x {item.name}",
                 items=[],
             )
@@ -1162,8 +1206,8 @@ async def produce(
         business_date=business_date,
         creator_id=user.id,
         correction_group_id=correction_group,
-        source_type="production",
-        source_id=str(item_id),
+        source_type=source_type,
+        source_id=sid,
         notes=notes,
         items=[],
     )
@@ -1199,3 +1243,284 @@ async def produce(
         db, transaction=production, user=user
     )
     return production, consumption
+
+
+# ─── Production orders ──────────────────────────────────────────────────────────
+#
+# The production half of a "transfer and production order". Creating one moves no
+# stock; each line posts its PRODUCTION movement (through `produce()` above) only
+# when the source till marks it produced. A line can also be cancelled with a note
+# (no movement) or have its quantity adjusted before producing.
+
+
+async def next_production_order_reference(db: AsyncSession) -> str:
+    """A production order reference (PDO-…). Shares the global inventory sequence
+    so the number is unique regardless of prefix."""
+    return await inventory_service.next_inventory_reference(db, "PDO")
+
+
+async def load_production_order(
+    db: AsyncSession, order_id: uuid.UUID
+) -> ProductionOrder:
+    """A production order with its lines."""
+    order = (
+        (
+            await db.execute(
+                select(ProductionOrder)
+                .where(ProductionOrder.id == order_id)
+                .options(selectinload(ProductionOrder.lines))
+            )
+        )
+        .scalars()
+        .unique()
+        .one_or_none()
+    )
+    if order is None:
+        raise NotFoundError("Production order not found")
+    return order
+
+
+async def _lock_production_line(
+    db: AsyncSession, line_id: uuid.UUID
+) -> ProductionLine:
+    """Serialize a single line's transition so two tills cannot both produce it."""
+    line = (
+        await db.execute(
+            select(ProductionLine)
+            .where(ProductionLine.id == line_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if line is None:
+        raise NotFoundError("Production line not found")
+    return line
+
+
+async def _recompute_production_status(
+    db: AsyncSession, order_id: uuid.UUID
+) -> None:
+    """Roll the lines' statuses up onto the production order, under a parent lock."""
+    order = (
+        await db.execute(
+            select(ProductionOrder)
+            .where(ProductionOrder.id == order_id)
+            .options(selectinload(ProductionOrder.lines))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        return
+    L = ProductionLineStatusEnum
+    P = ProductionOrderStatusEnum
+    live = [l for l in order.lines if l.status != L.CANCELLED.value]
+    if not live:
+        order.status = P.CANCELLED.value
+    elif all(l.status == L.PRODUCED.value for l in live):
+        order.status = P.PRODUCED.value
+    elif any(l.status == L.PRODUCED.value for l in live):
+        order.status = P.PARTIALLY_PRODUCED.value
+    else:
+        order.status = P.PENDING.value
+    await db.flush()
+
+
+async def _build_production_order(
+    db: AsyncSession,
+    *,
+    source_branch: Branch,
+    source_warehouse_id: uuid.UUID | None,
+    user: User,
+    production_items: list,
+    business_date: str,
+    transfer_order_id: uuid.UUID | None,
+    notes: str | None,
+    client_request_id: str | None,
+) -> ProductionOrder:
+    """Create a ProductionOrder + one pending line per makeable item. No movement.
+
+    Every item must genuinely produce something (have an active recipe or a legacy
+    BOM); a non-recipe item is refused, since the grid should never have offered
+    it. Idempotent on ``client_request_id``.
+    """
+    if client_request_id:
+        existing = (
+            await db.execute(
+                select(ProductionOrder).where(
+                    ProductionOrder.client_request_id == client_request_id
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return await load_production_order(db, existing.id)
+
+    order = ProductionOrder(
+        reference=await next_production_order_reference(db),
+        status=ProductionOrderStatusEnum.PENDING.value,
+        source_branch_id=source_branch.id,
+        source_warehouse_id=source_warehouse_id,
+        transfer_order_id=transfer_order_id,
+        business_date=business_date,
+        notes=notes,
+        client_request_id=client_request_id,
+        creator_id=user.id,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(order)
+            await db.flush()
+    except IntegrityError:
+        if client_request_id:
+            existing = (
+                await db.execute(
+                    select(ProductionOrder).where(
+                        ProductionOrder.client_request_id == client_request_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return await load_production_order(db, existing.id)
+        raise
+
+    made_a_line = False
+    for entry in production_items:
+        qty = _q(entry.quantity)
+        if qty <= 0:
+            continue
+        item = await db.get(InventoryItem, entry.item_id)
+        if item is None:
+            raise BadRequestError(f"Inventory item {entry.item_id} not found")
+        if not await recipe_service.item_produces_something(db, entry.item_id):
+            raise BadRequestError(
+                f"{item.name} has no recipe, so it cannot be produced"
+            )
+        unit = getattr(entry, "unit", "storage")
+        factor = (
+            Decimal("1")
+            if unit == "ingredient"
+            else Decimal(str(item.storage_to_ingredient_factor))
+        )
+        db.add(
+            ProductionLine(
+                production_order_id=order.id,
+                item_id=entry.item_id,
+                planned_quantity=qty,
+                unit=unit,
+                conversion_factor=factor,
+                status=ProductionLineStatusEnum.PENDING.value,
+            )
+        )
+        made_a_line = True
+
+    if not made_a_line:
+        raise BadRequestError("A production order needs at least one line")
+    await db.flush()
+    return await load_production_order(db, order.id)
+
+
+async def create_production_order(
+    db: AsyncSession,
+    *,
+    source_branch: Branch,
+    user: User,
+    production_items: list,
+    notes: str | None = None,
+    client_request_id: str | None = None,
+) -> ProductionOrder:
+    """Raise a production-only order at the source branch (no transfers). No stock
+    moves until a line is produced."""
+    if not production_items:
+        raise BadRequestError("A production order needs at least one line")
+    source_warehouse = await inventory_service.default_warehouse(db, source_branch.id)
+    business_date = await business_day_service.current_business_date(db, source_branch)
+    return await _build_production_order(
+        db,
+        source_branch=source_branch,
+        source_warehouse_id=source_warehouse.id,
+        user=user,
+        production_items=production_items,
+        business_date=business_date,
+        transfer_order_id=None,
+        notes=notes,
+        client_request_id=client_request_id,
+    )
+
+
+async def produce_line(
+    db: AsyncSession,
+    *,
+    line_id: uuid.UUID,
+    user: User,
+    quantity: Decimal | None = None,
+    notes: str | None = None,
+) -> ProductionLine:
+    """Mark one production line produced, posting its PRODUCTION movement now.
+
+    ``quantity`` overrides the planned amount (the till may adjust before
+    producing); omitted, the planned quantity is used. Refuses a line that is not
+    still pending — the re-produce guard.
+    """
+    line = await _lock_production_line(db, line_id)
+    if line.status != ProductionLineStatusEnum.PENDING.value:
+        raise ConflictError("This line has already been produced or cancelled")
+    order = await db.get(ProductionOrder, line.production_order_id)
+    if order is None:
+        raise NotFoundError("Production order not found")
+    branch = await db.get(Branch, order.source_branch_id)
+    if branch is None:
+        raise NotFoundError("Source branch not found")
+    qty = _q(quantity) if quantity is not None else _q(line.planned_quantity)
+    if qty <= 0:
+        raise BadRequestError("Production quantity must be positive")
+
+    production, _consumption = await produce(
+        db,
+        branch=branch,
+        user=user,
+        item_id=line.item_id,
+        quantity=qty,
+        warehouse_id=order.source_warehouse_id,
+        notes=notes or f"Production order {order.reference} · line {line.id}",
+        source_type="production_line",
+        source_id=str(line.id),
+    )
+    line.produced_quantity = qty
+    line.status = ProductionLineStatusEnum.PRODUCED.value
+    line.production_transaction_id = production.id
+    line.produced_at = utcnow()
+    line.produced_by_id = user.id
+    await db.flush()
+    await _recompute_production_status(db, order.id)
+    return line
+
+
+async def cancel_production_line(
+    db: AsyncSession,
+    *,
+    line_id: uuid.UUID,
+    user: User,
+    note: str,
+) -> ProductionLine:
+    """Cancel one pending line with a required note. Moves no stock."""
+    if not note or not note.strip():
+        raise BadRequestError("A cancellation note is required")
+    line = await _lock_production_line(db, line_id)
+    if line.status != ProductionLineStatusEnum.PENDING.value:
+        raise ConflictError("This line has already been produced or cancelled")
+    line.status = ProductionLineStatusEnum.CANCELLED.value
+    line.cancel_note = note.strip()
+    await db.flush()
+    await _recompute_production_status(db, line.production_order_id)
+    return line
+
+
+async def produce_all(
+    db: AsyncSession, *, order_id: uuid.UUID, user: User
+) -> ProductionOrder:
+    """Mark every still-pending line of an order produced, in one action."""
+    order = await load_production_order(db, order_id)
+    for line in order.lines:
+        if line.status == ProductionLineStatusEnum.PENDING.value:
+            await produce_line(db, line_id=line.id, user=user)
+    return await load_production_order(db, order_id)

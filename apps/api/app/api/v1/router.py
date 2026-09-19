@@ -71,6 +71,7 @@ from .modifiers import router as modifiers_router
 from .operations import (
     dashboard_router,
     notification_rules_router,
+    production_orders_router,
     production_router,
     transfer_orders_router,
     transfer_templates_router,
@@ -256,6 +257,11 @@ api_router.include_router(
 )
 api_router.include_router(
     production_router, prefix="/inventory/production", tags=["Inventory"]
+)
+api_router.include_router(
+    production_orders_router,
+    prefix="/inventory/production-orders",
+    tags=["Inventory"],
 )
 api_router.include_router(
     notification_rules_router, prefix="/notification-rules", tags=["Notifications"]

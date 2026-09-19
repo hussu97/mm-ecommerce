@@ -810,6 +810,8 @@ gives the intended value rather than an empty one:
 | `LALAMOVE_QUOTE_CACHE_SECONDS` | `120` | |
 | `STOREFRONT_SCHEDULER_ENABLED` | `true` | The in-process loop that dispatches orders, lands arrivals, tracks drivers and sends the daily email. Storefront only |
 | `DAILY_SALES_EMAIL_ENABLED` | `false` | Auto-send of the once-a-day sales report email. Off in production; set to `true` to resume. Manual send is unaffected. Storefront only |
+| `VAT_LEDGER_REFRESH_ENABLED` | `true` | Rebuilds the derived VAT report cache (`vat_ledger_entries`) hourly, plus a one-time full backfill when empty. Storefront only; `false` freezes the report at its last values |
+| `VAT_LEDGER_WINDOW_DAYS` | `45` | Trailing days each VAT refresh tick recomputes, so a late-settling marketplace fee is absorbed once it lands |
 | `ABANDONED_CART_EMAIL_ENABLED` | `true` | Abandoned-cart recovery email: reminds a customer who started checkout but never paid, once, with the cart contents and a link to the gateway's still-live payment page. Storefront only; `false` disables the loop |
 | `ABANDONED_CART_AFTER_MINUTES` | `60` | How long after checkout was started to wait before the reminder |
 | `ABANDONED_CART_MAX_AGE_HOURS` | `23` | Don't remind orders older than this — the gateway session has usually expired (Stripe dies at ~24h), so the link would be dead |

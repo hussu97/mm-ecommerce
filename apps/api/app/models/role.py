@@ -62,6 +62,10 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ),
         ("inventory.transfers.receive", "Book a transfer in at the destination till"),
         (
+            "inventory.production.manage",
+            "Produce or cancel production-order lines at the source till",
+        ),
+        (
             "inventory.purchase_orders.manage",
             "Create and submit purchase orders, and purchase against them",
         ),
@@ -88,6 +92,7 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         ("reports.sales", "View sales reports"),
         ("reports.cost", "View cost analysis, menu cost and cost history reports"),
         ("reports.inventory", "View inventory level, control and transaction reports"),
+        ("reports.vat", "View VAT collected and recoverable reports per legal entity"),
         ("reports.other", "View all other reports"),
     ],
     "Dashboard": [

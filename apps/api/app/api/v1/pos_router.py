@@ -31,7 +31,11 @@ from .marketing import (
 )
 from .menu_groups import router as menu_groups_router
 from .modifiers import router as modifiers_router
-from .operations import dashboard_router, pos_transfers_router
+from .operations import (
+    dashboard_router,
+    pos_production_router,
+    pos_transfers_router,
+)
 from .pos_config import (
     charges_router,
     courses_router,
@@ -113,6 +117,10 @@ pos_api_router.include_router(
 # Create and receive transfers/returns from the till.
 pos_api_router.include_router(
     pos_transfers_router, prefix="/pos/inventory", tags=["POS Inventory"]
+)
+# Produce or cancel production-order lines at the source till ("To Produce").
+pos_api_router.include_router(
+    pos_production_router, prefix="/pos/inventory", tags=["POS Inventory"]
 )
 # Raise a purchase order at the till (create-and-receive) or receive an
 # admin-raised one.

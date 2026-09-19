@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.money import quantity as quantize_quantity
 from app.models.base import utcnow
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryItem, InventoryItemIngredient
 from app.models.inventory_v2 import (
     InventoryTrackingModeEnum,
     Recipe,
@@ -170,6 +170,43 @@ async def active_version(
         .options(selectinload(RecipeVersion.lines).selectinload(RecipeLine.item))
     )
     return (await db.execute(stmt)).scalars().unique().one_or_none()
+
+
+async def item_produces_something(db: AsyncSession, item_id: uuid.UUID) -> bool:
+    """Whether an inventory item is *made* — has an active recipe (v2) or a legacy
+    bill of materials. This is the "produces something" test the production order
+    uses: only such items can appear as a production line."""
+    if await active_version(
+        db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item_id
+    ) is not None:
+        return True
+    legacy = await db.scalar(
+        select(func.count())
+        .select_from(InventoryItemIngredient)
+        .where(InventoryItemIngredient.parent_item_id == item_id)
+    )
+    return bool(legacy)
+
+
+async def producible_item_ids(db: AsyncSession) -> set[uuid.UUID]:
+    """Every inventory item that produces something — active v2 recipe or legacy
+    BOM. The admin transfer/production grid gates its "qty to produce" input on
+    membership of this set, so only makeable items are offered."""
+    v2 = (
+        await db.execute(
+            select(Recipe.inventory_item_id)
+            .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
+            .where(
+                Recipe.owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value,
+                Recipe.inventory_item_id.is_not(None),
+                RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
+            )
+        )
+    ).scalars().all()
+    legacy = (
+        await db.execute(select(InventoryItemIngredient.parent_item_id).distinct())
+    ).scalars().all()
+    return {i for i in v2 if i is not None} | {i for i in legacy if i is not None}
 
 
 def _normalise_basis(

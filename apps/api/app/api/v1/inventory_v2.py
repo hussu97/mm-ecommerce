@@ -104,6 +104,16 @@ async def list_pos_recipes(
     return await recipe_catalog_service.list_active_inventory_recipes(db)
 
 
+@control_router.get("/producible-item-ids", response_model=list[uuid.UUID])
+async def producible_item_ids(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("inventory.transfers.manage")),
+):
+    """Every inventory item that produces something (has a recipe). The admin
+    transfer-and-production grid gates its "qty to produce" input on this set."""
+    return sorted(await recipe_service.producible_item_ids(db), key=str)
+
+
 @control_router.get("/recipe-owners/{owner_kind}", response_model=PaginatedRecipeOwners)
 async def list_recipe_owners(
     owner_kind: str,

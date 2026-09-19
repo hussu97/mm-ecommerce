@@ -45,6 +45,15 @@ class TransferOrderItemInput(BaseModel):
     allocations: list[TransferAllocationInput] = Field(min_length=1)
 
 
+class ProductionItemInput(BaseModel):
+    """One item to be *produced* at the source branch, in the combined transfer
+    and production order. Only items that have a recipe may appear here."""
+
+    item_id: UUID
+    quantity: Decimal = Field(gt=0)
+    unit: Literal["storage", "ingredient"] = "storage"
+
+
 class TransferOrderCreate(BaseModel):
     source_branch_id: UUID
     kind: Literal["transfer", "return"] = "transfer"
@@ -56,6 +65,9 @@ class TransferOrderCreate(BaseModel):
     #: A stable token so a retried create does not raise the fan-out twice.
     client_request_id: str | None = Field(None, max_length=64)
     items: list[TransferOrderItemInput] = Field(min_length=1)
+    #: The production half: items to make at the source branch. Creates a sibling
+    #: production order (no stock moves until each line is produced). Optional.
+    production_items: list[ProductionItemInput] = Field(default_factory=list)
 
 
 # ─── Send (source till) ───────────────────────────────────────────────────────
