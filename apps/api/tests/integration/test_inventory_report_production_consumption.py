@@ -103,7 +103,6 @@ async def env(engine):
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("0.01"),
         )
         brownie = InventoryItem(
             sku=f"{MARKER}-brownie-{uuid.uuid4().hex[:8]}",
@@ -113,7 +112,6 @@ async def env(engine):
             storage_unit="unit",
             ingredient_unit="unit",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         db.add_all([flour, brownie])
         await db.flush()

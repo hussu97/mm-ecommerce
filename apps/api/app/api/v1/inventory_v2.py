@@ -8,7 +8,7 @@ import uuid
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -60,6 +60,7 @@ from app.schemas.inventory_v2 import (
     TillCloseTasksResponse,
     VersionedRecipeResponse,
 )
+from app.schemas.production import ProducibleItemBasis
 from app.services import audit_service
 from app.services.inventory import (
     access_service,
@@ -113,6 +114,23 @@ async def producible_item_ids(
     """Every inventory item that produces something (has a recipe). The admin
     transfer-and-production grid gates its "qty to produce" input on this set."""
     return sorted(await recipe_service.producible_item_ids(db), key=str)
+
+
+@control_router.get("/producible-item-bases", response_model=list[ProducibleItemBasis])
+async def producible_item_bases(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("inventory.transfers.manage")),
+):
+    """The recipe basis (unit/batch + batch_yield) of every item with an active
+    v2 recipe, so the transfer-and-production grid can render the "qty to produce"
+    cell in batches and show the live unit conversion."""
+    bases = await recipe_service.producible_item_bases(db)
+    return [
+        ProducibleItemBasis(item_id=item_id, basis=basis, batch_yield=batch_yield)
+        for item_id, (basis, batch_yield) in sorted(
+            bases.items(), key=lambda kv: str(kv[0])
+        )
+    ]
 
 
 @control_router.get("/recipe-owners/{owner_kind}", response_model=PaginatedRecipeOwners)
@@ -655,9 +673,14 @@ async def _enrich_report_names(
 async def list_shift_reports(
     branch_id: uuid.UUID | None = None,
     report_status: str | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("reports.inventory")),
 ):
+    """Submitted inventory reports, newest first. Paged + searchable server-side
+    (by business date, report type or status) so the whole history is reachable."""
     stmt = select(ShiftInventoryReport).options(
         selectinload(ShiftInventoryReport.lines)
     )
@@ -668,8 +691,26 @@ async def list_shift_reports(
         stmt = stmt.where(ShiftInventoryReport.branch_id.in_(_branch_ids_for(user)))
     if report_status:
         stmt = stmt.where(ShiftInventoryReport.status == report_status)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(ShiftInventoryReport.business_date).like(like),
+                func.lower(ShiftInventoryReport.report_type).like(like),
+                func.lower(ShiftInventoryReport.status).like(like),
+            )
+        )
     reports = list(
-        (await db.execute(stmt.order_by(ShiftInventoryReport.created_at.desc())))
+        (
+            await db.execute(
+                stmt.order_by(
+                    ShiftInventoryReport.created_at.desc(),
+                    ShiftInventoryReport.id.desc(),
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+        )
         .scalars()
         .unique()
     )

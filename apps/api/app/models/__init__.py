@@ -90,7 +90,6 @@ from .grubops import (  # noqa: F401
 from .grubops_order import GrubOpsOrderMap  # noqa: F401
 from .inventory import (  # noqa: F401
     TRANSACTION_SIGN,
-    CostingMethodEnum,
     CostLayerSourceKindEnum,
     InventoryCategory,
     InventoryCostLayer,
@@ -384,7 +383,6 @@ __all__ = [
     "InventoryTransactionTypeEnum",
     "TransactionStatusEnum",
     "TRANSACTION_SIGN",
-    "CostingMethodEnum",
     "PurchaseOrder",
     "PurchaseOrderItem",
     "PurchaseOrderStatusEnum",

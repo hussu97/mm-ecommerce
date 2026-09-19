@@ -87,7 +87,6 @@ async def env(engine):
             storage_unit="gram",
             ingredient_unit="gram",
             storage_to_ingredient_factor=D("1"),
-            cost=D("0"),
         )
         db.add(item)
         await db.commit()
@@ -489,18 +488,16 @@ async def _sum_layers(db, item_id, warehouse_id):
     return D(str(row[0])), D(str(row[1]))
 
 
-async def test_zero_cost_opening_balance_falls_back_to_catalogue_cost(engine, env):
-    """A go-live opening balance is often keyed before a cost is known (the level
-    sits at 0). It must lay down a layer at the item's catalogue cost, not 0, so
-    the cutover backfill and a later rebuild agree and stock is never valued nil."""
+async def test_opening_balance_with_a_cost_lays_a_layer_at_that_cost(engine, env):
+    """Cost is FIFO: an item carries no catalogue fallback any more, so an opening
+    balance is valued at the cost it is keyed with. Entering a real go-live cost
+    lays a layer at that cost; a 0-cost opening balance stays 0 (unknown until a
+    priced receipt), which the rebuild reproduces without drift."""
     branch_id, warehouse_id, user_id, item_id = env
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
         user = await db.get(User, user_id)
-        item = await db.get(InventoryItem, item_id)
-        item.cost = D("7")
-        await db.flush()
-        # Opening balance entered at unit_cost 0 — cost unknown at go-live.
+        # Opening balance keyed with its known go-live cost.
         await _post(
             db,
             branch_id=branch_id,
@@ -509,7 +506,7 @@ async def test_zero_cost_opening_balance_falls_back_to_catalogue_cost(engine, en
             user=user,
             kind=InventoryTransactionTypeEnum.OPENING_BALANCE,
             quantity="40",
-            unit_cost="0",
+            unit_cost="7",
         )
         level = await _level(db, item_id, warehouse_id)
         assert level.quantity == D("40.0000")

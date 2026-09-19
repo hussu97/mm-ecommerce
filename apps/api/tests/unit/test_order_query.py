@@ -110,3 +110,32 @@ def test_a_website_order_is_not_fulfilled_while_it_is_still_on_a_van():
     )
     # out_for_delivery only ever appears alongside the aggregator source.
     assert "online" not in sql
+
+
+# ── the courier breakdown counts live + completed, not delivered-only ──────────
+
+
+def test_active_or_fulfilled_excludes_only_the_terminal_set():
+    """The per-courier breakdown counts every live or completed order and drops
+    only the terminal ones (cancelled/payment_failed/refunded/disputed)."""
+    assert order_query.TERMINAL_STATUSES == (
+        "cancelled",
+        "payment_failed",
+        "refunded",
+        "disputed",
+    )
+    sql = str(
+        order_query.active_or_fulfilled_clause().compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    # It is a NOT IN over the terminal set.
+    for terminal in order_query.TERMINAL_STATUSES:
+        assert terminal in sql
+    # ...plus `created`: an unpaid/abandoned checkout must not count on the
+    # courier scorecard's revenue.
+    assert "created" in sql
+    # A live/completed status is not named — it is included by exclusion, so a
+    # delivered or still-in-flight order counts against its carrier.
+    assert "delivered" not in sql
+    assert "out_for_delivery" not in sql

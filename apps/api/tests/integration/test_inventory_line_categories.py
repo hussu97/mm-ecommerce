@@ -83,7 +83,6 @@ def _make_item(name: str, category_id: uuid.UUID | None) -> InventoryItem:
         storage_unit="kg",
         ingredient_unit="kg",
         storage_to_ingredient_factor=Decimal("1"),
-        cost=Decimal("3"),
     )
 
 

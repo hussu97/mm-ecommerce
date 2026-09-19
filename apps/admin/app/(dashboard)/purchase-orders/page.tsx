@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type {
   Branch,
@@ -37,6 +38,7 @@ interface DraftLine {
 const VAT_RATE = 0.05;
 
 export default function PurchaseOrdersPage() {
+  const router = useRouter();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -99,7 +101,7 @@ export default function PurchaseOrdersPage() {
         <div>
           <h1 className="font-display text-xl text-primary tracking-wide">Purchase Orders</h1>
           <p className="text-xs text-gray-500 font-body mt-1">
-            Draft → submit → approve → receive. Approving requires a second person.
+            Submit → approve → receive. An unapproved order stays editable; approving requires a second person.
           </p>
         </div>
         <Button onClick={() => setCreating(true)}>New Order</Button>
@@ -132,6 +134,8 @@ export default function PurchaseOrdersPage() {
           rowKey={(po) => po.id}
           actions={(po) => (
             <>
+              <RowAction onClick={() => router.push(`/purchase-orders/${po.id}`)}>Details</RowAction>
+              {/* Legacy drafts can still be submitted; new POs are born pending. */}
               {po.status === 'draft' && (
                 <RowAction onClick={() => act(po.id, 'submit')}>Submit</RowAction>
               )}
@@ -261,12 +265,16 @@ function CreateOrder({
     return () => { cancelled = true; };
   }, [supplierId]);
 
-  // Offer the supplier's mapped items when we have them; otherwise every
-  // purchasable item, so a PO is never blocked on missing mappings.
+  // With flexible item mapping on, any active item may be ordered; otherwise the
+  // supplier's mapped items when it has them, falling back to every active item so
+  // a PO is never blocked on missing mappings.
   const mappedIds = new Set((supplierItems ?? []).map((r) => r.item_id));
-  const pickable = (supplierItems && supplierItems.length > 0)
-    ? items.filter((i) => mappedIds.has(i.id))
-    : items.filter((i) => i.is_active && !i.deleted_at);
+  const activeItems = items.filter((i) => i.is_active && !i.deleted_at);
+  const pickable = supplier?.allow_any_item
+    ? activeItems
+    : (supplierItems && supplierItems.length > 0)
+      ? items.filter((i) => mappedIds.has(i.id))
+      : activeItems;
 
   const grossTotal = lines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0);
   const vatTotal = vatDeductible ? grossTotal - grossTotal / (1 + VAT_RATE) : 0;
@@ -481,7 +489,7 @@ function CreateOrder({
           Cancel
         </Button>
         <Button onClick={save} loading={saving}>
-          Create draft
+          Create order
         </Button>
       </div>
     </Modal>
@@ -497,28 +505,49 @@ function ReceiveOrder({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  // Seed each line to what's expected (the full ordered quantity); the staff edit
+  // it to what actually arrived, and a discrepant line needs a reason.
   const [quantities, setQuantities] = useState<Record<string, string>>(() =>
-    Object.fromEntries(order.items.map((i) => [i.id, formatQuantity(i.outstanding_quantity)])),
+    Object.fromEntries(order.items.map((i) => [i.id, formatQuantity(i.quantity)])),
   );
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  async function receive() {
-    const lines = order.items
-      .map((item) => ({
-        purchase_order_item_id: item.id,
-        quantity: Number(quantities[item.id] || 0),
-      }))
-      .filter((l) => l.quantity > 0);
+  const variance = (item: PurchaseOrder['items'][number]): number =>
+    Number(quantities[item.id] || 0) - Number(item.quantity);
+  const differs = (item: PurchaseOrder['items'][number]): boolean =>
+    variance(item) !== 0;
 
-    if (lines.length === 0) {
+  async function receive() {
+    // One-shot: every line is sent with what arrived (0 = full no-show), and any
+    // line that differs from the ordered quantity must carry a reason.
+    const missing = order.items.filter(
+      (i) => differs(i) && !(reasons[i.id] ?? '').trim(),
+    );
+    if (missing.length > 0) {
+      setError(
+        `A reason is required where received differs from ordered: ${missing
+          .map((i) => i.item_name ?? i.item_sku ?? i.item_id)
+          .join(', ')}.`,
+      );
+      return;
+    }
+    if (order.items.every((i) => Number(quantities[i.id] || 0) <= 0)) {
       setError('Enter at least one received quantity.');
       return;
     }
     setSaving(true);
     setError('');
     try {
-      await inventoryApi.receivePurchaseOrder(order.id, lines);
+      await inventoryApi.receivePurchaseOrder(
+        order.id,
+        order.items.map((item) => ({
+          purchase_order_item_id: item.id,
+          quantity: Number(quantities[item.id] || 0),
+          variance_reason: differs(item) ? (reasons[item.id] ?? '').trim() : null,
+        })),
+      );
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Receiving failed.');
@@ -530,39 +559,59 @@ function ReceiveOrder({
   return (
     <Modal title={`Receive ${order.reference}`} onClose={onClose} wide>
       <p className="mb-3 text-xs text-gray-500 font-body">
-        Receiving moves stock in at the line cost. A short delivery leaves the order partially
-        received so the remainder can be taken later.
+        Receiving is one action and closes the order: enter what actually arrived,
+        and whatever is short is recorded against the line. A line that differs from
+        what was ordered needs a reason, and the office is emailed the short/excess.
       </p>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
             <th className="py-2 text-left">Item</th>
-            <th className="py-2 text-right">Ordered</th>
-            <th className="py-2 text-right">Already received</th>
-            <th className="py-2 text-right w-32">Receiving now</th>
+            <th className="py-2 text-right">To receive</th>
+            <th className="py-2 text-right w-32">Received</th>
+            <th className="py-2 text-right w-24">Variance</th>
+            <th className="py-2 text-left w-56">Reason</th>
           </tr>
         </thead>
         <tbody>
-          {order.items.map((item) => (
-            <tr key={item.id} className="border-b border-gray-100">
-              <td className="py-2">
-                <span className="font-medium">{item.item_name}</span>{' '}
-                <code className="text-xs text-gray-400">{item.item_sku}</code>
-              </td>
-              <td className="py-2 text-right">{formatQuantity(item.quantity)}</td>
-              <td className="py-2 text-right text-gray-500">{formatQuantity(item.received_quantity)}</td>
-              <td className="py-2 pl-2">
-                <Input
-                  type="number"
-                  step="0.0001"
-                  value={quantities[item.id] ?? ''}
-                  onChange={(e) =>
-                    setQuantities((prev) => ({ ...prev, [item.id]: e.target.value }))
-                  }
-                />
-              </td>
-            </tr>
-          ))}
+          {order.items.map((item) => {
+            const v = variance(item);
+            return (
+              <tr key={item.id} className="border-b border-gray-100">
+                <td className="py-2">
+                  <span className="font-medium">{item.item_name}</span>{' '}
+                  <code className="text-xs text-gray-400">{item.item_sku}</code>
+                </td>
+                <td className="py-2 text-right text-gray-500">{formatQuantity(item.quantity)}</td>
+                <td className="py-2 pl-2">
+                  <Input
+                    type="number"
+                    step="0.0001"
+                    value={quantities[item.id] ?? ''}
+                    onChange={(e) =>
+                      setQuantities((prev) => ({ ...prev, [item.id]: e.target.value }))
+                    }
+                  />
+                </td>
+                <td className={`py-2 text-right tabular-nums ${v === 0 ? 'text-gray-300' : v < 0 ? 'text-red-600 font-medium' : 'text-amber-600 font-medium'}`}>
+                  {v === 0 ? '—' : `${v > 0 ? '+' : ''}${formatQuantity(v)}`}
+                </td>
+                <td className="py-2 pl-2">
+                  {differs(item) ? (
+                    <Input
+                      value={reasons[item.id] ?? ''}
+                      onChange={(e) =>
+                        setReasons((prev) => ({ ...prev, [item.id]: e.target.value }))
+                      }
+                      placeholder="Why short / over?"
+                    />
+                  ) : (
+                    <span className="text-gray-300 text-xs">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -573,7 +622,7 @@ function ReceiveOrder({
           Cancel
         </Button>
         <Button onClick={receive} loading={saving}>
-          Receive
+          Receive &amp; close
         </Button>
       </div>
     </Modal>

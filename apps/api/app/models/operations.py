@@ -440,6 +440,12 @@ class ProductionLine(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "production_order_items"
     __table_args__ = (
         status_vocabulary("production_order_items", "status", ProductionLineStatusEnum),
+        # Mirrors RecipeBasisEnum ('unit'/'batch'); spelt out here to avoid a
+        # model-layer import from inventory_v2. See migration adding these columns.
+        CheckConstraint(
+            "basis IN ('unit', 'batch')",
+            name="ck_production_order_items_basis_allowed",
+        ),
     )
 
     production_order_id: Mapped[uuid.UUID] = mapped_column(
@@ -454,11 +460,35 @@ class ProductionLine(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
-    #: The quantity the admin asked to produce.
+    #: The quantity the admin asked to produce, in *owner units* — always the
+    #: unit the ledger and every inventory report speak. For a batch-basis recipe
+    #: this is ``planned_basis_quantity * batch_yield``; for unit basis the two are
+    #: equal. Production posting and consumption read this, unchanged.
     planned_quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
-    #: What was actually produced (the till may adjust before marking produced).
-    #: Null until produced.
+    #: What was actually produced, in owner units (the till may adjust before
+    #: marking produced). Null until produced.
     produced_quantity: Mapped[Any | None] = mapped_column(Numeric(16, 4), nullable=True)
+    #: The recipe basis this line was raised in, snapshotted from the item's active
+    #: recipe version at create — 'unit' or 'batch'. A later basis change on the
+    #: recipe only affects the *next* order; this one keeps what it was raised with.
+    basis: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="unit"
+    )
+    #: Owner units produced by one batch, snapshotted with the basis. Null for a
+    #: unit-basis line; set (>0) for a batch-basis line so the UI/printout can show
+    #: "N batches (= N*batch_yield units)".
+    batch_yield: Mapped[Any | None] = mapped_column(Numeric(20, 8), nullable=True)
+    #: The quantity the admin entered, in the line's *basis* (batches for a batch
+    #: line, units for a unit line) — what the produce screen and printout display.
+    #: Null on legacy rows raised before basis existed (fall back to owner units).
+    planned_basis_quantity: Mapped[Any | None] = mapped_column(
+        Numeric(16, 4), nullable=True
+    )
+    #: What was produced, in the line's basis. Null until produced (or on legacy
+    #: rows). Owner-unit truth stays on ``produced_quantity``.
+    produced_basis_quantity: Mapped[Any | None] = mapped_column(
+        Numeric(16, 4), nullable=True
+    )
     unit: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default="storage"
     )

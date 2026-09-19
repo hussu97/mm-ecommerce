@@ -69,7 +69,6 @@ async def _item(db, name, kind, **kw):
         storage_unit=kw.get("unit", "unit"),
         ingredient_unit=kw.get("unit", "unit"),
         storage_to_ingredient_factor=Decimal("1"),
-        cost=kw.get("cost", Decimal("1")),
     )
     db.add(item)
     await db.flush()
@@ -269,6 +268,102 @@ async def test_create_moves_no_stock_then_produce_posts(env):
     async with Session() as db:
         with pytest.raises(ConflictError):
             await transfer_service.produce_line(db, line_id=line_id, user=ids.user)
+
+
+async def test_batch_basis_line_stores_basis_and_moves_owner_units(env):
+    """A batch-basis recipe: the client sends OWNER units (24 = 2 batches × 12);
+    the line snapshots the basis + yield and derives the basis count (2) for
+    display, and the ledger moves owner units."""
+    ids, Session = env
+    # Re-activate cookie as a batch recipe: 1 batch = 12 cookies, 6g flour/batch.
+    async with Session() as db:
+        draft = await recipe_service.create_draft(
+            db,
+            kind="inventory_item",
+            owner_id=ids.cookie,
+            lines=[RecipeLineInput(item_id=ids.flour, quantity=Decimal("6"))],
+            basis="batch",
+            batch_yield=Decimal("12"),
+        )
+        await recipe_service.activate(db, version_id=draft.id, user_id=ids.user.id)
+        await db.commit()
+
+    async with Session() as db:
+        order = await transfer_service.create_production_order(
+            db,
+            source_branch=ids.source,
+            user=ids.user,
+            production_items=[
+                # 2 batches, sent as 24 owner units (the client converts).
+                SimpleNamespace(
+                    item_id=ids.cookie, quantity=Decimal("24"), unit="storage"
+                )
+            ],
+        )
+        await db.commit()
+        line = order.lines[0]
+        line_id = line.id
+        assert line.basis == "batch"
+        assert line.batch_yield == Decimal("12.00000000")
+        # Owner-unit truth 24; basis count derived as 24 / 12 = 2.
+        assert line.planned_basis_quantity == Decimal("2.0000")
+        assert line.planned_quantity == Decimal("24.0000")
+
+    async with Session() as db:
+        line = await transfer_service.produce_line(db, line_id=line_id, user=ids.user)
+        await db.commit()
+        # Owner units on the ledger side, batches on the basis side.
+        assert line.produced_quantity == Decimal("24.0000")
+        assert line.produced_basis_quantity == Decimal("2.0000")
+
+    async with Session() as db:
+        # Cookie up 24 owner units; flour down 12g (6g/batch * 2 batches).
+        assert await _on_hand(db, ids.cookie, ids.source_wh) == Decimal("24.0000")
+        assert await _on_hand(db, ids.flour, ids.source_wh) == Decimal("988.0000")
+
+
+async def test_batch_basis_produce_override_is_in_owner_units(env):
+    """An override at produce time is in owner units (the till converts a batch
+    count to units before sending); the basis count is derived for display."""
+    ids, Session = env
+    async with Session() as db:
+        draft = await recipe_service.create_draft(
+            db,
+            kind="inventory_item",
+            owner_id=ids.cookie,
+            lines=[RecipeLineInput(item_id=ids.flour, quantity=Decimal("6"))],
+            basis="batch",
+            batch_yield=Decimal("12"),
+        )
+        await recipe_service.activate(db, version_id=draft.id, user_id=ids.user.id)
+        await db.commit()
+
+    async with Session() as db:
+        order = await transfer_service.create_production_order(
+            db,
+            source_branch=ids.source,
+            user=ids.user,
+            production_items=[
+                # 3 batches planned, sent as 36 owner units.
+                SimpleNamespace(
+                    item_id=ids.cookie, quantity=Decimal("36"), unit="storage"
+                )
+            ],
+        )
+        await db.commit()
+        line_id = order.lines[0].id
+
+    async with Session() as db:
+        # The till made only 1 batch (12 units), not the 3 planned.
+        line = await transfer_service.produce_line(
+            db, line_id=line_id, user=ids.user, quantity=Decimal("12")
+        )
+        await db.commit()
+        assert line.produced_quantity == Decimal("12.0000")  # owner units
+        assert line.produced_basis_quantity == Decimal("1.0000")  # 12 / 12 = 1 batch
+
+    async with Session() as db:
+        assert await _on_hand(db, ids.cookie, ids.source_wh) == Decimal("12.0000")
 
 
 async def test_partial_then_produce_all(env):

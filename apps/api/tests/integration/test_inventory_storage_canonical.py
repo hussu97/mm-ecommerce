@@ -53,7 +53,11 @@ async def engine():
     await engine.dispose()
 
 
-async def _post(db, *, branch, warehouse, user, item, ttype, qty, unit, factor):
+async def _post(
+    db, *, branch, warehouse, user, item, ttype, qty, unit, factor, cost="0"
+):
+    # Cost is FIFO now: a receipt carries the price it was bought at on the line
+    # (an issue's unit_cost is ignored — valuation comes from the layers it draws).
     txn = InventoryTransaction(
         reference=await inventory_service.next_reference(db, ttype),
         type=ttype,
@@ -69,7 +73,7 @@ async def _post(db, *, branch, warehouse, user, item, ttype, qty, unit, factor):
                 quantity=Decimal(str(qty)),
                 unit=unit,
                 conversion_factor=Decimal(str(factor)),
-                unit_cost=inventory_service.inventory_item_cost_for_unit(item, unit),
+                unit_cost=Decimal(str(cost)),
             )
         ],
     )
@@ -97,7 +101,6 @@ async def test_buy_in_grams_consume_in_teaspoons(engine):
             storage_unit="g",
             ingredient_unit="teaspoon",
             storage_to_ingredient_factor=Decimal("0.25"),  # 1 tsp = 4 g
-            cost=Decimal("2"),  # 2 per gram
         )
         db.add_all(
             [
@@ -119,6 +122,7 @@ async def test_buy_in_grams_consume_in_teaspoons(engine):
             qty="100",
             unit="storage",
             factor="0.25",
+            cost="2",  # 2 per gram
         )
         level = (
             await db.execute(

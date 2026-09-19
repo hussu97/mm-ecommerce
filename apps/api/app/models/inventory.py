@@ -49,11 +49,6 @@ if TYPE_CHECKING:
     from .branch import Branch
 
 
-class CostingMethodEnum(str, enum.Enum):
-    FIXED = "fixed"
-    FROM_INGREDIENTS = "from_ingredients"
-
-
 class InventoryTransactionTypeEnum(str, enum.Enum):
     """The ways stock moves, mirroring Foodics' transaction types.
 
@@ -259,12 +254,11 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
         Numeric(16, 4), nullable=False, server_default="0"
     )
 
-    cost: Mapped[Any] = mapped_column(
-        Numeric(16, 6), nullable=False, server_default="0"
-    )
-    costing_method: Mapped[str] = mapped_column(
-        String(30), nullable=False, server_default=CostingMethodEnum.FIXED.value
-    )
+    # There is no per-item cost column: cost is FIFO, held in the item's cost
+    # layers and summarised on ``InventoryLevel.average_cost`` per warehouse. The
+    # redundant, never-updated ``cost``/``costing_method`` columns were dropped
+    # (migration 267) — an item's cost is derived via
+    # ``cost_layer_service.item_average_cost`` (0 until its first receipt).
     # Produced items lose weight in the process; 0.9 means 10% is lost.
     yield_percentage: Mapped[Any] = mapped_column(
         Numeric(6, 4), nullable=False, server_default="1"
@@ -337,7 +331,8 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
     quantity: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
-    #: Weighted-average cost per storage unit (matches ``InventoryItem.cost``).
+    #: Weighted-average cost per storage unit — the item's cost at this warehouse,
+    #: derived from its surviving FIFO layers (the source of truth for valuation).
     average_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
     )
@@ -382,6 +377,13 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
     )
     is_vat_deductible: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
+    )
+    #: "Flexible item mapping": when true, a purchase order for this supplier may
+    #: add ANY active purchasable inventory item, not only the ones mapped to the
+    #: supplier — the mapped items remain the suggested shortlist. When false, only
+    #: mapped items may be ordered (the strict default).
+    allow_any_item: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
     )
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     tax_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -875,10 +877,21 @@ class PurchaseOrderItem(Base, UUIDMixin):
     total_cost: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
+    #: The receiver's note when what arrived differs from what was ordered — the
+    #: same short/excess variance capture a transfer line carries. Set on receipt,
+    #: required when ``received_quantity`` ≠ ``quantity``; null otherwise.
+    variance_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     purchase_order: Mapped[PurchaseOrder] = relationship(
         "PurchaseOrder", back_populates="items"
     )
+
+    @property
+    def variance_quantity(self) -> Any:
+        """received − ordered: negative when short, positive when over, 0 exact."""
+        from decimal import Decimal
+
+        return Decimal(str(self.received_quantity or 0)) - Decimal(str(self.quantity))
 
     @property
     def outstanding_quantity(self) -> Any:

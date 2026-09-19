@@ -181,7 +181,6 @@ async def test_a_missing_modifier_recipe_does_not_suppress_the_products_that_hav
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         db.add(ingredient)
         product = Product(name="Cake", slug=f"cake-{uuid4().hex[:8]}")

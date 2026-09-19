@@ -15,7 +15,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -45,6 +45,7 @@ from app.models import (
     TillStatusEnum,
     Transfer,
     TransferKindEnum,
+    TransferLine,
     TransferOrder,
     TransferStatusEnum,
     Warehouse,
@@ -766,14 +767,35 @@ async def pos_transfer_templates(
     return [await _serialise_template(db, t) for t in templates]
 
 
+def _transfer_search_clause(q: str):
+    """A transfer matches a search on its reference or any of its items' name/SKU
+    — the identifiers a picker or manager arrives holding. Server-side so it runs
+    over the whole list, not the loaded page."""
+    like = f"%{q.strip().lower()}%"
+    return or_(
+        func.lower(Transfer.reference).like(like),
+        exists().where(
+            TransferLine.transfer_id == Transfer.id,
+            TransferLine.item_id == InventoryItem.id,
+            or_(
+                func.lower(InventoryItem.name).like(like),
+                func.lower(InventoryItem.sku).like(like),
+            ),
+        ),
+    )
+
+
 @pos_transfers_router.get("/transfers/incoming", response_model=list[TransferResponse])
 async def pos_incoming_transfers(
     branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.receive")),
 ):
     """Transfers and returns sent to this branch and not yet booked in — the list
-    the receiving tills work from."""
+    the receiving tills work from. Paged and searchable server-side."""
     await access_service.assert_branch_access(db, user, branch_id)
     stmt = (
         select(Transfer)
@@ -783,8 +805,12 @@ async def pos_incoming_transfers(
             Transfer.received_transaction_id.is_(None),
         )
         .options(selectinload(Transfer.items))
-        .order_by(Transfer.created_at.desc())
+        .order_by(Transfer.created_at.desc(), Transfer.id.desc())
+        .offset(offset)
+        .limit(limit)
     )
+    if q and q.strip():
+        stmt = stmt.where(_transfer_search_clause(q))
     transfers = list((await db.execute(stmt)).scalars().unique().all())
     return [await _serialise_child(db, t) for t in transfers]
 
@@ -792,12 +818,15 @@ async def pos_incoming_transfers(
 @pos_transfers_router.get("/transfers/outgoing", response_model=list[TransferResponse])
 async def pos_outgoing_transfers(
     source_branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.send")),
 ):
     """Pending transfers this branch is to pack and send — admin created them, so
     they wait for the source till to mark each one sent. Distinct from
-    ``incoming``, which is the destination's receive list."""
+    ``incoming``, which is the destination's receive list. Paged + searchable."""
     await access_service.assert_branch_access(db, user, source_branch_id)
     stmt = (
         select(Transfer)
@@ -807,8 +836,12 @@ async def pos_outgoing_transfers(
             Transfer.status == TransferStatusEnum.PENDING.value,
         )
         .options(selectinload(Transfer.items))
-        .order_by(Transfer.created_at.desc())
+        .order_by(Transfer.created_at.desc(), Transfer.id.desc())
+        .offset(offset)
+        .limit(limit)
     )
+    if q and q.strip():
+        stmt = stmt.where(_transfer_search_clause(q))
     transfers = list((await db.execute(stmt)).scalars().unique().all())
     return [await _serialise_child(db, t) for t in transfers]
 
@@ -816,7 +849,9 @@ async def pos_outgoing_transfers(
 @pos_transfers_router.get("/transfers/completed", response_model=list[TransferResponse])
 async def pos_completed_transfers(
     branch_id: uuid.UUID,
-    limit: int = Query(200, ge=1, le=2000),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.transfers.manage")),
 ):
@@ -824,7 +859,8 @@ async def pos_completed_transfers(
     report: legs it has *sent* (source, shipped) and legs it has *received*
     (destination, booked in). The client tells the two apart by comparing
     ``source_branch_id``/``branch_id`` to its own branch. Gated on the broad
-    ``manage`` permission — same as the report link that opens it."""
+    ``manage`` permission — same as the report link that opens it. Paged +
+    searchable server-side so the whole history is reachable."""
     await access_service.assert_branch_access(db, user, branch_id)
     stmt = (
         select(Transfer)
@@ -841,9 +877,12 @@ async def pos_completed_transfers(
             )
         )
         .options(selectinload(Transfer.items))
-        .order_by(Transfer.updated_at.desc())
+        .order_by(Transfer.updated_at.desc(), Transfer.id.desc())
+        .offset(offset)
         .limit(limit)
     )
+    if q and q.strip():
+        stmt = stmt.where(_transfer_search_clause(q))
     transfers = list((await db.execute(stmt)).scalars().unique().all())
     return [await _serialise_child(db, t) for t in transfers]
 
@@ -1297,32 +1336,47 @@ async def get_production_order(
 )
 async def pos_pending_production(
     branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.production.manage")),
 ):
-    """Production orders with work still to do at this (source) branch."""
+    """Production orders with work still to do at this (source) branch. Paged +
+    searchable server-side (reference or any of its items' name/SKU)."""
     await access_service.assert_branch_access(db, user, branch_id)
-    orders = (
-        (
-            await db.execute(
-                select(ProductionOrder)
-                .where(
-                    ProductionOrder.source_branch_id == branch_id,
-                    ProductionOrder.status.in_(
-                        [
-                            ProductionOrderStatusEnum.PENDING.value,
-                            ProductionOrderStatusEnum.PARTIALLY_PRODUCED.value,
-                        ]
+    stmt = (
+        select(ProductionOrder)
+        .where(
+            ProductionOrder.source_branch_id == branch_id,
+            ProductionOrder.status.in_(
+                [
+                    ProductionOrderStatusEnum.PENDING.value,
+                    ProductionOrderStatusEnum.PARTIALLY_PRODUCED.value,
+                ]
+            ),
+        )
+        .options(selectinload(ProductionOrder.lines))
+        .order_by(ProductionOrder.created_at.desc(), ProductionOrder.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(ProductionOrder.reference).like(like),
+                exists().where(
+                    ProductionLine.production_order_id == ProductionOrder.id,
+                    ProductionLine.item_id == InventoryItem.id,
+                    or_(
+                        func.lower(InventoryItem.name).like(like),
+                        func.lower(InventoryItem.sku).like(like),
                     ),
-                )
-                .options(selectinload(ProductionOrder.lines))
-                .order_by(ProductionOrder.created_at.desc())
+                ),
             )
         )
-        .scalars()
-        .unique()
-        .all()
-    )
+    orders = (await db.execute(stmt)).scalars().unique().all()
     return [await _serialise_production_order(db, o) for o in orders]
 
 

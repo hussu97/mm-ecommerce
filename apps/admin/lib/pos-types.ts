@@ -403,8 +403,9 @@ export interface InventoryItem {
   minimum_level: number;
   maximum_level: number;
   par_level: number;
-  cost: number;
-  costing_method: 'fixed' | 'from_ingredients';
+  // Cost is FIFO now: the item's current cost per storage unit, derived from its
+  // cost layers (0 until first receipt/production). Not a stored column.
+  average_cost: number;
   yield_percentage: number;
   is_product: boolean;
   kind: 'raw_material' | 'packaging' | 'semi_finished' | 'produced_good' | 'resale_good';
@@ -455,6 +456,9 @@ export interface Supplier {
   name: string;
   reference: string | null;
   is_vat_deductible: boolean;
+  // Flexible item mapping: a PO for this supplier may add any active purchasable
+  // item, not just the mapped ones.
+  allow_any_item: boolean;
   address: string | null;
   tax_number: string | null;
   payment_terms_days: number;
@@ -492,6 +496,8 @@ export interface PurchaseOrderItem {
   net_total: number;
   unit_cost: number;
   total_cost: number;
+  // The receiver's short/excess note, set on receipt when received != ordered.
+  variance_reason: string | null;
   item_name: string | null;
   item_sku: string | null;
 }
@@ -690,8 +696,15 @@ export interface ProductionLine {
   item_id: string;
   item_name: string | null;
   item_sku: string | null;
+  // Owner-unit truth (what the ledger and inventory reports show).
   planned_quantity: number;
   produced_quantity: number | null;
+  // Recipe basis this line was raised in, and (for a batch line) owner units per
+  // batch. The report shows the basis count with the unit conversion.
+  basis: 'unit' | 'batch';
+  batch_yield: number | null;
+  planned_basis_quantity: number | null;
+  produced_basis_quantity: number | null;
   unit: string;
   status: ProductionLineStatus;
   cancel_note: string | null;
@@ -734,8 +747,16 @@ export interface ProductionOrderSummary {
 
 export interface ProductionOrderItemInput {
   item_id: string;
+  // In the item's recipe basis — batches for a batch recipe, units otherwise.
   quantity: number;
   unit: string;
+}
+
+/** One producible item's recipe basis, for the transfer-and-production grid. */
+export interface ProducibleItemBasis {
+  item_id: string;
+  basis: 'unit' | 'batch';
+  batch_yield: number | null;
 }
 
 /** Body for POST /inventory/production-orders (production-only). */

@@ -100,7 +100,6 @@ async def env(engine):
             storage_unit="unit",
             ingredient_unit="unit",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("3"),
         )
         db.add(item)
         template = InventoryReportTemplate(

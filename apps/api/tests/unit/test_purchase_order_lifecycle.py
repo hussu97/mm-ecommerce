@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.exceptions import ConflictError, ForbiddenError
+from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
 from app.models.inventory import (
     PurchaseOrder,
     PurchaseOrderItem,
@@ -262,30 +262,13 @@ class TestReceivingGoesThroughTheSameMap:
         # Nothing was written: no branch lookup, no transaction, no posting.
         db.add.assert_not_called()
 
-    @pytest.mark.parametrize(
-        "fully_received,expected",
-        [(True, PO.CLOSED), (False, PO.PARTIALLY_RECEIVED)],
-    )
-    async def test_a_short_delivery_leaves_it_open_and_a_full_one_closes_it(
-        self, fully_received, expected
-    ):
-        order = _po(PO.APPROVED)
-        line = PurchaseOrderItem(
-            id=uuid.uuid4(),
-            item_id=uuid.uuid4(),
-            unit="ingredient",
-            quantity=Decimal("10"),
-            received_quantity=Decimal("0"),
-            conversion_factor=Decimal("1"),
-            unit_cost=Decimal("2"),
-        )
-        order.items = [line]
-
+    def _receive_env(self, order):
+        """The patches receiving needs with no database — a stubbed reference,
+        business date and stock post."""
         db = AsyncMock()
         db.add = MagicMock()
         db.get = AsyncMock(return_value=SimpleNamespace(id=order.branch_id))
-
-        with (
+        return db, (
             patch.object(
                 inventory_service,
                 "next_reference",
@@ -299,17 +282,84 @@ class TestReceivingGoesThroughTheSameMap:
             patch.object(
                 inventory_service, "post_transaction", new=AsyncMock(return_value=None)
             ),
-            patch.object(
-                type(order),
-                "is_fully_received",
-                property(lambda _self: fully_received),
-            ),
-        ):
+        )
+
+    async def test_receiving_is_one_shot_and_always_closes(self):
+        """A short receipt no longer leaves the order open for a second delivery:
+        the receipt closes it and the remainder is recorded short."""
+        order = _po(PO.APPROVED)
+        line = PurchaseOrderItem(
+            id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
+            unit="ingredient",
+            quantity=Decimal("10"),
+            received_quantity=Decimal("0"),
+            conversion_factor=Decimal("1"),
+            unit_cost=Decimal("2"),
+        )
+        order.items = [line]
+
+        db, patches = self._receive_env(order)
+        with patches[0], patches[1], patches[2]:
             await inventory_service.receive_purchase_order(
                 db,
                 purchase_order=order,
                 user=_user(),
                 received={line.id: Decimal("4")},
+                reasons={line.id: "supplier short-shipped"},
             )
 
-        assert order.status == expected.value
+        assert order.status == PO.CLOSED.value
+        assert line.received_quantity == Decimal("4")
+        assert line.variance_reason == "supplier short-shipped"
+
+    async def test_a_short_line_without_a_reason_is_refused(self):
+        order = _po(PO.APPROVED)
+        line = PurchaseOrderItem(
+            id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
+            unit="ingredient",
+            quantity=Decimal("10"),
+            received_quantity=Decimal("0"),
+            conversion_factor=Decimal("1"),
+            unit_cost=Decimal("2"),
+        )
+        order.items = [line]
+
+        db, patches = self._receive_env(order)
+        with patches[0], patches[1], patches[2]:
+            with pytest.raises(BadRequestError):
+                await inventory_service.receive_purchase_order(
+                    db,
+                    purchase_order=order,
+                    user=_user(),
+                    received={line.id: Decimal("4")},
+                )
+        # Refused before any stock moved.
+        db.add.assert_not_called()
+
+    async def test_an_exact_receipt_needs_no_reason_and_closes(self):
+        order = _po(PO.APPROVED)
+        line = PurchaseOrderItem(
+            id=uuid.uuid4(),
+            item_id=uuid.uuid4(),
+            unit="ingredient",
+            quantity=Decimal("10"),
+            received_quantity=Decimal("0"),
+            conversion_factor=Decimal("1"),
+            unit_cost=Decimal("2"),
+        )
+        order.items = [line]
+
+        db, patches = self._receive_env(order)
+        with patches[0], patches[1], patches[2]:
+            await inventory_service.receive_purchase_order(
+                db,
+                purchase_order=order,
+                user=_user(),
+                received={line.id: Decimal("10")},
+            )
+
+        assert order.status == PO.CLOSED.value
+        assert line.received_quantity == Decimal("10")
+        assert line.variance_reason is None

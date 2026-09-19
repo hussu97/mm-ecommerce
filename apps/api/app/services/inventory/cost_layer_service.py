@@ -48,6 +48,8 @@ __all__ = [
     "rescale_layers_to_average",
     "remaining_totals",
     "derive_average_cost",
+    "item_average_cost",
+    "item_average_costs",
     "refresh_level_average",
     "delete_branch_layers",
 ]
@@ -149,15 +151,60 @@ async def derive_average_cost(
     """Weighted average of the surviving layers, per storage unit.
 
     Falls back to the given value (usually the level's current average), then to
-    the item's catalogue cost, when nothing remains costed — a level can sit at
-    negative quantity with no layers, and a zero average there is a lie.
+    zero, when nothing remains costed — a level can sit at negative quantity with
+    no layers, and a zero average there is a lie, but the item carries no
+    catalogue cost of its own any more: cost is FIFO, so an item with no costed
+    stock is valued at 0 until its first receipt or production.
     """
     total_qty, total_value = await remaining_totals(db, item.id, warehouse_id)
     if total_qty > 0:
         return _c(total_value / total_qty)
     if fallback is not None:
         return _c(fallback)
-    return _c(item.cost or 0)
+    return _c(0)
+
+
+async def item_average_cost(db: AsyncSession, item_id: uuid.UUID) -> Decimal:
+    """The item's current cost per storage unit across *all* warehouses — the
+    weighted average of every surviving FIFO layer. 0 when the item has no costed
+    stock yet (never purchased or produced). This is the item-level cost for
+    display and reporting, replacing the dropped ``InventoryItem.cost`` column."""
+    return (await item_average_costs(db, [item_id])).get(item_id, _c(0))
+
+
+async def item_average_costs(
+    db: AsyncSession, item_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, Decimal]:
+    """Bulk :func:`item_average_cost` — one query for many items, for list and
+    export screens. Items with no costed stock are omitted (read as 0)."""
+    if not item_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                InventoryCostLayer.item_id,
+                func.coalesce(func.sum(InventoryCostLayer.remaining_quantity), 0),
+                func.coalesce(
+                    func.sum(
+                        InventoryCostLayer.remaining_quantity
+                        * InventoryCostLayer.unit_cost
+                    ),
+                    0,
+                ),
+            )
+            .where(
+                InventoryCostLayer.item_id.in_(item_ids),
+                InventoryCostLayer.remaining_quantity > 0,
+            )
+            .group_by(InventoryCostLayer.item_id)
+        )
+    ).all()
+    out: dict[uuid.UUID, Decimal] = {}
+    for item_id, qty, value in rows:
+        q = Decimal(str(qty))
+        if q > 0:
+            out[item_id] = _c(Decimal(str(value)) / q)
+    return out
 
 
 async def refresh_level_average(
@@ -263,9 +310,10 @@ async def consume_fifo(
 
     layers = await _active_layers(db, item.id, warehouse_id, for_update=True)
     total_cost = Decimal("0")
-    # A never-costed item has a 0 fallback (its level average is 0); an over-issue
-    # of it should still book COGS at the catalogue cost, not nothing.
-    last_cost = fallback_cost if fallback_cost > 0 else _c(item.cost or 0)
+    # Cost is FIFO: an over-issue of a never-costed item books COGS at the given
+    # fallback (usually the level average), else 0 — the item has no catalogue
+    # cost of its own any more.
+    last_cost = fallback_cost if fallback_cost > 0 else _c(0)
     for layer in layers:
         if outstanding <= 0:
             break

@@ -89,7 +89,6 @@ async def env():
             storage_unit="kg",
             ingredient_unit="kg",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("3"),
         )
         db.add(item)
         await db.flush()

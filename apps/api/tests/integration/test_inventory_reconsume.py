@@ -99,7 +99,6 @@ async def test_a_post_close_edit_reverses_and_reconsumes_in_one_group(engine):
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         db.add(ingredient)
         product = Product(name="Cake", slug=f"cake-{uuid.uuid4().hex[:8]}")

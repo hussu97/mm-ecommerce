@@ -3990,6 +3990,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/producible-item-bases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Producible Item Bases
+         * @description The recipe basis (unit/batch + batch_yield) of every item with an active
+         *     v2 recipe, so the transfer-and-production grid can render the "qty to produce"
+         *     cell in batches and show the live unit conversion.
+         */
+        get: operations["producible_item_bases_api_v1_inventory_producible_item_bases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/producible-item-ids": {
         parameters: {
             query?: never;
@@ -4213,7 +4235,11 @@ export interface paths {
         put?: never;
         /**
          * Receive Purchase Order
-         * @description Receive a delivery, in full or in part, moving stock in.
+         * @description Receive a delivery in one action, closing the PO.
+         *
+         *     Whatever is not received is recorded as short; a line whose received quantity
+         *     differs from what was ordered carries a variance reason, and the office is
+         *     emailed the short/excess.
          */
         post: operations["receive_purchase_order_api_v1_inventory_purchase_orders__po_id__receive_post"];
         delete?: never;
@@ -4500,7 +4526,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Shift Reports */
+        /**
+         * List Shift Reports
+         * @description Submitted inventory reports, newest first. Paged + searchable server-side
+         *     (by business date, report type or status) so the whole history is reachable.
+         */
         get: operations["list_shift_reports_api_v1_inventory_shift_reports_get"];
         put?: never;
         post?: never;
@@ -12969,17 +12999,6 @@ export interface components {
             /** Category Id */
             category_id?: string | null;
             /**
-             * Cost
-             * @default 0
-             */
-            cost: number | string;
-            /**
-             * Costing Method
-             * @default fixed
-             * @enum {string}
-             */
-            costing_method: "fixed" | "from_ingredients";
-            /**
              * Count Order
              * @default 0
              */
@@ -13058,14 +13077,15 @@ export interface components {
         };
         /** InventoryItemResponse */
         InventoryItemResponse: {
+            /**
+             * Average Cost
+             * @default 0
+             */
+            average_cost: string;
             /** Barcode */
             barcode: string | null;
             /** Category Id */
             category_id: string | null;
-            /** Cost */
-            cost: string;
-            /** Costing Method */
-            costing_method: string;
             /** Count Order */
             count_order: number;
             /**
@@ -13130,10 +13150,6 @@ export interface components {
             barcode?: string | null;
             /** Category Id */
             category_id?: string | null;
-            /** Cost */
-            cost?: number | string | null;
-            /** Costing Method */
-            costing_method?: ("fixed" | "from_ingredients") | null;
             /** Count Order */
             count_order?: number | null;
             /** Ingredient Unit */
@@ -16500,6 +16516,29 @@ export interface components {
             /** Unit Cost */
             unit_cost: string;
         };
+        /**
+         * ProducibleItemBasis
+         * @description One producible item's recipe basis, for the admin transfer/production grid.
+         *
+         *     The grid renders the "qty to produce" cell in this basis — batches for a batch
+         *     recipe, units otherwise — and shows the live "= N units" conversion from
+         *     ``batch_yield``. Items with an active v2 recipe are listed; anything absent
+         *     (legacy BOM, non-producible) is treated as unit basis by the client.
+         */
+        ProducibleItemBasis: {
+            /**
+             * Basis
+             * @default unit
+             */
+            basis: string;
+            /** Batch Yield */
+            batch_yield?: string | null;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+        };
         /** ProductCreate */
         ProductCreate: {
             /**
@@ -16802,6 +16841,13 @@ export interface components {
         };
         /** ProductionLineResponse */
         ProductionLineResponse: {
+            /**
+             * Basis
+             * @default unit
+             */
+            basis: string;
+            /** Batch Yield */
+            batch_yield?: string | null;
             /** Cancel Note */
             cancel_note?: string | null;
             /** Category Name */
@@ -16822,10 +16868,14 @@ export interface components {
             item_name?: string | null;
             /** Item Sku */
             item_sku?: string | null;
+            /** Planned Basis Quantity */
+            planned_basis_quantity?: string | null;
             /** Planned Quantity */
             planned_quantity: string;
             /** Produced At */
             produced_at?: string | null;
+            /** Produced Basis Quantity */
+            produced_basis_quantity?: string | null;
             /** Produced Quantity */
             produced_quantity: string | null;
             /** Production Reference */
@@ -17782,6 +17832,8 @@ export interface components {
             purchase_order_item_id: string;
             /** Quantity */
             quantity: number | string;
+            /** Variance Reason */
+            variance_reason?: string | null;
         };
         /** ReceivePurchaseOrderRequest */
         ReceivePurchaseOrderRequest: {
@@ -19141,6 +19193,11 @@ export interface components {
         SupplierCreate: {
             /** Address */
             address?: string | null;
+            /**
+             * Allow Any Item
+             * @default false
+             */
+            allow_any_item: boolean;
             /** Contacts */
             contacts?: components["schemas"]["SupplierContactInput"][];
             /**
@@ -19239,6 +19296,11 @@ export interface components {
             /** Address */
             address: string | null;
             /**
+             * Allow Any Item
+             * @default false
+             */
+            allow_any_item: boolean;
+            /**
              * Contacts
              * @default []
              */
@@ -19284,6 +19346,8 @@ export interface components {
         SupplierUpdate: {
             /** Address */
             address?: string | null;
+            /** Allow Any Item */
+            allow_any_item?: boolean | null;
             /** Contacts */
             contacts?: components["schemas"]["SupplierContactInput"][] | null;
             /** Is Active */
@@ -28723,6 +28787,26 @@ export interface operations {
             };
         };
     };
+    producible_item_bases_api_v1_inventory_producible_item_bases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProducibleItemBasis"][];
+                };
+            };
+        };
+    };
     producible_item_ids_api_v1_inventory_producible_item_ids_get: {
         parameters: {
             query?: never;
@@ -29774,6 +29858,9 @@ export interface operations {
             query?: {
                 branch_id?: string | null;
                 status?: string | null;
+                limit?: number;
+                offset?: number;
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -33643,6 +33730,7 @@ export interface operations {
                 pos_status?: string | null;
                 order_type?: string | null;
                 open_only?: boolean;
+                q?: string | null;
                 limit?: number;
                 offset?: number;
             };

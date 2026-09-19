@@ -216,6 +216,64 @@ async def producible_item_ids(db: AsyncSession) -> set[uuid.UUID]:
     return {i for i in v2 if i is not None} | {i for i in legacy if i is not None}
 
 
+async def item_production_basis(
+    db: AsyncSession, item_id: uuid.UUID
+) -> tuple[str, Decimal | None]:
+    """The recipe basis an inventory item is produced in.
+
+    Returns ``('unit', None)`` or ``('batch', batch_yield)``, read from the item's
+    *current active* recipe version — so a later basis or yield change flows into
+    the next production order raised, while orders already raised keep the value
+    snapshotted onto their lines. A legacy-BOM item (no v2 version) has no basis
+    and produces in units.
+    """
+    version = await active_version(
+        db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item_id
+    )
+    if (
+        version is not None
+        and version.basis == RecipeBasisEnum.BATCH.value
+        and version.batch_yield
+    ):
+        return RecipeBasisEnum.BATCH.value, Decimal(str(version.batch_yield))
+    return RecipeBasisEnum.UNIT.value, None
+
+
+async def producible_item_bases(
+    db: AsyncSession,
+) -> dict[uuid.UUID, tuple[str, Decimal | None]]:
+    """``item_id → (basis, batch_yield)`` for every item with an active v2 recipe.
+
+    The admin grid reads this to render the "qty to produce" cell in the item's
+    basis (batches vs units) and show the live unit conversion. Items missing from
+    the map (legacy BOM, or not producible) are treated as unit basis by callers.
+    """
+    rows = (
+        await db.execute(
+            select(
+                Recipe.inventory_item_id,
+                RecipeVersion.basis,
+                RecipeVersion.batch_yield,
+            )
+            .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
+            .where(
+                Recipe.owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value,
+                Recipe.inventory_item_id.is_not(None),
+                RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
+            )
+        )
+    ).all()
+    out: dict[uuid.UUID, tuple[str, Decimal | None]] = {}
+    for item_id, basis, batch_yield in rows:
+        if item_id is None:
+            continue
+        if basis == RecipeBasisEnum.BATCH.value and batch_yield:
+            out[item_id] = (RecipeBasisEnum.BATCH.value, Decimal(str(batch_yield)))
+        else:
+            out[item_id] = (RecipeBasisEnum.UNIT.value, None)
+    return out
+
+
 def _normalise_basis(
     basis: str, batch_yield: Decimal | None
 ) -> tuple[str, Decimal | None]:

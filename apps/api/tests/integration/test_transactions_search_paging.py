@@ -66,7 +66,6 @@ async def world(engine):
                 storage_unit="g",
                 ingredient_unit="g",
                 storage_to_ingredient_factor=Decimal("1"),
-                cost=Decimal("1"),
             )
 
         flour = _item(f"{MARKER} Flour")
@@ -208,7 +207,6 @@ async def test_stock_audit_reads_as_submission_with_author_and_link(engine):
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         db.add(item)
         await db.flush()

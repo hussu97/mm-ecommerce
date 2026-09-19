@@ -136,8 +136,6 @@ class InventoryItemCreate(BaseModel):
     minimum_level: Decimal = Field(Decimal("0"), ge=0)
     maximum_level: Decimal = Field(Decimal("0"), ge=0)
     par_level: Decimal = Field(Decimal("0"), ge=0)
-    cost: Decimal = Field(Decimal("0"), ge=0)
-    costing_method: Literal["fixed", "from_ingredients"] = "fixed"
     yield_percentage: Decimal = Field(Decimal("1"), gt=0, le=1)
     is_product: bool = False
     kind: Literal[
@@ -162,8 +160,6 @@ class InventoryItemUpdate(BaseModel):
     minimum_level: Decimal | None = Field(None, ge=0)
     maximum_level: Decimal | None = Field(None, ge=0)
     par_level: Decimal | None = Field(None, ge=0)
-    cost: Decimal | None = Field(None, ge=0)
-    costing_method: Literal["fixed", "from_ingredients"] | None = None
     yield_percentage: Decimal | None = Field(None, gt=0, le=1)
     is_product: bool | None = None
     kind: (
@@ -192,8 +188,9 @@ class InventoryItemResponse(ORMModel):
     minimum_level: Decimal
     maximum_level: Decimal
     par_level: Decimal
-    cost: Decimal
-    costing_method: str
+    #: The item's current cost per storage unit, derived from its FIFO layers
+    #: (0 until first receipt/production). Populated by the endpoint, not a column.
+    average_cost: Decimal = Decimal("0")
     yield_percentage: Decimal
     is_product: bool
     kind: str
@@ -266,6 +263,9 @@ class SupplierCreate(BaseModel):
     name_localized: str | None = Field(None, max_length=200)
     reference: str | None = Field(None, max_length=50)
     is_vat_deductible: bool = True
+    #: Flexible item mapping — allow a PO for this supplier to add any active
+    #: purchasable item, not just the mapped ones.
+    allow_any_item: bool = False
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int = Field(0, ge=0, le=365)
@@ -279,6 +279,7 @@ class SupplierUpdate(BaseModel):
     name_localized: str | None = Field(None, max_length=200)
     reference: str | None = Field(None, max_length=50)
     is_vat_deductible: bool | None = None
+    allow_any_item: bool | None = None
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int | None = Field(None, ge=0, le=365)
@@ -302,6 +303,7 @@ class SupplierResponse(ORMModel):
     name_localized: str | None
     reference: str | None
     is_vat_deductible: bool
+    allow_any_item: bool = False
     address: str | None
     tax_number: str | None
     payment_terms_days: int
@@ -588,7 +590,11 @@ class ItemCostLayersResponse(BaseModel):
 
 class ReceiveLine(BaseModel):
     purchase_order_item_id: UUID
-    quantity: Decimal = Field(gt=0)
+    #: What actually arrived for this line — 0 when the line was a full no-show
+    #: (recorded as short). A line whose received quantity differs from what was
+    #: ordered must carry a ``variance_reason``, the same as a transfer receipt.
+    quantity: Decimal = Field(ge=0)
+    variance_reason: str | None = None
 
 
 class ReceivePurchaseOrderRequest(BaseModel):

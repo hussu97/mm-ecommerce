@@ -131,24 +131,19 @@ async def assert_warehouse_for_branch(
 
 
 def inventory_item_cost_for_unit(item: InventoryItem, unit: str) -> Decimal:
-    """Return the catalogue cost in the requested unit.
+    """The zero pre-cost fallback, in the requested unit.
 
-    ``InventoryItem.cost`` is the cost of one storage unit — which is also the
-    unit the ledger values stock in (see ``InventoryLevel``). Cost in the
-    ingredient unit is that divided by the factor (fewer, larger ingredient
-    units cost proportionally more). Keeping the conversion here prevents every
-    fallback path (sales, counts, waste and production) from inventing its own,
-    often wrong, interpretation.
+    The item no longer carries a catalogue cost of its own — cost is FIFO, held in
+    the item's cost layers and summarised on ``InventoryLevel.average_cost``. So an
+    item with no costed stock yet is valued at 0 until its first receipt or
+    production posts a real cost. Every caller here reaches this only *after*
+    consulting the FIFO layer / level average for the warehouse in hand, so this is
+    strictly the "no cost known" case. Kept as a function (rather than inlining a
+    zero) so the ``storage``/``ingredient`` unit contract stays enforced.
     """
     if unit not in {"storage", "ingredient"}:
         raise BadRequestError(f"Unknown inventory entry unit '{unit}'")
-    storage_cost = Decimal(str(item.cost or 0))
-    if unit == "storage":
-        return _c(storage_cost)
-    factor = Decimal(str(item.storage_to_ingredient_factor or 1))
-    if factor <= 0:
-        raise BadRequestError(f"{item.name} has an invalid unit conversion factor")
-    return _c(storage_cost / factor)
+    return _c(0)
 
 
 def canonical_cost_for_unit(
@@ -456,7 +451,7 @@ async def _reverse_line_costing(
     """
     if line.reverses_line_id is None:
         if delta > 0:
-            price = fallback_cost if fallback_cost > 0 else _c(item.cost or 0)
+            price = fallback_cost if fallback_cost > 0 else _c(0)
             await cost_layer_service.create_layer(
                 db,
                 transaction=transaction,
@@ -941,10 +936,11 @@ PURCHASE_ORDER_MOVES: dict[PurchaseOrderStatusEnum, _Move] = {
         sources=frozenset({PurchaseOrderStatusEnum.PENDING}),
         refusal="Only submitted orders can be declined",
     ),
-    # Receiving reaches one of two states from the same two sources: a short
-    # delivery leaves the order partially received and a complete one closes
-    # it. Which of the two is decided by what actually arrived, not by the
-    # caller — see `receive_purchase_order`.
+    # Receiving is now one-shot: `receive_purchase_order` always closes the order
+    # (whatever was short is recorded on the line), so PARTIALLY_RECEIVED is no
+    # longer reached from a receive. The transition is kept so an order left
+    # `partially_received` by the old multi-delivery flow can still be received to
+    # CLOSED, and its status stays a legal move source below.
     PurchaseOrderStatusEnum.PARTIALLY_RECEIVED: _Move(
         sources=frozenset(
             {
@@ -1265,28 +1261,49 @@ async def receive_purchase_order(
     purchase_order: PurchaseOrder,
     user: User,
     received: dict[uuid.UUID, Decimal],
+    reasons: dict[uuid.UUID, str] | None = None,
 ) -> InventoryTransaction:
     """
-    Receive against an approved PO, in full or in part.
+    Receive an approved PO in one action, closing it.
 
-    `received` maps purchase-order-item id to the quantity actually delivered,
-    so a short delivery leaves the PO partially received rather than closed.
+    Receiving is a single event, mirroring how a transfer is received: `received`
+    maps each line to the quantity that actually arrived, and whatever was not
+    received is recorded as **short** (the remainder is not left outstanding for a
+    later delivery — the PO closes). A line that arrived over its ordered quantity
+    is an **excess**. Either way the difference is a variance, and — exactly as on
+    a transfer receipt — a line whose received quantity differs from what was
+    ordered must carry a `reasons[line_id]` note, or the receipt is refused.
 
-    The one move whose consequence runs *before* the assignment: which state the
-    order lands in is computed from what arrived, so the stock has to be posted
-    first. The guard is therefore asked up front, against the same map, so a
-    declined order cannot get as far as moving stock and then be refused.
+    The one move whose consequence runs *before* the assignment: the guard is
+    asked up front, against the same map, so a declined order cannot get as far as
+    moving stock and then be refused.
     """
     if purchase_order.id is not None:
         purchase_order = await _lock_purchase_order(db, purchase_order.id)
-    assert_can_transition_purchase_order(
-        purchase_order, PurchaseOrderStatusEnum.PARTIALLY_RECEIVED
-    )
+    assert_can_transition_purchase_order(purchase_order, PurchaseOrderStatusEnum.CLOSED)
 
     branch = await db.get(Branch, purchase_order.branch_id)
     if branch is None:
         raise NotFoundError("Branch not found")
     business_date = await business_day_service.current_business_date(db, branch)
+
+    reasons = reasons or {}
+
+    # A discrepant line needs a reason before anything moves — collected up front
+    # so the message names every one at once rather than failing line by line.
+    missing: list[str] = []
+    for po_item in purchase_order.items:
+        quantity = _q(received.get(po_item.id, 0))
+        if quantity != _q(po_item.quantity):
+            reason = reasons.get(po_item.id)
+            if not reason or not reason.strip():
+                item = await db.get(InventoryItem, po_item.item_id)
+                missing.append(getattr(item, "name", None) or str(po_item.item_id))
+    if missing:
+        raise BadRequestError(
+            "A reason is required where the received quantity differs from what was "
+            "ordered: " + ", ".join(missing)
+        )
 
     transaction = InventoryTransaction(
         reference=await next_reference(
@@ -1308,12 +1325,17 @@ async def receive_purchase_order(
     paid_tax = Decimal("0")
     for po_item in purchase_order.items:
         quantity = _q(received.get(po_item.id, 0))
+        # Record what arrived and the variance note (one-shot receipt: this is the
+        # final received quantity, whether short, exact or over).
+        po_item.received_quantity = quantity
+        ordered = Decimal(str(po_item.quantity or 0))
+        po_item.variance_reason = (
+            reasons.get(po_item.id, "").strip() or None
+            if quantity != _q(ordered)
+            else None
+        )
         if quantity <= 0:
             continue
-        if quantity > po_item.outstanding_quantity:
-            raise BadRequestError(
-                f"Receiving {quantity} exceeds the {po_item.outstanding_quantity} outstanding"
-            )
         any_line = True
         db.add(
             InventoryTransactionItem(
@@ -1327,15 +1349,14 @@ async def receive_purchase_order(
         )
         # Carry the recoverable VAT for the portion received, pro rata, onto the
         # ledger transaction so the reclaim report can read it (the cost itself
-        # is gross and lands in the FIFO layer via unit_cost above).
-        ordered = Decimal(str(po_item.quantity or 0))
+        # is gross and lands in the FIFO layer via unit_cost above). The invoice's
+        # VAT is fixed at the ordered quantity, so an over-receipt is capped at the
+        # ordered amount — receiving extra stock does not reclaim extra VAT.
         if ordered > 0:
+            reclaimable = min(quantity, ordered)
             paid_tax += _money(
-                Decimal(str(po_item.vat_amount or 0)) * (quantity / ordered)
+                Decimal(str(po_item.vat_amount or 0)) * (reclaimable / ordered)
             )
-        po_item.received_quantity = _q(
-            Decimal(str(po_item.received_quantity or 0)) + quantity
-        )
 
     if not any_line:
         raise BadRequestError("Nothing was received")
@@ -1345,13 +1366,9 @@ async def receive_purchase_order(
     await db.refresh(transaction)
     posted = await post_transaction(db, transaction=transaction, user=user)
 
+    # One-shot: the receipt closes the order, whatever was short.
     await transition_purchase_order(
-        db,
-        purchase_order,
-        PurchaseOrderStatusEnum.CLOSED
-        if purchase_order.is_fully_received
-        else PurchaseOrderStatusEnum.PARTIALLY_RECEIVED,
-        user=user,
+        db, purchase_order, PurchaseOrderStatusEnum.CLOSED, user=user
     )
     await db.flush()
     return posted

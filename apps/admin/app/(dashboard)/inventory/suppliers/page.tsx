@@ -150,6 +150,7 @@ function SupplierModal({
   const [address, setAddress] = useState(supplier?.address ?? '');
   const [paymentTerms, setPaymentTerms] = useState(String(supplier?.payment_terms_days ?? 0));
   const [vatDeductible, setVatDeductible] = useState(supplier?.is_vat_deductible ?? true);
+  const [allowAnyItem, setAllowAnyItem] = useState(supplier?.allow_any_item ?? false);
   const [active, setActive] = useState(supplier?.is_active ?? true);
   const [contacts, setContacts] = useState<ContactDraft[]>(
     supplier?.contacts.map((c) => ({
@@ -224,6 +225,7 @@ function SupplierModal({
         address: address.trim() || null,
         payment_terms_days: Number(paymentTerms) || 0,
         is_vat_deductible: vatDeductible,
+        allow_any_item: allowAnyItem,
         is_active: active,
         contacts: cleanContacts,
       };
@@ -259,6 +261,10 @@ function SupplierModal({
         <label className="flex items-center gap-2 text-sm font-body">
           <input type="checkbox" checked={vatDeductible} onChange={(e) => setVatDeductible(e.target.checked)} />
           VAT deductible
+        </label>
+        <label className="flex items-center gap-2 text-sm font-body" title="Let a purchase order add any active item, not just the mapped ones below.">
+          <input type="checkbox" checked={allowAnyItem} onChange={(e) => setAllowAnyItem(e.target.checked)} />
+          Flexible item mapping
         </label>
         <label className="flex items-center gap-2 text-sm font-body">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />

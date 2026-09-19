@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -78,9 +79,10 @@ from app.schemas.inventory import (
     WarehouseUpdate,
     WasteRequest,
 )
-from app.services import audit_service, crud_service
+from app.services import audit_service, crud_service, email_service
 from app.services.inventory import (
     access_service,
+    cost_layer_service,
     inventory_service,
     recipe_service,
     supplier_service,
@@ -88,6 +90,8 @@ from app.services.inventory import (
 from app.services.pos import business_day_service
 
 from .pos_config import build_crud_router
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -330,9 +334,24 @@ async def list_items(
         filters.append(
             InventoryItem.name.ilike(pattern) | InventoryItem.sku.ilike(pattern)
         )
-    return await crud_service.list_all(
+    items = await crud_service.list_all(
         db, InventoryItem, include_inactive=include_inactive, filters=filters
     )
+    return await _items_with_cost(db, items)
+
+
+async def _items_with_cost(
+    db: AsyncSession, items: list[InventoryItem]
+) -> list[InventoryItemResponse]:
+    """Serialise items with their derived FIFO cost per storage unit attached, so
+    the list shows the received/produced cost rather than a stale column."""
+    costs = await cost_layer_service.item_average_costs(db, [i.id for i in items])
+    out = []
+    for item in items:
+        response = InventoryItemResponse.model_validate(item)
+        response.average_cost = costs.get(item.id, Decimal("0"))
+        out.append(response)
+    return out
 
 
 @items_router.post(
@@ -366,9 +385,12 @@ async def get_item(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("inventory.read")),
 ):
-    return await crud_service.get_or_404(
+    item = await crud_service.get_or_404(
         db, InventoryItem, item_id, include_deleted=True
     )
+    response = InventoryItemResponse.model_validate(item)
+    response.average_cost = await cost_layer_service.item_average_cost(db, item.id)
+    return response
 
 
 @items_router.get("/{item_id}/cost-layers", response_model=ItemCostLayersResponse)
@@ -454,7 +476,9 @@ async def update_item(
         changes={"data": data.model_dump(mode="json", exclude_unset=True)},
         request=request,
     )
-    return item
+    response = InventoryItemResponse.model_validate(item)
+    response.average_cost = await cost_layer_service.item_average_cost(db, item.id)
+    return response
 
 
 @items_router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1094,38 +1118,12 @@ async def _serialise_po(
     return payload
 
 
-async def _load_po(db: AsyncSession, po_id: uuid.UUID) -> PurchaseOrder:
-    return await crud_service.get_or_404(
-        db, PurchaseOrder, po_id, options=[selectinload(PurchaseOrder.items)]
-    )
-
-
-@purchase_orders_router.get("", response_model=list[PurchaseOrderResponse])
-async def list_purchase_orders(
-    branch_id: uuid.UUID | None = None,
-    supplier_id: uuid.UUID | None = None,
-    status_filter: str | None = Query(None, alias="status"),
-    limit: int = Query(100, ge=1, le=1000),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.purchase_orders.manage")),
-):
-    stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
-    if branch_id:
-        await access_service.assert_branch_access(db, user, branch_id)
-        stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.where(
-            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
-        )
-    if supplier_id:
-        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
-    if status_filter:
-        stmt = stmt.where(PurchaseOrder.status == status_filter)
-    stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
-    orders = list((await db.execute(stmt)).scalars().unique().all())
-
-    # Resolve every page's line items and suppliers in one query each, rather
-    # than two per order — the N+1 that scaled with the page (F-INV-24).
+async def _serialise_po_list(
+    db: AsyncSession, orders: list[PurchaseOrder]
+) -> list[PurchaseOrderResponse]:
+    """Serialise many POs with their line items and suppliers resolved in one
+    query each, not two per order — the N+1 that scaled with the page (F-INV-24).
+    Shared by every list endpoint so none re-derives the batching."""
     item_ids = {line.item_id for o in orders for line in o.items}
     items_lookup: dict[uuid.UUID, InventoryItem] = {}
     if item_ids:
@@ -1158,6 +1156,39 @@ async def list_purchase_orders(
     ]
 
 
+async def _load_po(db: AsyncSession, po_id: uuid.UUID) -> PurchaseOrder:
+    return await crud_service.get_or_404(
+        db, PurchaseOrder, po_id, options=[selectinload(PurchaseOrder.items)]
+    )
+
+
+@purchase_orders_router.get("", response_model=list[PurchaseOrderResponse])
+async def list_purchase_orders(
+    branch_id: uuid.UUID | None = None,
+    supplier_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
+    if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
+        stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
+        )
+    if supplier_id:
+        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
+    if status_filter:
+        stmt = stmt.where(PurchaseOrder.status == status_filter)
+    stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+
+    return await _serialise_po_list(db, orders)
+
+
 @purchase_orders_router.post(
     "", response_model=PurchaseOrderResponse, status_code=status.HTTP_201_CREATED
 )
@@ -1175,9 +1206,13 @@ async def create_purchase_order(
     supplier = await crud_service.get_or_404(db, Supplier, data.supplier_id)
     business_date = await business_day_service.current_business_date(db, branch)
 
+    # Born submitted (pending), not draft: there is no separate draft step any
+    # more — an unapproved (pending) PO stays fully editable, and approval is the
+    # one gate. The creator is stamped as the submitter; approval still needs a
+    # different person (separation of duties on the approve transition).
     purchase_order = PurchaseOrder(
         reference=await inventory_service.next_inventory_reference(db, "PO"),
-        status=PurchaseOrderStatusEnum.DRAFT.value,
+        status=PurchaseOrderStatusEnum.PENDING.value,
         origin="admin",
         supplier_id=data.supplier_id,
         branch_id=data.branch_id,
@@ -1188,6 +1223,8 @@ async def create_purchase_order(
         additional_cost=data.additional_cost,
         notes=data.notes,
         creator_id=user.id,
+        submitter_id=user.id,
+        submitted_at=inventory_service.utcnow(),
     )
     db.add(purchase_order)
     await db.flush()
@@ -1217,11 +1254,21 @@ async def update_purchase_order(
 ):
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
-    if purchase_order.status in (
+    received = purchase_order.status in (
         PurchaseOrderStatusEnum.CLOSED.value,
         PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
-    ):
-        raise ConflictError("A received purchase order can no longer be edited")
+    )
+    if received:
+        # Once stock has moved, the lines and quantities the ledger acted on are
+        # frozen — but the invoice details (the supplier's invoice/PO number and
+        # notes) can still be corrected, and the invoice image re-attached via its
+        # own endpoint. Anything else is refused.
+        editable_after_receipt = {"supplier_reference", "notes"}
+        changed = set(data.model_dump(exclude_unset=True, exclude={"items"}).keys())
+        if data.items is not None or (changed - editable_after_receipt):
+            raise ConflictError(
+                "A received purchase order can only have its invoice details edited"
+            )
     if data.warehouse_id:
         await inventory_service.assert_warehouse_for_branch(
             db, data.warehouse_id, purchase_order.branch_id
@@ -1315,15 +1362,92 @@ async def receive_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """Receive a delivery, in full or in part, moving stock in."""
+    """Receive a delivery in one action, closing the PO.
+
+    Whatever is not received is recorded as short; a line whose received quantity
+    differs from what was ordered carries a variance reason, and the office is
+    emailed the short/excess.
+    """
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = {line.purchase_order_item_id: line.quantity for line in data.lines}
+    reasons = {
+        line.purchase_order_item_id: line.variance_reason
+        for line in data.lines
+        if line.variance_reason
+    }
     transaction = await inventory_service.receive_purchase_order(
-        db, purchase_order=purchase_order, user=user, received=received
+        db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
+    reloaded = await _load_po(db, po_id)
+    await _email_po_receiving_variance(db, reloaded, user)
+    await _refresh_vat_ledger_for_po(db, reloaded)
     transaction = await inventory_service.load_transaction(db, transaction.id)
     return await _serialise_one_transaction(db, transaction)
+
+
+async def _refresh_vat_ledger_for_po(
+    db: AsyncSession, purchase_order: PurchaseOrder
+) -> None:
+    """Rebuild the VAT-ledger cache for the received PO's business day, so its
+    recoverable VAT shows on the reclaim report immediately rather than waiting
+    for the hourly sweep (the reason a just-received PO's VAT looked missing).
+    Never fails the receive — a cache miss self-heals on the next sweep. The
+    recompute runs inside a SAVEPOINT so a failure rolls back only its own writes
+    and leaves the (already-committed-in-effect) receive transaction usable for the
+    response serialisation that follows; without it a DB error here would poison
+    the session and 500 the whole receive after the stock had already posted."""
+    from app.services import vat_ledger
+
+    try:
+        async with db.begin_nested():
+            await vat_ledger.compute_window(
+                db, purchase_order.business_date, purchase_order.business_date
+            )
+    except Exception:  # noqa: BLE001 — the cache is derived; the sweep re-runs it
+        logger.warning(
+            "vat_ledger refresh failed for PO %s (%s); the hourly sweep will retry",
+            purchase_order.reference,
+            purchase_order.business_date,
+            exc_info=True,
+        )
+
+
+async def _email_po_receiving_variance(
+    db: AsyncSession, purchase_order: PurchaseOrder, user: User
+) -> None:
+    """Email the office the short/excess lines of a just-received PO. No-op when
+    every line arrived exactly as ordered. Mirrors the transfer sending-variance
+    notification. Read the PO *after* receiving so received/variance are set."""
+    variance_lines = []
+    for po_item in purchase_order.items:
+        ordered = Decimal(str(po_item.quantity))
+        got = Decimal(str(po_item.received_quantity or 0))
+        if got == ordered:
+            continue
+        item = await db.get(InventoryItem, po_item.item_id)
+        variance_lines.append(
+            {
+                "item_name": item.name if item else str(po_item.item_id),
+                "ordered": f"{ordered:f}",
+                "received": f"{got:f}",
+                "delta": f"{got - ordered:+f}",
+                "reason": po_item.variance_reason or "",
+            }
+        )
+    if not variance_lines:
+        return
+    supplier = await db.get(Supplier, purchase_order.supplier_id)
+    branch = await db.get(Branch, purchase_order.branch_id)
+    await email_service.send_purchase_order_receiving_variance(
+        purchase_order_id=str(purchase_order.id),
+        purchase_order_reference=purchase_order.reference,
+        supplier_name=supplier.name if supplier else "",
+        branch_name=branch.name if branch else "",
+        business_date=purchase_order.business_date,
+        received_by=user.display_name or user.email,
+        lines=variance_lines,
+    )
 
 
 # ─── Supplier catalogue ───────────────────────────────────────────────────────
@@ -1487,8 +1611,52 @@ async def pos_supplier_items(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """The items a supplier can supply — the lines the till offers to receive."""
+    """The items a PO for this supplier may add.
+
+    Normally the supplier's mapped items; with flexible item mapping on
+    (``allow_any_item``), every active purchasable inventory item, so the till can
+    order anything the supplier turned up with.
+    """
+    supplier = await crud_service.get_or_404(db, Supplier, supplier_id)
+    if supplier.allow_any_item:
+        return await _all_purchasable_items(db, supplier_id)
     return await _supplier_items(db, supplier_id)
+
+
+async def _all_purchasable_items(
+    db: AsyncSession, supplier_id: uuid.UUID
+) -> list[SupplierItemResponse]:
+    """Every active purchasable item, shaped like a supplier mapping so the till's
+    picker renders it identically — for a flexible-mapping supplier."""
+    items = (
+        (
+            await db.execute(
+                select(InventoryItem)
+                .where(
+                    InventoryItem.is_active.is_(True),
+                    InventoryItem.deleted_at.is_(None),
+                    InventoryItem.kind.in_(sorted(supplier_service.PURCHASABLE_KINDS)),
+                )
+                .order_by(InventoryItem.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        SupplierItemResponse(
+            id=item.id,
+            supplier_id=supplier_id,
+            item_id=item.id,
+            supplier_sku=None,
+            lead_time_days=0,
+            is_preferred=False,
+            item_name=item.name,
+            item_sku=item.sku,
+            storage_unit=item.storage_unit,
+        )
+        for item in items
+    ]
 
 
 @pos_purchase_orders_router.get(
@@ -1496,10 +1664,14 @@ async def pos_supplier_items(
 )
 async def pos_purchase_orders_to_receive(
     branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """Admin-raised POs waiting to be received at this branch."""
+    """Admin-raised POs waiting to be received at this branch. Paged + searchable
+    server-side by reference or supplier name."""
     await access_service.assert_branch_access(db, user, branch_id)
     stmt = (
         select(PurchaseOrder)
@@ -1513,10 +1685,31 @@ async def pos_purchase_orders_to_receive(
                 ]
             ),
         )
-        .order_by(PurchaseOrder.created_at.desc())
+        # Ordered by supplier first so the till's supplier-grouped list stays
+        # contiguous across pages (a supplier can't reappear in a later page and
+        # fragment its section), then newest-first, with `id` as the stable
+        # tiebreaker so offset paging cannot skip or repeat a row.
+        .order_by(
+            PurchaseOrder.supplier_id,
+            PurchaseOrder.created_at.desc(),
+            PurchaseOrder.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
     )
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(PurchaseOrder.reference).like(like),
+                exists().where(
+                    Supplier.id == PurchaseOrder.supplier_id,
+                    func.lower(Supplier.name).like(like),
+                ),
+            )
+        )
     orders = list((await db.execute(stmt)).scalars().unique().all())
-    return [await _serialise_po(db, o) for o in orders]
+    return await _serialise_po_list(db, orders)
 
 
 @pos_purchase_orders_router.post(
@@ -1528,14 +1721,25 @@ async def pos_receive_purchase_order(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """Receive an admin PO at the till — posts stock and its FIFO cost."""
+    """Receive an admin PO at the till — posts stock and its FIFO cost.
+
+    One-shot: unreceived quantity is recorded short, a discrepant line needs a
+    reason, and the office is emailed any short/excess (as for a transfer)."""
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
     received = {line.purchase_order_item_id: line.quantity for line in data.lines}
+    reasons = {
+        line.purchase_order_item_id: line.variance_reason
+        for line in data.lines
+        if line.variance_reason
+    }
     await inventory_service.receive_purchase_order(
-        db, purchase_order=purchase_order, user=user, received=received
+        db, purchase_order=purchase_order, user=user, received=received, reasons=reasons
     )
-    return await _serialise_po(db, await _load_po(db, po_id))
+    reloaded = await _load_po(db, po_id)
+    await _email_po_receiving_variance(db, reloaded, user)
+    await _refresh_vat_ledger_for_po(db, reloaded)
+    return await _serialise_po(db, reloaded)
 
 
 @pos_purchase_orders_router.post(
@@ -1586,7 +1790,9 @@ async def pos_create_purchase_order(
         invoice_object_key=invoice_key,
         invoice_content_type=data.invoice_content_type if invoice_key else None,
     )
-    return await _serialise_po(db, await _load_po(db, purchase_order.id))
+    reloaded = await _load_po(db, purchase_order.id)
+    await _refresh_vat_ledger_for_po(db, reloaded)
+    return await _serialise_po(db, reloaded)
 
 
 # ─── Recipes ──────────────────────────────────────────────────────────────────
@@ -1602,8 +1808,14 @@ async def _recipe_response(db: AsyncSession, product_id: uuid.UUID) -> RecipeRes
     total = Decimal("0")
     for row in rows:
         item = await db.get(InventoryItem, row.item_id)
+        # Cost is FIFO: the ingredient's current per-storage-unit cost, converted
+        # to the recipe (ingredient) unit. 0 until the ingredient is first costed.
         ingredient_cost = (
-            inventory_service.inventory_item_cost_for_unit(item, "ingredient")
+            inventory_service.canonical_cost_for_unit(
+                item,
+                await cost_layer_service.item_average_cost(db, item.id),
+                "ingredient",
+            )
             if item
             else Decimal("0")
         )

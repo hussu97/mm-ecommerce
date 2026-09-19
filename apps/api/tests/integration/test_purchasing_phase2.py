@@ -93,7 +93,6 @@ async def env(engine):
             storage_unit="gram",
             ingredient_unit="gram",
             storage_to_ingredient_factor=D("1"),
-            cost=D("0"),
         )
         produced = InventoryItem(
             sku=f"{MARKER}-prod-{uuid.uuid4().hex[:8]}",
@@ -103,7 +102,6 @@ async def env(engine):
             storage_unit="unit",
             ingredient_unit="unit",
             storage_to_ingredient_factor=D("1"),
-            cost=D("0"),
         )
         db.add_all([raw, produced])
         await db.commit()
@@ -312,6 +310,210 @@ async def test_admin_po_splits_vat_and_receives_into_fifo_stock(engine, env):
         assert level.average_cost == D("10.500000")
         assert await _layer_total(db, raw_id) == D("10.000000")
         assert po.status == PurchaseOrderStatusEnum.CLOSED.value
+        await db.rollback()
+
+
+async def test_short_receipt_records_variance_and_closes(engine, env):
+    """A short delivery closes the PO one-shot: the received quantity and the
+    variance reason are recorded, and only what arrived posts to stock."""
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} Short", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("100")
+                )
+            ],
+            is_vat_deductible=False,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+
+        # A short line with no reason is refused.
+        with pytest.raises(BadRequestError):
+            await inventory_service.receive_purchase_order(
+                db, purchase_order=po, user=user, received={line.id: D("6")}
+            )
+        await db.rollback()
+
+
+async def test_short_receipt_with_reason_closes_and_over_receipt_is_allowed(
+    engine, env
+):
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    # Short-with-reason closes and records the variance.
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} ShortOK", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("100")
+                )
+            ],
+            is_vat_deductible=False,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        await inventory_service.receive_purchase_order(
+            db,
+            purchase_order=po,
+            user=user,
+            received={line.id: D("6")},
+            reasons={line.id: "two cases missing"},
+        )
+        assert po.status == PurchaseOrderStatusEnum.CLOSED.value
+        assert line.received_quantity == D("6.0000")
+        assert line.variance_reason == "two cases missing"
+        level = await inventory_service.level_for(
+            db, raw_id, (await inventory_service.default_warehouse(db, branch_id)).id
+        )
+        # Only the 6 that arrived posted to stock.
+        assert level.quantity == D("6.0000")
+        await db.rollback()
+
+    # An over-receipt (more than ordered) is allowed with a reason.
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} Over", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("100")
+                )
+            ],
+            is_vat_deductible=False,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        await inventory_service.receive_purchase_order(
+            db,
+            purchase_order=po,
+            user=user,
+            received={line.id: D("12")},
+            reasons={line.id: "supplier sent two extra"},
+        )
+        assert po.status == PurchaseOrderStatusEnum.CLOSED.value
+        assert line.received_quantity == D("12.0000")
+        level = await inventory_service.level_for(
+            db, raw_id, (await inventory_service.default_warehouse(db, branch_id)).id
+        )
+        assert level.quantity == D("12.0000")
+        await db.rollback()
+
+
+async def test_over_receipt_does_not_reclaim_more_vat_than_the_invoice(engine, env):
+    """The invoice's VAT is fixed at the ordered quantity; receiving more than was
+    ordered must not pro-rata the recoverable VAT above the invoiced amount."""
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} OverVAT", is_vat_deductible=True)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        # 105 gross over 10 units: VAT 5.00.
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("105")
+                )
+            ],
+            is_vat_deductible=True,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        txn = await inventory_service.receive_purchase_order(
+            db,
+            purchase_order=po,
+            user=user,
+            received={line.id: D("12")},  # two more than ordered
+            reasons={line.id: "supplier sent two extra"},
+        )
+        # Capped at the invoiced VAT, not 12/10 * 5 = 6.00.
+        assert D(str(txn.paid_tax)) == D("5.00")
         await db.rollback()
 
 
