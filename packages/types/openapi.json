@@ -8104,6 +8104,76 @@
         "title": "CustomOrderCreate",
         "type": "object"
       },
+      "CustomOrderEnquiryAdminResponse": {
+        "description": "The whole lead, for the admin Enquiries list.",
+        "properties": {
+          "approx_kg": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approx Kg"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "customer_name": {
+            "title": "Customer Name",
+            "type": "string"
+          },
+          "customer_phone": {
+            "title": "Customer Phone",
+            "type": "string"
+          },
+          "delivery_by": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery By"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reference_image_urls": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reference Image Urls",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "customer_name",
+          "customer_phone",
+          "description",
+          "approx_kg",
+          "reference_image_urls",
+          "delivery_by",
+          "created_at"
+        ],
+        "title": "CustomOrderEnquiryAdminResponse",
+        "type": "object"
+      },
       "CustomOrderEnquiryCreate": {
         "description": "A custom-order request from the \"We cater to\" section. A lead, not an order.",
         "properties": {
@@ -19355,6 +19425,42 @@
           "pages"
         ],
         "title": "PaginatedAuditLogs",
+        "type": "object"
+      },
+      "PaginatedCustomOrderEnquiries": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomOrderEnquiryAdminResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "PaginatedCustomOrderEnquiries",
         "type": "object"
       },
       "PaginatedCustomers": {
@@ -36515,6 +36621,68 @@
           }
         ],
         "summary": "Get Calendar",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/admin/custom-orders/enquiries": {
+      "get": {
+        "description": "The custom-order enquiries sent from the storefront, newest first.\n\nRead-only: these are leads someone answers by phone or email, not bookings on\nthe calendar. Same permission as the custom-order diary, since the same people\nhandle both.",
+        "operationId": "list_enquiries_api_v1_admin_custom_orders_enquiries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedCustomOrderEnquiries"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Enquiries",
         "tags": [
           "Custom Orders"
         ]

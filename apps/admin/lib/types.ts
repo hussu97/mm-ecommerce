@@ -581,6 +581,26 @@ export interface PaginatedCustomers {
   pages: number;
 }
 
+// ─── Custom-order enquiries (storefront leads, not bookings) ─────────────────
+export interface CustomOrderEnquiry {
+  id: string;
+  customer_name: string;
+  customer_phone: string;
+  description: string;
+  approx_kg: number | null;
+  reference_image_urls: string[];
+  delivery_by: string | null;
+  created_at: string;
+}
+
+export interface PaginatedCustomOrderEnquiries {
+  items: CustomOrderEnquiry[];
+  total: number;
+  page: number;
+  per_page: number;
+  pages: number;
+}
+
 // ─── Dashboard (home) ───────────────────────────────────────────────────────
 
 /** One slice of the day — a status, channel, fulfilment or payment method. */

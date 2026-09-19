@@ -2,7 +2,7 @@ import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
   AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, DashboardToday, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
-  PaginatedCustomers, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
+  PaginatedCustomers, PaginatedCustomOrderEnquiries, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
   PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics, OrderRefundResponse,
@@ -708,6 +708,15 @@ export const analyticsApi = {
 export const customersApi = {
   list: (params?: { search?: string; page?: number; per_page?: number }) =>
     api.get<PaginatedCustomers>(`/users/admin/all${buildQs(params)}`),
+};
+
+// ─── Custom-order enquiries (storefront leads) ──────────────────────────────────
+
+export const customOrderEnquiriesApi = {
+  list: (params?: { page?: number; per_page?: number }) =>
+    api.get<PaginatedCustomOrderEnquiries>(
+      `/admin/custom-orders/enquiries${buildQs(params)}`,
+    ),
 };
 
 export const adminUsersApi = {

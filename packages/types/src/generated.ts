@@ -159,6 +159,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/custom-orders/enquiries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Enquiries
+         * @description The custom-order enquiries sent from the storefront, newest first.
+         *
+         *     Read-only: these are leads someone answers by phone or email, not bookings on
+         *     the calendar. Same permission as the custom-order diary, since the same people
+         *     handle both.
+         */
+        get: operations["list_enquiries_api_v1_admin_custom_orders_enquiries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/custom-orders/{custom_order_id}": {
         parameters: {
             query?: never;
@@ -11679,6 +11703,34 @@ export interface components {
             status: string;
         };
         /**
+         * CustomOrderEnquiryAdminResponse
+         * @description The whole lead, for the admin Enquiries list.
+         */
+        CustomOrderEnquiryAdminResponse: {
+            /** Approx Kg */
+            approx_kg: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Customer Name */
+            customer_name: string;
+            /** Customer Phone */
+            customer_phone: string;
+            /** Delivery By */
+            delivery_by: string | null;
+            /** Description */
+            description: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Reference Image Urls */
+            reference_image_urls: string[];
+        };
+        /**
          * CustomOrderEnquiryCreate
          * @description A custom-order request from the "We cater to" section. A lead, not an order.
          */
@@ -15431,6 +15483,19 @@ export interface components {
         PaginatedAuditLogs: {
             /** Items */
             items: components["schemas"]["AuditLogItem"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /** PaginatedCustomOrderEnquiries */
+        PaginatedCustomOrderEnquiries: {
+            /** Items */
+            items: components["schemas"]["CustomOrderEnquiryAdminResponse"][];
             /** Page */
             page: number;
             /** Pages */
@@ -21523,6 +21588,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CalendarDay"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_enquiries_api_v1_admin_custom_orders_enquiries_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedCustomOrderEnquiries"];
                 };
             };
             /** @description Validation Error */

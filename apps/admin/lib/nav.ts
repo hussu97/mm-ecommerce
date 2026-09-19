@@ -44,6 +44,7 @@ export const NAV: Array<NavEntry | NavSection> = [
   { section: 'Sales' },
   { href: '/orders',        label: 'Orders',          icon: 'receipt_long', requires: 'orders.read' },
   { href: '/custom-orders', label: 'Custom Orders',   icon: 'cake',         requires: 'orders.custom.manage' },
+  { href: '/enquiries',     label: 'Cake Enquiries',  icon: 'mail',         requires: 'orders.custom.manage' },
   { href: '/customers',     label: 'Customers',        icon: 'people',      requires: 'customers.read' },
   { href: '/promo-codes',   label: 'Promotions',      icon: 'local_offer',  requires: 'marketing.manage' },
   // "Payment Gateways", not "Payments" — the storefront processors (Stripe,

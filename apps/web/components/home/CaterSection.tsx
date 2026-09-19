@@ -51,7 +51,7 @@ export function CaterSection({ c, locale }: { c: CaterContent; locale: string })
             <div className="flex items-center gap-2 mb-1.5">
               <Icon name="cake" className="text-primary text-[20px]" />
               <h3 className="font-display text-lg sm:text-xl text-gray-800 uppercase tracking-[0.14em]">
-                {c.form?.heading ?? 'Request a custom order'}
+                {c.form?.heading ?? 'Customized cake order'}
               </h3>
             </div>
             <p className="font-body text-sm text-gray-500 mb-6">

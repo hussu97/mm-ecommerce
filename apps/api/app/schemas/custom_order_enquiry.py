@@ -39,3 +39,26 @@ class CustomOrderEnquiryResponse(BaseModel):
 
     id: UUID
     created_at: datetime
+
+
+class CustomOrderEnquiryAdminResponse(BaseModel):
+    """The whole lead, for the admin Enquiries list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    customer_name: str
+    customer_phone: str
+    description: str
+    approx_kg: Decimal | None
+    reference_image_urls: list[str]
+    delivery_by: date | None
+    created_at: datetime
+
+
+class PaginatedCustomOrderEnquiries(BaseModel):
+    items: list[CustomOrderEnquiryAdminResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int

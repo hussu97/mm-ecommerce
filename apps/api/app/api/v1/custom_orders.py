@@ -21,7 +21,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi.util import get_remote_address
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import object_storage
@@ -37,11 +37,13 @@ from app.models.custom_order import (
     CustomOrderSourceEnum,
     CustomOrderStatusEnum,
 )
+from app.models.custom_order_enquiry import CustomOrderEnquiry
 from app.models.user import User
 from app.schemas.custom_order_enquiry import (
     MAX_REFERENCE_IMAGES,
     CustomOrderEnquiryCreate,
     CustomOrderEnquiryResponse,
+    PaginatedCustomOrderEnquiries,
 )
 from app.services import (
     audit_service,
@@ -248,6 +250,46 @@ async def upload_enquiry_image(
     public_url = object_storage.public_url(settings.GCS_IMAGE_BUCKET, key)
     image_warm_service.warm_in_background([public_url])
     return {"url": public_url, "key": key}
+
+
+# ─── Admin: enquiries (the storefront leads) ───────────────────────────────────
+
+
+@admin_router.get("/enquiries", response_model=PaginatedCustomOrderEnquiries)
+async def list_enquiries(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require("orders.custom.manage")),
+):
+    """The custom-order enquiries sent from the storefront, newest first.
+
+    Read-only: these are leads someone answers by phone or email, not bookings on
+    the calendar. Same permission as the custom-order diary, since the same people
+    handle both.
+    """
+    total = int(
+        (
+            await db.execute(select(func.count()).select_from(CustomOrderEnquiry))
+        ).scalar()
+        or 0
+    )
+    rows = (
+        (
+            await db.execute(
+                select(CustomOrderEnquiry)
+                .order_by(CustomOrderEnquiry.created_at.desc())
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    pages = (total + per_page - 1) // per_page if total else 0
+    return PaginatedCustomOrderEnquiries(
+        items=rows, total=total, page=page, per_page=per_page, pages=pages
+    )
 
 
 # ─── Admin: the whole book ────────────────────────────────────────────────────
