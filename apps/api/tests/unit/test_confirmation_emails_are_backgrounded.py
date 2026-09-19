@@ -38,19 +38,15 @@ async def test_dispatch_returns_before_the_emails_finish_then_sends():
     order = SimpleNamespace(order_number="MM-20260919-999")
 
     with patch.object(order_service, "_send_confirmation_emails", slow_send):
-        # Returns synchronously — it schedules, it does not await.
+        # Returns synchronously — it schedules via `background.spawn_tracked`,
+        # it does not await.
         order_service._dispatch_confirmation_emails(order)
         # The send has not completed; the caller (the checkout response) is free.
         assert not finished.is_set()
-        # The task is held so the loop cannot drop it mid-send.
-        assert len(order_service._pending_email_tasks) == 1
         await asyncio.wait_for(started.wait(), timeout=1)
         release.set()
-        # It does run to completion, and cleans itself out of the set.
+        # It does run to completion.
         await asyncio.wait_for(finished.wait(), timeout=1)
-        for _ in range(3):
-            await asyncio.sleep(0)
-        assert order_service._pending_email_tasks == set()
 
 
 @pytest.mark.asyncio

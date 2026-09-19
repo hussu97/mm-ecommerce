@@ -27,7 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload, selectinload
 
-from app.core import receipt_token
+from app.core import background, receipt_token
 from app.core import search as search_text
 from app.core.exceptions import (
     BadRequestError,
@@ -105,13 +105,6 @@ from app.services.payments import payment_methods
 from app.services.pos import business_day_service, pos_order_service
 
 logger = logging.getLogger(__name__)
-
-# Confirmation emails fired after the checkout response is already on its way —
-# see `_dispatch_confirmation_emails`. The loop keeps only a weak reference to a
-# bare `create_task`, so without a strong reference the task can be garbage
-# collected mid-send; the module-level set holds it until it finishes and the
-# done-callback drops it, the same pattern `indexnow_service` uses.
-_pending_email_tasks: set[asyncio.Task] = set()
 
 __all__ = [
     "SUPPORTED_LOCALES",
@@ -1789,13 +1782,14 @@ def _dispatch_confirmation_emails(order: OrderResponse) -> None:
     the order is already written, confirmed and on the register. Nothing in the
     response depends on them, and `order` is a fully materialised
     `OrderResponse` carrying no session, so the task is safe to outlive the
-    request. Held in a module-level set so the loop's weak reference cannot let
-    it be collected mid-send; the done-callback drops it (the `indexnow_service`
-    pattern).
+    request. `spawn_tracked` holds a reference so the loop's weak one cannot let
+    it be collected mid-send, and reports a task that dies to Sentry (the
+    convention-5 helper; a bare `create_task` would drop an escaping exception).
     """
-    task = asyncio.create_task(_send_confirmation_emails(order))
-    _pending_email_tasks.add(task)
-    task.add_done_callback(_pending_email_tasks.discard)
+    background.spawn_tracked(
+        _send_confirmation_emails(order),
+        name=f"confirmation-emails:{order.order_number}",
+    )
 
 
 async def _send_confirmation_emails(order: OrderResponse) -> None:
