@@ -29,6 +29,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # `cost` carries the ``ck_inventory_item_nonnegative_cost`` CHECK from
+    # migration 186. Drop it explicitly first so the up/down is symmetric with the
+    # downgrade below (Postgres would cascade it with the column anyway, but being
+    # explicit keeps the alembic history and the DB in step).
+    op.drop_constraint(
+        "ck_inventory_item_nonnegative_cost", "inventory_items", type_="check"
+    )
     op.drop_column("inventory_items", "cost")
     op.drop_column("inventory_items", "costing_method")
 
@@ -51,4 +58,9 @@ def downgrade() -> None:
             nullable=False,
             server_default="0",
         ),
+    )
+    # Restore the constraint migration 186 created, so 186's own downgrade can
+    # drop it (the check that failed CI: dropping a constraint that wasn't there).
+    op.create_check_constraint(
+        "ck_inventory_item_nonnegative_cost", "inventory_items", "cost >= 0"
     )
