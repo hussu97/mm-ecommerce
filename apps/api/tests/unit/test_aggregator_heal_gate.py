@@ -180,10 +180,11 @@ async def test_list_heal_channels_does_not_call_decrypt(monkeypatch):
     assert out[1]["cookie_expired"] is False
 
 
-async def test_list_heal_channels_talabat_cookie_expiry_is_advisory():
-    """Talabat's rotating PerimeterX cookie must report cookie_expired=False even
-    when its nominal TTL has passed — otherwise the 2-minute heal cron re-warmed it
-    headed all day. Noon's expired cookie still reports True."""
+async def test_list_heal_channels_advisory_cookie_expiry_is_not_flagged():
+    """Talabat's rotating PerimeterX cookie and Noon's rotating Akamai cookie must
+    report cookie_expired=False even when the nominal TTL has passed — otherwise the
+    heal cron re-warmed them headed all day. Deliveroo's cookie is authoritative, so
+    its expiry still reports True."""
     now = datetime.now(timezone.utc)
     past = now - timedelta(minutes=10)
     db = AsyncMock()
@@ -192,10 +193,12 @@ async def test_list_heal_channels_talabat_cookie_expiry_is_advisory():
             all=lambda: [
                 ("noon", "live", None, past),
                 ("talabat", "live", None, past),
+                ("deliveroo", "live", None, past),
             ]
         )
     )
     out = await session_store.list_heal_channels(db)
     by_ch = {r["channel"]: r for r in out}
-    assert by_ch["noon"]["cookie_expired"] is True
+    assert by_ch["noon"]["cookie_expired"] is False
     assert by_ch["talabat"]["cookie_expired"] is False
+    assert by_ch["deliveroo"]["cookie_expired"] is True
