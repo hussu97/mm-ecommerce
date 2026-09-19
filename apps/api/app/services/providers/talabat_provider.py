@@ -415,6 +415,17 @@ def _split_balanced(value: str) -> list[str]:
     return tokens
 
 
+#: A trailing "(250 grams)" / "(500 g)" / "(1 kg)" is a SIZE, part of the product
+#: identity — not a modifier. Talabat splits a product into distinct sized SKUs
+#: (Cookie Melt 250g vs 500g) and the catalogue map keys on the sized name.
+_SIZE_SUFFIX_RE = re.compile(
+    r"^\s*\d+(?:\.\d+)?\s*"
+    r"(?:g|gm|gms|gr|gram|grams|kg|kgs|ml|l|ltr|litre|liter|oz|pc|pcs|piece|pieces)"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+
 def _extract_item_modifiers(name: str) -> tuple[str, list[str]]:
     """Strip trailing parenthetical or `+ addon` chains from an item name token.
 
@@ -424,6 +435,8 @@ def _extract_item_modifiers(name: str) -> tuple[str, list[str]]:
     - Plus-addon chain: `"Burger + Extra sauce + No pickle"` →
       `("Burger", ["Extra sauce", "No pickle"])`
     - Both combined: parenthetical is extracted first, then any remaining `+` chains.
+    - A trailing SIZE parenthetical (`"Lotus Cookie Melt (250 grams)"`) is kept in
+      the name — it is product identity, not a modifier (see `_SIZE_SUFFIX_RE`).
     """
     mods: list[str] = []
     # Trailing group at end, in either bracket style. Talabat wraps a box's chosen
@@ -433,9 +446,16 @@ def _extract_item_modifiers(name: str) -> tuple[str, list[str]]:
     # its picks become modifiers instead of separate mangled lines.
     group = re.search(r"[([]([^)\]]+)[)\]]\s*$", name)
     if group:
-        inner = [s.strip() for s in group.group(1).split(",") if s.strip()]
-        mods.extend(inner)
-        name = name[: group.start()].strip()
+        inner_text = group.group(1)
+        opener = name[group.start()]
+        # A round-paren size/weight suffix is part of the product name (e.g. the
+        # 250g vs 500g Cookie Melt). Stripping it as a modifier left a bare,
+        # unmappable name that drew no stock; keep it so the sized name resolves.
+        is_size = opener == "(" and _SIZE_SUFFIX_RE.match(inner_text) is not None
+        if not is_size:
+            inner = [s.strip() for s in inner_text.split(",") if s.strip()]
+            mods.extend(inner)
+            name = name[: group.start()].strip()
     # Plus-addon chain
     if " + " in name:
         parts = name.split(" + ")
