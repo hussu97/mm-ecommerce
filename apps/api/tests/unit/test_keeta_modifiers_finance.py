@@ -424,6 +424,97 @@ def test_parse_orders_structured_modifiers_from_groups():
     assert item.modifiers_text is not None
 
 
+def test_parse_orders_box_contents_from_shopProductGroupSkuList():
+    """The REAL Keeta order shape: box/quantity picks live under
+    groups[].shopProductGroupSkuList[] as product SPUs ({spuName, spuId, count,
+    unitPrice}). Regression for the prod bug where a "Box of 3" (and a "3 Pieces"
+    quantity option) came through with modifiers=null → empty
+    selected_options_snapshot → box contents never consumed from inventory. The
+    older `foods`/`spus` group test used a synthetic key that never appears live.
+    """
+    payload = {
+        "code": 0,
+        "data": {
+            "list": [
+                {
+                    "baseOrder": {"orderViewIdStr": "ORD-BOX", "status": 40},
+                    "merchantOrder": {"shopId": "shop-1", "orderAmount": 5500},
+                    "products": [
+                        {
+                            "name": "Mix Brownies and Cookies Box of 3",
+                            "count": 1,
+                            "unitPrice": "55",
+                            "skuId": "sku-box",
+                            "groups": [
+                                {
+                                    "groupName": "Options (Max 3)",
+                                    "shopProductGroupSkuList": [
+                                        {
+                                            "spuName": "Pistachio Kunafa Brownie",
+                                            "spuId": 102414423,
+                                            "groupSkuId": 487709198,
+                                            "count": 1,
+                                            "unitPrice": 0,
+                                        },
+                                        {
+                                            "spuName": "Fudge Brownie",
+                                            "spuId": 102227473,
+                                            "count": 1,
+                                            "unitPrice": 0,
+                                        },
+                                        {
+                                            "spuName": "Nutella Cookie",
+                                            "spuId": 102217571,
+                                            "count": 1,
+                                            "unitPrice": 0,
+                                        },
+                                    ],
+                                }
+                            ],
+                        },
+                        {
+                            "name": "Eggless Fudge Brownies",
+                            "count": 1,
+                            "unitPrice": "50",
+                            "skuId": "sku-single",
+                            "groups": [
+                                {
+                                    "groupName": "Your Choice of Quantity",
+                                    "shopProductGroupSkuList": [
+                                        {
+                                            "spuName": "3 Pieces",
+                                            "spuId": 102264130,
+                                            "count": 1,
+                                            # WHOLE line price, minor units — must
+                                            # NOT leak into the modifier price.
+                                            "unitPrice": 5000,
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ]
+        },
+    }
+    items = keeta.parse_orders(payload)[0].items
+    box = next(i for i in items if i.item_name.startswith("Mix Brownies"))
+    assert [m.name for m in box.modifiers] == [
+        "Pistachio Kunafa Brownie",
+        "Fudge Brownie",
+        "Nutella Cookie",
+    ]
+    # Stable SPU id carried as external_ref so external_item_map can key on it.
+    assert box.modifiers[0].external_ref == "102414423"
+    assert all(m.quantity == Decimal("1") for m in box.modifiers)
+
+    single = next(i for i in items if i.item_name.startswith("Eggless"))
+    assert [m.name for m in single.modifiers] == ["3 Pieces"]
+    # The leaf's minor-unit price (5000) is dropped, not folded into options.
+    assert single.modifiers[0].unit_price is None
+
+
 # ── 2c. status history (merchantOrderTraces) + customer address ──────────────
 # The trace list and recipientInfo below are transcribed from the real
 # orders_sample.json order data.list[0]: three lifecycle steps (10 submitted →
