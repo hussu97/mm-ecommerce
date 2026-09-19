@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -46,6 +47,8 @@ from app.services.inventory import (
     source_event_service,
     transfer_service,
 )
+
+logger = logging.getLogger(__name__)
 
 # The columns that add to a stock level and the ones that take from it, so the
 # closing figure is netted the same way in one place. Opening is the base, not a
@@ -613,8 +616,18 @@ async def _movement_totals(
     report: ShiftInventoryReport,
     *,
     through_sequence: int | None,
+    since_sequence: int | None = None,
 ) -> dict[uuid.UUID, dict[str, Decimal]]:
-    """Aggregate the source columns for the report's immutable time scope."""
+    """Aggregate the source columns for the report's movement window.
+
+    The window is ``(since_sequence, through_sequence]`` by posting sequence:
+    ``since_sequence`` is the previous same-scope report's ``posting_cutoff_sequence``
+    (see ``_previous_cutoff_sequence``), so every closed movement lands in exactly
+    one report and none is double-counted. When ``since_sequence`` is None — the
+    very first report of a scope, before any prior report has posted a cutoff — the
+    legacy business_date / window-timestamp lower bound is used instead, which is
+    the correct bound for a first report.
+    """
     stmt = (
         select(InventoryTransaction, InventoryTransactionItem)
         .join(
@@ -631,7 +644,12 @@ async def _movement_totals(
         stmt = stmt.where(InventoryTransaction.warehouse_id == uuid.UUID(warehouse_id))
     if through_sequence is not None:
         stmt = stmt.where(InventoryTransaction.posting_sequence <= through_sequence)
-    if (
+    if since_sequence is not None:
+        # Sequence tiling: everything strictly after the previous report's cutoff.
+        # Supersedes the date/timestamp lower bound, which cannot express "since the
+        # last report was completed" and was the source of the lost-movement bug.
+        stmt = stmt.where(InventoryTransaction.posting_sequence > since_sequence)
+    elif (
         report.template_snapshot.get("cadence")
         == InventoryReportCadenceEnum.PER_BUSINESS_DAY.value
     ):
@@ -657,6 +675,73 @@ async def _movement_totals(
     return movements
 
 
+def _ledger_column_values(
+    item_movements: dict[str, Decimal],
+    *,
+    proposed_production_consumption: Decimal = Decimal("0"),
+) -> dict[str, Decimal]:
+    """The movement-column values the ledger implies for one item, keyed by column.
+
+    Pure: no line mutation, so both the prefill (`_apply_source_columns`) and the
+    post-time recompute (`_recompute_ledger_columns`) derive the columns the same
+    way. Does NOT include opening/expected — those depend on the level and are set
+    by the caller.
+    """
+
+    def moved(transaction_type: str, *, outward: bool = False) -> Decimal:
+        value = item_movements.get(transaction_type, Decimal("0"))
+        return quantity(-value if outward else value)
+
+    net_movement = sum(item_movements.values(), Decimal("0"))
+    return {
+        "purchasing_quantity": moved(InventoryTransactionTypeEnum.PURCHASING.value),
+        "transfer_in_quantity": moved(
+            InventoryTransactionTypeEnum.TRANSFER_RECEIVE.value
+        ),
+        "production_quantity": moved(InventoryTransactionTypeEnum.PRODUCTION.value),
+        "sales_consumption_quantity": moved(
+            InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value, outward=True
+        ),
+        # "Used in production" = what the ledger already recorded (posted production)
+        # plus what a sibling production report that has NOT posted yet will draw down
+        # once approved. Disjoint by posted-status, so nothing double-counts; this is
+        # what makes the raw-material consumption visible at close.
+        "production_consumption_quantity": quantity(
+            moved(
+                InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value,
+                outward=True,
+            )
+            + proposed_production_consumption
+        ),
+        "extra_production_consumption_quantity": moved(
+            InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value, outward=True
+        ),
+        "transfer_out_quantity": moved(
+            InventoryTransactionTypeEnum.TRANSFER_SEND.value, outward=True
+        ),
+        "waste_quantity": quantity(
+            moved(InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value, outward=True)
+            + moved(
+                InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value, outward=True
+            )
+        ),
+        "internal_use_quantity": moved(
+            InventoryTransactionTypeEnum.INTERNAL_USE.value, outward=True
+        ),
+        # Everything else that moved this item in the window and has no column of its
+        # own — a customer restock, a manual adjustment, a return to supplier. Its
+        # signed net keeps Opening + Σcolumns equal to the system closing, so the
+        # count's variance is measured against the whole picture, not a subset.
+        "adjustment_quantity": quantity(
+            net_movement
+            - sum(
+                (item_movements.get(t, Decimal("0")) for t in _COLUMNED_MOVEMENT_TYPES),
+                Decimal("0"),
+            )
+        ),
+    }
+
+
 def _apply_source_columns(
     line: ShiftInventoryReportLine,
     *,
@@ -666,57 +751,16 @@ def _apply_source_columns(
     proposed_production_consumption: Decimal = Decimal("0"),
 ) -> None:
     net_movement = sum(item_movements.values(), Decimal("0"))
-
-    def moved(transaction_type: str, *, outward: bool = False) -> Decimal:
-        value = item_movements.get(transaction_type, Decimal("0"))
-        return quantity(-value if outward else value)
-
+    for column, value in _ledger_column_values(
+        item_movements,
+        proposed_production_consumption=proposed_production_consumption,
+    ).items():
+        setattr(line, column, value)
+    # Opening = level minus the window's net movement. With the movement window
+    # sequence-tiled to (previous report's cutoff, through], this equals the level
+    # at the previous cutoff — i.e. the prior report's closing — so consecutive
+    # reports chain with no gap and Opening + Σcolumns ties to the system closing.
     line.opening_quantity = quantity(expected - net_movement)
-    line.purchasing_quantity = moved(InventoryTransactionTypeEnum.PURCHASING.value)
-    line.transfer_in_quantity = moved(
-        InventoryTransactionTypeEnum.TRANSFER_RECEIVE.value
-    )
-    line.production_quantity = moved(InventoryTransactionTypeEnum.PRODUCTION.value)
-    line.sales_consumption_quantity = moved(
-        InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value, outward=True
-    )
-    # "Used in production" = what the ledger already recorded (posted production) plus
-    # what a sibling production report that has NOT posted yet will draw down once it
-    # is approved (its recipe exploded against the produced-goods entered). The two are
-    # disjoint by posted-status — the moment the sibling posts, its consumption is on
-    # the ledger and it drops out of the proposed figure — so nothing double-counts.
-    # This is what makes the raw-material consumption visible at close instead of
-    # appearing only after production is approved.
-    line.production_consumption_quantity = quantity(
-        moved(
-            InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value, outward=True
-        )
-        + proposed_production_consumption
-    )
-    line.extra_production_consumption_quantity = moved(
-        InventoryTransactionTypeEnum.EXTRA_PRODUCTION_USE.value, outward=True
-    )
-    line.transfer_out_quantity = moved(
-        InventoryTransactionTypeEnum.TRANSFER_SEND.value, outward=True
-    )
-    line.waste_quantity = quantity(
-        moved(InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value, outward=True)
-        + moved(InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value, outward=True)
-    )
-    line.internal_use_quantity = moved(
-        InventoryTransactionTypeEnum.INTERNAL_USE.value, outward=True
-    )
-    # Everything else that moved this item in the window and has no column of its
-    # own — a customer restock, a manual adjustment, a return to supplier. Its
-    # signed net keeps Opening + Σcolumns equal to the system closing, so the
-    # count's variance is measured against the whole picture, not a subset.
-    line.adjustment_quantity = quantity(
-        net_movement
-        - sum(
-            (item_movements.get(t, Decimal("0")) for t in _COLUMNED_MOVEMENT_TYPES),
-            Decimal("0"),
-        )
-    )
     # The proposed production drawdown is not on the ledger, so the current stock
     # level (``expected``) does not reflect it yet; the anticipated closing is the
     # level minus what production will consume. Seeding the stored closing this way
@@ -950,6 +994,53 @@ async def _chained_window_open(
     return previous_close or till.opened_at
 
 
+async def _previous_cutoff_sequence(
+    db: AsyncSession, report: ShiftInventoryReport
+) -> int | None:
+    """The lower bound of this report's movement window: the posting cutoff of the
+    temporally-preceding same-scope report.
+
+    Scope is (branch, report_type, cadence). "Temporally preceding" is by
+    ``created_at`` — fixed when the report is issued and therefore independent of
+    the order reports are posted/approved in, which is what lets a deferred report
+    posted late still tile correctly against the one before it. Only POSTED reports
+    carry a cutoff, so this reads the latest-created prior report that has one.
+
+    When none exists — the first report of a scope — fall back to the branch's
+    go-live sequence (the opening count's cutoff) so pre-go-live movements are not
+    swept in; if the branch has no opening count either, return None and the caller
+    uses the legacy date/timestamp window for that first report.
+    """
+    snapshot = report.template_snapshot or {}
+    prev = (
+        await db.execute(
+            select(ShiftInventoryReport.posting_cutoff_sequence)
+            .where(
+                ShiftInventoryReport.branch_id == report.branch_id,
+                ShiftInventoryReport.id != report.id,
+                ShiftInventoryReport.posting_cutoff_sequence.is_not(None),
+                ShiftInventoryReport.template_snapshot.op("->>")("report_type")
+                == snapshot.get("report_type"),
+                ShiftInventoryReport.template_snapshot.op("->>")("cadence")
+                == snapshot.get("cadence"),
+                ShiftInventoryReport.created_at < report.created_at,
+            )
+            .order_by(ShiftInventoryReport.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if prev is not None:
+        return prev
+    settings = (
+        await db.execute(
+            select(BranchInventorySettings).where(
+                BranchInventorySettings.branch_id == report.branch_id
+            )
+        )
+    ).scalar_one_or_none()
+    return settings.go_live_sequence if settings else None
+
+
 async def _create_report(
     db: AsyncSession,
     *,
@@ -1007,7 +1098,10 @@ async def _create_report(
     )
     db.add(report)
     await db.flush()
-    movements = await _movement_totals(db, report, through_sequence=base_sequence)
+    since_sequence = await _previous_cutoff_sequence(db, report)
+    movements = await _movement_totals(
+        db, report, through_sequence=base_sequence, since_sequence=since_sequence
+    )
     proposed = await _proposed_production_consumption(db, report)
     # One lookup of the item categories the report touches, so each line carries
     # its category name and the category's display order. The register groups the
@@ -1070,7 +1164,10 @@ async def refresh_report(
         raise ConflictError("Only an editable report can be refreshed")
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
     latest = await current_sequence(db, report.branch_id)
-    movements = await _movement_totals(db, report, through_sequence=latest)
+    since_sequence = await _previous_cutoff_sequence(db, report)
+    movements = await _movement_totals(
+        db, report, through_sequence=latest, since_sequence=since_sequence
+    )
     proposed = await _proposed_production_consumption(db, report)
     moved = set(
         (
@@ -1126,6 +1223,90 @@ async def refresh_report(
     report.base_posting_sequence = latest
     await db.flush()
     return report
+
+
+async def _recompute_columns_at_post(
+    db: AsyncSession,
+    report: ShiftInventoryReport,
+    *,
+    warehouse,
+    through_sequence: int | None,
+    since_sequence: int | None,
+) -> dict[str, dict[str, list[str]]]:
+    """Re-derive each line's ledger columns, Opening, expected closing and variance
+    from the movement window as it stands at post time, preserving the columns the
+    shop actually typed, and return the per-line before/after deltas.
+
+    This is the safety net for movements that land after the last refresh — most
+    often during the submit→approval→post delay, which the submit-time competing
+    guard does not cover. It changes only the report's own figures (display,
+    expected and variance); it never changes what the ledger posts, because only
+    columns in ``entered_columns`` post and those are left untouched here.
+    """
+    movements = await _movement_totals(
+        db, report, through_sequence=through_sequence, since_sequence=since_sequence
+    )
+    proposed = await _proposed_production_consumption(db, report)
+    deltas: dict[str, dict[str, list[str]]] = {}
+    for line in report.lines:
+        entered = set((line.source_summary or {}).get("entered_columns", []))
+        item_movements = movements.get(line.item_id, {})
+        net_movement = sum(item_movements.values(), Decimal("0"))
+        fresh = _ledger_column_values(
+            item_movements,
+            proposed_production_consumption=proposed.get(line.item_id, Decimal("0")),
+        )
+        line_delta: dict[str, list[str]] = {}
+
+        def _set(column: str, value: Decimal) -> None:
+            old = quantity(getattr(line, column) or 0)
+            new = quantity(value)
+            if old != new:
+                line_delta[column] = [str(old), str(new)]
+                setattr(line, column, new)
+
+        # Refresh only the columns the shop did not type; a typed column (its value
+        # and its prefill) is the shop's entry and drives what posts, so it is left
+        # exactly as submitted.
+        for column, value in fresh.items():
+            if column not in entered:
+                _set(column, value)
+        level = await inventory_service.level_for(db, line.item_id, warehouse.id)
+        _set("opening_quantity", Decimal(str(level.quantity)) - net_movement)
+        # Keep the ledger-owned prefills in step with the refreshed columns so the
+        # post loop still posts exactly ``entered − prefilled`` for typed columns.
+        prefilled = dict((line.source_summary or {}).get("prefilled", {}))
+        for column in (*_NET_IN_COLUMNS, *_NET_OUT_COLUMNS):
+            if column not in entered:
+                prefilled[column] = str(quantity(getattr(line, column) or 0))
+        line.source_summary = {
+            **(line.source_summary or {}),
+            "prefilled": prefilled,
+            "through_sequence": through_sequence,
+        }
+        new_expected = _net_quantity(line)
+        _set("expected_quantity", new_expected)
+        required_input = (line.source_summary or {}).get(
+            "required_input", "physical_count"
+        )
+        if required_input == "physical_count" and line.entered_quantity is not None:
+            line.variance_quantity = quantity(
+                Decimal(str(line.entered_quantity)) - new_expected
+            )
+            item = await db.get(InventoryItem, line.item_id)
+            per_storage_cost = (
+                unit_cost(level.average_cost)
+                if Decimal(str(level.average_cost or 0)) > 0
+                else inventory_service.inventory_item_cost_for_unit(item, "storage")
+                if item
+                else Decimal("0")
+            )
+            line.variance_cost = money(
+                abs(Decimal(str(line.variance_quantity))) * per_storage_cost
+            )
+        if line_delta:
+            deltas[str(line.item_id)] = line_delta
+    return deltas
 
 
 async def _write_line_edits(
@@ -1481,6 +1662,30 @@ async def post_report(
     await source_event_service.lock_branch_inventory(db, report.branch_id)
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
     report_type = report.template_snapshot.get("report_type")
+
+    # Recompute the movement columns through the branch's posting high-water as it
+    # stands right now — BEFORE this report posts anything of its own — so any
+    # movement that landed after the last refresh (e.g. a PO received during the
+    # approval delay) is counted in this report rather than lost. The report's own
+    # postings below take sequences above ``cutoff_open`` and are excluded from
+    # every report's window. Deltas are logged, not surfaced: an already-approved
+    # report is not re-opened for a post-time correction.
+    cutoff_open = await current_sequence(db, report.branch_id)
+    recompute_deltas = await _recompute_columns_at_post(
+        db,
+        report,
+        warehouse=warehouse,
+        through_sequence=cutoff_open,
+        since_sequence=await _previous_cutoff_sequence(db, report),
+    )
+    if recompute_deltas:
+        logger.info(
+            "shift_report.post_recompute report_id=%s branch_id=%s deltas=%s",
+            report.id,
+            report.branch_id,
+            json.dumps(recompute_deltas),
+        )
+    await db.flush()
     # A `production` report is an alias of the finished-goods sheet (see
     # report_columns._COLUMNS): the entered "Produced" column posts through
     # produce() below, and the physical count then trues the row up. The legacy
@@ -1646,6 +1851,13 @@ async def post_report(
     report.status = ShiftInventoryReportStatusEnum.POSTED.value
     report.approved_by = report.approved_by or user.id
     report.approved_at = report.approved_at or utcnow()
+    # Stamp the authoritative closing boundary and per-line closing on-hand. The
+    # cutoff is the high-water AFTER this report's own postings, so the next
+    # same-scope report's window opens exactly here — every movement counted once.
+    report.posting_cutoff_sequence = await current_sequence(db, report.branch_id)
+    for report_line in report.lines:
+        level = await inventory_service.level_for(db, report_line.item_id, warehouse.id)
+        report_line.closing_quantity = quantity(level.quantity)
     if report.template_snapshot.get("opening_count"):
         settings = (
             await db.execute(

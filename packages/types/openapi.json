@@ -29054,6 +29054,18 @@
             "title": "Adjustment Quantity",
             "type": "string"
           },
+          "closing_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing Quantity"
+          },
           "confirmed": {
             "title": "Confirmed",
             "type": "boolean"
@@ -29330,6 +29342,17 @@
               }
             ],
             "title": "Notes"
+          },
+          "posting_cutoff_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posting Cutoff Sequence"
           },
           "status": {
             "title": "Status",

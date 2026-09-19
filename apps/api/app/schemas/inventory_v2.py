@@ -344,6 +344,7 @@ class ShiftReportLineResponse(ORMModel):
     internal_use_quantity: Decimal
     adjustment_quantity: Decimal
     expected_quantity: Decimal
+    closing_quantity: Decimal | None = None
     entered_quantity: Decimal | None
     confirmed: bool
     variance_quantity: Decimal | None
@@ -362,6 +363,7 @@ class ShiftReportResponse(ORMModel):
     idempotency_key: str
     template_snapshot: dict[str, Any]
     base_posting_sequence: int | None
+    posting_cutoff_sequence: int | None = None
     notes: str | None
     deferred_reason: str | None
     submitted_by: UUID | None
