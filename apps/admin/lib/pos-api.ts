@@ -257,12 +257,17 @@ export const inventoryApi = {
 
   purchaseOrders: (params?: { branch_id?: string; supplier_id?: string; status?: string }) =>
     api.get<PurchaseOrder[]>(`/inventory/purchase-orders${buildQs(params)}`),
+  purchaseOrder: (id: string) => api.get<PurchaseOrder>(`/inventory/purchase-orders/${id}`),
   createPurchaseOrder: (d: Record<string, unknown>) => api.post<PurchaseOrder>('/inventory/purchase-orders', d),
+  updatePurchaseOrder: (id: string, d: Record<string, unknown>) =>
+    api.put<PurchaseOrder>(`/inventory/purchase-orders/${id}`, d),
   submitPurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/submit`),
   approvePurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/approve`),
   declinePurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/decline`),
-  receivePurchaseOrder: (id: string, lines: Array<{ purchase_order_item_id: string; quantity: number }>) =>
-    api.post<InventoryTransaction>(`/inventory/purchase-orders/${id}/receive`, { lines }),
+  receivePurchaseOrder: (
+    id: string,
+    lines: Array<{ purchase_order_item_id: string; quantity: number; variance_reason?: string | null }>,
+  ) => api.post<InventoryTransaction>(`/inventory/purchase-orders/${id}/receive`, { lines }),
   uploadPurchaseOrderInvoice: (id: string, file: File) =>
     request<PurchaseOrder>(`/inventory/purchase-orders/${id}/invoice`, {
       method: 'POST',

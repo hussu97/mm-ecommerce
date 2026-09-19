@@ -171,7 +171,7 @@ export default function ImportPage() {
         exportKey: 'inventory-items',
         title: '6. Inventory Items',
         description: 'Bulk-edit real units, conversions, thresholds, cost, classifications and count route. Existing rows match only by MM ID/SKU, never by name.',
-        columns: 'id, sku, name, barcode, category_reference, kind, tracking_mode, storage_unit, ingredient_unit, storage_to_ingredient_factor, cost, costing_method, yield_percentage, minimum_level, par_level, maximum_level, is_product, storage_zone, count_order, is_active',
+        columns: 'id, sku, name, barcode, category_reference, kind, tracking_mode, storage_unit, ingredient_unit, storage_to_ingredient_factor, average_cost (read-only, FIFO-derived), yield_percentage, minimum_level, par_level, maximum_level, is_product, storage_zone, count_order, is_active',
       },
       {
         key: 'recipes',

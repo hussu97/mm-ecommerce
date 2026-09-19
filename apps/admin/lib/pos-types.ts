@@ -403,8 +403,9 @@ export interface InventoryItem {
   minimum_level: number;
   maximum_level: number;
   par_level: number;
-  cost: number;
-  costing_method: 'fixed' | 'from_ingredients';
+  // Cost is FIFO now: the item's current cost per storage unit, derived from its
+  // cost layers (0 until first receipt/production). Not a stored column.
+  average_cost: number;
   yield_percentage: number;
   is_product: boolean;
   kind: 'raw_material' | 'packaging' | 'semi_finished' | 'produced_good' | 'resale_good';
@@ -455,6 +456,9 @@ export interface Supplier {
   name: string;
   reference: string | null;
   is_vat_deductible: boolean;
+  // Flexible item mapping: a PO for this supplier may add any active purchasable
+  // item, not just the mapped ones.
+  allow_any_item: boolean;
   address: string | null;
   tax_number: string | null;
   payment_terms_days: number;
@@ -492,6 +496,8 @@ export interface PurchaseOrderItem {
   net_total: number;
   unit_cost: number;
   total_cost: number;
+  // The receiver's short/excess note, set on receipt when received != ordered.
+  variance_reason: string | null;
   item_name: string | null;
   item_sku: string | null;
 }

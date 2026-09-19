@@ -1244,11 +1244,21 @@ async def update_purchase_order(
 ):
     purchase_order = await _load_po(db, po_id)
     await access_service.assert_branch_access(db, user, purchase_order.branch_id)
-    if purchase_order.status in (
+    received = purchase_order.status in (
         PurchaseOrderStatusEnum.CLOSED.value,
         PurchaseOrderStatusEnum.PARTIALLY_RECEIVED.value,
-    ):
-        raise ConflictError("A received purchase order can no longer be edited")
+    )
+    if received:
+        # Once stock has moved, the lines and quantities the ledger acted on are
+        # frozen — but the invoice details (the supplier's invoice/PO number and
+        # notes) can still be corrected, and the invoice image re-attached via its
+        # own endpoint. Anything else is refused.
+        editable_after_receipt = {"supplier_reference", "notes"}
+        changed = set(data.model_dump(exclude_unset=True, exclude={"items"}).keys())
+        if data.items is not None or (changed - editable_after_receipt):
+            raise ConflictError(
+                "A received purchase order can only have its invoice details edited"
+            )
     if data.warehouse_id:
         await inventory_service.assert_warehouse_for_branch(
             db, data.warehouse_id, purchase_order.branch_id
