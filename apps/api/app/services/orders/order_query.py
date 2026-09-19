@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from sqlalchemy import and_, exists, or_
 
-from app.models.order import DeliveryMethodEnum, Order
+from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.pos_order import OrderSourceEnum
 from app.services.couriers import courier_catalog
@@ -79,6 +79,30 @@ def fulfilled_clause():
             Order.status == OrderStatusEnum.OUT_FOR_DELIVERY.value,
         ),
     )
+
+
+#: The statuses where an order is over and never became a sale — cancelled, its
+#: payment failed, refunded, or disputed. Everything else (created … delivered,
+#: and the non-terminal `undelivered`) is a live or completed order.
+TERMINAL_STATUSES: tuple[str, ...] = (
+    OrderStatusEnum.CANCELLED.value,
+    OrderStatusEnum.PAYMENT_FAILED.value,
+    OrderStatusEnum.REFUNDED.value,
+    OrderStatusEnum.DISPUTED.value,
+)
+
+
+def active_or_fulfilled_clause():
+    """SQLAlchemy predicate for an order that is live or completed.
+
+    Broader than `fulfilled_clause` (delivered-only): it counts an order against
+    its carrier as soon as it is a real, uncancelled order, not only once the
+    parcel is delivered — every status from `created` through `out_for_delivery`,
+    `delivered` and the non-terminal `undelivered`, excluding only the terminal
+    set (`cancelled`, `payment_failed`, `refunded`, `disputed`). Used by the
+    dashboard's per-courier breakdown; the delivered KPI keeps `fulfilled_clause`.
+    """
+    return Order.status.notin_(TERMINAL_STATUSES)
 
 
 def courier_predicate(code: str):

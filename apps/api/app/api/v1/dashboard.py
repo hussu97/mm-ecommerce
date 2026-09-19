@@ -499,16 +499,18 @@ async def _by_legal_entity(
 async def _by_courier(
     db: AsyncSession, *, start, end, branch_ids=None, legal_entity_ids=None
 ) -> list[CourierBreakdownRow]:
-    """Delivered orders and revenue per carrier over the window.
+    """Active and completed orders and revenue per carrier over the window.
 
     Grouped in Python via `order_query.courier_code_for` rather than in SQL,
     because "which courier" spans three different columns (source for the
     counter, `aggregator_channel` for a marketplace, the delivery record's
     provider for a dispatch courier) and there is no single column to group by.
-    Delivered-only, so this reads as settled courier revenue. One row per known
-    courier code, busiest first. A store-pickup order has no carrier but is its
-    own synthetic code (`website_pickup`), the way the counter is; an order with
-    no resolvable carrier at all counts under none.
+    Counts every live or completed order — everything but the terminal set
+    (cancelled/payment_failed/refunded/disputed) — not delivered-only, so a
+    courier's column reflects its whole in-flight and settled load. One row per
+    known courier code, busiest first. A store-pickup order has no carrier but is
+    its own synthetic code (`website_pickup`), the way the counter is; an order
+    with no resolvable carrier at all counts under none.
     """
     provider = (
         select(OrderDelivery.provider)
@@ -527,7 +529,7 @@ async def _by_courier(
             ).where(
                 Order.created_at >= start,
                 Order.created_at <= end,
-                order_query.fulfilled_clause(),
+                order_query.active_or_fulfilled_clause(),
                 *(
                     c
                     for c in (
