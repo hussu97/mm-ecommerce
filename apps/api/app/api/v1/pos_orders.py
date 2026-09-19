@@ -6,7 +6,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, Query, status
-from sqlalchemy import inspect, select
+from sqlalchemy import exists, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +24,7 @@ from app.models import (
     DeliveryMethodEnum,
     KitchenTicket,
     Order,
+    OrderItem,
     OrderSourceEnum,
     OrderStatusEnum,
     PosOrderStatusEnum,
@@ -241,6 +242,7 @@ async def list_orders(
     pos_status: str | None = None,
     order_type: str | None = None,
     open_only: bool = False,
+    q: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -262,6 +264,28 @@ async def list_orders(
         stmt = stmt.where(Order.order_type == order_type)
     if open_only:
         stmt = stmt.where(Order.pos_status.in_(sorted(pos_order_service.OPEN_STATUSES)))
+    if q and q.strip():
+        # Server-side search over the whole (day's) list, not the loaded page:
+        # every identifier someone arrives holding — order/check number, the
+        # customer's name or phone, a marketplace's own reference/channel — and
+        # the products on the order.
+        needle = q.strip()
+        like = f"%{needle.lower()}%"
+        conditions = [
+            func.lower(Order.order_number).like(like),
+            func.lower(Order.customer_name).like(like),
+            func.lower(Order.customer_phone).like(like),
+            func.lower(Order.external_reference).like(like),
+            func.lower(Order.aggregator_channel).like(like),
+            exists().where(
+                OrderItem.order_id == Order.id,
+                func.lower(OrderItem.product_name).like(like),
+            ),
+        ]
+        # `check_number` is an integer counter; match it only on a numeric query.
+        if needle.isdigit():
+            conditions.append(Order.check_number == int(needle))
+        stmt = stmt.where(or_(*conditions))
     stmt = _ordered_page(
         stmt.options(*_list_load_options()), limit=limit, offset=offset
     )

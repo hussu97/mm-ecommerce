@@ -4448,7 +4448,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Shift Reports */
+        /**
+         * List Shift Reports
+         * @description Submitted inventory reports, newest first. Paged + searchable server-side
+         *     (by business date, report type or status) so the whole history is reachable.
+         */
         get: operations["list_shift_reports_api_v1_inventory_shift_reports_get"];
         put?: never;
         post?: never;
@@ -29544,6 +29548,9 @@ export interface operations {
             query?: {
                 branch_id?: string | null;
                 status?: string | null;
+                limit?: number;
+                offset?: number;
+                q?: string | null;
             };
             header?: never;
             path?: never;
@@ -33380,6 +33387,7 @@ export interface operations {
                 pos_status?: string | null;
                 order_type?: string | null;
                 open_only?: boolean;
+                q?: string | null;
                 limit?: number;
                 offset?: number;
             };

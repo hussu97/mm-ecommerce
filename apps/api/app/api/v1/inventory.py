@@ -9,7 +9,7 @@ import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1652,10 +1652,14 @@ async def _all_purchasable_items(
 )
 async def pos_purchase_orders_to_receive(
     branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
-    """Admin-raised POs waiting to be received at this branch."""
+    """Admin-raised POs waiting to be received at this branch. Paged + searchable
+    server-side by reference or supplier name."""
     await access_service.assert_branch_access(db, user, branch_id)
     stmt = (
         select(PurchaseOrder)
@@ -1670,7 +1674,20 @@ async def pos_purchase_orders_to_receive(
             ),
         )
         .order_by(PurchaseOrder.created_at.desc())
+        .offset(offset)
+        .limit(limit)
     )
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(PurchaseOrder.reference).like(like),
+                exists().where(
+                    Supplier.id == PurchaseOrder.supplier_id,
+                    func.lower(Supplier.name).like(like),
+                ),
+            )
+        )
     orders = list((await db.execute(stmt)).scalars().unique().all())
     return [await _serialise_po(db, o) for o in orders]
 

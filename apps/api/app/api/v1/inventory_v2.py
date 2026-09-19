@@ -8,7 +8,7 @@ import uuid
 
 import openpyxl
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -672,9 +672,14 @@ async def _enrich_report_names(
 async def list_shift_reports(
     branch_id: uuid.UUID | None = None,
     report_status: str | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("reports.inventory")),
 ):
+    """Submitted inventory reports, newest first. Paged + searchable server-side
+    (by business date, report type or status) so the whole history is reachable."""
     stmt = select(ShiftInventoryReport).options(
         selectinload(ShiftInventoryReport.lines)
     )
@@ -685,8 +690,23 @@ async def list_shift_reports(
         stmt = stmt.where(ShiftInventoryReport.branch_id.in_(_branch_ids_for(user)))
     if report_status:
         stmt = stmt.where(ShiftInventoryReport.status == report_status)
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(ShiftInventoryReport.business_date).like(like),
+                func.lower(ShiftInventoryReport.report_type).like(like),
+                func.lower(ShiftInventoryReport.status).like(like),
+            )
+        )
     reports = list(
-        (await db.execute(stmt.order_by(ShiftInventoryReport.created_at.desc())))
+        (
+            await db.execute(
+                stmt.order_by(ShiftInventoryReport.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        )
         .scalars()
         .unique()
     )

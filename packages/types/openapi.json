@@ -50790,6 +50790,7 @@
     },
     "/api/v1/inventory/shift-reports": {
       "get": {
+        "description": "Submitted inventory reports, newest first. Paged + searchable server-side\n(by business date, report type or status) so the whole history is reachable.",
         "operationId": "list_shift_reports_api_v1_inventory_shift_reports_get",
         "parameters": [
           {
@@ -50823,6 +50824,45 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
             }
           }
         ],
@@ -57484,6 +57524,22 @@
               "default": false,
               "title": "Open Only",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
             }
           },
           {
