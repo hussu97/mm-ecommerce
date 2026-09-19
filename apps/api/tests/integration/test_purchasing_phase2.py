@@ -466,6 +466,57 @@ async def test_short_receipt_with_reason_closes_and_over_receipt_is_allowed(
         await db.rollback()
 
 
+async def test_over_receipt_does_not_reclaim_more_vat_than_the_invoice(engine, env):
+    """The invoice's VAT is fixed at the ordered quantity; receiving more than was
+    ordered must not pro-rata the recoverable VAT above the invoiced amount."""
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} OverVAT", is_vat_deductible=True)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.APPROVED.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        # 105 gross over 10 units: VAT 5.00.
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("105")
+                )
+            ],
+            is_vat_deductible=True,
+        )
+        line = (
+            await db.execute(
+                select(PurchaseOrderItem).where(
+                    PurchaseOrderItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        txn = await inventory_service.receive_purchase_order(
+            db,
+            purchase_order=po,
+            user=user,
+            received={line.id: D("12")},  # two more than ordered
+            reasons={line.id: "supplier sent two extra"},
+        )
+        # Capped at the invoiced VAT, not 12/10 * 5 = 6.00.
+        assert D(str(txn.paid_tax)) == D("5.00")
+        await db.rollback()
+
+
 async def test_pos_create_and_receive_lands_cost_in_one_call(engine, env):
     branch_id, user_id, raw_id, produced_id = env
     Session = async_sessionmaker(engine, expire_on_commit=False)

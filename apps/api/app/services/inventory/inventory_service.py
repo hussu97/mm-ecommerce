@@ -1348,10 +1348,13 @@ async def receive_purchase_order(
         )
         # Carry the recoverable VAT for the portion received, pro rata, onto the
         # ledger transaction so the reclaim report can read it (the cost itself
-        # is gross and lands in the FIFO layer via unit_cost above).
+        # is gross and lands in the FIFO layer via unit_cost above). The invoice's
+        # VAT is fixed at the ordered quantity, so an over-receipt is capped at the
+        # ordered amount — receiving extra stock does not reclaim extra VAT.
         if ordered > 0:
+            reclaimable = min(quantity, ordered)
             paid_tax += _money(
-                Decimal(str(po_item.vat_amount or 0)) * (quantity / ordered)
+                Decimal(str(po_item.vat_amount or 0)) * (reclaimable / ordered)
             )
 
     if not any_line:

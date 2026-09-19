@@ -1385,13 +1385,18 @@ async def _refresh_vat_ledger_for_po(
     """Rebuild the VAT-ledger cache for the received PO's business day, so its
     recoverable VAT shows on the reclaim report immediately rather than waiting
     for the hourly sweep (the reason a just-received PO's VAT looked missing).
-    Never fails the receive — a cache miss self-heals on the next sweep."""
+    Never fails the receive — a cache miss self-heals on the next sweep. The
+    recompute runs inside a SAVEPOINT so a failure rolls back only its own writes
+    and leaves the (already-committed-in-effect) receive transaction usable for the
+    response serialisation that follows; without it a DB error here would poison
+    the session and 500 the whole receive after the stock had already posted."""
     from app.services import vat_ledger
 
     try:
-        await vat_ledger.compute_window(
-            db, purchase_order.business_date, purchase_order.business_date
-        )
+        async with db.begin_nested():
+            await vat_ledger.compute_window(
+                db, purchase_order.business_date, purchase_order.business_date
+            )
     except Exception:  # noqa: BLE001 — the cache is derived; the sweep re-runs it
         logger.warning(
             "vat_ledger refresh failed for PO %s (%s); the hourly sweep will retry",
