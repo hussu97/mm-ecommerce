@@ -136,8 +136,6 @@ class InventoryItemCreate(BaseModel):
     minimum_level: Decimal = Field(Decimal("0"), ge=0)
     maximum_level: Decimal = Field(Decimal("0"), ge=0)
     par_level: Decimal = Field(Decimal("0"), ge=0)
-    cost: Decimal = Field(Decimal("0"), ge=0)
-    costing_method: Literal["fixed", "from_ingredients"] = "fixed"
     yield_percentage: Decimal = Field(Decimal("1"), gt=0, le=1)
     is_product: bool = False
     kind: Literal[
@@ -162,8 +160,6 @@ class InventoryItemUpdate(BaseModel):
     minimum_level: Decimal | None = Field(None, ge=0)
     maximum_level: Decimal | None = Field(None, ge=0)
     par_level: Decimal | None = Field(None, ge=0)
-    cost: Decimal | None = Field(None, ge=0)
-    costing_method: Literal["fixed", "from_ingredients"] | None = None
     yield_percentage: Decimal | None = Field(None, gt=0, le=1)
     is_product: bool | None = None
     kind: (
@@ -192,8 +188,9 @@ class InventoryItemResponse(ORMModel):
     minimum_level: Decimal
     maximum_level: Decimal
     par_level: Decimal
-    cost: Decimal
-    costing_method: str
+    #: The item's current cost per storage unit, derived from its FIFO layers
+    #: (0 until first receipt/production). Populated by the endpoint, not a column.
+    average_cost: Decimal = Decimal("0")
     yield_percentage: Decimal
     is_product: bool
     kind: str

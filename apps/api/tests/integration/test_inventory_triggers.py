@@ -75,7 +75,6 @@ async def branch_and_item(session_factory):
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         db.add(item)
         await db.commit()

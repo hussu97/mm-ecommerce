@@ -84,7 +84,6 @@ async def env(engine):
             storage_unit="kg",
             ingredient_unit="kg",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("2"),
         )
         db.add(item)
         await db.commit()

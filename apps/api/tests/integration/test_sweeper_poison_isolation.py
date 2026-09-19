@@ -81,7 +81,6 @@ async def test_a_poison_event_is_quarantined_and_the_rest_of_the_branch_posts(en
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         db.add(item)
         order = Order(

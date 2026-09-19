@@ -81,6 +81,7 @@ from app.schemas.inventory import (
 from app.services import audit_service, crud_service, email_service
 from app.services.inventory import (
     access_service,
+    cost_layer_service,
     inventory_service,
     recipe_service,
     supplier_service,
@@ -330,9 +331,24 @@ async def list_items(
         filters.append(
             InventoryItem.name.ilike(pattern) | InventoryItem.sku.ilike(pattern)
         )
-    return await crud_service.list_all(
+    items = await crud_service.list_all(
         db, InventoryItem, include_inactive=include_inactive, filters=filters
     )
+    return await _items_with_cost(db, items)
+
+
+async def _items_with_cost(
+    db: AsyncSession, items: list[InventoryItem]
+) -> list[InventoryItemResponse]:
+    """Serialise items with their derived FIFO cost per storage unit attached, so
+    the list shows the received/produced cost rather than a stale column."""
+    costs = await cost_layer_service.item_average_costs(db, [i.id for i in items])
+    out = []
+    for item in items:
+        response = InventoryItemResponse.model_validate(item)
+        response.average_cost = costs.get(item.id, Decimal("0"))
+        out.append(response)
+    return out
 
 
 @items_router.post(
@@ -366,9 +382,12 @@ async def get_item(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require("inventory.read")),
 ):
-    return await crud_service.get_or_404(
+    item = await crud_service.get_or_404(
         db, InventoryItem, item_id, include_deleted=True
     )
+    response = InventoryItemResponse.model_validate(item)
+    response.average_cost = await cost_layer_service.item_average_cost(db, item.id)
+    return response
 
 
 @items_router.get("/{item_id}/cost-layers", response_model=ItemCostLayersResponse)
@@ -454,7 +473,9 @@ async def update_item(
         changes={"data": data.model_dump(mode="json", exclude_unset=True)},
         request=request,
     )
-    return item
+    response = InventoryItemResponse.model_validate(item)
+    response.average_cost = await cost_layer_service.item_average_cost(db, item.id)
+    return response
 
 
 @items_router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1665,8 +1686,14 @@ async def _recipe_response(db: AsyncSession, product_id: uuid.UUID) -> RecipeRes
     total = Decimal("0")
     for row in rows:
         item = await db.get(InventoryItem, row.item_id)
+        # Cost is FIFO: the ingredient's current per-storage-unit cost, converted
+        # to the recipe (ingredient) unit. 0 until the ingredient is first costed.
         ingredient_cost = (
-            inventory_service.inventory_item_cost_for_unit(item, "ingredient")
+            inventory_service.canonical_cost_for_unit(
+                item,
+                await cost_layer_service.item_average_cost(db, item.id),
+                "ingredient",
+            )
             if item
             else Decimal("0")
         )

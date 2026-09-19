@@ -259,12 +259,11 @@ class InventoryItem(Base, UUIDMixin, TimestampMixin):
         Numeric(16, 4), nullable=False, server_default="0"
     )
 
-    cost: Mapped[Any] = mapped_column(
-        Numeric(16, 6), nullable=False, server_default="0"
-    )
-    costing_method: Mapped[str] = mapped_column(
-        String(30), nullable=False, server_default=CostingMethodEnum.FIXED.value
-    )
+    # There is no per-item cost column: cost is FIFO, held in the item's cost
+    # layers and summarised on ``InventoryLevel.average_cost`` per warehouse. The
+    # redundant, never-updated ``cost``/``costing_method`` columns were dropped
+    # (migration 264) — an item's cost is derived via
+    # ``cost_layer_service.item_average_cost`` (0 until its first receipt).
     # Produced items lose weight in the process; 0.9 means 10% is lost.
     yield_percentage: Mapped[Any] = mapped_column(
         Numeric(6, 4), nullable=False, server_default="1"
@@ -337,7 +336,8 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
     quantity: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
     )
-    #: Weighted-average cost per storage unit (matches ``InventoryItem.cost``).
+    #: Weighted-average cost per storage unit — the item's cost at this warehouse,
+    #: derived from its surviving FIFO layers (the source of truth for valuation).
     average_cost: Mapped[Any] = mapped_column(
         Numeric(16, 6), nullable=False, server_default="0"
     )

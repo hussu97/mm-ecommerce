@@ -702,11 +702,13 @@ async def import_inventory_items(db: AsyncSession, rows: list[dict]) -> ImportRe
             if not storage_unit or not ingredient_unit:
                 raise ValueError("storage_unit and ingredient_unit are required")
             factor = _required_decimal(row, "storage_to_ingredient_factor", row_number)
-            cost = _parse_decimal(row.get("cost", "0"))
             yield_percentage = _required_decimal(row, "yield_percentage", row_number)
             if yield_percentage > 1:
                 raise ValueError("yield_percentage must not exceed 1")
 
+            # Item cost is FIFO now — there is no `cost`/`costing_method` column to
+            # import; a `cost` column in the CSV is ignored rather than rejected, so
+            # an older export still loads.
             values = {
                 "sku": sku,
                 "name": name,
@@ -720,18 +722,12 @@ async def import_inventory_items(db: AsyncSession, rows: list[dict]) -> ImportRe
                 "minimum_level": _parse_decimal(row.get("minimum_level", "0")),
                 "maximum_level": _parse_decimal(row.get("maximum_level", "0")),
                 "par_level": _parse_decimal(row.get("par_level", "0")),
-                "cost": cost,
-                "costing_method": str(row.get("costing_method") or "fixed").strip(),
                 "yield_percentage": yield_percentage,
                 "is_product": _parse_bool(row.get("is_product", "false")),
                 "storage_zone": str(row.get("storage_zone") or "").strip() or None,
                 "count_order": _parse_int(row.get("count_order", "0")),
                 "is_active": _parse_bool(row.get("is_active", "true")),
             }
-            if values["cost"] < 0:
-                raise ValueError("cost must not be negative")
-            if values["costing_method"] not in {"fixed", "from_ingredients"}:
-                raise ValueError("costing_method must be fixed or from_ingredients")
 
             if existing is None:
                 db.add(InventoryItem(id=item_id or uuid.uuid4(), **values))

@@ -50,8 +50,6 @@ async def test_inventory_item_export_uses_the_category_reference():
         storage_unit="kg",
         ingredient_unit="g",
         storage_to_ingredient_factor=Decimal("1000"),
-        cost=Decimal("24.50"),
-        costing_method="moving_average",
         yield_percentage=Decimal("100"),
         minimum_level=Decimal("2"),
         par_level=Decimal("5"),
@@ -62,7 +60,9 @@ async def test_inventory_item_export_uses_the_category_reference():
         is_active=True,
     )
 
-    content = await export_service.export_inventory_items(_Db([item]))
+    # Two queries now: the items, then the bulk FIFO cost lookup (no layers here,
+    # so the derived cost is 0).
+    content = await export_service.export_inventory_items(_Db([item], []))
 
     rows = list(csv.DictReader(io.StringIO(content)))
     assert rows == [
@@ -77,8 +77,7 @@ async def test_inventory_item_export_uses_the_category_reference():
             "storage_unit": "kg",
             "ingredient_unit": "g",
             "storage_to_ingredient_factor": "1000",
-            "cost": "24.50",
-            "costing_method": "moving_average",
+            "average_cost": "0",
             "yield_percentage": "100",
             "minimum_level": "2",
             "par_level": "5",

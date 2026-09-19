@@ -93,7 +93,6 @@ async def env(engine):
             storage_unit="gram",
             ingredient_unit="gram",
             storage_to_ingredient_factor=D("1"),
-            cost=D("0"),
         )
         produced = InventoryItem(
             sku=f"{MARKER}-prod-{uuid.uuid4().hex[:8]}",
@@ -103,7 +102,6 @@ async def env(engine):
             storage_unit="unit",
             ingredient_unit="unit",
             storage_to_ingredient_factor=D("1"),
-            cost=D("0"),
         )
         db.add_all([raw, produced])
         await db.commit()

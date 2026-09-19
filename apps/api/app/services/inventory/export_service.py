@@ -4,6 +4,7 @@ import csv
 import io
 from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from openpyxl import Workbook
@@ -19,6 +20,7 @@ from app.models.inventory_v2 import Recipe, RecipeVersion, RecipeVersionStatusEn
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderStatusEnum
 from app.models.product import Product
+from app.services.inventory import cost_layer_service
 
 __all__ = [
     "export_categories",
@@ -367,6 +369,9 @@ async def export_inventory_items(db: AsyncSession) -> str:
         .unique()
         .all()
     )
+    # Cost is FIFO now: export the item's current derived cost (read-only), not a
+    # stored column. The importer ignores this column, so it round-trips safely.
+    costs = await cost_layer_service.item_average_costs(db, [item.id for item in rows])
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
@@ -381,8 +386,7 @@ async def export_inventory_items(db: AsyncSession) -> str:
             "storage_unit",
             "ingredient_unit",
             "storage_to_ingredient_factor",
-            "cost",
-            "costing_method",
+            "average_cost",
             "yield_percentage",
             "minimum_level",
             "par_level",
@@ -407,8 +411,7 @@ async def export_inventory_items(db: AsyncSession) -> str:
                     item.storage_unit,
                     item.ingredient_unit,
                     str(item.storage_to_ingredient_factor),
-                    str(item.cost),
-                    item.costing_method,
+                    str(costs.get(item.id, Decimal("0"))),
                     str(item.yield_percentage),
                     str(item.minimum_level),
                     str(item.par_level),

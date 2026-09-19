@@ -107,7 +107,6 @@ async def test_voiding_a_completed_counter_sale_refunds_restocks_and_cancels(eng
             storage_unit="g",
             ingredient_unit="g",
             storage_to_ingredient_factor=Decimal("1"),
-            cost=Decimal("1"),
         )
         product = Product(name="Brownie", slug=f"brownie-{uuid.uuid4().hex[:8]}")
         db.add_all([cashier, method, ingredient, product])

@@ -131,24 +131,19 @@ async def assert_warehouse_for_branch(
 
 
 def inventory_item_cost_for_unit(item: InventoryItem, unit: str) -> Decimal:
-    """Return the catalogue cost in the requested unit.
+    """The zero pre-cost fallback, in the requested unit.
 
-    ``InventoryItem.cost`` is the cost of one storage unit — which is also the
-    unit the ledger values stock in (see ``InventoryLevel``). Cost in the
-    ingredient unit is that divided by the factor (fewer, larger ingredient
-    units cost proportionally more). Keeping the conversion here prevents every
-    fallback path (sales, counts, waste and production) from inventing its own,
-    often wrong, interpretation.
+    The item no longer carries a catalogue cost of its own — cost is FIFO, held in
+    the item's cost layers and summarised on ``InventoryLevel.average_cost``. So an
+    item with no costed stock yet is valued at 0 until its first receipt or
+    production posts a real cost. Every caller here reaches this only *after*
+    consulting the FIFO layer / level average for the warehouse in hand, so this is
+    strictly the "no cost known" case. Kept as a function (rather than inlining a
+    zero) so the ``storage``/``ingredient`` unit contract stays enforced.
     """
     if unit not in {"storage", "ingredient"}:
         raise BadRequestError(f"Unknown inventory entry unit '{unit}'")
-    storage_cost = Decimal(str(item.cost or 0))
-    if unit == "storage":
-        return _c(storage_cost)
-    factor = Decimal(str(item.storage_to_ingredient_factor or 1))
-    if factor <= 0:
-        raise BadRequestError(f"{item.name} has an invalid unit conversion factor")
-    return _c(storage_cost / factor)
+    return _c(0)
 
 
 def canonical_cost_for_unit(
@@ -456,7 +451,7 @@ async def _reverse_line_costing(
     """
     if line.reverses_line_id is None:
         if delta > 0:
-            price = fallback_cost if fallback_cost > 0 else _c(item.cost or 0)
+            price = fallback_cost if fallback_cost > 0 else _c(0)
             await cost_layer_service.create_layer(
                 db,
                 transaction=transaction,

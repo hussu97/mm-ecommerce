@@ -11663,29 +11663,6 @@
             ],
             "title": "Category Id"
           },
-          "cost": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              }
-            ],
-            "default": "0",
-            "title": "Cost"
-          },
-          "costing_method": {
-            "default": "fixed",
-            "enum": [
-              "fixed",
-              "from_ingredients"
-            ],
-            "title": "Costing Method",
-            "type": "string"
-          },
           "count_order": {
             "default": 0,
             "title": "Count Order",
@@ -11861,6 +11838,12 @@
       },
       "InventoryItemResponse": {
         "properties": {
+          "average_cost": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Average Cost",
+            "type": "string"
+          },
           "barcode": {
             "anyOf": [
               {
@@ -11883,15 +11866,6 @@
               }
             ],
             "title": "Category Id"
-          },
-          "cost": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Cost",
-            "type": "string"
-          },
-          "costing_method": {
-            "title": "Costing Method",
-            "type": "string"
           },
           "count_order": {
             "title": "Count Order",
@@ -12040,8 +12014,6 @@
           "minimum_level",
           "maximum_level",
           "par_level",
-          "cost",
-          "costing_method",
           "yield_percentage",
           "is_product",
           "kind",
@@ -12080,37 +12052,6 @@
               }
             ],
             "title": "Category Id"
-          },
-          "cost": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cost"
-          },
-          "costing_method": {
-            "anyOf": [
-              {
-                "enum": [
-                  "fixed",
-                  "from_ingredients"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Costing Method"
           },
           "count_order": {
             "anyOf": [
@@ -22290,6 +22231,38 @@
         "title": "ProduceResponse",
         "type": "object"
       },
+      "ProducibleItemBasis": {
+        "description": "One producible item's recipe basis, for the admin transfer/production grid.\n\nThe grid renders the \"qty to produce\" cell in this basis \u2014 batches for a batch\nrecipe, units otherwise \u2014 and shows the live \"= N units\" conversion from\n``batch_yield``. Items with an active v2 recipe are listed; anything absent\n(legacy BOM, non-producible) is treated as unit basis by the client.",
+        "properties": {
+          "basis": {
+            "default": "unit",
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "title": "ProducibleItemBasis",
+        "type": "object"
+      },
       "ProductCreate": {
         "properties": {
           "base_price": {
@@ -23157,6 +23130,23 @@
       },
       "ProductionLineResponse": {
         "properties": {
+          "basis": {
+            "default": "unit",
+            "title": "Basis",
+            "type": "string"
+          },
+          "batch_yield": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Yield"
+          },
           "cancel_note": {
             "anyOf": [
               {
@@ -23222,6 +23212,18 @@
             ],
             "title": "Item Sku"
           },
+          "planned_basis_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Basis Quantity"
+          },
           "planned_quantity": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Planned Quantity",
@@ -23238,6 +23240,18 @@
               }
             ],
             "title": "Produced At"
+          },
+          "produced_basis_quantity": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Produced Basis Quantity"
           },
           "produced_quantity": {
             "anyOf": [
@@ -26182,7 +26196,7 @@
           "quantity": {
             "anyOf": [
               {
-                "exclusiveMinimum": 0.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -26191,6 +26205,17 @@
               }
             ],
             "title": "Quantity"
+          },
+          "variance_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variance Reason"
           }
         },
         "required": [
@@ -30010,6 +30035,11 @@
             ],
             "title": "Address"
           },
+          "allow_any_item": {
+            "default": false,
+            "title": "Allow Any Item",
+            "type": "boolean"
+          },
           "contacts": {
             "items": {
               "$ref": "#/components/schemas/SupplierContactInput"
@@ -30263,6 +30293,11 @@
             ],
             "title": "Address"
           },
+          "allow_any_item": {
+            "default": false,
+            "title": "Allow Any Item",
+            "type": "boolean"
+          },
           "contacts": {
             "default": [],
             "items": {
@@ -30384,6 +30419,17 @@
               }
             ],
             "title": "Address"
+          },
+          "allow_any_item": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Any Item"
           },
           "contacts": {
             "anyOf": [
@@ -48862,6 +48908,37 @@
         ]
       }
     },
+    "/api/v1/inventory/producible-item-bases": {
+      "get": {
+        "description": "The recipe basis (unit/batch + batch_yield) of every item with an active\nv2 recipe, so the transfer-and-production grid can render the \"qty to produce\"\ncell in batches and show the live unit conversion.",
+        "operationId": "producible_item_bases_api_v1_inventory_producible_item_bases_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProducibleItemBasis"
+                  },
+                  "title": "Response Producible Item Bases Api V1 Inventory Producible Item Bases Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Producible Item Bases",
+        "tags": [
+          "Inventory Control"
+        ]
+      }
+    },
     "/api/v1/inventory/producible-item-ids": {
       "get": {
         "description": "Every inventory item that produces something (has a recipe). The admin\ntransfer-and-production grid gates its \"qty to produce\" input on this set.",
@@ -49647,7 +49724,7 @@
     },
     "/api/v1/inventory/purchase-orders/{po_id}/receive": {
       "post": {
-        "description": "Receive a delivery, in full or in part, moving stock in.",
+        "description": "Receive a delivery in one action, closing the PO.\n\nWhatever is not received is recorded as short; a line whose received quantity\ndiffers from what was ordered carries a variance reason, and the office is\nemailed the short/excess.",
         "operationId": "receive_purchase_order_api_v1_inventory_purchase_orders__po_id__receive_post",
         "parameters": [
           {

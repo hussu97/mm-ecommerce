@@ -58,17 +58,18 @@ def test_receipts_and_issues_point_the_right_way():
     assert TRANSACTION_SIGN["cost_adjustment"] == 0
 
 
-def test_catalogue_storage_cost_converts_once_for_ingredient_movements():
+def test_item_has_no_catalogue_cost_so_the_prefallback_is_zero():
+    # Cost is FIFO now: an item carries no catalogue cost of its own, so the
+    # pre-cost fallback is 0 in either unit until the first receipt/production.
     item = InventoryItem(
         sku="FLOUR-25KG",
         name="Flour",
-        cost=D("100"),
         storage_unit="sack",
         ingredient_unit="gram",
         storage_to_ingredient_factor=D("25000"),
     )
-    assert inventory_item_cost_for_unit(item, "storage") == D("100.000000")
-    assert inventory_item_cost_for_unit(item, "ingredient") == D("0.004000")
+    assert inventory_item_cost_for_unit(item, "storage") == D("0.000000")
+    assert inventory_item_cost_for_unit(item, "ingredient") == D("0.000000")
 
 
 def test_canonical_storage_cost_converts_to_the_entry_unit():
@@ -90,7 +91,6 @@ def test_unknown_ledger_unit_is_rejected_instead_of_assumed_to_be_storage():
     item = InventoryItem(
         sku="FLOUR",
         name="Flour",
-        cost=D("1"),
         storage_to_ingredient_factor=D("1"),
     )
     with pytest.raises(BadRequestError, match="Unknown inventory entry unit"):

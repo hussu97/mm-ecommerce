@@ -69,7 +69,6 @@ async def _item(db, name, kind, **kw):
         storage_unit=kw.get("unit", "unit"),
         ingredient_unit=kw.get("unit", "unit"),
         storage_to_ingredient_factor=Decimal("1"),
-        cost=kw.get("cost", Decimal("1")),
     )
     db.add(item)
     await db.flush()
