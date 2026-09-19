@@ -22,7 +22,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -212,6 +212,168 @@ async def _recompute_parent_status(db: AsyncSession, order_id: uuid.UUID) -> Non
     else:
         order.status = P.PENDING.value
     await db.flush()
+
+
+async def _reverse_unshipped_shortfall_topups(
+    db: AsyncSession, order_id: uuid.UUID, user: User
+) -> None:
+    """Net out the part of a create-time shortfall top-up that never shipped.
+
+    ``create_transfer_order`` raises the source's on-hand up front to cover the
+    *requested* fan-out (the override "shortfall top-up"). The later send can ship
+    less than that — a picker drops a line, or ships a partial — and there is no
+    accept or cancel step that would ever put the difference back. Left alone, the
+    unshipped remainder is phantom stock the source keeps forever (the bug behind
+    ADJ-003147/ADJ-003148: two lines topped up +2 each, then sent 0, leaving +2
+    each on the source's books).
+
+    Once no child is ``pending`` — every leg has been sent; there is no cancel
+    path today — compare each topped-up item's total top-up against what actually
+    left across the order's children and reverse the excess with a matching
+    negative ``QUANTITY_ADJUSTMENT`` under the same ``adjustment_group_id`` so the
+    report reads the top-up and its reversal together. This only ever runs during
+    a send (a receive cannot clear the last pending child), so the source's
+    inventory lock ``mark_transfer_sent`` holds is still in force.
+
+    Guards that keep this from writing a *different* wrong number:
+    * a physical count or opening balance for the item after the top-up already
+      re-measured reality (both set an absolute quantity), so the top-up is no
+      longer what is inflating on-hand — skip it;
+    * the reversal is clamped to current on-hand so it can never drive the level
+      negative, which ``post_transaction``'s prevent-negative guard would reject;
+    * items already reversed for this group are skipped, so repeated calls within
+      one send are idempotent.
+    """
+    order = (
+        await db.execute(
+            select(TransferOrder)
+            .where(TransferOrder.id == order_id)
+            .options(selectinload(TransferOrder.children))
+        )
+    ).scalar_one_or_none()
+    if order is None or order.adjustment_group_id is None:
+        return
+    if any(c.status == TransferStatusEnum.PENDING.value for c in order.children):
+        return  # more sends may still draw the top-up down
+
+    group = order.adjustment_group_id
+
+    # Per item: how much was topped up, and when the last top-up landed.
+    topups = (
+        await db.execute(
+            select(
+                InventoryTransactionItem.item_id,
+                func.sum(InventoryTransactionItem.signed_quantity),
+                func.max(InventoryTransaction.occurred_at),
+            )
+            .join(
+                InventoryTransaction,
+                InventoryTransaction.id == InventoryTransactionItem.transaction_id,
+            )
+            .where(
+                InventoryTransaction.correction_group_id == group,
+                InventoryTransaction.source_type == "transfer_shortfall_adjustment",
+            )
+            .group_by(InventoryTransactionItem.item_id)
+        )
+    ).all()
+    if not topups:
+        return
+
+    # Items already reversed for this group — keeps the pass idempotent.
+    already = set(
+        (
+            await db.execute(
+                select(InventoryTransactionItem.item_id)
+                .join(
+                    InventoryTransaction,
+                    InventoryTransaction.id == InventoryTransactionItem.transaction_id,
+                )
+                .where(
+                    InventoryTransaction.correction_group_id == group,
+                    InventoryTransaction.source_type == "transfer_shortfall_reversal",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # What actually left the source across every child's send leg.
+    sent_txn_ids = [
+        c.sent_transaction_id
+        for c in order.children
+        if c.sent_transaction_id is not None
+    ]
+    sent_by_item: dict[uuid.UUID, Decimal] = {}
+    if sent_txn_ids:
+        for item_id, total in (
+            await db.execute(
+                select(
+                    InventoryTransactionItem.item_id,
+                    func.sum(InventoryTransactionItem.signed_quantity),
+                )
+                .where(InventoryTransactionItem.transaction_id.in_(sent_txn_ids))
+                .group_by(InventoryTransactionItem.item_id)
+            )
+        ).all():
+            # Send lines are signed negative; flip to a positive "shipped".
+            sent_by_item[item_id] = -_q(total)
+
+    source = await db.get(Branch, order.source_branch_id)
+    if source is None:
+        return
+
+    for item_id, topped_up, topped_up_at in topups:
+        if item_id in already:
+            continue
+        excess = _q(topped_up) - sent_by_item.get(item_id, _q(0))
+        if excess <= 0:
+            continue
+        # A count or opening balance after the top-up already set an absolute
+        # quantity, so the phantom is no longer what is inflating on-hand.
+        recount = (
+            await db.execute(
+                select(InventoryTransaction.id)
+                .join(
+                    InventoryTransactionItem,
+                    InventoryTransactionItem.transaction_id == InventoryTransaction.id,
+                )
+                .where(
+                    InventoryTransaction.branch_id == order.source_branch_id,
+                    InventoryTransaction.warehouse_id == order.source_warehouse_id,
+                    InventoryTransactionItem.item_id == item_id,
+                    InventoryTransaction.type.in_(
+                        [
+                            InventoryTransactionTypeEnum.INVENTORY_COUNT.value,
+                            InventoryTransactionTypeEnum.OPENING_BALANCE.value,
+                        ]
+                    ),
+                    InventoryTransaction.occurred_at > topped_up_at,
+                )
+                .limit(1)
+            )
+        ).first()
+        if recount is not None:
+            continue
+        level = await inventory_service.level_for(
+            db, item_id, order.source_warehouse_id
+        )
+        reverse_qty = min(excess, _q(level.quantity))
+        if reverse_qty <= 0:
+            continue
+        await inventory_service.adjust_level(
+            db,
+            branch=source,
+            user=user,
+            item_id=item_id,
+            quantity_delta=-reverse_qty,
+            warehouse_id=order.source_warehouse_id,
+            source_type="transfer_shortfall_reversal",
+            source_id=str(order.id),
+            correction_group_id=group,
+            notes=f"Unshipped shortfall reversal for {order.reference}",
+        )
 
 
 async def create_transfer_order(
@@ -633,6 +795,9 @@ async def mark_transfer_sent(
     transfer.status = TransferStatusEnum.SENT.value
     await db.flush()
     await _recompute_parent_status(db, transfer.transfer_order_id)
+    # Now that this leg has shipped, put back any create-time shortfall top-up
+    # the order never sent (returns early while other legs are still pending).
+    await _reverse_unshipped_shortfall_topups(db, transfer.transfer_order_id, user)
 
     # A destination that runs no POS (DSO, Karama) has no till to receive on:
     # book the shipment straight in so its on-hand is right and it is not left
