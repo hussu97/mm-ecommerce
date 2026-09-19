@@ -55,6 +55,7 @@ from typing import Any
 from openpyxl import load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.aggregator import CHANNEL_TALABAT, GRAIN_LINE
 from app.services.aggregators.normalized import (
     PayoutsResult,
@@ -165,6 +166,69 @@ query ListExports($input: ListExportsReq!) {
   }
 }
 """.strip()
+
+# ── Order list + detail (per-line prices the Report Builder CSV omits) ─────────
+# The CSV export carries only the order `Subtotal`, not per-line money, so a
+# multi-item order lands with `amount_is_known=False` and every line at 0. These
+# two GraphQL ops (on the SAME `_FINANCE_GRAPHQL` host/session as the finance
+# queries) recover the real per-line prices. `ListOrders` gives the EXACT
+# `placedTimestamp` (to the second) that `GetOrderDetails` requires as a lookup
+# key — the CSV's minute-precision "Order received at" is not enough. Captured
+# live from the partner-app bundle 2026-09-19.
+_LIST_ORDERS_QUERY = """
+query ListOrders($params: ListOrdersReq!) {
+  orders {
+    listOrders(input: $params) {
+      nextPageToken
+      orders {
+        orderId
+        vendorId
+        placedTimestamp
+        subtotal
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+""".strip()
+
+_GET_ORDER_DETAILS_QUERY = """
+query GetOrderDetails($params: OrderReq!) {
+  orders {
+    order(input: $params) {
+      order {
+        orderId
+        orderValue
+        items {
+          id: productId
+          name
+          quantity
+          unitPrice
+          options {
+            name
+            quantity
+            unitPrice
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+""".strip()
+
+#: Order-detail enrichment paging + safety caps.
+_LIST_ORDERS_PAGE_SIZE = 50
+_MAX_LIST_ORDERS_PAGES = 40
+#: Never fan out more than this many per-order detail calls in one sweep — a
+#: guard against an unexpectedly large unpriced-order set hammering the portal.
+_MAX_DETAIL_FETCHES = 200
 
 _LIST_PAYOUTS_QUERY = """
 query ListPayouts($params: ListPayoutsRequest!) {
@@ -1181,7 +1245,239 @@ class TalabatClient(BaseAggregatorClient):
             )
         csv_text = await self._download_csv(session, download_url)
         orders = self._orders_from_csv(csv_text)
+        orders = await self._enrich_line_prices(
+            session, orders, since=since, until=until
+        )
         return SalesResult(orders=orders, truncation_note=truncation_note)
+
+    # ── per-line price enrichment (order detail) ──────────────────────────────
+    async def _list_order_timestamps(
+        self,
+        session: LoadedSession,
+        *,
+        vendor_ids: list[str],
+        since: datetime,
+        until: datetime,
+    ) -> dict[str, str]:
+        """`orderId -> exact RFC3339 placedTimestamp` from `ListOrders`.
+
+        `GetOrderDetails` keys on the placed instant to the SECOND; the CSV only
+        carries minute precision (and can even round to the wrong minute), so the
+        exact value must come from here. Scoped to the vendors that actually have
+        an order needing enrichment, over the sweep's own window.
+        """
+        entity = self._global_entity_id(session)
+        codes = [{"globalEntityId": entity, "vendorId": v} for v in vendor_ids]
+        time_from = since.date().isoformat() + "T00:00:00.000Z"
+        # `until` is the last day to include; make `to` exclusive-safe by covering
+        # the whole day.
+        time_to = (until.date() + timedelta(days=1)).isoformat() + "T00:00:00.000Z"
+        out: dict[str, str] = {}
+        page_token: str | None = None
+        for _ in range(_MAX_LIST_ORDERS_PAGES):
+            pagination: dict[str, Any] = {"pageSize": _LIST_ORDERS_PAGE_SIZE}
+            if page_token:
+                pagination["pageToken"] = page_token
+            data = await self._graphql(
+                session,
+                endpoint=_FINANCE_GRAPHQL,
+                query=_LIST_ORDERS_QUERY,
+                variables={
+                    "params": {
+                        "globalVendorCodes": codes,
+                        "timeFrom": time_from,
+                        "timeTo": time_to,
+                        "pagination": pagination,
+                    }
+                },
+                operation_name="ListOrders",
+            )
+            listing = (data.get("orders") or {}).get("listOrders") or {}
+            for row in listing.get("orders") or []:
+                oid = str(row.get("orderId") or "").strip()
+                placed = str(row.get("placedTimestamp") or "").strip()
+                if oid and placed:
+                    out[oid] = placed
+            page_token = (listing.get("nextPageToken") or "").strip() or None
+            if not page_token:
+                break
+        return out
+
+    async def _fetch_order_detail_items(
+        self,
+        session: LoadedSession,
+        *,
+        order_id: str,
+        vendor_id: str,
+        placed_timestamp: str,
+    ) -> tuple[Decimal | None, list[StandardOrderItem]]:
+        """`(orderValue, priced line items)` from `GetOrderDetails`.
+
+        Each line's price is `unitPrice` on the base item; a box's price sits on
+        the parent item with its contents as zero-priced `options`, and a
+        quantity modifier (e.g. "3 Pieces") carries the price on the option — the
+        base item then being 0. Both reconstruct correctly via promote's existing
+        `base_price + Σ(option price × qty)`, so both are represented as a base
+        `StandardOrderItem` plus `StandardModifier` options.
+        """
+        entity = self._global_entity_id(session)
+        data = await self._graphql(
+            session,
+            endpoint=_FINANCE_GRAPHQL,
+            query=_GET_ORDER_DETAILS_QUERY,
+            variables={
+                "params": {
+                    "orderId": order_id,
+                    "GlobalVendorCode": {
+                        "globalEntityId": entity,
+                        "vendorId": vendor_id,
+                    },
+                    "placedTimestamp": placed_timestamp,
+                    "isBillingDataFlagEnabled": True,
+                }
+            },
+            operation_name="GetOrderDetails",
+        )
+        order = ((data.get("orders") or {}).get("order") or {}).get("order") or {}
+        order_value = _money(order.get("orderValue"))
+        items: list[StandardOrderItem] = []
+        for index, raw in enumerate(order.get("items") or [], start=1):
+            name = str(raw.get("name") or "").strip() or None
+            quantity = _money(raw.get("quantity")) or Decimal("1")
+            unit_price = _money(raw.get("unitPrice")) or Decimal("0")
+            modifiers: list[StandardModifier] = []
+            for opt in raw.get("options") or []:
+                opt_name = str(opt.get("name") or "").strip()
+                if not opt_name:
+                    continue
+                modifiers.append(
+                    StandardModifier(
+                        name=opt_name,
+                        quantity=_money(opt.get("quantity")) or Decimal("1"),
+                        unit_price=_money(opt.get("unitPrice")) or Decimal("0"),
+                    )
+                )
+            options_total = sum(
+                ((m.unit_price or Decimal("0")) * m.quantity for m in modifiers),
+                Decimal("0"),
+            )
+            line_total = (unit_price + options_total) * quantity
+            items.append(
+                StandardOrderItem(
+                    source_key=f"{order_id}:{index}",
+                    grain=GRAIN_LINE,
+                    item_name=name,
+                    quantity=quantity,
+                    unit_price=unit_price + options_total,
+                    gross_sales=line_total,
+                    net_sales=line_total,
+                    amount_is_known=True,
+                    modifiers=modifiers,
+                )
+            )
+        return order_value, items
+
+    async def _enrich_line_prices(
+        self,
+        session: LoadedSession,
+        orders: list[StandardOrder],
+        *,
+        since: datetime,
+        until: datetime,
+    ) -> list[StandardOrder]:
+        """Overlay real per-line prices onto orders the CSV left unpriced.
+
+        The Report Builder CSV omits per-line money, so a MULTI-item order lands
+        with every line `amount_is_known=False` (a single-item order already gets
+        the subtotal). For exactly those orders, fetch the marketplace's own order
+        detail and replace the price-less lines with priced ones. Fail-soft: any
+        error leaves the CSV lines untouched — this must never break the sales
+        sweep — and a rebuilt line set is accepted only when it reconciles to the
+        detail's `orderValue` AND the CSV `Subtotal`, so a mismatch never silently
+        rewrites the money.
+        """
+        if not settings.TALABAT_ORDER_DETAIL_ENRICH:
+            return orders
+        needing = [
+            o
+            for o in orders
+            if o.external_order_id
+            and o.external_outlet_id
+            and any(not it.amount_is_known for it in o.items)
+        ]
+        if not needing:
+            return orders
+        vendor_ids = sorted({str(o.external_outlet_id) for o in needing})
+        try:
+            placed_map = await self._list_order_timestamps(
+                session, vendor_ids=vendor_ids, since=since, until=until
+            )
+        except (AggregatorUnavailableError, AggregatorAuthError) as exc:
+            logger.warning(
+                "talabat order-detail: ListOrders failed, skipping (%s)", exc
+            )
+            return orders
+
+        replacements: dict[str, list[StandardOrderItem]] = {}
+        fetched = 0
+        for order in needing:
+            if fetched >= _MAX_DETAIL_FETCHES:
+                logger.warning(
+                    "talabat order-detail: hit fetch cap %s, leaving rest on CSV",
+                    _MAX_DETAIL_FETCHES,
+                )
+                break
+            placed = placed_map.get(order.external_order_id)
+            if not placed:
+                continue
+            fetched += 1
+            try:
+                order_value, items = await self._fetch_order_detail_items(
+                    session,
+                    order_id=order.external_order_id,
+                    vendor_id=str(order.external_outlet_id),
+                    placed_timestamp=placed,
+                )
+            except (AggregatorUnavailableError, AggregatorAuthError) as exc:
+                logger.warning(
+                    "talabat order-detail %s: fetch failed, keeping CSV (%s)",
+                    order.external_order_id,
+                    exc,
+                )
+                continue
+            if not items or order_value is None:
+                continue
+            line_sum = sum(
+                ((it.gross_sales or Decimal("0")) for it in items), Decimal("0")
+            )
+            # Only trust a rebuild that reconciles to the detail's own total AND
+            # the CSV subtotal (the finance number) — otherwise leave the CSV line.
+            if line_sum != order_value:
+                logger.warning(
+                    "talabat order-detail %s: line sum %s != orderValue %s, keeping CSV",
+                    order.external_order_id,
+                    line_sum,
+                    order_value,
+                )
+                continue
+            if order.gross_sales is not None and order_value != order.gross_sales:
+                logger.warning(
+                    "talabat order-detail %s: orderValue %s != CSV subtotal %s, keeping CSV",
+                    order.external_order_id,
+                    order_value,
+                    order.gross_sales,
+                )
+                continue
+            replacements[order.external_order_id] = items
+
+        if not replacements:
+            return orders
+        return [
+            replace(o, items=replacements[o.external_order_id])
+            if o.external_order_id in replacements
+            else o
+            for o in orders
+        ]
 
     async def _poll_export_ready(
         self, session: LoadedSession, *, export_id: str

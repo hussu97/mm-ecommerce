@@ -1471,3 +1471,284 @@ async def test_delete_product_and_category_urls(monkeypatch):
     )
     assert calls[1][0] == "DELETE"
     assert calls[1][1].endswith("/vendors/V1/catalogs/CAT1/categories/C9")
+
+
+# ── 6. order-detail per-line price enrichment ─────────────────────────────────
+# The Report Builder CSV omits per-line money, so a multi-item Talabat order lands
+# unpriced (every line 0). `_enrich_line_prices` overlays the real prices from the
+# `ListOrders` + `GetOrderDetails` GraphQL ops, guarded by a reconciliation.
+
+from types import SimpleNamespace  # noqa: E402
+
+from app.services.aggregators.normalized import (  # noqa: E402
+    StandardOrder,
+    StandardOrderItem,
+)
+from app.services.providers import talabat_provider as _tp  # noqa: E402
+
+
+def _unpriced_multi_item_order(order_id="TB-9001", vendor="793319", n=2):
+    """A CSV-shaped multi-item order: names + qty, no per-line money."""
+    items = [
+        StandardOrderItem(
+            source_key=f"{order_id}:{i}",
+            item_name=f"Item {i}",
+            quantity=Decimal("1"),
+            unit_price=None,
+            gross_sales=None,
+            amount_is_known=False,
+        )
+        for i in range(1, n + 1)
+    ]
+    return StandardOrder(
+        external_order_id=order_id,
+        external_outlet_id=vendor,
+        gross_sales=Decimal("115.00"),
+        items=items,
+    )
+
+
+def _detail_envelope(order_id, order_value, items):
+    return {
+        "orders": {
+            "order": {
+                "order": {
+                    "orderId": order_id,
+                    "orderValue": order_value,
+                    "items": items,
+                }
+            }
+        }
+    }
+
+
+def _list_envelope(rows, next_token=""):
+    return {"orders": {"listOrders": {"nextPageToken": next_token, "orders": rows}}}
+
+
+def _patch_graphql(monkeypatch, client, *, list_rows, details):
+    """Route _graphql by operation_name to canned ListOrders / GetOrderDetails."""
+
+    async def fake_graphql(session, *, endpoint, query, variables, operation_name):
+        if operation_name == "ListOrders":
+            return _list_envelope(list_rows)
+        if operation_name == "GetOrderDetails":
+            oid = variables["params"]["orderId"]
+            return _detail_envelope(oid, *details[oid])
+        raise AssertionError(f"unexpected op {operation_name}")
+
+    monkeypatch.setattr(client, "_graphql", fake_graphql)
+
+
+@pytest.mark.asyncio
+async def test_enrich_overlays_real_prices_on_multi_item(monkeypatch):
+    client = TalabatClient()
+    order = _unpriced_multi_item_order("TB-9001", n=3)
+    since = datetime(2026, 9, 19)
+    until = datetime(2026, 9, 19)
+    detail_items = [
+        {
+            "id": "a",
+            "name": "Nutella Cookie Melt (500 grams)",
+            "quantity": 1,
+            "unitPrice": 70,
+            "options": None,
+        },
+        {
+            "id": "b",
+            "name": "Gift Note Card",
+            "quantity": 1,
+            "unitPrice": 5,
+            "options": None,
+        },
+        {
+            "id": "c",
+            "name": "Brookie Cookie Melt (250 grams)",
+            "quantity": 1,
+            "unitPrice": 40,
+            "options": None,
+        },
+    ]
+    _patch_graphql(
+        monkeypatch,
+        client,
+        list_rows=[
+            {
+                "orderId": "TB-9001",
+                "vendorId": "793319",
+                "placedTimestamp": "2026-09-19T09:12:25Z",
+                "subtotal": 115,
+            }
+        ],
+        details={"TB-9001": (115, detail_items)},
+    )
+    out = await client._enrich_line_prices(
+        SimpleNamespace(tokens=None), [order], since=since, until=until
+    )
+    (o,) = out
+    assert [it.item_name for it in o.items] == [
+        "Nutella Cookie Melt (500 grams)",
+        "Gift Note Card",
+        "Brookie Cookie Melt (250 grams)",
+    ]
+    assert all(it.amount_is_known for it in o.items)
+    assert [it.unit_price for it in o.items] == [
+        Decimal("70"),
+        Decimal("5"),
+        Decimal("40"),
+    ]
+    assert sum((it.gross_sales for it in o.items), Decimal("0")) == Decimal("115")
+
+
+@pytest.mark.asyncio
+async def test_enrich_box_and_quantity_modifier(monkeypatch):
+    client = TalabatClient()
+    box = _unpriced_multi_item_order("TB-BOX", n=2)  # forced multi so it enriches
+    # Box: price on the parent, contents zero-priced options.
+    box_items = [
+        {
+            "id": "p",
+            "name": "Mix Brownies and Cookies Box of 3",
+            "quantity": 1,
+            "unitPrice": 55,
+            "options": [
+                {"name": "Ferrero Brownie", "quantity": 1, "unitPrice": 0},
+                {"name": "Nutella Cookie", "quantity": 1, "unitPrice": 0},
+                {"name": "Brookie", "quantity": 1, "unitPrice": 0},
+            ],
+        },
+        {
+            "id": "q",
+            "name": "Lindor Brownies",
+            "quantity": 1,
+            "unitPrice": 0,
+            "options": [{"name": "3 Pieces", "quantity": 1, "unitPrice": 60}],
+        },
+    ]
+    box = StandardOrder(
+        external_order_id="TB-BOX",
+        external_outlet_id="793319",
+        gross_sales=Decimal("115.00"),
+        items=box.items,
+    )
+    _patch_graphql(
+        monkeypatch,
+        client,
+        list_rows=[
+            {
+                "orderId": "TB-BOX",
+                "vendorId": "793319",
+                "placedTimestamp": "2026-09-17T16:51:14Z",
+                "subtotal": 115,
+            }
+        ],
+        details={"TB-BOX": (115, box_items)},
+    )
+    (o,) = await client._enrich_line_prices(
+        SimpleNamespace(tokens=None),
+        [box],
+        since=datetime(2026, 9, 17),
+        until=datetime(2026, 9, 17),
+    )
+    parent, modline = o.items
+    # Box parent line total = 55 (base 55 + options 0).
+    assert parent.item_name == "Mix Brownies and Cookies Box of 3"
+    assert parent.gross_sales == Decimal("55")
+    assert [m.name for m in parent.modifiers] == [
+        "Ferrero Brownie",
+        "Nutella Cookie",
+        "Brookie",
+    ]
+    # Quantity modifier: price sits on the option -> line total 60.
+    assert modline.item_name == "Lindor Brownies"
+    assert modline.gross_sales == Decimal("60")
+    assert modline.modifiers[0].name == "3 Pieces"
+    assert modline.modifiers[0].unit_price == Decimal("60")
+
+
+@pytest.mark.asyncio
+async def test_enrich_reconciliation_mismatch_keeps_csv(monkeypatch):
+    client = TalabatClient()
+    order = _unpriced_multi_item_order("TB-BAD", n=2)
+    # Detail sums to 100, but CSV subtotal is 115 -> reject, keep unpriced CSV.
+    bad_items = [
+        {"id": "a", "name": "A", "quantity": 1, "unitPrice": 60, "options": None},
+        {"id": "b", "name": "B", "quantity": 1, "unitPrice": 40, "options": None},
+    ]
+    _patch_graphql(
+        monkeypatch,
+        client,
+        list_rows=[
+            {
+                "orderId": "TB-BAD",
+                "vendorId": "793319",
+                "placedTimestamp": "2026-09-19T10:00:00Z",
+                "subtotal": 115,
+            }
+        ],
+        details={"TB-BAD": (100, bad_items)},
+    )
+    (o,) = await client._enrich_line_prices(
+        SimpleNamespace(tokens=None),
+        [order],
+        since=datetime(2026, 9, 19),
+        until=datetime(2026, 9, 19),
+    )
+    assert all(not it.amount_is_known for it in o.items)  # untouched
+    assert all(it.unit_price is None for it in o.items)
+
+
+@pytest.mark.asyncio
+async def test_enrich_single_item_order_not_fetched(monkeypatch):
+    client = TalabatClient()
+    # Single-item order already carries the subtotal (amount_is_known=True) -> the
+    # enrichment must not fetch it at all.
+    priced = StandardOrder(
+        external_order_id="TB-SOLO",
+        external_outlet_id="793319",
+        gross_sales=Decimal("40.00"),
+        items=[
+            StandardOrderItem(
+                source_key="TB-SOLO:1",
+                item_name="Brookie Cookie Melt (250 grams)",
+                quantity=Decimal("1"),
+                unit_price=Decimal("40"),
+                gross_sales=Decimal("40"),
+                amount_is_known=True,
+            )
+        ],
+    )
+    called = {"n": 0}
+
+    async def fake_graphql(session, **kwargs):
+        called["n"] += 1
+        raise AssertionError("should not be called for a fully-priced order")
+
+    monkeypatch.setattr(client, "_graphql", fake_graphql)
+    out = await client._enrich_line_prices(
+        SimpleNamespace(tokens=None),
+        [priced],
+        since=datetime(2026, 9, 19),
+        until=datetime(2026, 9, 19),
+    )
+    assert out[0] is priced
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_enrich_disabled_flag_is_noop(monkeypatch):
+    client = TalabatClient()
+    order = _unpriced_multi_item_order("TB-OFF", n=2)
+    monkeypatch.setattr(_tp.settings, "TALABAT_ORDER_DETAIL_ENRICH", False)
+
+    async def boom(*a, **k):
+        raise AssertionError("must not touch the portal when disabled")
+
+    monkeypatch.setattr(client, "_graphql", boom)
+    out = await client._enrich_line_prices(
+        SimpleNamespace(tokens=None),
+        [order],
+        since=datetime(2026, 9, 19),
+        until=datetime(2026, 9, 19),
+    )
+    assert out[0] is order
