@@ -482,11 +482,11 @@ services:
     # pulls on the e2-small after the image was already local.
     pull_policy: missing
     restart: always
-    command: >
-      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000
-      --proxy-headers --forwarded-allow-ips='*'
-      --workers ${UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 8"
+    # Two processes: the HTTP worker + the background-scheduler sibling, split so
+    # a heavy sweep can no longer starve checkout or drain its DB pool. The
+    # script decides which child runs the loops (see it for the why). The
+    # register (`pos-api`) keeps a plain single-process command.
+    command: ["bash", "/app/scripts/start-web-and-scheduler.sh"]
     stop_grace_period: 10s
     environment: *api-environment
     # Ship stdout/stderr directly to GCP Cloud Logging.
@@ -500,7 +500,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # Two processes now (HTTP worker + scheduler sibling), so more than the
+          # single-process 512m. The box is 2 GB with swap; at rest the pair uses
+          # ~450–500m, and the cutover already stops the aggregator-worker to make
+          # room for the green slot.
+          memory: 704m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
       interval: 10s
@@ -573,11 +577,11 @@ services:
     # pulls on the e2-small after the image was already local.
     pull_policy: missing
     restart: always
-    command: >
-      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000
-      --proxy-headers --forwarded-allow-ips='*'
-      --workers ${UVICORN_WORKERS:-1} --log-level warning
-      --timeout-graceful-shutdown 8"
+    # Two processes: the HTTP worker + the background-scheduler sibling, split so
+    # a heavy sweep can no longer starve checkout or drain its DB pool. The
+    # script decides which child runs the loops (see it for the why). The
+    # register (`pos-api`) keeps a plain single-process command.
+    command: ["bash", "/app/scripts/start-web-and-scheduler.sh"]
     stop_grace_period: 10s
     environment: *api-environment
     logging: *gcplogs
@@ -586,7 +590,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # Two processes now (HTTP worker + scheduler sibling), so more than the
+          # single-process 512m. The box is 2 GB with swap; at rest the pair uses
+          # ~450–500m, and the cutover already stops the aggregator-worker to make
+          # room for the green slot.
+          memory: 704m
     healthcheck:
       test: ["CMD", "curl", "-sf", "-H", "Host: api.meltingmomentscakes.com", "http://localhost:8000/ping"]
       interval: 10s

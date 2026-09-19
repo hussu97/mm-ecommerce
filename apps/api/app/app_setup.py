@@ -160,6 +160,169 @@ def _configure_logging() -> None:
     logging.root.setLevel(logging.INFO)
 
 
+async def start_storefront_schedulers() -> list[asyncio.Task]:
+    """Spawn every storefront background loop and return its tasks.
+
+    Extracted from the lifespan so a dedicated process (`app.scheduler_runner`)
+    can own these loops instead of the HTTP worker. Running them in the worker's
+    event loop meant a heavy aggregator sweep (152 orders + external HTTP)
+    monopolised the single worker and drained its DB pool, so checkout stalled
+    for tens of seconds and — under pool exhaustion — an order's commit landed
+    on a reaped connection and was lost while the customer saw success
+    (MM-20260919-007). The list of loops lives here, in one place, so the
+    lifespan and the scheduler process cannot drift apart.
+
+    The caller decides *whether* to run them (`run_scheduler` and
+    `STOREFRONT_SCHEDULER_ENABLED`); this only starts them. Each loop holds a
+    database advisory lock, so a second copy across blue/green is harmless.
+    """
+    background: list[asyncio.Task] = []
+    from app.services.delivery import delivery_scheduler
+
+    background.append(
+        spawn_tracked(delivery_scheduler.run_forever(), name="delivery_scheduler")
+    )
+
+    # Rides with the delivery scheduler rather than getting a flag of its
+    # own. Both are loops in the app because this stack has no cron, both
+    # hold an advisory lock so a second copy would achieve nothing, and
+    # both belong to whichever app already owns the shared work.
+    from app.services import log_retention
+
+    background.append(spawn_tracked(log_retention.run_forever(), name="log_retention"))
+
+    from app.services.inventory import source_event_service
+
+    background.append(
+        spawn_tracked(
+            source_event_service.run_sweeper_forever(),
+            name="inventory_source_event_sweeper",
+        )
+    )
+
+    # The daily sales email. Rides here for the same reasons its
+    # neighbours do — no cron in this stack, an advisory lock so a second
+    # copy is harmless — and belongs to whichever app owns the shared
+    # work. Sends once, after the last branch closes for the day. Its own
+    # flag (default off in production) gates it independently of dispatch;
+    # when off, the loop simply never starts and its heartbeat reads null.
+    if settings.DAILY_SALES_EMAIL_ENABLED:
+        from app.services.pos import daily_sales_email
+
+        background.append(
+            spawn_tracked(daily_sales_email.run_forever(), name="daily_sales_email")
+        )
+
+    # Abandoned-cart recovery. Same lifespan reasons as its neighbours —
+    # no cron here, an advisory lock so a second copy is harmless,
+    # storefront only. Own flag so the customer-facing mail can be turned
+    # off without stopping dispatch; when off, the loop never starts.
+    if settings.ABANDONED_CART_EMAIL_ENABLED:
+        from app.services.orders import abandoned_checkout_service
+
+        background.append(
+            spawn_tracked(
+                abandoned_checkout_service.run_forever(),
+                name="abandoned_cart",
+            )
+        )
+
+    # The business-day sweeper. Same lifespan reasons as its neighbours —
+    # no cron here, an advisory lock so a second copy is harmless. Hourly
+    # it closes any trading day that rolled past its cut-off without an
+    # end-of-day, which `close_current` alone could never reach (F-POS-26).
+    from app.services.pos import business_day_service
+
+    background.append(
+        spawn_tracked(business_day_service.run_forever(), name="business_day_sweeper")
+    )
+
+    # The VAT ledger refresh. Same lifespan reasons as its neighbours —
+    # no cron here, an advisory lock so a second copy across blue/green is
+    # harmless, storefront only. Own flag so the derived VAT cache can be
+    # paused without stopping dispatch; when off, the loop never starts and
+    # the report serves its last computed values.
+    if settings.VAT_LEDGER_REFRESH_ENABLED:
+        from app.services import vat_ledger
+
+        background.append(
+            spawn_tracked(vat_ledger.run_forever(), name="vat_ledger_refresh")
+        )
+
+    # Branch hours sync. Same reasoning as its neighbours — no cron here,
+    # an advisory lock so a second copy is harmless, storefront app only.
+    # Hourly it mirrors each branch's weekly schedule (the source of truth)
+    # out to the marketplaces + Foodics, gated behind the sync flags.
+    from app.services import branch_hours_sync
+
+    background.append(
+        spawn_tracked(branch_hours_sync.run_forever(), name="branch_hours_sync")
+    )
+
+    # Same reasoning, its own flag: this one talks to somebody else's
+    # private API, so it has to be switchable off without taking the
+    # dispatcher down with it. Storefront only, like its neighbours —
+    # the register app must not run a second copy.
+    if settings.GRUBOPS_SYNC_ENABLED:
+        from app.services.grubops import grubops_reconcile
+
+        background.append(
+            spawn_tracked(grubops_reconcile.run_forever(), name="grubops_reconcile")
+        )
+
+    # The order-ingest loop, the OOS sync's mirror image: it reads
+    # aggregator orders out of the same console rather than pushing
+    # availability in. Its own flag, because ingesting orders and
+    # syncing stock are switched on at different times and fail
+    # independently. Storefront only, like its neighbours.
+    if settings.GRUBOPS_ORDERS_ENABLED:
+        from app.services.grubops import grubops_orders
+
+        background.append(
+            spawn_tracked(grubops_orders.run_forever(), name="grubops_orders")
+        )
+
+    # The aggregator ingest: once a day at AGGREGATOR_RUN_HOUR_DXB it
+    # mirrors each marketplace's ledger (sales + statements/payouts) into
+    # the aggregator_* tables over httpx, replaying a browser-captured
+    # session, and reconciles; plus a rolling sales-only refresh every
+    # AGGREGATOR_SALES_REFRESH_MINUTES so values that settle after an order
+    # is first seen (a Talabat commission landing hours later) are picked up
+    # within the hour. Both schedulers are wall-clock anchored with a boot
+    # catch-up, so a redeploy can never skip a run. Storefront only.
+    #
+    # A single LEADER-ELECTED supervisor owns both loops: every slot that
+    # boots it stands by unless it holds the scheduler-leader advisory lock —
+    # so a blue/green cutover (two scheduler processes up at once) never runs
+    # two ingests, and a stale slot with wrong env cannot keep 401ing and
+    # re-flagging sessions in the background.
+    if settings.AGGREGATOR_INGEST_ENABLED:
+        from app.services.aggregators import ingest as aggregator_ingest
+
+        background.append(
+            spawn_tracked(
+                aggregator_ingest.run_aggregator_schedulers_forever(),
+                name="aggregator_ingest",
+            )
+        )
+
+    return background
+
+
+async def stop_storefront_schedulers(tasks: list[asyncio.Task]) -> None:
+    """Cancel the loops `start_storefront_schedulers` spawned, and wait briefly.
+
+    Awaited so a batch mid-booking finishes rather than being torn off halfway
+    between a quotation and an order. The wait is capped: an ingest tick blocked
+    in httpx used to hold SIGTERM for the full graceful-shutdown window (~25s),
+    which is what made `docker stop -t 30` take 40s per colour on every deploy.
+    """
+    for task in tasks:
+        task.cancel()
+        with suppress(asyncio.CancelledError, TimeoutError):
+            await asyncio.wait_for(task, timeout=8)
+
+
 def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
     """
     Startup checks, the i18n seed, and the storefront scheduler — each owned by
@@ -204,156 +367,15 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
 
         background: list[asyncio.Task] = []
         if run_scheduler and settings.STOREFRONT_SCHEDULER_ENABLED:
-            from app.services.delivery import delivery_scheduler
-
-            background.append(
-                spawn_tracked(
-                    delivery_scheduler.run_forever(), name="delivery_scheduler"
-                )
-            )
-
-            # Rides with the delivery scheduler rather than getting a flag of its
-            # own. Both are loops in the app because this stack has no cron, both
-            # hold an advisory lock so a second copy would achieve nothing, and
-            # both belong to whichever app already owns the shared work.
-            from app.services import log_retention
-
-            background.append(
-                spawn_tracked(log_retention.run_forever(), name="log_retention")
-            )
-
-            from app.services.inventory import source_event_service
-
-            background.append(
-                spawn_tracked(
-                    source_event_service.run_sweeper_forever(),
-                    name="inventory_source_event_sweeper",
-                )
-            )
-
-            # The daily sales email. Rides here for the same reasons its
-            # neighbours do — no cron in this stack, an advisory lock so a second
-            # copy is harmless — and belongs to whichever app owns the shared
-            # work. Sends once, after the last branch closes for the day. Its own
-            # flag (default off in production) gates it independently of dispatch;
-            # when off, the loop simply never starts and its heartbeat reads null.
-            if settings.DAILY_SALES_EMAIL_ENABLED:
-                from app.services.pos import daily_sales_email
-
-                background.append(
-                    spawn_tracked(
-                        daily_sales_email.run_forever(), name="daily_sales_email"
-                    )
-                )
-
-            # Abandoned-cart recovery. Same lifespan reasons as its neighbours —
-            # no cron here, an advisory lock so a second copy is harmless,
-            # storefront only. Own flag so the customer-facing mail can be turned
-            # off without stopping dispatch; when off, the loop never starts.
-            if settings.ABANDONED_CART_EMAIL_ENABLED:
-                from app.services.orders import abandoned_checkout_service
-
-                background.append(
-                    spawn_tracked(
-                        abandoned_checkout_service.run_forever(),
-                        name="abandoned_cart",
-                    )
-                )
-
-            # The business-day sweeper. Same lifespan reasons as its neighbours —
-            # no cron here, an advisory lock so a second copy is harmless. Hourly
-            # it closes any trading day that rolled past its cut-off without an
-            # end-of-day, which `close_current` alone could never reach (F-POS-26).
-            from app.services.pos import business_day_service
-
-            background.append(
-                spawn_tracked(
-                    business_day_service.run_forever(), name="business_day_sweeper"
-                )
-            )
-
-            # The VAT ledger refresh. Same lifespan reasons as its neighbours —
-            # no cron here, an advisory lock so a second copy across blue/green is
-            # harmless, storefront only. Own flag so the derived VAT cache can be
-            # paused without stopping dispatch; when off, the loop never starts and
-            # the report serves its last computed values.
-            if settings.VAT_LEDGER_REFRESH_ENABLED:
-                from app.services import vat_ledger
-
-                background.append(
-                    spawn_tracked(vat_ledger.run_forever(), name="vat_ledger_refresh")
-                )
-
-            # Branch hours sync. Same reasoning as its neighbours — no cron here,
-            # an advisory lock so a second copy is harmless, storefront app only.
-            # Hourly it mirrors each branch's weekly schedule (the source of truth)
-            # out to the marketplaces + Foodics, gated behind the sync flags.
-            from app.services import branch_hours_sync
-
-            background.append(
-                spawn_tracked(branch_hours_sync.run_forever(), name="branch_hours_sync")
-            )
-
-            # Same reasoning, its own flag: this one talks to somebody else's
-            # private API, so it has to be switchable off without taking the
-            # dispatcher down with it. Storefront only, like its neighbours —
-            # the register app must not run a second copy.
-            if settings.GRUBOPS_SYNC_ENABLED:
-                from app.services.grubops import grubops_reconcile
-
-                background.append(
-                    spawn_tracked(
-                        grubops_reconcile.run_forever(), name="grubops_reconcile"
-                    )
-                )
-
-            # The order-ingest loop, the OOS sync's mirror image: it reads
-            # aggregator orders out of the same console rather than pushing
-            # availability in. Its own flag, because ingesting orders and
-            # syncing stock are switched on at different times and fail
-            # independently. Storefront only, like its neighbours.
-            if settings.GRUBOPS_ORDERS_ENABLED:
-                from app.services.grubops import grubops_orders
-
-                background.append(
-                    spawn_tracked(grubops_orders.run_forever(), name="grubops_orders")
-                )
-
-            # The aggregator ingest: once a day at AGGREGATOR_RUN_HOUR_DXB it
-            # mirrors each marketplace's ledger (sales + statements/payouts) into
-            # the aggregator_* tables over httpx, replaying a browser-captured
-            # session, and reconciles; plus a rolling sales-only refresh every
-            # AGGREGATOR_SALES_REFRESH_MINUTES so values that settle after an order
-            # is first seen (a Talabat commission landing hours later) are picked up
-            # within the hour. Both schedulers are wall-clock anchored with a boot
-            # catch-up, so a redeploy can never skip a run. Storefront only.
-            #
-            # A single LEADER-ELECTED supervisor owns both loops: `api` and
-            # `api-green` both boot it, but only the slot holding the scheduler-leader
-            # advisory lock actually ticks — so a blue/green cutover (two slots up at
-            # once) never runs two schedulers, and a stale slot with wrong env cannot
-            # keep 401ing and re-flagging sessions in the background.
-            if settings.AGGREGATOR_INGEST_ENABLED:
-                from app.services.aggregators import ingest as aggregator_ingest
-
-                background.append(
-                    spawn_tracked(
-                        aggregator_ingest.run_aggregator_schedulers_forever(),
-                        name="aggregator_ingest",
-                    )
-                )
+            # Started here only when this app is configured to own them. In
+            # production the HTTP worker runs with STOREFRONT_SCHEDULER_ENABLED
+            # off and a sibling process (`app.scheduler_runner`) owns the loops,
+            # so a sweep can never share this event loop or DB pool.
+            background = await start_storefront_schedulers()
 
         logger.info("%s starting up [env=%s]", service, settings.APP_ENV)
         yield
-        for task in background:
-            task.cancel()
-            # Awaited so a batch mid-booking finishes rather than being torn
-            # off halfway between a quotation and an order. Cap the wait:
-            # an ingest tick blocked in httpx used to hold SIGTERM for the
-            # full uvicorn graceful-shutdown window (~25s), which is what
-            # made `docker stop -t 30` take 40s per colour on every deploy.
-            with suppress(asyncio.CancelledError, TimeoutError):
-                await asyncio.wait_for(task, timeout=8)
+        await stop_storefront_schedulers(background)
         # Close the reused APNs HTTP/2 client (F-POS-12) so its connection is
         # released cleanly rather than on GC after the loop is gone.
         from app.services.providers import apns_provider

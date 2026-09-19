@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -28,6 +29,7 @@ from app.core.exceptions import (
     BadRequestError,
     ConflictError,
     NotFoundError,
+    ServiceUnavailableError,
 )
 from app.core.limiter import limiter
 from app.core.money import to_decimal
@@ -73,6 +75,8 @@ from app.services.orders import order_economics, order_service
 from app.services.payments import payment_service
 
 router = APIRouter()
+
+logger = logging.getLogger("mm.api")
 
 
 class PaginatedOrders(BaseModel):
@@ -282,6 +286,32 @@ async def create_order(
     order = await order_service.create_order(
         db, data, user_id, fallback_email=fallback_email
     )
+
+    # Fail closed: durably persist the order INSIDE the request, so the customer
+    # is never shown a confirmed order that a later commit then silently rolls
+    # back. Services flush and the request-scoped `get_db` normally commits after
+    # the handler returns (convention 2) — but with `BaseHTTPMiddleware` that
+    # commit runs after the 201 has been handed back, so under DB-pool exhaustion
+    # a commit landing on a reaped connection lost the row while the browser saw
+    # success (MM-20260919-007, seen when in-process sweeps drained the pool).
+    # Committing here turns that failure into a 503 the customer can retry rather
+    # than a false confirmation; the `get_db` commit that follows is then a no-op.
+    # This deliberately commits the caller's session in the router — the one place
+    # it is done — because an order the customer has been told about must be on
+    # disk before we answer, and that guarantee cannot live in a service.
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            "order create commit failed for %s: %s",
+            getattr(order, "order_number", "?"),
+            exc,
+        )
+        raise ServiceUnavailableError(
+            "We couldn't confirm your order was saved. Please try again."
+        ) from exc
+
     # No `cache_delete_pattern("analytics:*")` here any more, deliberately.
     #
     # It used to run on this one line and nowhere else, which made the console's

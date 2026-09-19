@@ -21,7 +21,30 @@ yaml = pytest.importorskip("yaml", reason="pyyaml is needed to read the compose 
 
 COMPOSE = pathlib.Path(__file__).parents[3].parent / "docker-compose.prod.yml"
 
+# The storefront slots run a start script that launches uvicorn (plus the
+# scheduler sibling), so their uvicorn flags live in the script rather than the
+# compose `command`. The register keeps a plain uvicorn command.
+START_SCRIPT = (
+    pathlib.Path(__file__).parents[2] / "scripts" / "start-web-and-scheduler.sh"
+)
+
 pytestmark = pytest.mark.skipif(not COMPOSE.exists(), reason=f"{COMPOSE} not found")
+
+
+def _uvicorn_invocation(service: str) -> str:
+    """The text that actually launches uvicorn for a slot.
+
+    For the storefront slots that is the start script (the compose `command`
+    just runs it); for the register it is the compose `command` itself.
+    """
+    compose = yaml.safe_load(COMPOSE.read_text())
+    command = str(compose["services"][service].get("command", ""))
+    if service in ("api", "api-green"):
+        assert "start-web-and-scheduler.sh" in command, (
+            f"{service} should launch the two-process start script"
+        )
+        return START_SCRIPT.read_text()
+    return command
 
 
 def _environment(service: str) -> dict:
@@ -92,9 +115,8 @@ def test_every_api_slot_trusts_the_proxy_headers():
     storefront and both register — need it, and `--forwarded-allow-ips` so the
     single hop from nginx is trusted.
     """
-    compose = yaml.safe_load(COMPOSE.read_text())
     for svc in ("api", "api-green", "pos-api", "pos-api-green"):
-        command = str(compose["services"][svc].get("command", ""))
+        command = _uvicorn_invocation(svc)
         assert "--proxy-headers" in command, f"{svc} does not trust proxy headers"
         assert "--forwarded-allow-ips" in command, (
             f"{svc} does not name the trusted proxy hop"
@@ -104,7 +126,7 @@ def test_every_api_slot_trusts_the_proxy_headers():
 def test_storefront_slots_finish_in_flight_requests():
     compose = yaml.safe_load(COMPOSE.read_text())
     for svc in ("api", "api-green"):
-        command = str(compose["services"][svc].get("command", ""))
+        command = _uvicorn_invocation(svc)
         assert "app.main:app" in command
         assert "--timeout-graceful-shutdown 8" in command
         assert compose["services"][svc].get("stop_grace_period") == "10s"

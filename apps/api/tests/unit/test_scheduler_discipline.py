@@ -92,11 +92,14 @@ def test_the_aggregator_supervisor_beats_while_leading():
 
 
 def test_heartbeat_names_match_the_spawned_loop_names():
-    # The names `/health` reports must be exactly the names the lifespan spawns.
+    # The names `/health` reports must be exactly the names spawned. The loops
+    # were lifted out of the lifespan into `start_storefront_schedulers` so a
+    # dedicated process (`app.scheduler_runner`) can own them; the names live
+    # there now.
     from app import app_setup
 
-    lifespan_src = inspect.getsource(app_setup.make_lifespan)
+    spawn_src = inspect.getsource(app_setup.start_storefront_schedulers)
     for name in heartbeat.LOOP_NAMES:
-        assert f'name="{name}"' in lifespan_src, (
+        assert f'name="{name}"' in spawn_src, (
             f"{name!r} is in heartbeat.LOOP_NAMES but no loop is spawned under it"
         )
