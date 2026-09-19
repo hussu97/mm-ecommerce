@@ -49,6 +49,7 @@ from app.core.database import (
 )
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
+    CHANNEL_DELIVEROO,
     CHANNEL_KEETA,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -192,7 +193,7 @@ async def _branch_for(
     )
 
 
-def _order_matches_line_ids(ids: set[str]):
+def _order_matches_line_ids(ids: set[str], channel: str):
     """Match statement-line marketplace ids onto `aggregator_order`.
 
     Most channels spell the same id on both sides (`external_order_id`). Deliveroo
@@ -205,12 +206,26 @@ def _order_matches_line_ids(ids: set[str]):
     The invoice CSV spells two *other* columns: `Order Number` (e.g.
     ``51135384652``, not on the sales payload) and `Order ID` (the `drn_id`).
     Joining only `external_order_id` / `display_ref` therefore matches nothing.
+
+    The `raw->detail->drn_id` branch is a **JSON expression Postgres cannot
+    index**, and its presence in the OR forced a full per-channel scan with a
+    JSONB parse on every row — the single most expensive query in the database
+    (28.9% of all exec time; ~75ms × 38k calls as `aggregator_order` grows). It
+    matters only for Deliveroo, whose ids genuinely live in three places; every
+    other channel spells its id in `external_order_id` (and sometimes
+    `display_ref`), both of which are indexed. So the JSON branch is now added
+    only for Deliveroo. For the other four channels the predicate is
+    `external_order_id IN (…) OR display_ref IN (…)`, which Postgres satisfies
+    with a BitmapOr of `uq_aggregator_order` and the partial
+    `ix_aggregator_order_channel_display_ref` (migration) instead of a scan.
     """
-    return or_(
+    branches = [
         AggregatorOrder.external_order_id.in_(ids),
         AggregatorOrder.display_ref.in_(ids),
-        AggregatorOrder.raw["detail"]["drn_id"].as_string().in_(ids),
-    )
+    ]
+    if channel == CHANNEL_DELIVEROO:
+        branches.append(AggregatorOrder.raw["detail"]["drn_id"].as_string().in_(ids))
+    return or_(*branches)
 
 
 async def _mm_order_for_external(
@@ -227,7 +242,7 @@ async def _mm_order_for_external(
         select(AggregatorOrder.mm_order_id).where(
             AggregatorOrder.channel == channel,
             AggregatorOrder.mm_order_id.is_not(None),
-            _order_matches_line_ids({external_order_id}),
+            _order_matches_line_ids({external_order_id}, channel),
         )
     )
 
@@ -889,7 +904,7 @@ async def backfill_order_economics_from_statement(
             sql_update(AggregatorOrder)
             .where(
                 AggregatorOrder.channel == channel,
-                _order_matches_line_ids({str(external_order_id)}),
+                _order_matches_line_ids({str(external_order_id)}, channel),
                 or_(*changed),
             )
             .values(**values, updated_at=utcnow())
@@ -916,7 +931,7 @@ async def _stamp_orders_from_settled_ids(
         .where(
             AggregatorOrder.channel == channel,
             AggregatorOrder.statement_id.is_(None),
-            _order_matches_line_ids(settled_order_ids),
+            _order_matches_line_ids(settled_order_ids, channel),
         )
         .values(statement_id=statement_id)
         .execution_options(synchronize_session=False)
@@ -979,7 +994,7 @@ async def apply_statement_refunds(
             sql_update(AggregatorOrder)
             .where(
                 AggregatorOrder.channel == channel,
-                _order_matches_line_ids({str(external_order_id)}),
+                _order_matches_line_ids({str(external_order_id)}, channel),
                 AggregatorOrder.refund_amount.is_distinct_from(capped),
             )
             .values(refund_amount=capped, updated_at=utcnow())

@@ -2067,7 +2067,7 @@ def test_deliveroo_settlement_joins_on_drn_id_not_short_or_order_number():
 
     compiled = str(
         select(AggregatorOrder.id)
-        .where(ingest._order_matches_line_ids({drn_uuid}))
+        .where(ingest._order_matches_line_ids({drn_uuid}, "deliveroo"))
         .compile(compile_kwargs={"literal_binds": True})
     )
     assert "drn_id" in compiled
@@ -2082,6 +2082,33 @@ def test_deliveroo_settlement_joins_on_drn_id_not_short_or_order_number():
     assert "external_order_id" in src
     assert "display_ref" in src
     assert "drn_id" in src
+
+
+def test_correlation_drops_the_jsonb_branch_off_deliveroo():
+    """The `raw->detail->drn_id` branch is unindexable and forced a per-channel
+    scan (28.9% of DB time). It matters only for Deliveroo; every other channel
+    matches on the indexed `external_order_id`/`display_ref`, so the JSON branch
+    is left out for them and the OR can use a BitmapOr of two indexes."""
+    from sqlalchemy import select
+
+    from app.models.aggregator import AggregatorOrder
+
+    def _sql(channel: str) -> str:
+        return str(
+            select(AggregatorOrder.id)
+            .where(ingest._order_matches_line_ids({"abc123"}, channel))
+            .compile(compile_kwargs={"literal_binds": True})
+        )
+
+    # Deliveroo keeps all three branches (its ids genuinely live in three places).
+    assert "drn_id" in _sql("deliveroo")
+
+    # Every other channel is external_order_id OR display_ref only — no JSON scan.
+    for channel in ("keeta", "talabat", "noon", "careem"):
+        sql = _sql(channel)
+        assert "drn_id" not in sql, f"{channel} should not scan the JSON path"
+        assert "external_order_id" in sql
+        assert "display_ref" in sql
 
 
 async def test_careem_empty_payouts_notes_channel_limit(monkeypatch):
