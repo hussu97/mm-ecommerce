@@ -13,7 +13,7 @@ import {
   branchesApi,
   inventoryApi,
 } from '@/lib/pos-api';
-import type { Branch, InventoryCategory, InventoryItem, InventoryLevel, ItemCostLayers } from '@/lib/pos-types';
+import type { Branch, InventoryCategory, InventoryItem, InventoryLevel, ItemCostLayers, Supplier } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
@@ -37,10 +37,16 @@ export default function ItemsPage() {
   const [trackingMode, setTrackingMode] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive' | 'all'>('active');
   const [stockFilter, setStockFilter] = useState<'' | 'low' | 'below_par'>('');
+  // '' = all, 'unmapped' = items with no supplier, otherwise a supplier id.
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   useEffect(() => {
     void inventoryApi.categories().then(setCategories).catch(() => setCategories([]));
     void branchesApi.list().then(setBranches).catch(() => setBranches([]));
+    // Suppliers here only populate the filter dropdown; each item already
+    // carries its own `suppliers` from the items endpoint.
+    void inventoryApi.suppliers({ include_inactive: true }).then(setSuppliers).catch(() => setSuppliers([]));
   }, []);
 
   // Every item×branch level across the estate (no branch filter), pivoted to
@@ -85,6 +91,14 @@ export default function ItemsPage() {
     if (categoryId && item.category_id !== categoryId) return false;
     if (kind && item.kind !== kind) return false;
     if (trackingMode && item.tracking_mode !== trackingMode) return false;
+    if (supplierFilter) {
+      const mapped = item.suppliers ?? [];
+      if (supplierFilter === 'unmapped') {
+        if (mapped.length) return false;
+      } else if (!mapped.some((s) => s.supplier_id === supplierFilter)) {
+        return false;
+      }
+    }
     const active = item.is_active && !item.deleted_at;
     if (!(status === 'all' || (status === 'active' ? active : !active))) return false;
     if (stockFilter) {
@@ -100,7 +114,7 @@ export default function ItemsPage() {
       }
     }
     return true;
-  }, [categoryId, kind, status, trackingMode, stockFilter, pivot]);
+  }, [categoryId, kind, status, trackingMode, stockFilter, supplierFilter, pivot]);
 
   // The management screen is the one place that shows inactive items (it has an
   // active/inactive/all filter), so it opts into them explicitly; everywhere else
@@ -122,6 +136,11 @@ export default function ItemsPage() {
       </select>
       <select aria-label="Filter inventory stock" value={stockFilter} onChange={(event) => setStockFilter(event.target.value as typeof stockFilter)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
         <option value="">All stock</option><option value="low">Low stock</option><option value="below_par">Below par</option>
+      </select>
+      <select aria-label="Filter inventory supplier" value={supplierFilter} onChange={(event) => setSupplierFilter(event.target.value)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
+        <option value="">All suppliers</option>
+        <option value="unmapped">No supplier</option>
+        {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
       </select>
       <select aria-label="Filter inventory status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="h-9 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700">
         <option value="active">Active</option><option value="inactive">Inactive</option><option value="all">All statuses</option>
@@ -195,6 +214,19 @@ export default function ItemsPage() {
           sortable: true,
           sortAccessor: (i) => categoryNames.get(i.category_id ?? '') ?? 'Uncategorised',
           render: (i) => categoryNames.get(i.category_id ?? '') ?? <span className="text-gray-400">Uncategorised</span>,
+        },
+        {
+          header: 'Suppliers',
+          priority: 'secondary',
+          className: 'max-w-xs align-top',
+          render: (i) =>
+            i.suppliers && i.suppliers.length ? (
+              <span className="block whitespace-normal break-words text-xs text-gray-600">
+                {i.suppliers.map((s) => s.supplier_name).join(', ')}
+              </span>
+            ) : (
+              <span className="text-gray-400">—</span>
+            ),
         },
         {
           header: 'Units',

@@ -12167,6 +12167,14 @@
             ],
             "title": "Storage Zone"
           },
+          "suppliers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ItemSupplierRef"
+            },
+            "title": "Suppliers",
+            "type": "array"
+          },
           "tracking_mode": {
             "title": "Tracking Mode",
             "type": "string"
@@ -13620,6 +13628,26 @@
           }
         },
         "title": "ItemMappingUpdate",
+        "type": "object"
+      },
+      "ItemSupplierRef": {
+        "description": "A compact view of one supplier that can supply an item, for the items list.",
+        "properties": {
+          "supplier_id": {
+            "format": "uuid",
+            "title": "Supplier Id",
+            "type": "string"
+          },
+          "supplier_name": {
+            "title": "Supplier Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "supplier_id",
+          "supplier_name"
+        ],
+        "title": "ItemSupplierRef",
         "type": "object"
       },
       "JoinOrderRequest": {

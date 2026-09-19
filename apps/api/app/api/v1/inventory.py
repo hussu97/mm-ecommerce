@@ -58,6 +58,7 @@ from app.schemas.inventory import (
     InventoryTransactionCreate,
     InventoryTransactionResponse,
     ItemCostLayersResponse,
+    ItemSupplierRef,
     OpenCountRequest,
     PosPurchaseOrderCreate,
     PurchaseOrderCreate,
@@ -344,12 +345,40 @@ async def _items_with_cost(
     db: AsyncSession, items: list[InventoryItem]
 ) -> list[InventoryItemResponse]:
     """Serialise items with their derived FIFO cost per storage unit attached, so
-    the list shows the received/produced cost rather than a stale column."""
+    the list shows the received/produced cost rather than a stale column, and the
+    suppliers that can supply each item so the table can show them."""
     costs = await cost_layer_service.item_average_costs(db, [i.id for i in items])
+
+    # Attach each item's suppliers in one query, so the items table can show who
+    # supplies it without a round-trip per row (mirrors the supplier list, which
+    # fills the inverse `mapped_items`). Deleted suppliers are excluded.
+    suppliers_by_item: dict[uuid.UUID, list[ItemSupplierRef]] = {}
+    if items:
+        rows = (
+            await db.execute(
+                select(
+                    SupplierItem.item_id,
+                    Supplier.id,
+                    Supplier.name,
+                )
+                .join(Supplier, Supplier.id == SupplierItem.supplier_id)
+                .where(
+                    SupplierItem.item_id.in_([i.id for i in items]),
+                    Supplier.deleted_at.is_(None),
+                )
+                .order_by(Supplier.name)
+            )
+        ).all()
+        for item_id, supplier_id, supplier_name in rows:
+            suppliers_by_item.setdefault(item_id, []).append(
+                ItemSupplierRef(supplier_id=supplier_id, supplier_name=supplier_name)
+            )
+
     out = []
     for item in items:
         response = InventoryItemResponse.model_validate(item)
         response.average_cost = costs.get(item.id, Decimal("0"))
+        response.suppliers = suppliers_by_item.get(item.id, [])
         out.append(response)
     return out
 

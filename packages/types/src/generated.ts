@@ -13128,6 +13128,11 @@ export interface components {
             storage_unit: string;
             /** Storage Zone */
             storage_zone: string | null;
+            /**
+             * Suppliers
+             * @default []
+             */
+            suppliers: components["schemas"]["ItemSupplierRef"][];
             /** Tracking Mode */
             tracking_mode: string;
             /** Translations */
@@ -13492,6 +13497,19 @@ export interface components {
             notes?: string | null;
             /** Product Id */
             product_id?: string | null;
+        };
+        /**
+         * ItemSupplierRef
+         * @description A compact view of one supplier that can supply an item, for the items list.
+         */
+        ItemSupplierRef: {
+            /**
+             * Supplier Id
+             * Format: uuid
+             */
+            supplier_id: string;
+            /** Supplier Name */
+            supplier_name: string;
         };
         /** JoinOrderRequest */
         JoinOrderRequest: {

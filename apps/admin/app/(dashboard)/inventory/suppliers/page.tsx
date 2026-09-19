@@ -93,13 +93,13 @@ export default function SuppliersPage() {
               { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (s) => s.name, render: (s) => <span className="font-medium">{s.name}</span> },
               {
                 header: 'Supplies',
+                className: 'max-w-xs align-top',
                 render: (s) =>
                   s.mapped_items.length === 0 ? (
                     <span className="text-gray-400">—</span>
                   ) : (
-                    <span className="text-xs text-gray-600" title={s.mapped_items.map((m) => m.item_name ?? m.item_sku).join(', ')}>
-                      {s.mapped_items.slice(0, 3).map((m) => m.item_name ?? m.item_sku).join(', ')}
-                      {s.mapped_items.length > 3 ? ` +${s.mapped_items.length - 3}` : ''}
+                    <span className="block whitespace-normal break-words text-xs text-gray-600">
+                      {s.mapped_items.map((m) => m.item_name ?? m.item_sku).join(', ')}
                     </span>
                   ),
               },

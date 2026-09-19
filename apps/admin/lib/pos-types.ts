@@ -414,6 +414,13 @@ export interface InventoryItem {
   count_order: number;
   is_active: boolean;
   deleted_at: string | null;
+  // Filled by the items list endpoint: the suppliers that can supply this item.
+  suppliers?: ItemSupplierRef[];
+}
+
+export interface ItemSupplierRef {
+  supplier_id: string;
+  supplier_name: string;
 }
 
 export interface InventoryLevel {

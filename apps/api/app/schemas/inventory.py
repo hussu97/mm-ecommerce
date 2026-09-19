@@ -174,6 +174,13 @@ class InventoryItemUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class ItemSupplierRef(BaseModel):
+    """A compact view of one supplier that can supply an item, for the items list."""
+
+    supplier_id: UUID
+    supplier_name: str
+
+
 class InventoryItemResponse(ORMModel):
     id: UUID
     sku: str
@@ -203,6 +210,9 @@ class InventoryItemResponse(ORMModel):
     #: Populated on the levels report.
     quantity_on_hand: Decimal | None = None
     stock_value: Decimal | None = None
+    #: The suppliers that can supply this item, filled by the list endpoint so
+    #: the items table can show them without a query per row.
+    suppliers: list[ItemSupplierRef] = []
 
 
 class InventoryLevelResponse(ORMModel):
