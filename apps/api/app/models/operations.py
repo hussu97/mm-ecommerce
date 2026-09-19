@@ -363,9 +363,7 @@ class ProductionOrder(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "production_orders"
     __table_args__ = (
-        status_vocabulary(
-            "production_orders", "status", ProductionOrderStatusEnum
-        ),
+        status_vocabulary("production_orders", "status", ProductionOrderStatusEnum),
         business_date_format("production_orders"),
         # Same idempotency guard as TransferOrder: a retried admin create with the
         # same token is refused and the existing order returned.
@@ -437,9 +435,7 @@ class ProductionLine(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "production_order_items"
     __table_args__ = (
-        status_vocabulary(
-            "production_order_items", "status", ProductionLineStatusEnum
-        ),
+        status_vocabulary("production_order_items", "status", ProductionLineStatusEnum),
     )
 
     production_order_id: Mapped[uuid.UUID] = mapped_column(
@@ -458,9 +454,7 @@ class ProductionLine(Base, UUIDMixin, TimestampMixin):
     planned_quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
     #: What was actually produced (the till may adjust before marking produced).
     #: Null until produced.
-    produced_quantity: Mapped[Any | None] = mapped_column(
-        Numeric(16, 4), nullable=True
-    )
+    produced_quantity: Mapped[Any | None] = mapped_column(Numeric(16, 4), nullable=True)
     unit: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default="storage"
     )

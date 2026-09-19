@@ -60,7 +60,6 @@ from app.schemas.inventory import (
 from app.schemas.production import (
     CancelLineRequest,
     ProduceLineRequest,
-    ProductionLineResponse,
     ProductionOrderCreate,
     ProductionOrderResponse,
     ProductionOrderSummary,
@@ -1133,7 +1132,11 @@ async def _serialise_production_order(
     categories: dict = {}
     if item_ids:
         rows = (
-            (await db.execute(select(InventoryItem).where(InventoryItem.id.in_(item_ids))))
+            (
+                await db.execute(
+                    select(InventoryItem).where(InventoryItem.id.in_(item_ids))
+                )
+            )
             .scalars()
             .all()
         )
@@ -1150,9 +1153,9 @@ async def _serialise_production_order(
         refs = dict(
             (
                 await db.execute(
-                    select(InventoryTransaction.id, InventoryTransaction.reference).where(
-                        InventoryTransaction.id.in_(txn_ids)
-                    )
+                    select(
+                        InventoryTransaction.id, InventoryTransaction.reference
+                    ).where(InventoryTransaction.id.in_(txn_ids))
                 )
             ).all()
         )
@@ -1162,9 +1165,7 @@ async def _serialise_production_order(
         if item is not None:
             line_payload.item_name = item.name
             line_payload.item_sku = item.sku
-            category = (
-                categories.get(item.category_id) if item.category_id else None
-            )
+            category = categories.get(item.category_id) if item.category_id else None
             if category is not None:
                 line_payload.category_name = category.name
                 line_payload.category_order = int(category.display_order or 0)
@@ -1251,7 +1252,9 @@ async def list_production_orders(
         stmt = stmt.where(ProductionOrder.source_branch_id == source_branch_id)
     elif not _is_super(user):
         allowed = list(access_service.branch_ids_for(user))
-        stmt = stmt.where(ProductionOrder.source_branch_id.in_(allowed or [uuid.uuid4()]))
+        stmt = stmt.where(
+            ProductionOrder.source_branch_id.in_(allowed or [uuid.uuid4()])
+        )
     if status_filter:
         stmt = stmt.where(ProductionOrder.status == status_filter)
     if date_from:
@@ -1275,9 +1278,7 @@ async def list_production_orders(
     ]
 
 
-@production_orders_router.get(
-    "/{order_id}", response_model=ProductionOrderResponse
-)
+@production_orders_router.get("/{order_id}", response_model=ProductionOrderResponse)
 async def get_production_order(
     order_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -1400,7 +1401,9 @@ async def pos_produce_line(
     user: User = Depends(require("inventory.production.manage")),
 ):
     """Mark one line produced, posting its PRODUCTION movement now."""
-    await access_service.assert_branch_access(db, user, await _load_line_branch(db, line_id))
+    await access_service.assert_branch_access(
+        db, user, await _load_line_branch(db, line_id)
+    )
     line = await transfer_service.produce_line(
         db, line_id=line_id, user=user, quantity=data.quantity, notes=data.notes
     )
@@ -1418,7 +1421,9 @@ async def pos_cancel_line(
     user: User = Depends(require("inventory.production.manage")),
 ):
     """Cancel one pending line with a note. Moves no stock."""
-    await access_service.assert_branch_access(db, user, await _load_line_branch(db, line_id))
+    await access_service.assert_branch_access(
+        db, user, await _load_line_branch(db, line_id)
+    )
     line = await transfer_service.cancel_production_line(
         db, line_id=line_id, user=user, note=data.note
     )

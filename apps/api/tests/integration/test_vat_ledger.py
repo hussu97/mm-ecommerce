@@ -81,11 +81,15 @@ async def seeded(engine):
         # The legal entities are seeded by migration 237 — use them, don't clash on
         # the unique reference.
         fatema = (
-            await db.execute(select(LegalEntity).where(LegalEntity.reference == "fatema"))
+            await db.execute(
+                select(LegalEntity).where(LegalEntity.reference == "fatema")
+            )
         ).scalar_one()
         najm = (
             await db.execute(
-                select(LegalEntity).where(LegalEntity.vat_registered.is_(False)).limit(1)
+                select(LegalEntity)
+                .where(LegalEntity.vat_registered.is_(False))
+                .limit(1)
             )
         ).scalar_one()
         branch = Branch(
@@ -97,37 +101,68 @@ async def seeded(engine):
 
         # Fatema (registered)
         o1 = _order(  # counter sale → sales_output
-            branch.id, fatema.id, source="cashier", status=OrderStatusEnum.DELIVERED.value,
-            pos_status="closed", total=Decimal("105"), total_excl_vat=Decimal("100"),
-            vat_amount=Decimal("5"), vat_rate=Decimal("0.05"),
+            branch.id,
+            fatema.id,
+            source="cashier",
+            status=OrderStatusEnum.DELIVERED.value,
+            pos_status="closed",
+            total=Decimal("105"),
+            total_excl_vat=Decimal("100"),
+            vat_amount=Decimal("5"),
+            vat_rate=Decimal("0.05"),
         )
         o2 = _order(  # refunded → sales_refund only (not a completed sale)
-            branch.id, fatema.id, source="online", status=OrderStatusEnum.REFUNDED.value,
-            total=Decimal("105"), vat_rate=Decimal("0.05"), refunded_amount=Decimal("21"),
+            branch.id,
+            fatema.id,
+            source="online",
+            status=OrderStatusEnum.REFUNDED.value,
+            total=Decimal("105"),
+            vat_rate=Decimal("0.05"),
+            refunded_amount=Decimal("21"),
         )
         o3 = _order(  # cancelled but carries fees → commission + payment only
-            branch.id, fatema.id, source="aggregator",
-            status=OrderStatusEnum.CANCELLED.value, total=Decimal("0"),
-            aggregator_fee=Decimal("10.50"), payment_fee=Decimal("2.10"),
+            branch.id,
+            fatema.id,
+            source="aggregator",
+            status=OrderStatusEnum.CANCELLED.value,
+            total=Decimal("0"),
+            aggregator_fee=Decimal("10.50"),
+            payment_fee=Decimal("2.10"),
         )
         o4 = _order(  # cancelled, carries a courier cost → courier_fees only
-            branch.id, fatema.id, source="online",
-            status=OrderStatusEnum.CANCELLED.value, total=Decimal("0"),
+            branch.id,
+            fatema.id,
+            source="online",
+            status=OrderStatusEnum.CANCELLED.value,
+            total=Decimal("0"),
         )
         # Najm (not registered)
         o5 = _order(  # counter sale, zero VAT → sales_output najm net only
-            branch.id, najm.id, source="cashier", status=OrderStatusEnum.DELIVERED.value,
-            pos_status="closed", total=Decimal("50"), total_excl_vat=Decimal("50"),
-            vat_amount=Decimal("0"), vat_rate=Decimal("0"),
+            branch.id,
+            najm.id,
+            source="cashier",
+            status=OrderStatusEnum.DELIVERED.value,
+            pos_status="closed",
+            total=Decimal("50"),
+            total_excl_vat=Decimal("50"),
+            vat_amount=Decimal("0"),
+            vat_rate=Decimal("0"),
         )
         o6 = _order(  # najm commission → input, non-recoverable
-            branch.id, najm.id, source="aggregator",
-            status=OrderStatusEnum.CANCELLED.value, total=Decimal("0"),
+            branch.id,
+            najm.id,
+            source="aggregator",
+            status=OrderStatusEnum.CANCELLED.value,
+            total=Decimal("0"),
             aggregator_fee=Decimal("10.50"),
         )
         db.add_all([o1, o2, o3, o4, o5, o6])
         await db.flush()
-        db.add(OrderDelivery(order_id=o4.id, provider="lalamove", cost_total=Decimal("5.25")))
+        db.add(
+            OrderDelivery(
+                order_id=o4.id, provider="lalamove", cost_total=Decimal("5.25")
+            )
+        )
 
         supplier = Supplier(name=f"{MARKER} supplier", is_vat_deductible=True)
         db.add(supplier)
@@ -156,17 +191,23 @@ async def seeded(engine):
         bid = ids["branch_id"]
         order_ids = select(Order.id).where(Order.branch_id == bid)
         await db.execute(
-            OrderDelivery.__table__.delete().where(OrderDelivery.order_id.in_(order_ids))
+            OrderDelivery.__table__.delete().where(
+                OrderDelivery.order_id.in_(order_ids)
+            )
         )
         await db.execute(Order.__table__.delete().where(Order.branch_id == bid))
         await db.execute(
             PurchaseOrder.__table__.delete().where(PurchaseOrder.branch_id == bid)
         )
-        await db.execute(Supplier.__table__.delete().where(Supplier.name.like(f"{MARKER}%")))
+        await db.execute(
+            Supplier.__table__.delete().where(Supplier.name.like(f"{MARKER}%"))
+        )
         await db.execute(Warehouse.__table__.delete().where(Warehouse.branch_id == bid))
         await db.execute(Branch.__table__.delete().where(Branch.id == bid))
         await db.execute(
-            VatLedgerEntry.__table__.delete().where(VatLedgerEntry.business_date == BDATE)
+            VatLedgerEntry.__table__.delete().where(
+                VatLedgerEntry.business_date == BDATE
+            )
         )
         await db.commit()
 
@@ -188,45 +229,45 @@ async def test_compute_window_splits_every_category(seeded):
         rows = await vat_ledger.read_ledger(db, date_from=BDATE, date_to=BDATE)
 
     fat = _by_cat(rows, ids["fatema_id"])
-    O, I = VatDirectionEnum.OUTPUT.value, VatDirectionEnum.INPUT.value
+    OUT, INP = VatDirectionEnum.OUTPUT.value, VatDirectionEnum.INPUT.value
 
-    sales = fat[(VatCategoryEnum.SALES_OUTPUT.value, O)]
+    sales = fat[(VatCategoryEnum.SALES_OUTPUT.value, OUT)]
     assert sales["net_value"] == Decimal("100.00")
     assert sales["vat_amount"] == Decimal("5.00")
     assert sales["gross_value"] == Decimal("105.00")
 
-    refund = fat[(VatCategoryEnum.SALES_REFUND.value, O)]
+    refund = fat[(VatCategoryEnum.SALES_REFUND.value, OUT)]
     assert refund["gross_value"] == Decimal("-21.00")
     assert refund["vat_amount"] == Decimal("-1.00")
     assert refund["net_value"] == Decimal("-20.00")
 
-    comm = fat[(VatCategoryEnum.AGGREGATOR_COMMISSION.value, I)]
+    comm = fat[(VatCategoryEnum.AGGREGATOR_COMMISSION.value, INP)]
     assert comm["gross_value"] == Decimal("10.50")
     assert comm["net_value"] == Decimal("10.00")
     assert comm["vat_amount"] == Decimal("0.50")
     assert comm["vat_recoverable"] is True
 
-    pay = fat[(VatCategoryEnum.PAYMENT_PROCESSING.value, I)]
+    pay = fat[(VatCategoryEnum.PAYMENT_PROCESSING.value, INP)]
     assert pay["net_value"] == Decimal("2.00")
     assert pay["vat_amount"] == Decimal("0.10")
 
-    courier = fat[(VatCategoryEnum.COURIER_FEES.value, I)]
+    courier = fat[(VatCategoryEnum.COURIER_FEES.value, INP)]
     assert courier["gross_value"] == Decimal("5.25")
     assert courier["net_value"] == Decimal("5.00")
     assert courier["vat_amount"] == Decimal("0.25")
 
-    raw = fat[(VatCategoryEnum.RAW_GOODS.value, I)]
+    raw = fat[(VatCategoryEnum.RAW_GOODS.value, INP)]
     assert raw["net_value"] == Decimal("200.00")
     assert raw["vat_amount"] == Decimal("10.00")
     assert raw["gross_value"] == Decimal("210.00")
 
     # Najm: output VAT zero; input commission shown but non-recoverable.
     naj = _by_cat(rows, ids["najm_id"])
-    naj_sales = naj[(VatCategoryEnum.SALES_OUTPUT.value, O)]
+    naj_sales = naj[(VatCategoryEnum.SALES_OUTPUT.value, OUT)]
     assert naj_sales["net_value"] == Decimal("50.00")
     assert naj_sales["vat_amount"] == Decimal("0.00")
 
-    naj_comm = naj[(VatCategoryEnum.AGGREGATOR_COMMISSION.value, I)]
+    naj_comm = naj[(VatCategoryEnum.AGGREGATOR_COMMISSION.value, INP)]
     assert naj_comm["gross_value"] == Decimal("10.50")
     assert naj_comm["net_value"] == Decimal("10.00")
     assert naj_comm["vat_amount"] == Decimal("0.00")

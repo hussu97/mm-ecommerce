@@ -20,8 +20,9 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
+
+from alembic import op
 
 revision: str = "261_production_orders"
 down_revision: Union[str, None] = "260_vat_ledger"
@@ -80,9 +81,7 @@ def upgrade() -> None:
             name="ck_production_orders_business_date_format",
         ),
     )
-    op.create_index(
-        "ix_production_orders_status", "production_orders", ["status"]
-    )
+    op.create_index("ix_production_orders_status", "production_orders", ["status"])
     op.create_index(
         "ix_production_orders_source_branch_id",
         "production_orders",

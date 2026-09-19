@@ -214,7 +214,9 @@ async def test_create_moves_no_stock_then_produce_posts(env):
             source_branch=ids.source,
             user=ids.user,
             production_items=[
-                SimpleNamespace(item_id=ids.brownie, quantity=Decimal("5"), unit="storage")
+                SimpleNamespace(
+                    item_id=ids.brownie, quantity=Decimal("5"), unit="storage"
+                )
             ],
         )
         await db.commit()
@@ -222,9 +224,12 @@ async def test_create_moves_no_stock_then_produce_posts(env):
         assert len(order.lines) == 1
         line_id = order.lines[0].id
         # No movement at create.
-        assert await _count_txns(db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value) == 0
-        flour_before = await _on_hand(db, ids.flour, ids.source_wh)
-        brownie_before = await _on_hand(db, ids.brownie, ids.source_wh)
+        assert (
+            await _count_txns(
+                db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value
+            )
+            == 0
+        )
 
     async with Session() as db:
         line = await transfer_service.produce_line(db, line_id=line_id, user=ids.user)
@@ -237,11 +242,23 @@ async def test_create_moves_no_stock_then_produce_posts(env):
         # Ledger: brownie up 5, flour down 10 (2g/unit).
         assert await _on_hand(db, ids.brownie, ids.source_wh) == Decimal("5.0000")
         assert await _on_hand(db, ids.flour, ids.source_wh) == Decimal("990.0000")
-        assert await _count_txns(db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value) == 1
-        assert await _count_txns(
-            db, ids.source.id, InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value
-        ) == 1
-        order = await transfer_service.load_production_order(db, line.production_order_id)
+        assert (
+            await _count_txns(
+                db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value
+            )
+            == 1
+        )
+        assert (
+            await _count_txns(
+                db,
+                ids.source.id,
+                InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value,
+            )
+            == 1
+        )
+        order = await transfer_service.load_production_order(
+            db, line.production_order_id
+        )
         assert order.status == ProductionOrderStatusEnum.PRODUCED.value
         # The PRODUCTION movement links back to the line.
         txn = await db.get(InventoryTransaction, line.production_transaction_id)
@@ -262,8 +279,12 @@ async def test_partial_then_produce_all(env):
             source_branch=ids.source,
             user=ids.user,
             production_items=[
-                SimpleNamespace(item_id=ids.brownie, quantity=Decimal("3"), unit="storage"),
-                SimpleNamespace(item_id=ids.cookie, quantity=Decimal("4"), unit="storage"),
+                SimpleNamespace(
+                    item_id=ids.brownie, quantity=Decimal("3"), unit="storage"
+                ),
+                SimpleNamespace(
+                    item_id=ids.cookie, quantity=Decimal("4"), unit="storage"
+                ),
             ],
         )
         await db.commit()
@@ -281,7 +302,7 @@ async def test_partial_then_produce_all(env):
         await db.commit()
         assert order.status == ProductionOrderStatusEnum.PRODUCED.value
         assert all(
-            l.status == ProductionLineStatusEnum.PRODUCED.value for l in order.lines
+            ln.status == ProductionLineStatusEnum.PRODUCED.value for ln in order.lines
         )
 
 
@@ -293,7 +314,9 @@ async def test_cancel_requires_note_and_moves_nothing(env):
             source_branch=ids.source,
             user=ids.user,
             production_items=[
-                SimpleNamespace(item_id=ids.brownie, quantity=Decimal("2"), unit="storage")
+                SimpleNamespace(
+                    item_id=ids.brownie, quantity=Decimal("2"), unit="storage"
+                )
             ],
         )
         await db.commit()
@@ -312,8 +335,15 @@ async def test_cancel_requires_note_and_moves_nothing(env):
         await db.commit()
         assert line.status == ProductionLineStatusEnum.CANCELLED.value
         assert line.cancel_note == "Out of flour"
-        assert await _count_txns(db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value) == 0
-        order = await transfer_service.load_production_order(db, line.production_order_id)
+        assert (
+            await _count_txns(
+                db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value
+            )
+            == 0
+        )
+        order = await transfer_service.load_production_order(
+            db, line.production_order_id
+        )
         # Only line cancelled ⇒ whole order cancelled.
         assert order.status == ProductionOrderStatusEnum.CANCELLED.value
 
@@ -327,7 +357,9 @@ async def test_non_recipe_item_rejected(env):
                 source_branch=ids.source,
                 user=ids.user,
                 production_items=[
-                    SimpleNamespace(item_id=ids.napkin, quantity=Decimal("1"), unit="storage")
+                    SimpleNamespace(
+                        item_id=ids.napkin, quantity=Decimal("1"), unit="storage"
+                    )
                 ],
             )
 
@@ -350,7 +382,9 @@ async def test_combined_transfer_and_production_links(env):
                 )
             ],
             production_items=[
-                SimpleNamespace(item_id=ids.brownie, quantity=Decimal("2"), unit="storage")
+                SimpleNamespace(
+                    item_id=ids.brownie, quantity=Decimal("2"), unit="storage"
+                )
             ],
         )
         await db.commit()
@@ -365,4 +399,9 @@ async def test_combined_transfer_and_production_links(env):
         ).scalar_one()
         assert len(prod.lines) == 1
         # No production movement at create.
-        assert await _count_txns(db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value) == 0
+        assert (
+            await _count_txns(
+                db, ids.source.id, InventoryTransactionTypeEnum.PRODUCTION.value
+            )
+            == 0
+        )

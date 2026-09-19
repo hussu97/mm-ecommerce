@@ -281,9 +281,7 @@ def make_lifespan(service: str, *, seed: bool, run_scheduler: bool = False):
                 from app.services import vat_ledger
 
                 background.append(
-                    spawn_tracked(
-                        vat_ledger.run_forever(), name="vat_ledger_refresh"
-                    )
+                    spawn_tracked(vat_ledger.run_forever(), name="vat_ledger_refresh")
                 )
 
             # Branch hours sync. Same reasoning as its neighbours — no cron here,

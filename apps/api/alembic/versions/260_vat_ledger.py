@@ -22,8 +22,9 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
+
+from alembic import op
 
 revision: str = "260_vat_ledger"
 down_revision: Union[str, None] = "259_drop_supplier_item_cost"

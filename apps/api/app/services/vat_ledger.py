@@ -35,10 +35,10 @@ from app.core import advisory_lock, heartbeat
 from app.core.config import settings
 from app.core.money import money, to_decimal
 from app.models.base import utcnow
+from app.models.inventory import PurchaseOrder, PurchaseOrderStatusEnum
 from app.models.legal_entity import LegalEntity
 from app.models.order import Order
 from app.models.order_delivery import OrderDelivery
-from app.models.inventory import PurchaseOrder, PurchaseOrderStatusEnum
 from app.models.vat_ledger import VatCategoryEnum, VatDirectionEnum, VatLedgerEntry
 from app.services.orders import tax_identity_service
 from app.services.orders.order_pricing import VAT_RATE
@@ -104,7 +104,9 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
 
     grains: dict[tuple[str, uuid.UUID, str, str], _Grain] = {}
 
-    def cell(bdate: str, entity_id: uuid.UUID | None, category: str, direction: str) -> _Grain:
+    def cell(
+        bdate: str, entity_id: uuid.UUID | None, category: str, direction: str
+    ) -> _Grain:
         eid = entity_id or default_entity
         key = (bdate, eid, category, direction)
         grain = grains.get(key)
@@ -133,7 +135,12 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         .group_by(Order.business_date, Order.legal_entity_id)
     )
     for bdate, entity_id, net, vat, gross, count in sales:
-        g = cell(bdate, entity_id, VatCategoryEnum.SALES_OUTPUT.value, VatDirectionEnum.OUTPUT.value)
+        g = cell(
+            bdate,
+            entity_id,
+            VatCategoryEnum.SALES_OUTPUT.value,
+            VatDirectionEnum.OUTPUT.value,
+        )
         g.net += to_decimal(net)
         g.vat += to_decimal(vat)
         g.gross += to_decimal(gross)
@@ -143,9 +150,7 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
     # VAT in a refund is derived from the order's own frozen rate, so a refund on
     # a zero-VAT (non-registered) order carries no VAT reduction.
     refund_vat = func.sum(
-        func.coalesce(Order.refunded_amount, 0)
-        * Order.vat_rate
-        / (1 + Order.vat_rate)
+        func.coalesce(Order.refunded_amount, 0) * Order.vat_rate / (1 + Order.vat_rate)
     )
     refunds = await db.execute(
         select(
@@ -159,7 +164,12 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         .group_by(Order.business_date, Order.legal_entity_id)
     )
     for bdate, entity_id, gross, vat, count in refunds:
-        g = cell(bdate, entity_id, VatCategoryEnum.SALES_REFUND.value, VatDirectionEnum.OUTPUT.value)
+        g = cell(
+            bdate,
+            entity_id,
+            VatCategoryEnum.SALES_REFUND.value,
+            VatDirectionEnum.OUTPUT.value,
+        )
         gross_d = money(gross)
         vat_d = money(vat)
         g.gross -= gross_d
@@ -207,7 +217,12 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
         .group_by(Order.business_date, Order.legal_entity_id)
     )
     for bdate, entity_id, gross, count in couriers:
-        g = cell(bdate, entity_id, VatCategoryEnum.COURIER_FEES.value, VatDirectionEnum.INPUT.value)
+        g = cell(
+            bdate,
+            entity_id,
+            VatCategoryEnum.COURIER_FEES.value,
+            VatDirectionEnum.INPUT.value,
+        )
         net, vat = _split_inclusive(gross)
         g.net += net
         g.vat += vat
@@ -246,7 +261,12 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
             db, branch_id=branch_id, source="cashier"
         )
         entity_id = entity.id if entity is not None else default_entity
-        g = cell(bdate, entity_id, VatCategoryEnum.RAW_GOODS.value, VatDirectionEnum.INPUT.value)
+        g = cell(
+            bdate,
+            entity_id,
+            VatCategoryEnum.RAW_GOODS.value,
+            VatDirectionEnum.INPUT.value,
+        )
         g.net += to_decimal(net)
         g.vat += to_decimal(vat)
         g.gross += to_decimal(gross)
@@ -257,7 +277,9 @@ async def compute_window(db: AsyncSession, date_from: str, date_to: str) -> int:
     # VAT and flag it non-recoverable. Output rows already carry zero VAT.
     now = utcnow()
     for (bdate, entity_id, category, direction), g in grains.items():
-        if direction == VatDirectionEnum.INPUT.value and not registered.get(entity_id, True):
+        if direction == VatDirectionEnum.INPUT.value and not registered.get(
+            entity_id, True
+        ):
             g.vat = to_decimal(0)
             g.recoverable = False
 
@@ -322,7 +344,9 @@ async def read_ledger(
             VatLedgerEntry.category,
             VatLedgerEntry.direction,
         )
-        .order_by(LegalEntity.legal_name, VatLedgerEntry.direction, VatLedgerEntry.category)
+        .order_by(
+            LegalEntity.legal_name, VatLedgerEntry.direction, VatLedgerEntry.category
+        )
     )
     if date_from:
         stmt = stmt.where(VatLedgerEntry.business_date >= date_from)

@@ -176,9 +176,10 @@ async def item_produces_something(db: AsyncSession, item_id: uuid.UUID) -> bool:
     """Whether an inventory item is *made* — has an active recipe (v2) or a legacy
     bill of materials. This is the "produces something" test the production order
     uses: only such items can appear as a production line."""
-    if await active_version(
-        db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item_id
-    ) is not None:
+    if (
+        await active_version(db, RecipeOwnerKindEnum.INVENTORY_ITEM.value, item_id)
+        is not None
+    ):
         return True
     legacy = await db.scalar(
         select(func.count())
@@ -193,19 +194,25 @@ async def producible_item_ids(db: AsyncSession) -> set[uuid.UUID]:
     BOM. The admin transfer/production grid gates its "qty to produce" input on
     membership of this set, so only makeable items are offered."""
     v2 = (
-        await db.execute(
-            select(Recipe.inventory_item_id)
-            .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
-            .where(
-                Recipe.owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value,
-                Recipe.inventory_item_id.is_not(None),
-                RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
+        (
+            await db.execute(
+                select(Recipe.inventory_item_id)
+                .join(RecipeVersion, RecipeVersion.recipe_id == Recipe.id)
+                .where(
+                    Recipe.owner_kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value,
+                    Recipe.inventory_item_id.is_not(None),
+                    RecipeVersion.status == RecipeVersionStatusEnum.ACTIVE.value,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     legacy = (
-        await db.execute(select(InventoryItemIngredient.parent_item_id).distinct())
-    ).scalars().all()
+        (await db.execute(select(InventoryItemIngredient.parent_item_id).distinct()))
+        .scalars()
+        .all()
+    )
     return {i for i in v2 if i is not None} | {i for i in legacy if i is not None}
 
 

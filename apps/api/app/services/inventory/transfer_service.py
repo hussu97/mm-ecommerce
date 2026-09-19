@@ -1280,9 +1280,7 @@ async def load_production_order(
     return order
 
 
-async def _lock_production_line(
-    db: AsyncSession, line_id: uuid.UUID
-) -> ProductionLine:
+async def _lock_production_line(db: AsyncSession, line_id: uuid.UUID) -> ProductionLine:
     """Serialize a single line's transition so two tills cannot both produce it."""
     line = (
         await db.execute(
@@ -1297,9 +1295,7 @@ async def _lock_production_line(
     return line
 
 
-async def _recompute_production_status(
-    db: AsyncSession, order_id: uuid.UUID
-) -> None:
+async def _recompute_production_status(db: AsyncSession, order_id: uuid.UUID) -> None:
     """Roll the lines' statuses up onto the production order, under a parent lock."""
     order = (
         await db.execute(
@@ -1314,12 +1310,12 @@ async def _recompute_production_status(
         return
     L = ProductionLineStatusEnum
     P = ProductionOrderStatusEnum
-    live = [l for l in order.lines if l.status != L.CANCELLED.value]
+    live = [ln for ln in order.lines if ln.status != L.CANCELLED.value]
     if not live:
         order.status = P.CANCELLED.value
-    elif all(l.status == L.PRODUCED.value for l in live):
+    elif all(ln.status == L.PRODUCED.value for ln in live):
         order.status = P.PRODUCED.value
-    elif any(l.status == L.PRODUCED.value for l in live):
+    elif any(ln.status == L.PRODUCED.value for ln in live):
         order.status = P.PARTIALLY_PRODUCED.value
     else:
         order.status = P.PENDING.value

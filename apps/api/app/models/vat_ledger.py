@@ -121,9 +121,7 @@ class VatLedgerEntry(Base, UUIDMixin, TimestampMixin):
     )
     #: False on an input row whose entity is not VAT-registered — the cost shows
     #: but the VAT cannot be reclaimed. Always true for output rows.
-    vat_recoverable: Mapped[bool] = mapped_column(
-        nullable=False, server_default="true"
-    )
+    vat_recoverable: Mapped[bool] = mapped_column(nullable=False, server_default="true")
     #: How many source rows fed this grain, so "0 because none" is distinct from
     #: "no data yet".
     source_count: Mapped[int] = mapped_column(
