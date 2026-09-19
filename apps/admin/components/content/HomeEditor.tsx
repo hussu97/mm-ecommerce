@@ -54,11 +54,6 @@ interface GalleryItem {
   alt?: string;
 }
 
-interface Occasion {
-  icon: string;
-  label: string;
-}
-
 /** Copy for the storefront's custom-order enquiry form (the "We cater to"
  *  section). Every field is optional; the storefront falls back to English. */
 interface CaterForm {
@@ -110,7 +105,6 @@ interface HomeContent {
     subtitle?: string;
     cta_text?: string;
     cta_href?: string;
-    occasions?: Occasion[];
     gallery?: GalleryItem[];
     form?: CaterForm;
   };
@@ -562,20 +556,6 @@ export function HomeEditor({ content, onChange }: Props) {
           onChange={cta_href => setBlock('cater', { cta_href })}
         />
       </div>
-
-      <Repeatable<Occasion>
-        items={c.cater?.occasions ?? []}
-        onChange={occasions => setBlock('cater', { occasions })}
-        blank={() => ({ icon: '🎉', label: '' })}
-        addLabel="Add occasion"
-      >
-        {(occasion, set) => (
-          <div className="grid grid-cols-[100px_1fr] gap-3">
-            <Field label="Emoji" value={occasion.icon} onChange={icon => set({ icon })} />
-            <Field label="Label" value={occasion.label} onChange={label => set({ label })} />
-          </div>
-        )}
-      </Repeatable>
 
       <div className="mt-4">
         <p className="text-xs font-medium uppercase tracking-wider text-gray-600 mb-2">

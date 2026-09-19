@@ -3,11 +3,6 @@ import { Icon } from '@/components/ui/Icon';
 import { CaterGallery } from './CaterGallery';
 import { CaterEnquiryForm, type CaterFormCopy } from './CaterEnquiryForm';
 
-export interface Occasion {
-  icon: string;
-  label: string;
-}
-
 export interface CaterGalleryItem {
   /** Public image URL (a GCS object under the `cater/` folder). Named `image`
    *  to match the baker gallery's item shape and the admin's `GalleryItem`. */
@@ -19,7 +14,6 @@ export interface CaterGalleryItem {
 export interface CaterContent {
   title?: string;
   subtitle?: string;
-  occasions?: Occasion[];
   /** Real custom cakes to show off, per occasion. Rendered as an auto-scrolling,
    *  click-to-zoom gallery. Editable in the admin Content tab. */
   gallery?: CaterGalleryItem[];
@@ -29,7 +23,6 @@ export interface CaterContent {
 }
 
 export function CaterSection({ c, locale }: { c: CaterContent; locale: string }) {
-  const occasions = c.occasions ?? [];
   const gallery = c.gallery ?? [];
 
   return (
@@ -46,27 +39,6 @@ export function CaterSection({ c, locale }: { c: CaterContent; locale: string })
             <p className="font-body text-sm text-gray-500 mt-2.5">{c.subtitle}</p>
           )}
         </Reveal>
-
-        {occasions.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-            {occasions.map(({ icon, label }, i) => (
-              <Reveal key={`${label}-${i}`} delay={Math.min(i, 6) * 55}>
-                <div className="group h-full flex flex-col items-center justify-center gap-3 p-5 sm:p-6 bg-white border border-secondary/40 hover:border-primary hover:shadow-[0_10px_30px_-18px_rgba(138,90,100,0.55)] hover:-translate-y-0.5 transition-all duration-300">
-                  <span
-                    className="text-3xl transition-transform duration-300 group-hover:scale-110"
-                    role="img"
-                    aria-label={label}
-                  >
-                    {icon}
-                  </span>
-                  <span className="font-body text-[10px] sm:text-xs uppercase tracking-[0.18em] text-gray-600 text-center">
-                    {label}
-                  </span>
-                </div>
-              </Reveal>
-            ))}
-          </div>
-        )}
 
         {gallery.length > 0 && (
           <Reveal delay={80} className="mt-10 sm:mt-12">
