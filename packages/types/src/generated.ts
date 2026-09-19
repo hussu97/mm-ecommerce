@@ -2554,6 +2554,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/custom-orders/enquiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Enquiry
+         * @description Take a custom-order request from the "We cater to" section of the home page.
+         *
+         *     This stores a lead and emails the shop — it does **not** create an order or a
+         *     `CustomOrder`, and holds no slot on the custom-cake calendar. A human reads it
+         *     and decides whether it becomes a booking, which is why the form tells the
+         *     customer their delivery date is confirmed only after review.
+         */
+        post: operations["submit_enquiry_api_v1_custom_orders_enquiry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/custom-orders/enquiry/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Enquiry Image
+         * @description Upload one inspiration photo for a custom-order enquiry, returning its URL.
+         *
+         *     Public because the person filling in the enquiry form has no account — the
+         *     admin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot
+         *     be reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is
+         *     single-use, and one enquiry uploads up to four photos before it submits, so a
+         *     token spent on the first upload would fail the rest. The human check lives on
+         *     `/enquiry` — the request that actually stores a lead and sends mail. This
+         *     endpoint only puts a re-encoded, downscaled, size- and type-capped image in
+         *     the bucket, and a rate limit bounds the rest.
+         */
+        post: operations["upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dashboard/today": {
         parameters: {
             query?: never;
@@ -9944,6 +9998,11 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post */
+        Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_image_api_v1_uploads_image_post */
         Body_upload_image_api_v1_uploads_image_post: {
             /** File */
@@ -11618,6 +11677,42 @@ export interface components {
              * @default enquiry
              */
             status: string;
+        };
+        /**
+         * CustomOrderEnquiryCreate
+         * @description A custom-order request from the "We cater to" section. A lead, not an order.
+         */
+        CustomOrderEnquiryCreate: {
+            /** Approx Kg */
+            approx_kg?: number | string | null;
+            /** Customer Name */
+            customer_name: string;
+            /** Customer Phone */
+            customer_phone: string;
+            /** Delivery By */
+            delivery_by?: string | null;
+            /** Description */
+            description: string;
+            /** Reference Image Urls */
+            reference_image_urls?: string[];
+            /** Turnstile Token */
+            turnstile_token?: string | null;
+        };
+        /**
+         * CustomOrderEnquiryResponse
+         * @description What the storefront gets back: enough to confirm receipt, nothing more.
+         */
+        CustomOrderEnquiryResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
         };
         /** CustomOrderResponse */
         CustomOrderResponse: {
@@ -25862,6 +25957,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AvailabilityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_enquiry_api_v1_custom_orders_enquiry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomOrderEnquiryCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomOrderEnquiryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_enquiry_image_api_v1_custom_orders_enquiry_image_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

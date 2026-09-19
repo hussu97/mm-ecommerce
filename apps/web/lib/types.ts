@@ -846,3 +846,27 @@ export interface DeliveryArea {
    */
   polygon_id?: string | null;
 }
+
+// ─── Custom-order enquiries ("We cater to" section) ──────────────────────────
+// A lead a customer sends from the home page. NOT an order — see the API's
+// custom_order_enquiry model. `reference_image_urls` are public GCS URLs the
+// upload endpoint returned, at most four.
+export interface CustomOrderEnquiryCreate {
+  customer_name: string;
+  customer_phone: string;
+  description: string;
+  approx_kg?: number | null;
+  reference_image_urls?: string[];
+  delivery_by?: string | null; // YYYY-MM-DD
+  turnstile_token?: string;
+}
+
+export interface CustomOrderEnquiryResponse {
+  id: string;
+  created_at: string;
+}
+
+export interface EnquiryImageUploadResponse {
+  url: string;
+  key: string;
+}

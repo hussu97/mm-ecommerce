@@ -3165,6 +3165,20 @@
         "title": "Body_preview_stock_audit_file_api_v1_inventory_stock_audits_file_preview_post",
         "type": "object"
       },
+      "Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post",
+        "type": "object"
+      },
       "Body_upload_image_api_v1_uploads_image_post": {
         "properties": {
           "file": {
@@ -8088,6 +8102,106 @@
           "description"
         ],
         "title": "CustomOrderCreate",
+        "type": "object"
+      },
+      "CustomOrderEnquiryCreate": {
+        "description": "A custom-order request from the \"We cater to\" section. A lead, not an order.",
+        "properties": {
+          "approx_kg": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1000.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approx Kg"
+          },
+          "customer_name": {
+            "maxLength": 150,
+            "minLength": 1,
+            "title": "Customer Name",
+            "type": "string"
+          },
+          "customer_phone": {
+            "maxLength": 30,
+            "minLength": 3,
+            "title": "Customer Phone",
+            "type": "string"
+          },
+          "delivery_by": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery By"
+          },
+          "description": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "reference_image_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Reference Image Urls",
+            "type": "array"
+          },
+          "turnstile_token": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnstile Token"
+          }
+        },
+        "required": [
+          "customer_name",
+          "customer_phone",
+          "description"
+        ],
+        "title": "CustomOrderEnquiryCreate",
+        "type": "object"
+      },
+      "CustomOrderEnquiryResponse": {
+        "description": "What the storefront gets back: enough to confirm receipt, nothing more.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "CustomOrderEnquiryResponse",
         "type": "object"
       },
       "CustomOrderResponse": {
@@ -44351,6 +44465,88 @@
           }
         },
         "summary": "Get Availability",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/custom-orders/enquiry": {
+      "post": {
+        "description": "Take a custom-order request from the \"We cater to\" section of the home page.\n\nThis stores a lead and emails the shop \u2014 it does **not** create an order or a\n`CustomOrder`, and holds no slot on the custom-cake calendar. A human reads it\nand decides whether it becomes a booking, which is why the form tells the\ncustomer their delivery date is confirmed only after review.",
+        "operationId": "submit_enquiry_api_v1_custom_orders_enquiry_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomOrderEnquiryCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomOrderEnquiryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Enquiry",
+        "tags": [
+          "Custom Orders"
+        ]
+      }
+    },
+    "/api/v1/custom-orders/enquiry/image": {
+      "post": {
+        "description": "Upload one inspiration photo for a custom-order enquiry, returning its URL.\n\nPublic because the person filling in the enquiry form has no account \u2014 the\nadmin uploader at `/uploads/image` requires `catalogue.manage`, so it cannot\nbe reused. Not Turnstile-guarded, and deliberately: a Turnstile solution is\nsingle-use, and one enquiry uploads up to four photos before it submits, so a\ntoken spent on the first upload would fail the rest. The human check lives on\n`/enquiry` \u2014 the request that actually stores a lead and sends mail. This\nendpoint only puts a re-encoded, downscaled, size- and type-capped image in\nthe bucket, and a rate limit bounds the rest.",
+        "operationId": "upload_enquiry_image_api_v1_custom_orders_enquiry_image_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_enquiry_image_api_v1_custom_orders_enquiry_image_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Enquiry Image",
         "tags": [
           "Custom Orders"
         ]

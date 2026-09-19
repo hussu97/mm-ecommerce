@@ -80,6 +80,8 @@ PUBLIC: set[tuple[str, str]] = {
     ("GET", "/pickup-points"),
     ("GET", "/apple-pay/eligibility"),
     ("GET", "/availability"),  # custom-orders public availability calendar
+    ("POST", "/enquiry"),  # custom-order enquiry from the "We cater to" section
+    ("POST", "/enquiry/image"),  # inspiration photo for a custom-order enquiry
     # ── Public delivery quoting ──────────────────────────────────────────────
     ("GET", "/rates"),
     ("POST", "/calculate"),

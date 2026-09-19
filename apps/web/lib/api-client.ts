@@ -16,7 +16,7 @@ import { readZone } from '@/lib/location/branch-cookie';
 import 'client-only';
 
 import { analytics, normalisePath } from './analytics';
-import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult, ApplePayEligibility, ApplePayIntent } from './types';
+import { AdvertisedPromo, Cart, Product, ProductListResponse, TokenResponse, User, PromoValidateResponse, Order, Address, AddressCreate, OrderCreate, PaymentSessionResponse, PaymentMethod, toWireMethod, DeliveryRates, DeliveryQuote, DeliveryArea, OrderPreview, PickupBranch, TrackResult, ApplePayEligibility, ApplePayIntent, CustomOrderEnquiryCreate, CustomOrderEnquiryResponse, EnquiryImageUploadResponse } from './types';
 import { API_BASE } from './api-base';
 
 export { API_BASE };
@@ -197,6 +197,11 @@ async function request<T>(path: string, options: RequestInit = {}, _retry = true
     ...(options.headers as Record<string, string>),
   };
 
+  // A multipart upload sets its own `Content-Type` with the boundary the browser
+  // generates; our JSON default would clobber that and the server would fail to
+  // parse the parts. Drop it and let fetch fill it in.
+  if (options.body instanceof FormData) delete headers['Content-Type'];
+
   if (sessionId) headers['X-Session-Id'] = sessionId;
 
   const method = (options.method ?? 'GET').toUpperCase();
@@ -269,6 +274,9 @@ export const api = {
   put:    <T>(path: string, data?: unknown)  => request<T>(path, { method: 'PUT',    body: JSON.stringify(data) }),
   patch:  <T>(path: string, data?: unknown)  => request<T>(path, { method: 'PATCH',  body: JSON.stringify(data) }),
   delete: <T>(path: string)                  => request<T>(path, { method: 'DELETE' }),
+  // Multipart POST for file uploads — same wrapper (session id, 401 retry,
+  // analytics), just a FormData body instead of JSON.
+  postForm: <T>(path: string, form: FormData) => request<T>(path, { method: 'POST', body: form }),
 };
 
 // ─── Typed endpoints ──────────────────────────────────────────────────────────
@@ -620,4 +628,26 @@ export const deliveryApi = {
       longitude,
       address: address || null,
     }),
+};
+
+// ─── Custom-order enquiries ("We cater to" section) ──────────────────────────
+
+/**
+ * The storefront's custom-order enquiry: a lead, never an order.
+ *
+ * `submit` stores the request and emails the shop; it does not create an order
+ * or hold a slot on the custom-cake calendar (the API is explicit about this).
+ * `uploadImage` puts one inspiration photo in the bucket and returns its URL —
+ * the form collects up to four and passes them to `submit`. The image endpoint
+ * is not Turnstile-guarded (a token is single-use and a form uploads several
+ * photos); the human check rides on `submit`, the request that actually writes.
+ */
+export const enquiryApi = {
+  submit: (data: CustomOrderEnquiryCreate) =>
+    api.post<CustomOrderEnquiryResponse>('/custom-orders/enquiry', data),
+  uploadImage: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.postForm<EnquiryImageUploadResponse>('/custom-orders/enquiry/image', form);
+  },
 };
