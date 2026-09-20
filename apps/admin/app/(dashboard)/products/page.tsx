@@ -13,7 +13,13 @@ import { useConfirm, useToast } from '@/components/ui/feedback';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { formatCurrency } from '@/lib/utils';
-import { BranchStockBadges, useBranchStock } from '@/components/products/BranchStock';
+import {
+  BranchStockBadges,
+  ModifierBranchStockBadges,
+  productOptionIds,
+  useBranchStock,
+  useModifierStock,
+} from '@/components/products/BranchStock';
 
 export default function ProductsPage() {
   const toast = useToast();
@@ -59,6 +65,10 @@ export default function ProductsPage() {
   // however long the list gets — which is what makes a per-branch column
   // affordable rather than a request per row.
   const { branches, statusOf } = useBranchStock();
+  // The option-level twin, for products that have modifiers: their branch-stock
+  // cell reads "how many fillings are in stock here" rather than the rarely-used
+  // product-level flag. One shared fetch, same as the product overrides above.
+  const { statusOf: modifierStatusOf } = useModifierStock();
 
   // Load categories + pre-fetch inactive count on mount
   useEffect(() => {
@@ -358,13 +368,20 @@ export default function ProductsPage() {
               // this screen to say so.
               header: 'Branch stock',
               className: 'text-center',
-              render: p => (
-                <BranchStockBadges
-                  productId={p.id}
-                  branches={branches}
-                  statusOf={statusOf}
-                />
-              ),
+              render: p =>
+                p.product_modifiers.length > 0 ? (
+                  <ModifierBranchStockBadges
+                    optionIds={productOptionIds(p.product_modifiers)}
+                    branches={branches}
+                    statusOf={modifierStatusOf}
+                  />
+                ) : (
+                  <BranchStockBadges
+                    productId={p.id}
+                    branches={branches}
+                    statusOf={statusOf}
+                  />
+                ),
             },
             {
               header: 'Channels',

@@ -7483,6 +7483,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/products/modifier-availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List All Modifier Availability
+         * @description Every modifier-option override in the estate, for the console.
+         *
+         *     The option-level twin of `/availability`: `branch_modifier_options` is
+         *     exception-only too, so one call returns the whole picture — which the
+         *     product list needs to say "5 of 8 fillings in stock at this branch" and the
+         *     edit screen needs to draw its per-option, per-branch grid. Declared above
+         *     `/{slug}` for the same reason `/availability` is: a one-segment GET would
+         *     otherwise be read as a product whose slug is "modifier-availability".
+         */
+        get: operations["list_all_modifier_availability_api_v1_products_modifier_availability_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/products/modifier-options/{option_id}/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Modifier Option Availability
+         * @description Mark one modifier option (a filling, a flavour) in or out at one branch.
+         *
+         *     The option-level sibling of `set_branch_availability`, and the same two
+         *     callers with one meaning: the register's "86 it" on a single filling, and a
+         *     manager doing the same from the console without standing in that kitchen. The
+         *     stock half goes through `availability_service.set_option_stock`, which owns
+         *     the clock and the CHECK that a put-back clears the countdown — so this route
+         *     never touches the column itself and cannot drift from the register.
+         */
+        put: operations["set_modifier_option_availability_api_v1_products_modifier_options__option_id__availability_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/products/{product_id}/availability": {
         parameters: {
             query?: never;
@@ -10521,6 +10575,23 @@ export interface components {
             total_devices: number;
             /** Total Tables */
             total_tables: number;
+        };
+        /** BranchModifierOptionResponse */
+        BranchModifierOptionResponse: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Is In Stock */
+            is_in_stock: boolean;
+            /**
+             * Modifier Option Id
+             * Format: uuid
+             */
+            modifier_option_id: string;
+            /** Out Of Stock Until */
+            out_of_stock_until?: string | null;
         };
         /** BranchProductResponse */
         BranchProductResponse: {
@@ -18786,6 +18857,21 @@ export interface components {
             is_in_stock?: boolean | null;
             /** Price */
             price?: number | string | null;
+        };
+        /** SetOptionAvailabilityRequest */
+        SetOptionAvailabilityRequest: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /**
+             * Duration
+             * @default indefinite
+             */
+            duration: string;
+            /** Is In Stock */
+            is_in_stock: boolean;
         };
         /**
          * SettlementPayoutInfo
@@ -35483,6 +35569,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProductResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_all_modifier_availability_api_v1_products_modifier_availability_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchModifierOptionResponse"][];
+                };
+            };
+        };
+    };
+    set_modifier_option_availability_api_v1_products_modifier_options__option_id__availability_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                option_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetOptionAvailabilityRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchModifierOptionResponse"];
                 };
             };
             /** @description Validation Error */

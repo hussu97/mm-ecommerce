@@ -11,7 +11,7 @@ import type {
   PaymentGateway, PaymentGatewayUpdate,
   LalamoveQuote, OrderStatusEvent,
   FulfilmentOptions, FulfilmentQuote,
-  BranchProductAvailability, StockDuration,
+  BranchProductAvailability, BranchModifierOptionAvailability, StockDuration,
   UrlRedirect,
   GrubOpsLocation,
   GrubOpsOrderList,
@@ -377,6 +377,30 @@ export const productsApi = {
     },
   ) =>
     api.put<BranchProductAvailability>(`/products/${productId}/availability`, data),
+
+  /**
+   * Every modifier-option branch override in the estate, in one call.
+   *
+   * The option-level twin of `branchAvailability` — exception-only, so a few
+   * dozen rows however large the menu — which is what lets the product list say
+   * "5 of 8 fillings in stock here" and the edit screen draw its option×branch
+   * grid without a request per option.
+   */
+  modifierAvailability: () =>
+    api.get<BranchModifierOptionAvailability[]>('/products/modifier-availability'),
+
+  /**
+   * Mark one modifier option in or out of stock at one branch. `duration` only
+   * means anything on the way out; putting it back clears the countdown.
+   */
+  setModifierAvailability: (
+    optionId: string,
+    data: { branch_id: string; is_in_stock: boolean; duration?: StockDuration },
+  ) =>
+    api.put<BranchModifierOptionAvailability>(
+      `/products/modifier-options/${optionId}/availability`,
+      data,
+    ),
 };
 
 // ─── Modifiers ────────────────────────────────────────────────────────────────

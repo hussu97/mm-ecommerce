@@ -7,6 +7,7 @@ import { categoriesApi, productsApi, modifiersApi, uploadsApi, ApiError } from '
 import type { Category, Modifier, Product, SalesChannel, ProductLabel } from '@/lib/types';
 import { SALES_CHANNELS, PRODUCT_LABELS, PRODUCT_LABEL_LABELS } from '@/lib/types';
 import { SalesChannelPicker } from '@/components/products/SalesChannels';
+import { ModifierOptionStockGrid } from '@/components/products/BranchStock';
 import { Button, Input, Select, Textarea } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { TranslationFields } from '@/components/TranslationFields';
@@ -600,6 +601,21 @@ export function ProductForm({ product }: Props) {
               <p className="text-xs text-gray-400 font-body">No modifiers linked.</p>
             )}
           </div>
+
+          {/* Per-option, per-branch stock. A filling is 86'd per branch — that is
+              what pulls a box off one emirate's website — so the flat option
+              chips above are only the menu; this is where each one can actually
+              be made right now, and where a manager puts it back. */}
+          {(currentProduct ?? product).product_modifiers.length > 0 && (
+            <div className="mt-6 pt-5 border-t border-gray-100">
+              <h3 className="text-xs font-body uppercase tracking-widest text-gray-500 mb-3">
+                Option stock by branch
+              </h3>
+              <ModifierOptionStockGrid
+                productModifiers={(currentProduct ?? product).product_modifiers}
+              />
+            </div>
+          )}
         </section>
       )}
 

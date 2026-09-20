@@ -23,7 +23,8 @@ from app.core.deps import (
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.core.permissions import require, require_any
 from app.models.branch import Branch
-from app.models.menu import BranchProduct
+from app.models.menu import BranchModifierOption, BranchProduct
+from app.models.modifier import ModifierOption
 from app.models.product import Product
 from app.models.user import User
 from app.schemas.product import (
@@ -264,6 +265,37 @@ async def list_all_branch_availability(
     """
     rows = (await db.execute(select(BranchProduct))).scalars().all()
     return [BranchProductResponse.model_validate(r) for r in rows]
+
+
+class BranchModifierOptionResponse(BaseModel):
+    branch_id: uuid.UUID
+    modifier_option_id: uuid.UUID
+    is_in_stock: bool
+    #: When it comes back, or null for "until somebody puts it back". Only
+    #: meaningful while `is_in_stock` is false — the same convention as
+    #: `BranchProductResponse`.
+    out_of_stock_until: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/modifier-availability", response_model=list[BranchModifierOptionResponse])
+async def list_all_modifier_availability(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("catalogue.manage")),
+):
+    """
+    Every modifier-option override in the estate, for the console.
+
+    The option-level twin of `/availability`: `branch_modifier_options` is
+    exception-only too, so one call returns the whole picture — which the
+    product list needs to say "5 of 8 fillings in stock at this branch" and the
+    edit screen needs to draw its per-option, per-branch grid. Declared above
+    `/{slug}` for the same reason `/availability` is: a one-segment GET would
+    otherwise be read as a product whose slug is "modifier-availability".
+    """
+    rows = (await db.execute(select(BranchModifierOption))).scalars().all()
+    return [BranchModifierOptionResponse.model_validate(r) for r in rows]
 
 
 @router.get("/{slug}", response_model=ProductResponse)
@@ -547,3 +579,88 @@ async def set_branch_availability(
         until=row.out_of_stock_until,
     )
     return BranchProductResponse.model_validate(row)
+
+
+class SetOptionAvailabilityRequest(BaseModel):
+    branch_id: uuid.UUID
+    is_in_stock: bool
+    #: `one_hour`, `end_of_day` or `indefinite` — the same three the register and
+    #: the product-level setter use.
+    duration: str = availability_service.DURATION_INDEFINITE
+
+
+@router.put(
+    "/modifier-options/{option_id}/availability",
+    response_model=BranchModifierOptionResponse,
+)
+async def set_modifier_option_availability(
+    option_id: uuid.UUID,
+    data: SetOptionAvailabilityRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """
+    Mark one modifier option (a filling, a flavour) in or out at one branch.
+
+    The option-level sibling of `set_branch_availability`, and the same two
+    callers with one meaning: the register's "86 it" on a single filling, and a
+    manager doing the same from the console without standing in that kitchen. The
+    stock half goes through `availability_service.set_option_stock`, which owns
+    the clock and the CHECK that a put-back clears the countdown — so this route
+    never touches the column itself and cannot drift from the register.
+    """
+    if not (user.can("pos.products.availability") or user.can("catalogue.manage")):
+        raise ForbiddenError("You do not have permission to change availability")
+
+    branch = await db.get(Branch, data.branch_id)
+    if branch is None or branch.deleted_at is not None:
+        raise NotFoundError("Branch not found")
+
+    option = await db.get(ModifierOption, option_id)
+    if option is None:
+        raise NotFoundError("Modifier option not found")
+
+    if data.duration not in availability_service.DURATIONS:
+        raise BadRequestError(
+            f"Unknown duration {data.duration!r}. "
+            f"Expected one of {', '.join(availability_service.DURATIONS)}"
+        )
+
+    row = await availability_service.set_option_stock(
+        db,
+        branch=branch,
+        option_id=option_id,
+        in_stock=data.is_in_stock,
+        duration=data.duration,
+    )
+    await db.refresh(row)
+
+    # The website resolves a product's sellability from its options, and its
+    # per-branch answers are cached by the branch that just changed.
+    await catalogue_cache.retire()
+
+    await audit_service.log_action(
+        db,
+        action="UPDATE",
+        entity_type="branch_modifier_option",
+        entity_id=str(row.id),
+        entity_label=f"{option.name} @ {branch.reference}",
+        admin=user,
+        changes={
+            "is_in_stock": row.is_in_stock,
+            "out_of_stock_until": (
+                row.out_of_stock_until.isoformat() if row.out_of_stock_until else None
+            ),
+        },
+        request=request,
+    )
+
+    # GrubOps is fed the same fact per option (its push already speaks option ids).
+    grubops_service.push_change_in_background(
+        branch_id=branch.id,
+        option_ids=[option_id],
+        in_stock=bool(row.is_in_stock),
+        until=row.out_of_stock_until,
+    )
+    return BranchModifierOptionResponse.model_validate(row)

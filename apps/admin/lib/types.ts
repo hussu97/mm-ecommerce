@@ -1430,6 +1430,22 @@ export interface BranchProductAvailability {
 }
 
 /**
+ * One branch's override of the catalogue, for one modifier option.
+ *
+ * The option-level twin of `BranchProductAvailability` and exactly as
+ * exception-only: a row exists where a branch has 86'd one filling/flavour, and
+ * "no row" means the option is offered there. Indexed by
+ * `modifier_option_id + branch_id`; a miss is in stock.
+ */
+export interface BranchModifierOptionAvailability {
+  branch_id: string;
+  modifier_option_id: string;
+  is_in_stock: boolean;
+  /** When it comes back, or null for "until somebody puts it back". */
+  out_of_stock_until: string | null;
+}
+
+/**
  * How long a stockout lasts. The same three the register offers, because they
  * are the same three answers a shop actually gives — and a console that
  * invented a fourth would be describing a state no terminal can produce.

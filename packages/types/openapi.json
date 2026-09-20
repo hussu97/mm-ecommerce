@@ -4278,6 +4278,43 @@
         "title": "BranchLive",
         "type": "object"
       },
+      "BranchModifierOptionResponse": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "is_in_stock": {
+            "title": "Is In Stock",
+            "type": "boolean"
+          },
+          "modifier_option_id": {
+            "format": "uuid",
+            "title": "Modifier Option Id",
+            "type": "string"
+          },
+          "out_of_stock_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Of Stock Until"
+          }
+        },
+        "required": [
+          "branch_id",
+          "modifier_option_id",
+          "is_in_stock"
+        ],
+        "title": "BranchModifierOptionResponse",
+        "type": "object"
+      },
       "BranchProductResponse": {
         "properties": {
           "branch_id": {
@@ -28815,6 +28852,30 @@
           "branch_id"
         ],
         "title": "SetAvailabilityRequest",
+        "type": "object"
+      },
+      "SetOptionAvailabilityRequest": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "duration": {
+            "default": "indefinite",
+            "title": "Duration",
+            "type": "string"
+          },
+          "is_in_stock": {
+            "title": "Is In Stock",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "branch_id",
+          "is_in_stock"
+        ],
+        "title": "SetOptionAvailabilityRequest",
         "type": "object"
       },
       "SettlementPayoutInfo": {
@@ -61713,6 +61774,96 @@
           }
         },
         "summary": "List Featured",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/api/v1/products/modifier-availability": {
+      "get": {
+        "description": "Every modifier-option override in the estate, for the console.\n\nThe option-level twin of `/availability`: `branch_modifier_options` is\nexception-only too, so one call returns the whole picture \u2014 which the\nproduct list needs to say \"5 of 8 fillings in stock at this branch\" and the\nedit screen needs to draw its per-option, per-branch grid. Declared above\n`/{slug}` for the same reason `/availability` is: a one-segment GET would\notherwise be read as a product whose slug is \"modifier-availability\".",
+        "operationId": "list_all_modifier_availability_api_v1_products_modifier_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BranchModifierOptionResponse"
+                  },
+                  "title": "Response List All Modifier Availability Api V1 Products Modifier Availability Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List All Modifier Availability",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/api/v1/products/modifier-options/{option_id}/availability": {
+      "put": {
+        "description": "Mark one modifier option (a filling, a flavour) in or out at one branch.\n\nThe option-level sibling of `set_branch_availability`, and the same two\ncallers with one meaning: the register's \"86 it\" on a single filling, and a\nmanager doing the same from the console without standing in that kitchen. The\nstock half goes through `availability_service.set_option_stock`, which owns\nthe clock and the CHECK that a put-back clears the countdown \u2014 so this route\nnever touches the column itself and cannot drift from the register.",
+        "operationId": "set_modifier_option_availability_api_v1_products_modifier_options__option_id__availability_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "option_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Option Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetOptionAvailabilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BranchModifierOptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Modifier Option Availability",
         "tags": [
           "Products"
         ]
