@@ -369,7 +369,18 @@ class DeliverooClient(BaseAggregatorClient):
         token = (session.tokens or {}).get("access_token") or (
             session.cookies or {}
         ).get("token")
-        if token and not any(k.lower() == "authorization" for k in headers):
+        if token:
+            # The session token is the ONE source of truth for the Bearer. A
+            # captured `authorization` can ride in via `header_profile` — the headed
+            # worker snapshots its request headers, Bearer included — and it goes
+            # stale ~47 min after capture (the identity JWT's life). Deferring to it
+            # made every server-side httpx re-mint replay that dead Bearer while the
+            # data endpoints 401'd, even though `_login` had just minted a good token
+            # (the 2026-09-20 outage: sales sweeps green for days, then 401 from 10:58
+            # the first hour after a 09:12 headed relogin poisoned the profile). So
+            # always overwrite: drop any inherited authorization, set the fresh one.
+            for key in [k for k in headers if k.lower() == "authorization"]:
+                del headers[key]
             headers["Authorization"] = f"Bearer {token}"
         org = self._org_id(session)
         headers.setdefault("X-Roo-Org-Id", org)
@@ -1275,6 +1286,11 @@ class DeliverooClient(BaseAggregatorClient):
         )
         exp = _jwt_exp(token)
         header_profile = dict(previous.header_profile or {}) if previous else {}
+        # Never carry a captured Bearer forward. It belongs to the token we are
+        # replacing right now, so persisting it would shadow the fresh token in
+        # `build_headers` on the next load (the 2026-09-20 stale-Bearer outage).
+        for key in [k for k in header_profile if k.lower() == "authorization"]:
+            del header_profile[key]
         header_profile.setdefault("user-agent", _BROWSER_UA)
         header_profile.setdefault("accept-language", "en-GB,en;q=0.9,ar;q=0.8")
         # Preserve the browser-captured anti-bot cookies (cf_clearance et al.) from
@@ -1328,10 +1344,15 @@ class DeliverooClient(BaseAggregatorClient):
         tokens["access_token"] = token
         cookies = dict(session.cookies or {})
         cookies["token"] = token
+        header_profile = dict(session.header_profile or {})
+        # Drop any stale captured Bearer — the fresh token above is authoritative
+        # (see build_headers / _login: the 2026-09-20 stale-Bearer outage).
+        for key in [k for k in header_profile if k.lower() == "authorization"]:
+            del header_profile[key]
         return await self._persist_minted(
             cookies=cookies,
             tokens=tokens,
-            header_profile=dict(session.header_profile or {}),
+            header_profile=header_profile,
             expires_at=exp,
         )
 

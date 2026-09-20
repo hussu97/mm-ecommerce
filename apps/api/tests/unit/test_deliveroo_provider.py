@@ -55,6 +55,25 @@ _SAMPLE_CSV = textwrap.dedent("""\
 _SAMPLE_CSV_BYTES = _SAMPLE_CSV.encode()
 
 
+def test_build_headers_overwrites_stale_authorization() -> None:
+    """A captured Bearer in header_profile must never shadow the fresh session
+    token. Regression for the 2026-09-20 outage: a headed relogin snapshotted an
+    `authorization` header into the profile; ~47 min later that JWT expired and
+    every httpx re-mint kept replaying it, so the data endpoints 401'd for hours
+    while `_login` was minting perfectly good tokens."""
+    client = DeliverooClient()
+    session = LoadedSession(
+        channel="deliveroo",
+        account_ref="",
+        cookies={"token": "FRESH"},
+        tokens={"access_token": "FRESH", "org_id": "497912"},
+        header_profile={"authorization": "Bearer STALE", "user-agent": "x"},
+    )
+    headers = client.build_headers(session)
+    auth = [v for k, v in headers.items() if k.lower() == "authorization"]
+    assert auth == ["Bearer FRESH"]
+
+
 # ── 1. _num and _parse_date (utilities) ───────────────────────────────────────
 
 
