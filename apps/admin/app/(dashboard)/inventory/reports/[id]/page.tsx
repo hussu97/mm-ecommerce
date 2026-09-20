@@ -7,7 +7,7 @@ import { inventoryApi, type ReportSave, type ShiftInventoryReport } from '@/lib/
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Spinner } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatDateTime, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 type ReportLine = ShiftInventoryReport['lines'][number];
 type GridColumn = { key: string; label: string; role: string; source: string; posts: string | null; editable: boolean };
@@ -296,7 +296,7 @@ export default function ReportDetailPage() {
             {grouped.map((group) => (
               <GroupRows key={group.name} name={group.name} span={columns.length + 3}>
                 {group.lines.map((line) => (
-                  <tr key={line.id} className="border-t border-gray-100">
+                  <tr key={line.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
                     <td className="px-2 py-1 font-medium">{itemName(line)}</td>
                     <td className="px-2 py-1 text-gray-500">{line.unit}</td>
                     {columns.map((col) => (

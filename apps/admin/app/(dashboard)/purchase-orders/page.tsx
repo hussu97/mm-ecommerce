@@ -15,7 +15,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
   PurchaseOrderStatus,
@@ -418,7 +418,7 @@ function CreateOrder({
             const qty = Number(line.quantity || 0);
             const unit = qty > 0 ? Number(line.entered_total || 0) / qty : 0;
             return (
-              <tr key={index} className="border-b border-gray-100">
+              <tr key={index} className={`border-b border-gray-100 ${interactiveRowClass}`}>
                 <td className="py-2 pr-2">
                   <Select
                     value={line.item_id}
@@ -577,7 +577,7 @@ function ReceiveOrder({
           {order.items.map((item) => {
             const v = variance(item);
             return (
-              <tr key={item.id} className="border-b border-gray-100">
+              <tr key={item.id} className={`border-b border-gray-100 ${interactiveRowClass}`}>
                 <td className="py-2">
                   <span className="font-medium">{item.item_name}</span>{' '}
                   <code className="text-xs text-gray-400">{item.item_sku}</code>

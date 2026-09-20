@@ -2,6 +2,18 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ');
 }
 
+/**
+ * The faint row highlight every data table shares.
+ *
+ * A row lights up both on hover *and* while any control inside it holds focus
+ * (`focus-within`), so on an inline-edit table — transfers/production, stock
+ * counts, purchase orders — clicking into a cell's input tints the whole row
+ * and it stays clear which line you are editing. Apply this to the body `<tr>`;
+ * the shared `DataTable` already carries it, and the hand-rolled tables import
+ * it so the behaviour reads the same everywhere.
+ */
+export const interactiveRowClass = 'transition-colors hover:bg-gray-50 focus-within:bg-gray-50';
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()

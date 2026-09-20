@@ -5,7 +5,7 @@ import { inventoryApi, type StockAuditPreview } from '@/lib/pos-api';
 import type { InventoryLevel } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button } from '@/components/ui';
-import { csvCell, formatQuantity } from '@/lib/utils';
+import { csvCell, formatQuantity, interactiveRowClass } from '@/lib/utils';
 import { BranchFilter, LedgerTab } from '../_shared';
 
 export default function CountsPage() {
@@ -153,7 +153,7 @@ export default function CountsPage() {
                         <td colSpan={7} className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-gray-600">{category}</td>
                       </tr>
                       {bucket.rows.map((row) => (
-                        <tr key={`${row.sku}-${row.counted_quantity}-${row.errors.join('|')}`} className="border-t border-gray-100">
+                        <tr key={`${row.sku}-${row.counted_quantity}-${row.errors.join('|')}`} className={`border-t border-gray-100 ${interactiveRowClass}`}>
                           <td className="px-2 py-1"><code className="text-xs">{row.sku}</code></td>
                           <td className="px-2 py-1 font-medium">{row.item_name ?? 'Unknown item'}</td>
                           <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(row.expected_quantity)}</td>

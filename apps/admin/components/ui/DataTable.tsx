@@ -413,7 +413,10 @@ export function DataTable<T>({
                   <tr
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     className={cn(
-                      'group border-b border-gray-100 hover:bg-gray-50',
+                      // Hover *and* focus-within: on a table with inline-edit
+                      // cells, clicking into an input tints the whole row so it
+                      // stays clear which line you are editing.
+                      'group border-b border-gray-100 transition-colors hover:bg-gray-50 focus-within:bg-gray-50',
                       !detail && 'last:border-0',
                       onRowClick && 'cursor-pointer',
                       rowClassName?.(row),
@@ -428,7 +431,7 @@ export function DataTable<T>({
                           // scrolling under it show through; `group-hover` keeps
                           // it in step with the row's hover. A `rowClassName`
                           // background tint does not currently extend under it.
-                          stickyFirstColumn && i === 0 && 'sticky left-0 z-10 bg-white group-hover:bg-gray-50',
+                          stickyFirstColumn && i === 0 && 'sticky left-0 z-10 bg-white group-hover:bg-gray-50 group-focus-within:bg-gray-50',
                           c.className,
                         )}
                       >

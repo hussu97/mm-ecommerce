@@ -19,7 +19,7 @@ type PeriodCharge = Schemas['AggregatorPeriodChargeRow'];
 import { Badge, LoadError, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { useApiList } from '@/hooks/useApiList';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDateTime, interactiveRowClass } from '@/lib/utils';
 import { AggregatorTabs } from '../AggregatorTabs';
 
 /**
@@ -371,7 +371,7 @@ export default function ReconciliationPage() {
               </thead>
               <tbody>
                 {periodCharges.map((c, i) => (
-                  <tr key={`${c.channel}-${c.charge_date}-${c.fee_category}-${i}`} className="border-t border-gray-50">
+                  <tr key={`${c.channel}-${c.charge_date}-${c.fee_category}-${i}`} className={`border-t border-gray-50 ${interactiveRowClass}`}>
                     <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{c.charge_date ?? '—'}</td>
                     <td className="px-4 py-2">
                       <Badge variant="neutral">{channelName(c.channel)}</Badge>

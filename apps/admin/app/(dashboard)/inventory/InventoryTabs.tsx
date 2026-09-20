@@ -25,7 +25,7 @@ const TABS = [
   { href: '/inventory/counts', label: 'Counts' },
   { href: '/inventory/templates', label: 'Report templates' },
   { href: '/inventory/submissions', label: 'Report submissions' },
-  { href: '/inventory/transfers', label: 'Transfers' },
+  { href: '/inventory/transfers', label: 'Transfers & Production' },
   { href: '/inventory/suppliers', label: 'Suppliers' },
   { href: '/inventory/categories', label: 'Categories' },
   { href: '/inventory/integrity', label: 'Integrity' },

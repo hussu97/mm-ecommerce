@@ -23,6 +23,7 @@ import type { Branch } from '@/lib/pos-types';
 import { Button, Input } from '@/components/ui';
 import { RowAction } from '@/components/ui/DataTable';
 import { useConfirm } from '@/components/ui/feedback';
+import { interactiveRowClass } from '@/lib/utils';
 
 const BLANK = {
   name: '',
@@ -324,7 +325,7 @@ export default function MenuGroupsPage() {
     const canAddInside = !isIntegrator;
     return (
       <>
-        <tr className={node.is_active ? '' : 'opacity-50'}>
+        <tr className={`${interactiveRowClass} ${node.is_active ? '' : 'opacity-50'}`}>
           <td className="px-4 py-2">
             <div className="flex items-center gap-1" style={{ paddingLeft: depth * 22 }}>
               {hasChildren ? (

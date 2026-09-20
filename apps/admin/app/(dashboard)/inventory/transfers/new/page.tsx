@@ -25,7 +25,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Select, Spinner, Textarea } from '@/components/ui';
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/feedback';
-import { formatQuantity } from '@/lib/utils';
+import { formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const parseNum = (value: string | undefined): number => {
   if (value === undefined) return 0;
@@ -365,8 +365,8 @@ export default function NewTransferOrderPage() {
                       const overThreshold = short > 0;
                       const row = cells[item.id] ?? {};
                       return (
-                        <tr key={item.id} className="border-t border-gray-100">
-                          <td className="px-2 py-1 font-medium sticky left-0 bg-white">
+                        <tr key={item.id} className={`group border-t border-gray-100 ${interactiveRowClass}`}>
+                          <td className="px-2 py-1 font-medium sticky left-0 bg-white group-hover:bg-gray-50 group-focus-within:bg-gray-50">
                             {item.name}
                             <span className="ml-1 text-xs text-gray-400">{item.storage_unit}</span>
                           </td>
@@ -390,7 +390,13 @@ export default function NewTransferOrderPage() {
                           </td>
                           <td className="px-2 py-1 text-right">
                             {producibleIds.has(item.id) ? (
-                              <div className="flex items-center justify-end gap-1.5">
+                              // Input on top, unit/conversion hint stacked
+                              // beneath it — right-aligned to the column. The
+                              // hint grows as you type ("batch" → "batch → 3744
+                              // unit"); with it beside the input it shoved the
+                              // box sideways, so it lives below where its width
+                              // no longer moves the field.
+                              <div className="flex flex-col items-end gap-0.5">
                                 <input
                                   inputMode="decimal"
                                   value={produce[item.id] ?? ''}

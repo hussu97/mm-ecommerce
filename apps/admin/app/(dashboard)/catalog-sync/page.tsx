@@ -8,6 +8,7 @@ import type { Branch } from '@/lib/pos-types';
 import type { Schemas } from '@mm/types';
 import { Badge, Button, LoadError, Select, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/feedback';
+import { interactiveRowClass } from '@/lib/utils';
 
 type Status = Schemas['CatalogSyncStatus'];
 type Report = Schemas['BranchDriftReport'];
@@ -76,7 +77,7 @@ function DeltaTable({ title, diff }: { title: string; diff?: Diff | null }) {
           </thead>
           <tbody>
             {diff.deltas.map((d, i) => (
-              <tr key={i} className="border-t border-gray-100">
+              <tr key={i} className={`border-t border-gray-100 ${interactiveRowClass}`}>
                 <td className="px-3 py-2">
                   <Badge variant={ACTION_VARIANT[d.action] ?? 'neutral'}>{d.action}</Badge>
                 </td>
@@ -256,7 +257,7 @@ function HoursSyncRunsPanel() {
               {runs.map((r) => (
                 <tr
                   key={r.id}
-                  className={`border-t border-gray-100 ${r.status === 'failed' ? 'bg-red-50/60' : ''}`}
+                  className={`border-t border-gray-100 ${r.status === 'failed' ? 'bg-red-50/60' : interactiveRowClass}`}
                 >
                   <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
                     {r.created_at ? new Date(r.created_at).toLocaleString() : '—'}

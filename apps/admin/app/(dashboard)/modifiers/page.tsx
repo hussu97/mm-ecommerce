@@ -404,7 +404,7 @@ export default function ModifiersPage() {
                 </tr>
               ) : paginatedModifiers.map(m => (
                 <Fragment key={m.id}>
-                  <tr className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${selectedIds.has(m.id) ? 'bg-primary/5' : ''}`}>
+                  <tr className={`border-b border-gray-100 hover:bg-gray-50 focus-within:bg-gray-50 transition-colors ${selectedIds.has(m.id) ? 'bg-primary/5' : ''}`}>
                     <td className="px-4 py-2.5 w-8">
                       <input
                         type="checkbox"

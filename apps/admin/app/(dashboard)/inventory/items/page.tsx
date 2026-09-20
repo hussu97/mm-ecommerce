@@ -18,7 +18,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
 const MADE_KINDS = new Set(['produced_good', 'semi_finished']);
@@ -343,7 +343,7 @@ function CostLayersModal({ item, onClose }: { item: InventoryItem; onClose: () =
             </thead>
             <tbody>
               {data.layers.map((layer) => (
-                <tr key={layer.id} className="border-b border-gray-100">
+                <tr key={layer.id} className={`border-b border-gray-100 ${interactiveRowClass}`}>
                   <td className="py-2"><Badge>{layer.source_kind.replaceAll('_', ' ')}</Badge></td>
                   <td className="py-2 text-gray-600">{layer.warehouse_name ?? '—'}</td>
                   <td className="py-2 text-right">{formatQuantity(layer.remaining_quantity)}</td>

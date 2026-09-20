@@ -23,7 +23,7 @@ import {
   type OrderFilters,
 } from '@/lib/order-filters';
 import { DateRangePresets } from '@/components/orders/DateRangePresets';
-import { formatCurrency, formatTime, formatTimeAgo, cn } from '@/lib/utils';
+import { formatCurrency, formatTime, formatTimeAgo, cn, interactiveRowClass } from '@/lib/utils';
 
 // Recharts is client-only and heavy — lazy-load the pieces the trend charts use,
 // the same pattern the analytics page follows.
@@ -384,7 +384,7 @@ function HeatmapTable({
             </thead>
             <tbody>
               {DOW_LABELS.map((day, dow) => (
-                <tr key={day}>
+                <tr key={day} className={interactiveRowClass}>
                   <td className="text-[10px] font-body text-gray-500 pr-1.5 text-right whitespace-nowrap">{day}</td>
                   {HOURS.map((h) => {
                     const v = byKey.get(dow * 24 + h) ?? 0;

@@ -6,6 +6,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import type { Language } from '@/lib/types';
 import { Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/feedback';
+import { interactiveRowClass } from '@/lib/utils';
 
 const NAMESPACES = [
   'common', 'nav', 'home', 'product', 'category', 'cart', 'checkout',
@@ -278,7 +279,7 @@ export default function TranslationsPage() {
                 </tr>
               ) : (
                 pagedKeys.map(key => (
-                  <tr key={key} className="hover:bg-gray-50 transition-colors">
+                  <tr key={key} className={interactiveRowClass}>
                     <td className="px-4 py-1.5 font-body text-xs text-gray-600 sticky left-0 bg-white align-top pt-3">
                       <span className="break-all">{namespace ? key.replace(`${namespace}.`, '') : key}</span>
                     </td>

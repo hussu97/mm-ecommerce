@@ -14,7 +14,7 @@ import { inventoryApi } from '@/lib/pos-api';
 import type { ProductionLine, ProductionOrder } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
-import { formatDateTime, formatQuantity } from '@/lib/utils';
+import { formatDateTime, formatQuantity, interactiveRowClass } from '@/lib/utils';
 import { transferStatusLabel, transferStatusVariant } from '../../../_shared';
 
 const num = (value: unknown): number => Number(value ?? 0);
@@ -119,7 +119,7 @@ export default function ProductionOrderDetailPage() {
                   const modified = line.status === 'produced' && produced != null && num(produced) !== num(line.planned_quantity);
                   const diff = produced == null ? null : num(produced) - num(line.planned_quantity);
                   return (
-                    <tr key={line.id} className="border-t border-gray-100">
+                    <tr key={line.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
                       <td className="px-2 py-1 font-medium">
                         {line.item_name ?? line.item_id}
                         {line.item_sku && <span className="ml-1 text-xs text-gray-400">{line.item_sku}</span>}

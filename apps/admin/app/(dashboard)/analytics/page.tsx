@@ -8,7 +8,7 @@ import type {
   OrdersPoint, PromoPerformance, RevenueBreakdown, RevenuePoint,
   TopProduct, TrafficData,
 } from '@/lib/types';
-import { formatCurrency, shopDaysAgo, todayInShopTz } from '@/lib/utils';
+import { formatCurrency, shopDaysAgo, todayInShopTz, interactiveRowClass } from '@/lib/utils';
 import { AnalyticsTabs } from './AnalyticsTabs';
 import { BRAND } from '@/lib/brand';
 
@@ -688,7 +688,7 @@ export default function AnalyticsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {topProducts.map((p, i) => (
-                      <tr key={i}>
+                      <tr key={i} className={interactiveRowClass}>
                         <td className="py-2 text-gray-700">
                           {p.product_name}
                           {p.product_sku && <span className="text-gray-400 ml-1">({p.product_sku})</span>}
@@ -719,7 +719,7 @@ export default function AnalyticsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {traffic.top_pages.map((p, i) => (
-                      <tr key={i}>
+                      <tr key={i} className={interactiveRowClass}>
                         <td className="py-2 text-gray-700 truncate max-w-[240px]">{p.path}</td>
                         <td className="py-2 text-right text-gray-800">{p.views}</td>
                       </tr>
@@ -753,7 +753,7 @@ export default function AnalyticsPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {traffic.events.map((e) => (
-                    <tr key={e.name}>
+                    <tr key={e.name} className={interactiveRowClass}>
                       <td className="py-2 text-gray-700 truncate max-w-[240px]">{e.name}</td>
                       <td className="py-2 text-right text-gray-800">{e.count}</td>
                     </tr>
@@ -782,7 +782,7 @@ export default function AnalyticsPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {promos.map((p, i) => (
-                    <tr key={i}>
+                    <tr key={i} className={interactiveRowClass}>
                       <td className="py-2 text-gray-800 font-medium">{p.code}</td>
                       <td className="py-2 text-right text-gray-500">{p.uses}</td>
                       <td className="py-2 text-right text-gray-800">{formatCurrency(p.revenue_driven)}</td>

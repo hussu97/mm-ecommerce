@@ -13,7 +13,7 @@ import { inventoryApi } from '@/lib/pos-api';
 import type { PurchaseOrder, PurchaseOrderStatus } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Spinner } from '@/components/ui';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
   PurchaseOrderStatus,
@@ -91,7 +91,7 @@ export default function PurchaseOrderDetailPage() {
             {po.items.map((item) => {
               const v = Number(item.received_quantity) - Number(item.quantity);
               return (
-                <tr key={item.id} className="border-t border-gray-100">
+                <tr key={item.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
                   <td className="px-2 py-1 font-medium">
                     {item.item_name ?? item.item_id}
                     {item.item_sku && <span className="ml-1 text-xs text-gray-400">{item.item_sku}</span>}
