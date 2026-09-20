@@ -153,6 +153,10 @@ async def test_branch_sweep_loads_the_catalog_once_for_the_whole_batch(
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as db:
         branch_id, _ = await _seed(db, n_orders=5)
+        # A newly accepted missing-recipe event has already tried the current
+        # catalog and must sleep.  Advancing the durable graph generation models
+        # the recipe activation that makes the backlog eligible for one retry.
+        await recipe_service._bump_catalog_generation(db)
         await db.commit()
     try:
         calls = {"n": 0}
@@ -183,6 +187,10 @@ async def test_branch_sweep_caps_the_batch_and_continues_next_tick(engine, monke
         # and each capped sweep re-processes the same batch).
         product = await db.get(Product, product_id)
         product.consumes_stock = False
+        # The source events were stamped with the generation they tried during
+        # acceptance.  Model a later recipe-graph change so this recovery pass is
+        # eligible; the batch cap should still leave the third row for next tick.
+        await recipe_service._bump_catalog_generation(db)
         await db.commit()
     try:
         monkeypatch.setattr(source_event_service, "_SWEEP_BRANCH_BATCH", 2)
