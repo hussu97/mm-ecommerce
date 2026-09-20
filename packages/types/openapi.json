@@ -8712,6 +8712,16 @@
       },
       "CustomerOrderHistoryRow": {
         "properties": {
+          "courier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourierBadge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "customer_email": {
             "anyOf": [
               {
@@ -8753,6 +8763,17 @@
             "title": "Order Channel",
             "type": "string"
           },
+          "order_channel_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Channel Code"
+          },
           "order_date": {
             "title": "Order Date",
             "type": "string"
@@ -8774,6 +8795,7 @@
           "customer_email",
           "order_date",
           "order_channel",
+          "order_channel_code",
           "order_value"
         ],
         "title": "CustomerOrderHistoryRow",
@@ -65474,7 +65496,7 @@
     },
     "/api/v1/users/admin/all": {
       "get": {
-        "description": "List the deduplicated customer directory across every MM order channel.",
+        "description": "List the deduplicated customer directory across every MM order channel.\n\nA complete date pair makes the rows and summary metrics reflect orders in\nthat order-date window, matching the dashboard and orders list. With no\nrange, the precomputed all-time cache is read directly.",
         "operationId": "list_customers_api_v1_users_admin_all_get",
         "parameters": [
           {
@@ -65493,6 +65515,73 @@
               ],
               "description": "Search by name, email, or phone",
               "title": "Search"
+            }
+          },
+          {
+            "description": "ISO date; with date_to, filters and rolls up by order date.",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; with date_to, filters and rolls up by order date.",
+              "title": "Date From"
+            }
+          },
+          {
+            "description": "ISO date; with date_from, filters and rolls up by order date.",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date; with date_from, filters and rolls up by order date.",
+              "title": "Date To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "latest_order_at",
+              "enum": [
+                "order_count",
+                "earliest_order_at",
+                "latest_order_at",
+                "total_revenue",
+                "aov"
+              ],
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_direction",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Sort Direction",
+              "type": "string"
             }
           },
           {

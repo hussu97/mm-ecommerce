@@ -708,7 +708,15 @@ export const analyticsApi = {
 // ─── Customers ────────────────────────────────────────────────────────────────
 
 export const customersApi = {
-  list: (params?: { search?: string; page?: number; per_page?: number }) =>
+  list: (params?: {
+    search?: string;
+    date_from?: string;
+    date_to?: string;
+    sort_by?: 'order_count' | 'earliest_order_at' | 'latest_order_at' | 'total_revenue' | 'aov';
+    sort_direction?: 'asc' | 'desc';
+    page?: number;
+    per_page?: number;
+  }) =>
     api.get<PaginatedCustomers>(`/users/admin/all${buildQs(params)}`),
   orders: (customerId: string, params?: { page?: number; per_page?: number }) =>
     api.get<PaginatedCustomerOrders>(`/users/admin/${customerId}/orders${buildQs(params)}`),

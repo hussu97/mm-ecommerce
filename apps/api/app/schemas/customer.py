@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from app.schemas.courier import CourierBadge
+
 
 class CustomerSummary(BaseModel):
     id: str
@@ -32,6 +34,10 @@ class CustomerOrderHistoryRow(BaseModel):
     customer_email: str | None
     order_date: str
     order_channel: str
+    #: Stable carrier/channel code. Counter and pickup are synthetic display
+    #: channels; every other value is a courier or marketplace code.
+    order_channel_code: str | None
+    courier: CourierBadge | None = None
     order_value: float
 
 

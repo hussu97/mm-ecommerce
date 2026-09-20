@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core import search as search_text
 from app.core.deps import get_db
@@ -16,6 +18,7 @@ from app.models.admin_passkey import AdminPasskey
 from app.models.customer_cache import CustomerCache, CustomerOrderCache
 from app.models.order import Order
 from app.models.user import User as UserModel
+from app.schemas.courier import CourierBadge
 from app.schemas.customer import (
     CustomerOrderHistoryRow,
     CustomerSummary,
@@ -23,6 +26,8 @@ from app.schemas.customer import (
     PaginatedCustomers,
 )
 from app.services import customer_service
+from app.services.orders import order_query
+from app.services.pos import business_day_service
 
 router = APIRouter()
 
@@ -46,27 +51,101 @@ def _channel_label(order: Order) -> str:
 
 
 def _order_name(order: Order) -> str | None:
-    name = (order.customer_name or "").strip()
+    name = customer_service.normalise_customer_name(order.customer_name)
     if name:
         return name
     snapshot = order.shipping_address_snapshot or {}
-    name = " ".join(
-        str(snapshot.get(key) or "").strip() for key in ("first_name", "last_name")
+    return customer_service.normalise_customer_name(
+        " ".join(
+            str(snapshot.get(key) or "").strip() for key in ("first_name", "last_name")
+        )
     )
-    return name or None
+
+
+def _channel_for_order(order: Order) -> tuple[str, str | None]:
+    """Return the same channel identity the orders list uses for its logo."""
+    code = order_query.courier_code_for(
+        order.source,
+        order.aggregator_channel,
+        order.delivery.provider if order.delivery else None,
+        order.delivery_method.value,
+    )
+    return (order_query.courier_label(code) if code else _channel_label(order), code)
 
 
 @router.get("/admin/all", response_model=PaginatedCustomers)
 async def list_customers(
     search: str | None = Query(None, description="Search by name, email, or phone"),
+    date_from: str | None = Query(
+        None, description="ISO date; with date_to, filters and rolls up by order date."
+    ),
+    date_to: str | None = Query(
+        None,
+        description="ISO date; with date_from, filters and rolls up by order date.",
+    ),
+    sort_by: Literal[
+        "order_count", "earliest_order_at", "latest_order_at", "total_revenue", "aov"
+    ] = Query("latest_order_at"),
+    sort_direction: Literal["asc", "desc"] = Query("desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     _admin: UserModel = Depends(require("customers.read")),
 ) -> PaginatedCustomers:
-    """List the deduplicated customer directory across every MM order channel."""
+    """List the deduplicated customer directory across every MM order channel.
+
+    A complete date pair makes the rows and summary metrics reflect orders in
+    that order-date window, matching the dashboard and orders list. With no
+    range, the precomputed all-time cache is read directly.
+    """
     await customer_service.refresh_if_dirty(db)
-    base = select(CustomerCache)
+
+    bounds = await business_day_service.range_bounds(db, date_from, date_to)
+    if bounds is None:
+        base = select(CustomerCache)
+        fields = {
+            "order_count": CustomerCache.order_count,
+            "earliest_order_at": CustomerCache.earliest_order_at,
+            "latest_order_at": CustomerCache.latest_order_at,
+            "total_revenue": CustomerCache.total_revenue,
+            "aov": CustomerCache.aov,
+        }
+    else:
+        start, end = bounds
+        billable = Order.status != "cancelled"
+        order_count = func.coalesce(func.sum(case((billable, 1), else_=0)), 0)
+        total_revenue = func.coalesce(
+            func.sum(case((billable, Order.total), else_=0)), 0
+        )
+        metrics = (
+            select(
+                CustomerOrderCache.customer_id.label("customer_id"),
+                order_count.label("order_count"),
+                func.min(case((billable, Order.created_at))).label("earliest_order_at"),
+                func.max(case((billable, Order.created_at))).label("latest_order_at"),
+                total_revenue.label("total_revenue"),
+                (total_revenue / func.nullif(order_count, 0)).label("aov"),
+            )
+            .join(Order, Order.id == CustomerOrderCache.order_id)
+            .where(Order.created_at >= start, Order.created_at <= end)
+            .group_by(CustomerOrderCache.customer_id)
+            .subquery()
+        )
+        base = select(
+            CustomerCache,
+            metrics.c.order_count,
+            metrics.c.earliest_order_at,
+            metrics.c.latest_order_at,
+            metrics.c.total_revenue,
+            metrics.c.aov,
+        ).join(metrics, metrics.c.customer_id == CustomerCache.id)
+        fields = {
+            "order_count": metrics.c.order_count,
+            "earliest_order_at": metrics.c.earliest_order_at,
+            "latest_order_at": metrics.c.latest_order_at,
+            "total_revenue": metrics.c.total_revenue,
+            "aov": metrics.c.aov,
+        }
     if search:
         phone_search = normalise_phone(search) or search
         base = base.where(
@@ -78,36 +157,51 @@ async def list_customers(
         )
 
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    sort_column = fields[sort_by]
+    order_by = (
+        sort_column.asc().nullslast()
+        if sort_direction == "asc"
+        else sort_column.desc().nullslast()
+    )
     rows = (
-        await db.scalars(
-            base.order_by(
-                CustomerCache.latest_order_at.desc().nullslast(),
-                CustomerCache.created_at.desc(),
-            )
+        await db.execute(
+            base.order_by(order_by, CustomerCache.created_at.desc())
             .offset((page - 1) * per_page)
             .limit(per_page)
         )
     ).all()
+
+    def summary(row: object) -> CustomerSummary:
+        customer = row[0]
+        if bounds is None:
+            order_count = customer.order_count
+            earliest_order_at = customer.earliest_order_at
+            latest_order_at = customer.latest_order_at
+            total_revenue = customer.total_revenue
+            aov = customer.aov
+        else:
+            order_count = row[1]
+            earliest_order_at = row[2]
+            latest_order_at = row[3]
+            total_revenue = row[4]
+            aov = row[5]
+        return CustomerSummary(
+            id=str(customer.id),
+            name=customer_service.normalise_customer_name(customer.name),
+            email=customer.email,
+            phone=customer.phone,
+            phone_country=customer.phone_country,
+            order_count=int(order_count),
+            earliest_order_at=(
+                earliest_order_at.isoformat() if earliest_order_at else None
+            ),
+            latest_order_at=(latest_order_at.isoformat() if latest_order_at else None),
+            total_revenue=float(total_revenue),
+            aov=float(aov or 0),
+        )
+
     return PaginatedCustomers(
-        items=[
-            CustomerSummary(
-                id=str(row.id),
-                name=row.name,
-                email=row.email,
-                phone=row.phone,
-                phone_country=row.phone_country,
-                order_count=row.order_count,
-                earliest_order_at=(
-                    row.earliest_order_at.isoformat() if row.earliest_order_at else None
-                ),
-                latest_order_at=(
-                    row.latest_order_at.isoformat() if row.latest_order_at else None
-                ),
-                total_revenue=float(row.total_revenue),
-                aov=float(row.aov),
-            )
-            for row in rows
-        ],
+        items=[summary(row) for row in rows],
         total=total,
         page=page,
         per_page=per_page,
@@ -137,6 +231,7 @@ async def list_customer_orders(
     rows = (
         await db.scalars(
             base.order_by(Order.created_at.desc())
+            .options(selectinload(Order.delivery))
             .offset((page - 1) * per_page)
             .limit(per_page)
         )
@@ -150,10 +245,19 @@ async def list_customer_orders(
                 customer_phone=order.customer_phone,
                 customer_email=order.email or None,
                 order_date=order.created_at.isoformat(),
-                order_channel=_channel_label(order),
+                order_channel=channel[0],
+                order_channel_code=channel[1],
+                courier=CourierBadge.for_order(
+                    source=order.source,
+                    aggregator_channel=order.aggregator_channel,
+                    delivery_provider=order.delivery.provider
+                    if order.delivery
+                    else None,
+                ),
                 order_value=float(order.total),
             )
             for order in rows
+            for channel in [_channel_for_order(order)]
         ],
         total=total,
         page=page,

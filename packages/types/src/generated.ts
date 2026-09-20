@@ -8496,6 +8496,10 @@ export interface paths {
         /**
          * List Customers
          * @description List the deduplicated customer directory across every MM order channel.
+         *
+         *     A complete date pair makes the rows and summary metrics reflect orders in
+         *     that order-date window, matching the dashboard and orders list. With no
+         *     range, the precomputed all-time cache is read directly.
          */
         get: operations["list_customers_api_v1_users_admin_all_get"];
         put?: never;
@@ -11930,6 +11934,7 @@ export interface components {
         };
         /** CustomerOrderHistoryRow */
         CustomerOrderHistoryRow: {
+            courier?: components["schemas"]["CourierBadge"] | null;
             /** Customer Email */
             customer_email: string | null;
             /** Customer Name */
@@ -11940,6 +11945,8 @@ export interface components {
             id: string;
             /** Order Channel */
             order_channel: string;
+            /** Order Channel Code */
+            order_channel_code: string | null;
             /** Order Date */
             order_date: string;
             /** Order Number */
@@ -37854,6 +37861,12 @@ export interface operations {
             query?: {
                 /** @description Search by name, email, or phone */
                 search?: string | null;
+                /** @description ISO date; with date_to, filters and rolls up by order date. */
+                date_from?: string | null;
+                /** @description ISO date; with date_from, filters and rolls up by order date. */
+                date_to?: string | null;
+                sort_by?: "order_count" | "earliest_order_at" | "latest_order_at" | "total_revenue" | "aov";
+                sort_direction?: "asc" | "desc";
                 page?: number;
                 per_page?: number;
             };

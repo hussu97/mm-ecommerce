@@ -37,8 +37,22 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
+def normalise_customer_name(value: str | None) -> str | None:
+    """Make a customer name stable before it becomes an identity or display value.
+
+    Marketplace and register feeds are inconsistent about casing (``AISHA
+    KHAN``, ``aisha khan``), while people expect one readable spelling in the
+    directory. Title casing after whitespace cleanup gives the cache one
+    canonical display value and means its identity key is based on the exact
+    same normalised input. Non-Latin text is left intact by ``str.title``.
+    """
+    value = _clean(value)
+    return value.title() if value else None
+
+
 def _name_key(value: str | None) -> str | None:
-    return _clean(value.casefold() if value else None)
+    value = normalise_customer_name(value)
+    return value.casefold() if value else None
 
 
 def _email(value: str | None) -> str | None:
@@ -50,11 +64,11 @@ def _email(value: str | None) -> str | None:
 
 def _order_name(order: Order) -> str | None:
     """Use the delivery snapshot when checkout has no pickup contact."""
-    name = _clean(order.customer_name)
+    name = normalise_customer_name(order.customer_name)
     if name:
         return name
     snapshot = order.shipping_address_snapshot or {}
-    return _clean(
+    return normalise_customer_name(
         " ".join(str(snapshot.get(k) or "") for k in ("first_name", "last_name"))
     )
 
@@ -167,7 +181,7 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
         sources.append(
             _Source(
                 key=f"user:{account.id}",
-                name=_clean(account.display_name),
+                name=normalise_customer_name(account.display_name),
                 email=_email(account.email),
                 phone=describe_phone(account.phone).e164 or _clean(account.phone),
                 phone_country=getattr(account, "phone_country", None),

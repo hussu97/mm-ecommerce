@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from app.services.customer_service import _components, _Source
+from app.services.customer_service import _components, _Source, normalise_customer_name
 
 
 def _source(
@@ -39,6 +39,22 @@ def test_components_merge_same_name_and_phone_across_channels():
 
     assert [[source.key for source in group] for group in groups] == [
         ["order:website", "order:talabat"]
+    ]
+
+
+def test_customer_name_is_canonicalised_before_identity_matching_and_display():
+    assert normalise_customer_name("  aISHA   kHAN ") == "Aisha Khan"
+    groups = list(
+        _components(
+            [
+                _source("order:website", name="aisha khan", phone="+971501234567"),
+                _source("order:counter", name="AISHA KHAN", phone="+971501234567"),
+            ]
+        )
+    )
+
+    assert [[source.key for source in group] for group in groups] == [
+        ["order:website", "order:counter"]
     ]
 
 

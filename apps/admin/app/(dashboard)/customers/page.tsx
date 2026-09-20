@@ -5,10 +5,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Schemas } from '@mm/types';
 import { customersApi } from '@/lib/api';
 import { Button, Input, LoadError, Pagination, Spinner } from '@/components/ui';
-import { DataTable } from '@/components/ui/DataTable';
+import { DataTable, type SortState } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
+import { CourierLogo, CourierMark } from '@/components/orders/CourierLogo';
+import { DateRangePresets } from '@/components/orders/DateRangePresets';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useOrderFilters } from '@/lib/order-filters';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 type CustomerSummary = Schemas['CustomerSummary'];
@@ -17,6 +20,7 @@ type CustomerOrdersPage = Schemas['PaginatedCustomerOrders'];
 
 export default function CustomersPage() {
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortState>({ key: 'latest_order_at', direction: 'desc' });
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerSummary | null>(null);
   const [history, setHistory] = useState<CustomerOrdersPage | null>(null);
   const [historyPage, setHistoryPage] = useState(1);
@@ -24,14 +28,20 @@ export default function CustomersPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const debouncedSearch = useDebouncedValue(search);
+  const { filters, patch } = useOrderFilters();
+  const hasCompleteDateRange = Boolean(filters.from && filters.to);
 
   const fetchCustomers = useCallback(
     (page: number, perPage: number) => customersApi.list({
       search: debouncedSearch || undefined,
+      date_from: hasCompleteDateRange ? filters.from : undefined,
+      date_to: hasCompleteDateRange ? filters.to : undefined,
+      sort_by: sort.key as 'order_count' | 'earliest_order_at' | 'latest_order_at' | 'total_revenue' | 'aov',
+      sort_direction: sort.direction,
       page,
       per_page: perPage,
     }),
-    [debouncedSearch],
+    [debouncedSearch, filters.from, filters.to, hasCompleteDateRange, sort],
   );
   const {
     items: customers, total, pages, page, perPage, setPage, setPerPage,
@@ -87,12 +97,50 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      <div className="mb-4 max-w-md">
-        <Input
-          placeholder="Search name, email, or phone…"
-          value={search}
-          onChange={event => setSearch(event.target.value)}
-        />
+      <div className="mb-4 max-w-3xl">
+        <div className="mb-3">
+          <span className="mb-1.5 block text-[10px] font-body uppercase tracking-widest text-gray-400">Quick range</span>
+          <DateRangePresets filters={filters} onPatch={patch} />
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-[10px] font-body uppercase tracking-widest text-gray-400">From</label>
+            <input
+              type="date"
+              value={filters.from}
+              max={filters.to || undefined}
+              onChange={event => patch({ from: event.target.value })}
+              className="h-10 border border-gray-300 bg-white px-3 text-sm font-body outline-none focus:border-primary"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-body uppercase tracking-widest text-gray-400">To</label>
+            <input
+              type="date"
+              value={filters.to}
+              min={filters.from || undefined}
+              onChange={event => patch({ to: event.target.value })}
+              className="h-10 border border-gray-300 bg-white px-3 text-sm font-body outline-none focus:border-primary"
+            />
+          </div>
+          {(filters.from || filters.to) && (
+            <button
+              type="button"
+              onClick={() => patch({ from: '', to: '' })}
+              className="h-10 border border-gray-300 px-3 text-xs font-body uppercase tracking-wider text-gray-500 transition-colors hover:bg-gray-50"
+            >
+              All time
+            </button>
+          )}
+        </div>
+        <div className="mt-3">
+          <label className="mb-1 block text-[10px] font-body uppercase tracking-widest text-gray-400">Search</label>
+          <Input
+            placeholder="Search name, email, or phone…"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+          />
+        </div>
       </div>
 
       {loading ? (
@@ -102,6 +150,11 @@ export default function CustomersPage() {
           rows={customers}
           rowKey={customer => customer.id}
           stickyHeader
+          sort={sort}
+          onSortChange={next => {
+            setSort(next);
+            setPage(1);
+          }}
           empty={<p className="py-16 text-center text-sm font-body text-gray-400">No customers found.</p>}
           actions={customer => (
             <Button
@@ -135,15 +188,25 @@ export default function CustomersPage() {
               priority: 'secondary',
               render: customer => customer.phone ?? '—',
             },
-            { header: 'Orders', className: 'text-center', render: customer => customer.order_count },
+            {
+              header: 'Orders',
+              className: 'text-center',
+              sortable: true,
+              sortKey: 'order_count',
+              render: customer => customer.order_count,
+            },
             {
               header: 'First order',
+              sortable: true,
+              sortKey: 'earliest_order_at',
               render: customer => customer.earliest_order_at
                 ? formatDate(customer.earliest_order_at)
                 : '—',
             },
             {
               header: 'Last order',
+              sortable: true,
+              sortKey: 'latest_order_at',
               render: customer => customer.latest_order_at
                 ? formatDate(customer.latest_order_at)
                 : '—',
@@ -151,11 +214,15 @@ export default function CustomersPage() {
             {
               header: 'Revenue',
               className: 'text-right',
+              sortable: true,
+              sortKey: 'total_revenue',
               render: customer => formatCurrency(customer.total_revenue),
             },
             {
               header: 'AOV',
               className: 'text-right',
+              sortable: true,
+              sortKey: 'aov',
               render: customer => formatCurrency(customer.aov),
             },
           ]}
@@ -205,7 +272,17 @@ export default function CustomersPage() {
                   { header: 'Phone', render: order => order.customer_phone ?? '—' },
                   { header: 'Email', render: order => order.customer_email ?? '—' },
                   { header: 'Order date', render: order => formatDate(order.order_date) },
-                  { header: 'Channel', render: order => order.order_channel },
+                  {
+                    header: 'Channel',
+                    render: order => order.courier ? (
+                      <CourierLogo courier={order.courier} size={20} showName />
+                    ) : order.order_channel_code ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <CourierMark code={order.order_channel_code} size={18} />
+                        {order.order_channel}
+                      </span>
+                    ) : order.order_channel,
+                  },
                   {
                     header: 'Value',
                     className: 'text-right',
