@@ -547,22 +547,36 @@ async def _build_modifier_snapshot(
     The snapshot shape mirrors the GrubOps ingest (option_name / option_price
     dialect) so the admin item table and the register decode it identically.
 
-    `product_id` is the line's resolved product: when the global option map misses,
-    the modifier name is matched against that product's OWN options (see
-    `_match_product_option`). This is what lets an aggregator quantity modifier
-    ("Fudge Brownies" + "3 Pieces") reach the option that carries the recipe, rather
-    than landing `modifier_option_id=None` and drawing no stock.
+    `product_id` is the line's resolved product. The option is resolved against
+    that product's OWN options FIRST (see `_match_product_option`), because an
+    aggregator quantity/choice code is shared across products and the global
+    option map can only point it at one — so a global-first lookup drew the wrong
+    product's recipe (the 2026-09-20 noon shared-code bug). The global map is the
+    fallback, for a genuine name mismatch or an unresolved product.
     """
     snapshot: list[dict] = []
     options_price = Decimal("0")
     for mod in mods:
         name = mod.name
         quantity = int(mod.quantity)
-        opt_id, _, _ = await external_item_map_service.resolve_option(
-            db, channel, name, ref=mod.external_ref
-        )
+        # Resolve the option WITHIN the line's product FIRST. A quantity/choice
+        # code an aggregator reuses across products — noon hands one "6 Pieces"
+        # code (I706562576B) to every box size, and 25 of its 28 option codes are
+        # shared across products — makes the GLOBAL option map ambiguous by
+        # construction: one code maps to one internal option, so every product
+        # sharing it drew that one option's recipe. That is the 2026-09-20 noon
+        # bug where "[Eggless] Fudge Brownies · 6 Pieces" consumed Red Velvet
+        # cookie, because the shared code's global row pointed at Red Velvet's
+        # option. Matching the option name against the options THIS product
+        # actually offers disambiguates it deterministically (the option that
+        # carries the right recipe), with no per-product map row to curate. The
+        # global map stays as the fallback for a genuine name mismatch or when the
+        # product itself did not resolve (product_id is None).
+        opt_id = await _match_product_option(db, product_id, name)
         if opt_id is None:
-            opt_id = await _match_product_option(db, product_id, name)
+            opt_id, _, _ = await external_item_map_service.resolve_option(
+                db, channel, name, ref=mod.external_ref
+            )
         if opt_id is None:
             # Some channels glue the chosen quantity onto the option name
             # ("1 Nutella Cookie", "2 x Fudge Brownie", "1 3 Pieces" — Talabat's

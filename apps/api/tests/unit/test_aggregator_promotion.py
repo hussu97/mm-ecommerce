@@ -1648,6 +1648,45 @@ async def test_build_modifier_snapshot_strips_leading_count_after_verbatim_miss(
     proposal.assert_not_called()
 
 
+async def test_build_modifier_snapshot_prefers_product_option_over_shared_global_map():
+    """A quantity code shared across products must resolve to the LINE's product's
+    own option, not whatever the ambiguous global map points at.
+
+    Regression for the 2026-09-20 noon bug: "[Eggless] Fudge Brownies · 6 Pieces"
+    and Red Velvet share noon option code I706562576B; the global map pointed that
+    code at Red Velvet's option, so the brownie consumed Red Velvet cookie. The
+    resolver must match the option within the line's product first, so the global
+    map's (wrong) answer never wins."""
+    red_velvet_opt = uuid.uuid4()  # what the shared-code global map wrongly returns
+    brownie_opt = uuid.uuid4()  # the line product's OWN "6 Pieces" option
+
+    async def wrong_global(_db, _system, _name, *, ref=None):
+        return red_velvet_opt, "6 Pieces", Decimal("0")
+
+    async def by_name(_db, _pid, name):
+        return brownie_opt if name == "6 Pieces" else None
+
+    with (
+        patch.object(
+            promote.external_item_map_service,
+            "resolve_option",
+            side_effect=wrong_global,
+        ),
+        patch.object(promote, "_match_product_option", side_effect=by_name),
+        patch.object(
+            promote.external_item_map_service,
+            "record_option_proposal",
+            AsyncMock(),
+        ),
+    ):
+        mods = [StandardModifier(name="6 Pieces", quantity=Decimal("1"))]
+        snap, _ = await promote._build_modifier_snapshot(
+            _FakeDB(), "noon", mods, product_id=uuid.uuid4()
+        )
+    assert snap[0]["modifier_option_id"] == str(brownie_opt)
+    assert snap[0]["modifier_option_id"] != str(red_velvet_opt)
+
+
 async def test_build_modifier_snapshot_keeps_verbatim_numeric_option_name():
     """ "3 Pieces" is a real option name — the count-strip must not fire when the
     verbatim name already matches, so it is never mangled to "Pieces"."""
