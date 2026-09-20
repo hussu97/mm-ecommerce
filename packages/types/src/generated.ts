@@ -8495,9 +8495,29 @@ export interface paths {
         };
         /**
          * List Customers
-         * @description List registered (non-guest, non-admin) customers with order stats.
+         * @description List the deduplicated customer directory across every MM order channel.
          */
         get: operations["list_customers_api_v1_users_admin_all_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/admin/{customer_id}/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Customer Orders
+         * @description Return the actual orders that established one cached customer identity.
+         */
+        get: operations["list_customer_orders_api_v1_users_admin__customer_id__orders_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11908,20 +11928,47 @@ export interface components {
             /** Returning Customers */
             returning_customers: number;
         };
-        /** CustomerSummary */
-        CustomerSummary: {
-            /** Created At */
-            created_at: string;
-            /** Email */
-            email: string;
+        /** CustomerOrderHistoryRow */
+        CustomerOrderHistoryRow: {
+            /** Customer Email */
+            customer_email: string | null;
+            /** Customer Name */
+            customer_name: string | null;
+            /** Customer Phone */
+            customer_phone: string | null;
             /** Id */
             id: string;
+            /** Order Channel */
+            order_channel: string;
+            /** Order Date */
+            order_date: string;
+            /** Order Number */
+            order_number: string;
+            /** Order Value */
+            order_value: number;
+        };
+        /** CustomerSummary */
+        CustomerSummary: {
+            /** Aov */
+            aov: number;
+            /** Earliest Order At */
+            earliest_order_at: string | null;
+            /** Email */
+            email: string | null;
+            /** Id */
+            id: string;
+            /** Latest Order At */
+            latest_order_at: string | null;
+            /** Name */
+            name: string | null;
             /** Order Count */
             order_count: number;
             /** Phone */
             phone: string | null;
-            /** Total Spent */
-            total_spent: number;
+            /** Phone Country */
+            phone_country: string | null;
+            /** Total Revenue */
+            total_revenue: number;
         };
         /** DailySalesEmailRecipientResult */
         DailySalesEmailRecipientResult: {
@@ -15544,6 +15591,19 @@ export interface components {
         PaginatedCustomOrderEnquiries: {
             /** Items */
             items: components["schemas"]["CustomOrderEnquiryAdminResponse"][];
+            /** Page */
+            page: number;
+            /** Pages */
+            pages: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /** PaginatedCustomerOrders */
+        PaginatedCustomerOrders: {
+            /** Items */
+            items: components["schemas"]["CustomerOrderHistoryRow"][];
             /** Page */
             page: number;
             /** Pages */
@@ -37792,7 +37852,7 @@ export interface operations {
     list_customers_api_v1_users_admin_all_get: {
         parameters: {
             query?: {
-                /** @description Search by email or name */
+                /** @description Search by name, email, or phone */
                 search?: string | null;
                 page?: number;
                 per_page?: number;
@@ -37810,6 +37870,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedCustomers"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_customer_orders_api_v1_users_admin__customer_id__orders_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                customer_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedCustomerOrders"];
                 };
             };
             /** @description Validation Error */

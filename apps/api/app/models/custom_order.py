@@ -125,6 +125,7 @@ class CustomOrder(Base, UUIDMixin, TimestampMixin):
     #: nothing else.
     customer_name: Mapped[str] = mapped_column(String(150), nullable=False)
     customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    customer_phone_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     customer_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     #: What was asked for, in the customer's words.

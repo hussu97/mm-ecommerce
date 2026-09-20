@@ -2,7 +2,7 @@ import type {
   AdminLoginOptions, AdminPasskey, AdminUserSummary,
   AnalyticsOverview, AuditLog, Category, CmsPage, CustomerBreakdown, DashboardToday, ZoneSalesData,
   FunnelData, ImportResult, Language, Modifier, Order, OrdersPoint, PaginatedAuditLogs,
-  PaginatedCustomers, PaginatedCustomOrderEnquiries, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
+  PaginatedCustomOrderEnquiries, PaginatedEmailLogs, PaginatedLiveCarts, PaginatedOrders, Product, ProductListResponse,
   PromoCode, Promotion, PromoPerformance, RevenueBreakdown, RevenuePoint, TokenResponse, TopProduct,
   TrafficData, UploadResponse, User, DeliverySettings, SalesChannel,
   DeliveryMapVersion, DeliveryPricingMode, DeliveryZone, DeliveryZoneSummary, FulfilmentProvider, OrderDelivery, OrderEconomics, OrderRefundResponse,
@@ -41,6 +41,8 @@ type FeesSummary = Schemas['AggregatorFeesSummaryOut'];
 type OrderAdminDetails = Schemas['OrderAdminDetails'];
 type OrderInventoryConsumption = Schemas['OrderInventoryConsumptionResponse'];
 type InventoryTransactionResponse = Schemas['InventoryTransactionResponse'];
+type PaginatedCustomers = Schemas['PaginatedCustomers'];
+type PaginatedCustomerOrders = Schemas['PaginatedCustomerOrders'];
 
 // The unified external-system item map (GrubOps + every aggregator) — one table,
 // one generic API. Names straight from the generated contract (rule 8).
@@ -708,6 +710,8 @@ export const analyticsApi = {
 export const customersApi = {
   list: (params?: { search?: string; page?: number; per_page?: number }) =>
     api.get<PaginatedCustomers>(`/users/admin/all${buildQs(params)}`),
+  orders: (customerId: string, params?: { page?: number; per_page?: number }) =>
+    api.get<PaginatedCustomerOrders>(`/users/admin/${customerId}/orders${buildQs(params)}`),
 };
 
 // ─── Custom-order enquiries (storefront leads) ──────────────────────────────────

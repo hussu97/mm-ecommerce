@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.core.phone import normalise_phone
+from app.core.phone import describe_phone
 from app.models.business_settings import BusinessSettings
 from app.models.custom_order import (
     OCCUPIES_SLOT,
@@ -275,7 +275,9 @@ async def book(
             # operator typing "0501234567" and the website's "+971501234567" are
             # one format. The raw is kept where it will not parse — a booking
             # still needs ringing.
-            customer_phone=normalise_phone(customer_phone) or customer_phone,
+            customer_phone=(phone := describe_phone(customer_phone)).e164
+            or customer_phone,
+            customer_phone_country=phone.country,
             customer_email=customer_email,
             description=description.strip(),
             cake_message=cake_message,

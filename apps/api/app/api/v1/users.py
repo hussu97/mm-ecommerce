@@ -1,38 +1,30 @@
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import search as search_text
 from app.core.deps import get_db
+from app.core.exceptions import NotFoundError
 from app.core.permissions import require
+from app.core.phone import normalise_phone
 from app.models.admin_passkey import AdminPasskey
-from app.models.order import Order, OrderStatusEnum
+from app.models.customer_cache import CustomerCache, CustomerOrderCache
+from app.models.order import Order
 from app.models.user import User as UserModel
+from app.schemas.customer import (
+    CustomerOrderHistoryRow,
+    CustomerSummary,
+    PaginatedCustomerOrders,
+    PaginatedCustomers,
+)
+from app.services import customer_service
 
 router = APIRouter()
-
-
-# ─── Schemas ──────────────────────────────────────────────────────────────────
-
-
-class CustomerSummary(BaseModel):
-    id: str
-    email: str
-    phone: str | None
-    order_count: int
-    total_spent: float
-    created_at: str
-
-
-class PaginatedCustomers(BaseModel):
-    items: list[CustomerSummary]
-    total: int
-    page: int
-    per_page: int
-    pages: int
 
 
 class AdminUserSummary(BaseModel):
@@ -45,76 +37,128 @@ class AdminUserSummary(BaseModel):
     created_at: str
 
 
-# ─── Endpoints ────────────────────────────────────────────────────────────────
+def _channel_label(order: Order) -> str:
+    if order.source == "aggregator":
+        return order.aggregator_channel or "Aggregator"
+    if order.source == "cashier":
+        return "Counter"
+    return "Website"
+
+
+def _order_name(order: Order) -> str | None:
+    name = (order.customer_name or "").strip()
+    if name:
+        return name
+    snapshot = order.shipping_address_snapshot or {}
+    name = " ".join(
+        str(snapshot.get(key) or "").strip() for key in ("first_name", "last_name")
+    )
+    return name or None
 
 
 @router.get("/admin/all", response_model=PaginatedCustomers)
 async def list_customers(
-    search: str | None = Query(None, description="Search by email or name"),
+    search: str | None = Query(None, description="Search by name, email, or phone"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=2000),
+    per_page: int = Query(50, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     _admin: UserModel = Depends(require("customers.read")),
-):
-    """List registered (non-guest, non-admin) customers with order stats."""
-    # Subquery: order count + total spent per user (excluding cancelled)
-    order_subq = (
-        select(
-            Order.user_id,
-            func.count(Order.id).label("order_count"),
-            func.coalesce(func.sum(Order.total), 0).label("total_spent"),
-        )
-        .where(Order.status != OrderStatusEnum.CANCELLED)
-        .group_by(Order.user_id)
-        .subquery()
-    )
-
-    base = (
-        select(
-            UserModel,
-            func.coalesce(order_subq.c.order_count, 0).label("order_count"),
-            func.coalesce(order_subq.c.total_spent, 0).label("total_spent"),
-        )
-        .outerjoin(order_subq, order_subq.c.user_id == UserModel.id)
-        .where(
-            UserModel.is_guest == False,  # noqa: E712
-            UserModel.is_admin == False,  # noqa: E712
-        )
-    )
-
+) -> PaginatedCustomers:
+    """List the deduplicated customer directory across every MM order channel."""
+    await customer_service.refresh_if_dirty(db)
+    base = select(CustomerCache)
     if search:
-        base = base.where(search_text.contains(UserModel.email, search))
+        phone_search = normalise_phone(search) or search
+        base = base.where(
+            or_(
+                search_text.contains(CustomerCache.name, search),
+                search_text.contains(CustomerCache.email, search),
+                search_text.contains(CustomerCache.phone, phone_search),
+            )
+        )
 
-    total = (
-        await db.execute(select(func.count()).select_from(base.subquery()))
-    ).scalar() or 0
-
-    offset = (page - 1) * per_page
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = (
-        await db.execute(
-            base.order_by(UserModel.created_at.desc()).offset(offset).limit(per_page)
+        await db.scalars(
+            base.order_by(
+                CustomerCache.latest_order_at.desc().nullslast(),
+                CustomerCache.created_at.desc(),
+            )
+            .offset((page - 1) * per_page)
+            .limit(per_page)
         )
     ).all()
-
-    items = [
-        CustomerSummary(
-            id=str(row.User.id),
-            email=row.User.email,
-            phone=row.User.phone,
-            order_count=int(row.order_count),
-            total_spent=float(row.total_spent),
-            created_at=row.User.created_at.isoformat(),
-        )
-        for row in rows
-    ]
-
-    pages = max(1, (total + per_page - 1) // per_page)
     return PaginatedCustomers(
-        items=items,
+        items=[
+            CustomerSummary(
+                id=str(row.id),
+                name=row.name,
+                email=row.email,
+                phone=row.phone,
+                phone_country=row.phone_country,
+                order_count=row.order_count,
+                earliest_order_at=(
+                    row.earliest_order_at.isoformat() if row.earliest_order_at else None
+                ),
+                latest_order_at=(
+                    row.latest_order_at.isoformat() if row.latest_order_at else None
+                ),
+                total_revenue=float(row.total_revenue),
+                aov=float(row.aov),
+            )
+            for row in rows
+        ],
         total=total,
         page=page,
         per_page=per_page,
-        pages=pages,
+        pages=max(1, (total + per_page - 1) // per_page),
+    )
+
+
+@router.get("/admin/{customer_id}/orders", response_model=PaginatedCustomerOrders)
+async def list_customer_orders(
+    customer_id: uuid.UUID,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    _admin: UserModel = Depends(require("customers.read")),
+) -> PaginatedCustomerOrders:
+    """Return the actual orders that established one cached customer identity."""
+    await customer_service.refresh_if_dirty(db)
+    if await db.get(CustomerCache, customer_id) is None:
+        raise NotFoundError("Customer not found")
+
+    base = (
+        select(Order)
+        .join(CustomerOrderCache, CustomerOrderCache.order_id == Order.id)
+        .where(CustomerOrderCache.customer_id == customer_id)
+    )
+    total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    rows = (
+        await db.scalars(
+            base.order_by(Order.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+    ).all()
+    return PaginatedCustomerOrders(
+        items=[
+            CustomerOrderHistoryRow(
+                id=str(order.id),
+                order_number=order.order_number,
+                customer_name=_order_name(order),
+                customer_phone=order.customer_phone,
+                customer_email=order.email or None,
+                order_date=order.created_at.isoformat(),
+                order_channel=_channel_label(order),
+                order_value=float(order.total),
+            )
+            for order in rows
+        ],
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=max(1, (total + per_page - 1) // per_page),
     )
 
 
@@ -143,7 +187,6 @@ async def list_admin_users(
             .order_by(UserModel.email.asc())
         )
     ).all()
-
     return [
         AdminUserSummary(
             id=str(row.User.id),

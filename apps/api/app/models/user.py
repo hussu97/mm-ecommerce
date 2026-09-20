@@ -36,6 +36,9 @@ class User(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: ISO country for the canonical E.164 phone. Kept separately so admin and
+    #: exports can filter/read the country without parsing a presentation value.
+    phone_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     #: When this number was last proved to belong to whoever typed it, via a
     #: Firebase OTP. NULL means never — which is every account that predates
     #: verification, and every one that has only ever typed a number in.

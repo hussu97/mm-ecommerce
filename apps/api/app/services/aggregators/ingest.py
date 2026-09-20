@@ -47,6 +47,7 @@ from app.core.database import (
 from app.core.database import (
     SchedulerSessionFactory as AsyncSessionFactory,  # noqa: N813 — scheduler pool, kept under this name for existing patch points
 )
+from app.core.phone import describe_phone
 from app.models.aggregator import (
     AGGREGATOR_CHANNELS,
     CHANNEL_DELIVEROO,
@@ -390,6 +391,7 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
                 order.external_order_id,
                 order.external_outlet_id,
             )
+    customer_phone = describe_phone(order.customer_phone)
     values = {
         "channel": channel,
         "external_order_id": order.external_order_id,
@@ -403,7 +405,8 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "status": order.status,
         "currency": order.currency,
         "customer_name": order.customer_name,
-        "customer_phone": order.customer_phone,
+        "customer_phone": customer_phone.e164 or order.customer_phone,
+        "customer_phone_country": customer_phone.country,
         "customer_address": (
             _json_safe(order.customer_address)
             if order.customer_address is not None

@@ -90,3 +90,19 @@ removing redundant payload, query, and logging work.
 - POS: complete `swift test` suite passed with zero failures; existing Swift 6
   warnings remain unrelated to this change.
 - Production deploy/health verification pending the direct-to-main pushes.
+
+---
+
+# Unified admin customers (2026-09-20)
+
+- [x] Add a transactionally rebuilt, dirty-tracked customer cache sourced from
+      customer-bearing orders and registered accounts; exclude anonymous counter
+      checks and deduplicate only on name plus a shared email or phone.
+- [x] Normalise source phones into E.164 and persist the detected country beside
+      them across account, marketplace-ledger, and custom-order write paths.
+- [x] Replace the registered-user customer endpoint with cached customer metrics
+      and a scoped order-history endpoint.
+- [x] Rebuild the Customers admin table and its order-history modal; regenerate
+      OpenAPI TypeScript contracts.
+- [x] Add focused regression coverage, run API/admin checks, and commit the
+      coherent feature with the required author.

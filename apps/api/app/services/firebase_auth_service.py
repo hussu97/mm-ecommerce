@@ -41,7 +41,7 @@ from jose import jwt
 from jose.exceptions import JOSEError
 
 from app.core.config import settings
-from app.core.phone import normalise_phone
+from app.core.phone import describe_phone, normalise_phone
 
 logger = logging.getLogger(__name__)
 
@@ -289,7 +289,9 @@ async def record_verification(
         if user is not None:
             # The number that was proved, not the one already on file. Someone
             # verifying a new handset is telling us their number changed.
-            user.phone = proof.phone
+            phone = describe_phone(proof.phone)
+            user.phone = phone.e164 or proof.phone
+            user.phone_country = phone.country
             user.phone_verified_at = at
     await db.flush()
     return row

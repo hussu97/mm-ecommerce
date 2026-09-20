@@ -51,7 +51,7 @@ from app.core.exceptions import (
 )
 from app.core.limiter import limiter
 from app.core.permissions import require
-from app.core.phone import normalise_phone
+from app.core.phone import describe_phone, normalise_phone
 from app.core.security import (
     create_access_token,
     create_password_reset_token,
@@ -377,11 +377,13 @@ async def register(
     if result.scalar_one_or_none():
         raise ConflictError("An account with this email already exists")
 
+    phone = describe_phone(body.phone)
     user = User(
         id=uuid.uuid4(),
         email=body.email.lower(),
         hashed_password=hash_password(body.password),
-        phone=body.phone,
+        phone=phone.e164 or body.phone,
+        phone_country=phone.country,
         is_active=True,
         is_admin=False,
         is_guest=False,
@@ -914,7 +916,9 @@ async def update_me(
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     if body.phone is not None:
-        current_user.phone = body.phone
+        phone = describe_phone(body.phone)
+        current_user.phone = phone.e164 or body.phone
+        current_user.phone_country = phone.country
 
     await db.flush()
     await db.refresh(current_user)

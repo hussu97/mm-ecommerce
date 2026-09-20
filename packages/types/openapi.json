@@ -8710,19 +8710,128 @@
         "title": "CustomerBreakdown",
         "type": "object"
       },
-      "CustomerSummary": {
+      "CustomerOrderHistoryRow": {
         "properties": {
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
+          "customer_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Email"
           },
-          "email": {
-            "title": "Email",
-            "type": "string"
+          "customer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
           },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "order_channel": {
+            "title": "Order Channel",
+            "type": "string"
+          },
+          "order_date": {
+            "title": "Order Date",
+            "type": "string"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "order_value": {
+            "title": "Order Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "order_number",
+          "customer_name",
+          "customer_phone",
+          "customer_email",
+          "order_date",
+          "order_channel",
+          "order_value"
+        ],
+        "title": "CustomerOrderHistoryRow",
+        "type": "object"
+      },
+      "CustomerSummary": {
+        "properties": {
+          "aov": {
+            "title": "Aov",
+            "type": "number"
+          },
+          "earliest_order_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Order At"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_order_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Order At"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
           },
           "order_count": {
             "title": "Order Count",
@@ -8739,18 +8848,33 @@
             ],
             "title": "Phone"
           },
-          "total_spent": {
-            "title": "Total Spent",
+          "phone_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone Country"
+          },
+          "total_revenue": {
+            "title": "Total Revenue",
             "type": "number"
           }
         },
         "required": [
           "id",
+          "name",
           "email",
           "phone",
+          "phone_country",
           "order_count",
-          "total_spent",
-          "created_at"
+          "earliest_order_at",
+          "latest_order_at",
+          "total_revenue",
+          "aov"
         ],
         "title": "CustomerSummary",
         "type": "object"
@@ -19445,6 +19569,42 @@
           "pages"
         ],
         "title": "PaginatedCustomOrderEnquiries",
+        "type": "object"
+      },
+      "PaginatedCustomerOrders": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerOrderHistoryRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page",
+          "pages"
+        ],
+        "title": "PaginatedCustomerOrders",
         "type": "object"
       },
       "PaginatedCustomers": {
@@ -65314,11 +65474,11 @@
     },
     "/api/v1/users/admin/all": {
       "get": {
-        "description": "List registered (non-guest, non-admin) customers with order stats.",
+        "description": "List the deduplicated customer directory across every MM order channel.",
         "operationId": "list_customers_api_v1_users_admin_all_get",
         "parameters": [
           {
-            "description": "Search by email or name",
+            "description": "Search by name, email, or phone",
             "in": "query",
             "name": "search",
             "required": false,
@@ -65331,7 +65491,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Search by email or name",
+              "description": "Search by name, email, or phone",
               "title": "Search"
             }
           },
@@ -65351,7 +65511,7 @@
             "name": "per_page",
             "required": false,
             "schema": {
-              "default": 20,
+              "default": 50,
               "maximum": 2000,
               "minimum": 1,
               "title": "Per Page",
@@ -65387,6 +65547,78 @@
           }
         ],
         "summary": "List Customers",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/api/v1/users/admin/{customer_id}/orders": {
+      "get": {
+        "description": "Return the actual orders that established one cached customer identity.",
+        "operationId": "list_customer_orders_api_v1_users_admin__customer_id__orders_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customer_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Customer Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedCustomerOrders"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Customer Orders",
         "tags": [
           "Users"
         ]

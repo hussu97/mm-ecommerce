@@ -562,25 +562,6 @@ export interface ImportResult {
   errors: ImportError[];
 }
 
-// ─── Customers ────────────────────────────────────────────────────────────────
-
-export interface CustomerSummary {
-  id: string;
-  email: string;
-  phone: string | null;
-  order_count: number;
-  total_spent: number;
-  created_at: string;
-}
-
-export interface PaginatedCustomers {
-  items: CustomerSummary[];
-  total: number;
-  page: number;
-  per_page: number;
-  pages: number;
-}
-
 // ─── Custom-order enquiries (storefront leads, not bookings) ─────────────────
 export interface CustomOrderEnquiry {
   id: string;

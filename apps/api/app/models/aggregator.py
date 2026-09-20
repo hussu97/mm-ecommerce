@@ -543,6 +543,7 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     customer_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    customer_phone_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
     #: The marketplace's delivery address for the order, as it exposes it —
     #: structured (`{line, area, city, building, ...}`) when the portal gives
     #: parts, else `{"text": "..."}`. JSONB to mirror `orders.shipping_address_
