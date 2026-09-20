@@ -344,6 +344,49 @@ async def test_posted_production_is_not_double_counted(engine, env):
         assert proposed.get(env["flour_id"], Decimal("0")) == Decimal("0")
 
 
+async def test_report_production_books_to_report_business_date(engine, env):
+    """A production report approved on a *later* day still books its PRODUCTION and
+    CONSUMPTION_FROM_PRODUCTION to the day the report is for — not the approver's
+    current business date. Regression: a report approved next morning used to leak
+    its production (and packaging/recipe drawdown) onto that day's report."""
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, env["user_id"])
+        # BUSINESS_DATE (2026-09-08) is well in the past, so the branch's current
+        # business date at post time necessarily differs from it — the produce()
+        # default would book to today, not to the report's day.
+        report = _production_report(
+            env, status=ShiftInventoryReportStatusEnum.APPROVED.value, produced=5
+        )
+        db.add(report)
+        await db.flush()
+        await report_service.post_report(db, report=report, user=user)
+        await db.commit()
+
+    async with Session() as db:
+        for tx_type in (
+            InventoryTransactionTypeEnum.PRODUCTION.value,
+            InventoryTransactionTypeEnum.CONSUMPTION_FROM_PRODUCTION.value,
+        ):
+            dates = (
+                (
+                    await db.execute(
+                        select(InventoryTransaction.business_date).where(
+                            InventoryTransaction.type == tx_type,
+                            InventoryTransaction.source_type == "production",
+                            InventoryTransaction.source_id == str(env["brownie_id"]),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert dates, f"no {tx_type} transaction posted"
+            assert all(d == BUSINESS_DATE for d in dates), (
+                f"{tx_type} booked to {dates}, expected {BUSINESS_DATE}"
+            )
+
+
 async def test_extra_production_use_posts_its_own_movement(engine, env):
     """Entering the extra column deducts extra flour and posts an EXTRA_PRODUCTION_USE
     transaction on approval."""

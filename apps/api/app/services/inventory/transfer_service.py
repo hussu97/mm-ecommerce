@@ -959,6 +959,7 @@ async def produce(
     notes: str | None = None,
     source_type: str = "production",
     source_id: str | None = None,
+    business_date: str | None = None,
 ) -> tuple[InventoryTransaction, InventoryTransaction | None]:
     """
     Produce a batch of an item, consuming its bill of materials.
@@ -976,6 +977,12 @@ async def produce(
     a production order passes ``"production_line"`` / the line id so the movement
     links back to the order line as well as through the line's
     ``production_transaction_id``.
+
+    ``business_date`` overrides the day the movements are booked to. It defaults
+    to the branch's *current* business date — right for a real-time till produce
+    — but a shift report posted (approved) on a later day must book its
+    production to the day the report is *for*, not the approver's clock, or a
+    report approved next morning leaks its production onto that day's sheet.
     """
     output_quantity = _q(quantity)
     if output_quantity <= 0:
@@ -1003,7 +1010,8 @@ async def produce(
     if item is None:
         raise NotFoundError("Inventory item not found")
 
-    business_date = await business_day_service.current_business_date(db, branch)
+    if business_date is None:
+        business_date = await business_day_service.current_business_date(db, branch)
     warehouse = (
         warehouse_id or (await inventory_service.default_warehouse(db, branch.id)).id
     )

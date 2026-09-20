@@ -1735,6 +1735,12 @@ async def post_report(
                     quantity=value,
                     warehouse_id=warehouse.id,
                     notes=f"Shift report {report.id} · {column.key}",
+                    # Book the production (and its recipe drawdown) to the day the
+                    # report is for, matching every other movement this post emits
+                    # (business_date=report.business_date above). Without this the
+                    # produce() default — the approver's current business date —
+                    # leaks a report approved next morning onto that day's sheet.
+                    business_date=report.business_date,
                 )
                 first_transaction = first_transaction or produced
             continue
