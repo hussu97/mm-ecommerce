@@ -129,7 +129,7 @@ export function OrderFilterBar({
             Search
           </label>
           <Input
-            placeholder="Order #, marketplace ref, name, email or phone…"
+            placeholder="Order #, ref, name, email, phone, product or SKU…"
             value={search}
             onChange={e => onSearch(e.target.value)}
           />

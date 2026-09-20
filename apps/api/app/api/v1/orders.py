@@ -427,7 +427,11 @@ async def list_my_orders(
 async def list_all_orders(
     status: OrderStatusEnum | None = Query(None),
     search: str | None = Query(
-        None, description="Order number, email, customer name or phone"
+        None,
+        description=(
+            "Order number, marketplace reference, email, customer name or phone, "
+            "or a product name or SKU held on the order"
+        ),
     ),
     channel: str | None = Query(
         None,

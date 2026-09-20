@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from sqlalchemy import and_, exists, or_
 
+from app.core import search as search_text
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_delivery import OrderDelivery
 from app.models.pos_order import OrderItemStatusEnum, OrderSourceEnum
@@ -156,6 +157,31 @@ def category_clause(category_ids: list | None):
         OrderItem.order_id == Order.id,
         OrderItem.product_id == Product.id,
         Product.category_id.in_(ids),
+        OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
+    )
+
+
+def item_search_clause(term: str | None):
+    """Select orders holding a line whose product name or SKU matches `term`.
+
+    Like `category_clause`, a product match lives on the *line*, not the order,
+    so this is an EXISTS over `order_items`. It matches the line's frozen
+    snapshot (`product_name`/`product_sku`) rather than joining `products`: the
+    snapshot is what the customer actually ordered and survives a later rename or
+    delete of the catalogue row, so a search keeps finding the historic order.
+    Both columns go through the escaping-safe `contains` (case-insensitive
+    substring). Voided counter lines (`status = 'void'`) do not make an order
+    match; an off-counter line has a NULL status, so the guard is
+    `is_distinct_from('void')`, never `!= 'void'` (which NULL would fail).
+    """
+    if not term:
+        return None
+    return exists().where(
+        OrderItem.order_id == Order.id,
+        or_(
+            search_text.contains(OrderItem.product_name, term),
+            search_text.contains(OrderItem.product_sku, term),
+        ),
         OrderItem.status.is_distinct_from(OrderItemStatusEnum.VOID.value),
     )
 

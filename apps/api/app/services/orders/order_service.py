@@ -2321,6 +2321,12 @@ async def get_all_admin(
             # order was right there.
             | search_text.contains(Order.external_reference, search)
             | search_text.contains(Order.aggregator_display_code, search)
+            # ...and the goods themselves: an order matches when it holds a line
+            # whose product name or SKU contains the term, so "brookie" or
+            # "FG0052" surfaces every order that sold it. Line-level, hence an
+            # EXISTS (see `order_query.item_search_clause`), OR'd in beside the
+            # order-level columns above.
+            | order_query.item_search_clause(search)
         )
 
     count_result = await db.execute(

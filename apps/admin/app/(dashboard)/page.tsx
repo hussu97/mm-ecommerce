@@ -590,7 +590,7 @@ export default function DashboardPage() {
               type="search"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              placeholder="MM number, marketplace ref, customer name or email"
+              placeholder="MM number, ref, name, email, product or SKU"
               className="w-full pl-9 pr-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
             />
           </div>
