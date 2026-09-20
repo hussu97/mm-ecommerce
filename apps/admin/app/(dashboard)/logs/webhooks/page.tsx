@@ -26,7 +26,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { webhookLogsApi } from '@/lib/api';
 import type { WebhookLog, WebhookLogDetail } from '@/lib/types';
 import { Badge, Input, Pagination, Select, LoadError, Spinner } from '@/components/ui';
@@ -91,7 +91,6 @@ function formatDateTime(iso: string): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WebhookLogsPage() {
-  const router = useRouter();
   const [logs, setLogs] = useState<WebhookLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -360,12 +359,12 @@ export default function WebhookLogsPage() {
               header: 'Order #',
               render: log =>
                 log.order_number ? (
-                  <button
-                    onClick={() => router.push(`/orders/${log.order_number}`)}
+                  <Link
+                    href={`/orders/${log.order_number}`}
                     className="inline-flex items-center min-h-11 md:min-h-0 text-xs font-body font-medium text-primary hover:underline"
                   >
                     {log.order_number}
-                  </button>
+                  </Link>
                 ) : (
                   <span className="text-gray-300">—</span>
                 ),

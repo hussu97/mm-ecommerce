@@ -11,8 +11,6 @@
 // loaded once on mount.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type { Branch, InventoryTransaction } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
@@ -43,7 +41,6 @@ const netDelta = (tx: InventoryTransaction) =>
   tx.items.reduce((sum, line) => sum + Number(line.signed_quantity ?? 0), 0);
 
 export default function StockCountsPage() {
-  const router = useRouter();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<InventoryTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,7 +93,7 @@ export default function StockCountsPage() {
     { header: 'Posted', sortable: true, sortAccessor: (row) => row.posted_at ?? null, render: (row) => row.posted_at ? formatDateTime(row.posted_at) : '—' },
     { header: 'Branch', sortable: true, sortAccessor: (row) => branchName(row.branch_id), render: (row) => branchName(row.branch_id) },
     { header: 'Posted by', sortable: true, sortAccessor: (row) => row.posted_by_name ?? null, render: (row) => row.posted_by_name ?? '—' },
-    { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <Link href={`/inventory/transactions/${row.id}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{row.reference}</Link> },
+    { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <span className="text-primary">{row.reference}</span> },
     { header: 'Items', className: 'text-right', sortable: true, sortAccessor: (row) => row.items.length, render: (row) => row.items.length },
     { header: 'Net delta', className: 'text-right', sortable: true, sortAccessor: (row) => netDelta(row), render: (row) => { const d = netDelta(row); return <span className={d < 0 ? 'text-red-600' : d > 0 ? 'text-green-700' : 'text-gray-400'}>{d === 0 ? '—' : `${d > 0 ? '+' : ''}${formatQuantity(d)}`}</span>; } },
     { header: 'Value impact', className: 'text-right', sortable: true, sortAccessor: (row) => row.total_cost, render: (row) => formatCurrency(row.total_cost) },
@@ -135,7 +132,7 @@ export default function StockCountsPage() {
           <DataTable
             rows={pageRows}
             rowKey={(row) => row.id}
-            onRowClick={(row) => router.push(`/inventory/transactions/${row.id}`)}
+            getRowHref={(row) => `/inventory/transactions/${row.id}`}
             empty={<span className="text-sm text-gray-500">No stock counts match these filters.</span>}
             columns={columns}
             sort={sort}

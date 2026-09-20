@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Fragment, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -110,6 +111,20 @@ interface DataTableProps<T> {
    * its own click must stop propagation.
    */
   onRowClick?: (row: T) => void;
+  /**
+   * A row's detail-page URL. The proper way to make a list navigable: every
+   * cell (and the card body) is rendered as a real `<Link>` to it, so a plain
+   * click navigates in-place while cmd/ctrl-click, middle-click and right-click
+   * → "open in new tab" all work — the thing a bare `onRowClick` (a `<tr>` with
+   * a JS handler, which is not a link) silently breaks. Because the cells become
+   * anchors, a column's `render` must not itself contain an interactive control
+   * under `getRowHref`; put row controls in the `actions` slot (they sit in
+   * their own, un-wrapped cell). Prefer this over `onRowClick` for any list
+   * whose rows open a page; keep `onRowClick` for rows that open a modal or do
+   * something with no URL. It needs no router, so a `<DataTable>` under test
+   * renders without an app-router context.
+   */
+  getRowHref?: (row: T) => string | undefined;
   className?: string;
   /**
    * Controlled sort — pass this with `onSortChange` when the rows are one
@@ -195,6 +210,7 @@ export function DataTable<T>({
   rowClassName,
   expanded,
   onRowClick,
+  getRowHref,
   className,
   sort,
   onSortChange,
@@ -275,49 +291,67 @@ export function DataTable<T>({
 
       {/* ── Cards, below md ─────────────────────────────────────────────── */}
       <ul className="md:hidden space-y-2">
-        {sortedRows.map(row => (
+        {sortedRows.map(row => {
+          const href = getRowHref?.(row);
+          const clickable = !!onRowClick || !!href;
+          // The tappable part of the card — everything but the actions and the
+          // expanded detail, which carry their own controls and must stay
+          // outside the anchor. Rendered inside a `<Link>` when `href` is set,
+          // so a tap navigates and a long-press offers "open in new tab".
+          const body = (
+            <>
+              {primary && (
+                <div className="text-sm font-body font-medium text-gray-800 break-words">
+                  {primary.render(row)}
+                </div>
+              )}
+              {secondary.map(c => (
+                <div key={c.header} className="mt-0.5 text-xs font-body text-gray-400 break-words">
+                  {c.render(row)}
+                </div>
+              ))}
+
+              {meta.length > 0 && (
+                // Two columns rather than a stack: the label is short and the
+                // value is short, and stacking them doubled the card's height
+                // for no gain. `minmax(0,1fr)` on the value is what lets a long
+                // one wrap instead of pushing the card wide.
+                <dl
+                  className={cn(
+                    'grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1',
+                    (primary || secondary.length > 0) && 'mt-2.5 border-t border-gray-100 pt-2.5',
+                  )}
+                >
+                  {meta.map(c => (
+                    <div key={c.header} className="contents">
+                      <dt className="text-[11px] font-body uppercase tracking-widest text-gray-400 pt-0.5">
+                        {c.header}
+                      </dt>
+                      <dd className="text-xs font-body text-gray-700 min-w-0 break-words">
+                        {c.render(row)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </>
+          );
+          return (
           <li
             key={rowKey(row)}
             onClick={onRowClick ? () => onRowClick(row) : undefined}
             className={cn(
               'rounded border border-gray-200 bg-white px-[var(--card-px)] py-[var(--card-py)]',
-              onRowClick && 'cursor-pointer active:bg-gray-50',
+              clickable && 'cursor-pointer active:bg-gray-50',
               rowClassName?.(row),
             )}
           >
-            {primary && (
-              <div className="text-sm font-body font-medium text-gray-800 break-words">
-                {primary.render(row)}
-              </div>
-            )}
-            {secondary.map(c => (
-              <div key={c.header} className="mt-0.5 text-xs font-body text-gray-400 break-words">
-                {c.render(row)}
-              </div>
-            ))}
-
-            {meta.length > 0 && (
-              // Two columns rather than a stack: the label is short and the
-              // value is short, and stacking them doubled the card's height
-              // for no gain. `minmax(0,1fr)` on the value is what lets a long
-              // one wrap instead of pushing the card wide.
-              <dl
-                className={cn(
-                  'grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1',
-                  (primary || secondary.length > 0) && 'mt-2.5 border-t border-gray-100 pt-2.5',
-                )}
-              >
-                {meta.map(c => (
-                  <div key={c.header} className="contents">
-                    <dt className="text-[11px] font-body uppercase tracking-widest text-gray-400 pt-0.5">
-                      {c.header}
-                    </dt>
-                    <dd className="text-xs font-body text-gray-700 min-w-0 break-words">
-                      {c.render(row)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+            {href ? (
+              <Link href={href} className="block">
+                {body}
+              </Link>
+            ) : (
+              body
             )}
 
             {actions && (
@@ -330,7 +364,8 @@ export function DataTable<T>({
               <div className="mt-2.5 border-t border-gray-100 pt-2.5">{expanded(row)}</div>
             ) : null}
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       {/* ── Table, md and up ──────────────────────────────────────────────
@@ -408,6 +443,8 @@ export function DataTable<T>({
           <tbody>
             {sortedRows.map(row => {
               const detail = expanded?.(row);
+              const href = getRowHref?.(row);
+              const rowClickable = !!onRowClick || !!href;
               return (
                 <Fragment key={rowKey(row)}>
                   <tr
@@ -418,7 +455,7 @@ export function DataTable<T>({
                       // stays clear which line you are editing.
                       'group border-b border-gray-100 transition-colors hover:bg-gray-50 focus-within:bg-gray-50',
                       !detail && 'last:border-0',
-                      onRowClick && 'cursor-pointer',
+                      rowClickable && 'cursor-pointer',
                       rowClassName?.(row),
                     )}
                   >
@@ -435,7 +472,23 @@ export function DataTable<T>({
                           c.className,
                         )}
                       >
-                        {c.render(row)}
+                        {href ? (
+                          // Each cell is a real anchor filling the cell (negative
+                          // margins cancel the td padding, then re-add it), so a
+                          // plain click anywhere on the row navigates and
+                          // cmd/ctrl/middle/right-click opens a new tab. Only the
+                          // first cell is in the tab order — the rest repeat the
+                          // same destination, so they are skipped for the keyboard.
+                          <Link
+                            href={href}
+                            tabIndex={i === 0 ? undefined : -1}
+                            className="block -mx-[var(--row-px)] -my-[var(--row-py)] px-[var(--row-px)] py-[var(--row-py)]"
+                          >
+                            {c.render(row)}
+                          </Link>
+                        ) : (
+                          c.render(row)
+                        )}
                       </td>
                     ))}
                     {actions && (
@@ -471,26 +524,36 @@ export function DataTable<T>({
  */
 export function RowAction({
   onClick,
+  href,
   danger,
   disabled,
   children,
 }: {
-  onClick: () => void;
+  onClick?: () => void;
+  /** Render the action as a real `<Link>` — for an action that opens a page, so
+   *  it too honours cmd/middle/right-click → open in new tab. Pass this instead
+   *  of an `onClick` that calls `router.push`. */
+  href?: string;
   danger?: boolean;
   disabled?: boolean;
   children: React.ReactNode;
 }) {
+  const className = cn(
+    'text-xs font-body hover:underline disabled:opacity-40 disabled:no-underline',
+    'inline-flex items-center justify-center min-h-11 min-w-11 md:min-h-0 md:min-w-0',
+    danger ? 'text-red-500' : 'text-primary',
+  );
+  if (href && !disabled) {
+    return (
+      // Stop propagation so an action inside a navigable row/card does not also
+      // trigger the row's own click.
+      <Link href={href} onClick={e => e.stopPropagation()} className={className}>
+        {children}
+      </Link>
+    );
+  }
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        'text-xs font-body hover:underline disabled:opacity-40 disabled:no-underline',
-        'inline-flex items-center justify-center min-h-11 min-w-11 md:min-h-0 md:min-w-0',
-        danger ? 'text-red-500' : 'text-primary',
-      )}
-    >
+    <button type="button" onClick={onClick} disabled={disabled} className={className}>
       {children}
     </button>
   );

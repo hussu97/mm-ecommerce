@@ -6,7 +6,6 @@
 // client-side over the rows loaded once on mount.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { branchesApi, inventoryApi, type ShiftInventoryReport } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
@@ -33,7 +32,6 @@ function withinRange(date: string | null | undefined, from: string, to: string):
 }
 
 export default function ShiftReportsPage() {
-  const router = useRouter();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<ShiftInventoryReport[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,7 +112,7 @@ export default function ShiftReportsPage() {
           <DataTable
             rows={pageRows}
             rowKey={(row) => row.id}
-            onRowClick={(row) => router.push(`/inventory/reports/${row.id}`)}
+            getRowHref={(row) => `/inventory/reports/${row.id}`}
             empty={<span className="text-sm text-gray-500">No shift reports match these filters.</span>}
             columns={columns}
             sort={sort}

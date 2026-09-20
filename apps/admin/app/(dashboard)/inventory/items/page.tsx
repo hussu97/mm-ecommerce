@@ -8,7 +8,6 @@
 // section; a made item's row links out to it rather than editing inline.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   branchesApi,
   inventoryApi,
@@ -31,7 +30,6 @@ export default function ItemsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [pivot, setPivot] = useState<StockPivot>(new Map());
   const [costItem, setCostItem] = useState<InventoryItem | null>(null);
-  const router = useRouter();
   const [categoryId, setCategoryId] = useState('');
   const [kind, setKind] = useState('');
   const [trackingMode, setTrackingMode] = useState('');
@@ -183,7 +181,7 @@ export default function ItemsPage() {
       rowActions={(item) => (
         <>
           {MADE_KINDS.has(item.kind) && (
-            <RowAction onClick={() => router.push(`/recipes/inventory?open=${item.id}`)}>Recipe</RowAction>
+            <RowAction href={`/recipes/inventory?open=${item.id}`}>Recipe</RowAction>
           )}
           {item.tracking_mode !== 'phantom' && (
             <RowAction onClick={() => setCostItem(item)}>Cost</RowAction>

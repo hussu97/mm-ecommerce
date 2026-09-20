@@ -7,8 +7,6 @@
 // the rows loaded once on mount, the same shape as the Transfers & returns tab.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type { Branch, ProductionOrderSummary } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
@@ -35,7 +33,6 @@ function withinRange(date: string | null | undefined, from: string, to: string):
 }
 
 export default function ProductionSubmissionsPage() {
-  const router = useRouter();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<ProductionOrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,7 +71,7 @@ export default function ProductionSubmissionsPage() {
   const statuses = useMemo(() => Array.from(new Set(rows.map((r) => r.status))).sort(), [rows]);
 
   const columns = useMemo<DataColumn<ProductionOrderSummary>[]>(() => [
-    { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <Link href={`/inventory/submissions/production/${row.id}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{row.reference}</Link> },
+    { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <span className="text-primary">{row.reference}</span> },
     { header: 'Source', sortable: true, sortAccessor: (row) => row.source_branch_name ?? branchName(row.source_branch_id), render: (row) => <span className="text-xs">{row.source_branch_name ?? branchName(row.source_branch_id)}</span> },
     { header: 'Business date', sortable: true, sortAccessor: (row) => row.business_date, render: (row) => row.business_date },
     { header: 'Status', sortable: true, sortAccessor: (row) => row.status, render: (row) => <Badge variant={transferStatusVariant(row.status)}>{transferStatusLabel(row.status)}</Badge> },
@@ -117,7 +114,7 @@ export default function ProductionSubmissionsPage() {
           <DataTable
             rows={pageRows}
             rowKey={(row) => row.id}
-            onRowClick={(row) => router.push(`/inventory/submissions/production/${row.id}`)}
+            getRowHref={(row) => `/inventory/submissions/production/${row.id}`}
             empty={<span className="text-sm text-gray-500">No production orders match these filters.</span>}
             columns={columns}
             sort={sort}

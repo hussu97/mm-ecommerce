@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type {
   Branch,
@@ -38,7 +37,6 @@ interface DraftLine {
 const VAT_RATE = 0.05;
 
 export default function PurchaseOrdersPage() {
-  const router = useRouter();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -134,7 +132,7 @@ export default function PurchaseOrdersPage() {
           rowKey={(po) => po.id}
           actions={(po) => (
             <>
-              <RowAction onClick={() => router.push(`/purchase-orders/${po.id}`)}>Details</RowAction>
+              <RowAction href={`/purchase-orders/${po.id}`}>Details</RowAction>
               {/* Legacy drafts can still be submitted; new POs are born pending. */}
               {po.status === 'draft' && (
                 <RowAction onClick={() => act(po.id, 'submit')}>Submit</RowAction>

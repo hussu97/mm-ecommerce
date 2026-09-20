@@ -7,7 +7,6 @@
 // client-side over the rows loaded once on mount.
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { branchesApi, inventoryApi, type TransferOrder } from '@/lib/pos-api';
 import type { Branch } from '@/lib/pos-types';
@@ -53,7 +52,6 @@ const hasSendingVariance = (order: TransferOrder) =>
   );
 
 export default function TransfersPage() {
-  const router = useRouter();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [rows, setRows] = useState<TransferOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,7 +90,7 @@ export default function TransfersPage() {
   const statuses = useMemo(() => Array.from(new Set(rows.map((r) => r.status))).sort(), [rows]);
 
   const columns = useMemo<DataColumn<TransferOrder>[]>(() => [
-    { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <Link href={`/inventory/transfers/${row.id}`} className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>{row.reference}</Link> },
+    { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <span className="text-primary">{row.reference}</span> },
     { header: 'Kind', sortable: true, sortAccessor: (row) => row.kind, render: (row) => <Badge variant={row.kind === 'return' ? 'warning' : 'neutral'}>{row.kind}</Badge> },
     { header: 'Source', sortable: true, sortAccessor: (row) => branchName(row.source_branch_id), render: (row) => <span className="text-xs">{branchName(row.source_branch_id)}</span> },
     { header: 'Destinations', sortable: true, sortAccessor: (row) => row.children.length, render: (row) => <span className="text-xs" title={row.children.map((child) => branchName(child.branch_id)).join(', ')}>{row.children.length} branch{row.children.length === 1 ? '' : 'es'}</span> },
@@ -139,7 +137,7 @@ export default function TransfersPage() {
           <DataTable
             rows={pageRows}
             rowKey={(row) => row.id}
-            onRowClick={(row) => router.push(`/inventory/transfers/${row.id}`)}
+            getRowHref={(row) => `/inventory/transfers/${row.id}`}
             empty={<span className="text-sm text-gray-500">No transfer orders match these filters.</span>}
             columns={columns}
             sort={sort}

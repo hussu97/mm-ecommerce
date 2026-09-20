@@ -17,7 +17,6 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
 import { ordersApi, exportApi, categoriesApi } from '@/lib/api';
 import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
 import type { Branch, LegalEntity } from '@/lib/pos-types';
@@ -118,7 +117,6 @@ function CostCover({ order }: { order: Order }) {
 }
 
 export default function OrdersPage() {
-  const router = useRouter();
   const {
     filters,
     patch,
@@ -238,7 +236,7 @@ export default function OrdersPage() {
           rows={orders}
           rowKey={o => o.id}
           stickyHeader
-          onRowClick={o => router.push(`/orders/${o.order_number}`)}
+          getRowHref={o => `/orders/${o.order_number}`}
           empty={
             <p className="py-16 text-center text-sm text-gray-400 font-body">No orders found.</p>
           }

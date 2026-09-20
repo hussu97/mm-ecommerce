@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { emailLogsApi } from '@/lib/api';
 import type { EmailLog, EmailLogStatus } from '@/lib/types';
 import { Badge, Input, Pagination, Select, LoadError, Spinner } from '@/components/ui';
@@ -68,7 +68,6 @@ function formatDateTime(iso: string): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmailLogsPage() {
-  const router = useRouter();
   const [logs, setLogs] = useState<EmailLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -260,12 +259,12 @@ export default function EmailLogsPage() {
               header: 'Order #',
               render: log =>
                 log.order_number ? (
-                  <button
-                    onClick={() => router.push(`/orders/${log.order_number}`)}
+                  <Link
+                    href={`/orders/${log.order_number}`}
                     className="inline-flex items-center min-h-11 md:min-h-0 text-xs font-body font-medium text-primary hover:underline"
                   >
                     {log.order_number}
-                  </button>
+                  </Link>
                 ) : (
                   <span className="text-gray-300">—</span>
                 ),
