@@ -12,7 +12,7 @@ import logging
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -160,6 +160,11 @@ async def accept_order(
         _warn_if_edited_after_acceptance(order, existing)
         return existing
 
+    # Read the generation BEFORE the catalog snapshot.  If an activation commits
+    # between these two reads, this event is deliberately stamped with the older
+    # generation and the next 30-second pass retries it; no catalog change can be
+    # missed by a race.
+    catalog_generation = await recipe_service.current_catalog_generation(db)
     plan, warnings = await recipe_service.snapshot_order(db, order)
     if warnings:
         plan["warnings"] = warnings
@@ -186,6 +191,7 @@ async def accept_order(
         accepted_at=utcnow(),
         frozen_plan=plan,
         recipe_version_ids=plan.get("recipe_version_ids", []),
+        recipe_catalog_generation=catalog_generation,
         error_code="missing_recipe" if warnings else None,
         error_detail="; ".join(warnings) if warnings else None,
         processed_at=None,
@@ -366,6 +372,7 @@ async def retry_event(
     user: User | None,
     already_locked: bool = False,
     catalog: "recipe_service.ActiveRecipeCatalog | None" = None,
+    catalog_generation: int | None = None,
 ) -> InventoryTransaction | None:
     """Re-snapshot a never-posted event so a recipe activated since acceptance lands.
 
@@ -385,12 +392,15 @@ async def retry_event(
     if not already_locked:
         await lock_branch_inventory(db, event.branch_id)
 
+    if catalog_generation is None:
+        catalog_generation = await recipe_service.current_catalog_generation(db)
     plan, warnings = await recipe_service.snapshot_order(db, order, catalog=catalog)
     if warnings:
         plan["warnings"] = warnings
     # The plan was never applied (guarded above), so re-freezing it is safe.
     event.frozen_plan = plan
     event.recipe_version_ids = plan.get("recipe_version_ids", [])
+    event.recipe_catalog_generation = catalog_generation
     event.error_code = "missing_recipe" if warnings else None
     event.error_detail = "; ".join(warnings) if warnings else None
     event.status = InventorySourceEventStatusEnum.PENDING.value
@@ -868,17 +878,37 @@ async def _try_lock_branch_inventory(db: AsyncSession, branch_id: uuid.UUID) -> 
     return bool(got)
 
 
-async def _pending_branch_ids() -> list[uuid.UUID]:
+def _eligible_pending(generation: int):
+    """SQL predicate for pending work at one active-recipe generation.
+
+    Ordinary pending events remain immediately recoverable.  Only the known
+    ``missing_recipe`` no-op path sleeps after it has tried this exact graph.
+    """
+    return or_(
+        InventorySourceEvent.error_code.is_distinct_from("missing_recipe"),
+        InventorySourceEvent.recipe_catalog_generation < generation,
+    )
+
+
+async def _pending_branch_ids(
+    catalog_generation: int | None = None,
+) -> tuple[int, list[uuid.UUID]]:
     """Branches with pending events, read on a session of their own and released
     before any per-branch work opens one."""
     async with SchedulerSessionFactory() as db:
-        return list(
+        generation = (
+            catalog_generation
+            if catalog_generation is not None
+            else await recipe_service.current_catalog_generation(db)
+        )
+        branch_ids = list(
             (
                 await db.execute(
                     select(InventorySourceEvent.branch_id)
                     .where(
                         InventorySourceEvent.status
-                        == InventorySourceEventStatusEnum.PENDING.value
+                        == InventorySourceEventStatusEnum.PENDING.value,
+                        _eligible_pending(generation),
                     )
                     .distinct()
                 )
@@ -886,13 +916,23 @@ async def _pending_branch_ids() -> list[uuid.UUID]:
             .scalars()
             .all()
         )
+        return generation, branch_ids
 
 
-async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
+async def _sweep_branch_pending(
+    db: AsyncSession,
+    branch_id: uuid.UUID,
+    catalog_generation: int | None = None,
+) -> int:
     """Process one branch's pending events in acceptance order.
 
     The caller holds the branch try-lock in this transaction and commits it.
     """
+    generation = (
+        catalog_generation
+        if catalog_generation is not None
+        else await recipe_service.current_catalog_generation(db)
+    )
     events = list(
         (
             await db.execute(
@@ -901,6 +941,7 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
                     InventorySourceEvent.branch_id == branch_id,
                     InventorySourceEvent.status
                     == InventorySourceEventStatusEnum.PENDING.value,
+                    _eligible_pending(generation),
                 )
                 .order_by(InventorySourceEvent.accepted_sequence)
                 .with_for_update(skip_locked=True)
@@ -916,7 +957,7 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
     # backlog past the budget. Reused across the batch it is a single query; a recipe
     # activated mid-tick simply lands on the next tick, which reloads.
     catalog = None
-    if events:
+    if any(event.error_code == "missing_recipe" for event in events):
         catalog = await recipe_service.load_active_catalog(db)
     processed = 0
     for event in events:
@@ -949,6 +990,7 @@ async def _sweep_branch_pending(db: AsyncSession, branch_id: uuid.UUID) -> int:
                         user=None,
                         already_locked=True,
                         catalog=catalog,
+                        catalog_generation=generation,
                     )
                 else:
                     await _post_or_record_exception(
@@ -995,7 +1037,7 @@ async def sweep_pending_once() -> int:
     connection across every other branch's work nor pin the whole sweep behind
     one live acceptance.
     """
-    branch_ids = await _pending_branch_ids()
+    catalog_generation, branch_ids = await _pending_branch_ids()
     processed = 0
     for branch_id in branch_ids:
         async with SchedulerSessionFactory() as db:
@@ -1003,7 +1045,9 @@ async def sweep_pending_once() -> int:
                 if not await _try_lock_branch_inventory(db, branch_id):
                     await db.rollback()
                     continue
-                processed += await _sweep_branch_pending(db, branch_id)
+                processed += await _sweep_branch_pending(
+                    db, branch_id, catalog_generation
+                )
                 # This worker owns the session and has no request dependency to
                 # commit it; one commit per branch makes that branch durable.
                 await db.commit()

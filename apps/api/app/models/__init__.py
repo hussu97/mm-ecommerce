@@ -123,6 +123,7 @@ from .inventory_v2 import (  # noqa: F401
     InventorySourceEventStatusEnum,
     InventoryTrackingModeEnum,
     Recipe,
+    RecipeCatalogState,
     RecipeLine,
     RecipeOwnerKindEnum,
     RecipeVersion,

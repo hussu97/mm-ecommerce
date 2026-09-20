@@ -76,6 +76,28 @@ class RecipeBasisEnum(str, enum.Enum):
     BATCH = "batch"
 
 
+class RecipeCatalogState(Base):
+    """Singleton generation clock for changes to the active recipe graph.
+
+    Pending source events remember the generation they last tried.  The recovery
+    loop can therefore keep its 30-second cadence without rebuilding the complete
+    recipe catalog until an activation actually changes what expansion can do.
+    """
+
+    __tablename__ = "recipe_catalog_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_recipe_catalog_state_singleton"),
+        CheckConstraint(
+            "generation > 0", name="ck_recipe_catalog_state_positive_generation"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="1"
+    )
+
+
 class InventorySourceEventStatusEnum(str, enum.Enum):
     PENDING = "pending"
     PROCESSING = "processing"
@@ -386,6 +408,12 @@ class InventorySourceEvent(Base, UUIDMixin, TimestampMixin):
     frozen_plan: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="{}")
     recipe_version_ids: Mapped[Any] = mapped_column(
         JSONB, nullable=False, server_default="[]"
+    )
+    #: Active-recipe generation used by the most recent snapshot attempt.  A
+    #: pending missing-recipe event is eligible for recovery only after the
+    #: singleton catalog generation advances beyond this value.
+    recipe_catalog_generation: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default="0"
     )
     transaction_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

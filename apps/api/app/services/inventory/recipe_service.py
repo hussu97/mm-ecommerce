@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Iterable, Sequence
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,6 +25,7 @@ from app.models.inventory_v2 import (
     InventoryTrackingModeEnum,
     Recipe,
     RecipeBasisEnum,
+    RecipeCatalogState,
     RecipeLine,
     RecipeOwnerKindEnum,
     RecipeVersion,
@@ -90,6 +91,29 @@ def _owner_column(kind: str):
 #: the maker-checker on recipe creation — enforced on the write, since a stocked
 #: retail/raw/packaging item having a recipe is a data error by construction.
 _PURCHASED_ITEM_KINDS = frozenset({"raw_material", "packaging", "resale_good"})
+
+
+async def current_catalog_generation(db: AsyncSession) -> int:
+    """Return the durable generation of the active recipe graph."""
+    generation = await db.scalar(
+        select(RecipeCatalogState.generation).where(RecipeCatalogState.id == 1)
+    )
+    if generation is None:
+        raise RuntimeError("Recipe catalog generation singleton is missing")
+    return int(generation)
+
+
+async def _bump_catalog_generation(db: AsyncSession) -> int:
+    """Advance the graph clock in the same transaction as an activation."""
+    generation = await db.scalar(
+        update(RecipeCatalogState)
+        .where(RecipeCatalogState.id == 1)
+        .values(generation=RecipeCatalogState.generation + 1)
+        .returning(RecipeCatalogState.generation)
+    )
+    if generation is None:
+        raise RuntimeError("Recipe catalog generation singleton is missing")
+    return int(generation)
 
 
 async def _assert_owner_exists(
@@ -522,6 +546,10 @@ async def activate(
     candidate.activated_at = now
     candidate.activated_by = user_id
     await db.flush()
+    # Wake pending missing-recipe events only when the active graph changes.  The
+    # update is transactional with activation, so a sweeper can never observe a
+    # generation whose recipe version is not visible yet.
+    await _bump_catalog_generation(db)
     return await _load_version(db, candidate.id)
 
 

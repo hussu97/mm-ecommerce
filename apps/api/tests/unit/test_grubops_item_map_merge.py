@@ -91,9 +91,9 @@ def test_matcher_writes_a_modifier_pinned_to_its_recipe():
     assert row.external_type == "MODIFIER"
 
 
-def test_matcher_refreshes_name_only_on_an_existing_row():
-    """Re-running the matcher never overrules a human — only the display name is
-    refreshed, ids and approval are left as they are."""
+def test_matcher_refreshes_name_and_repairs_only_a_missing_brand_scope():
+    """A menu read does not overrule a human mapping, but its authoritative
+    provider identity may fill the absent brand scope older rows did not carry."""
     db = _CaptureDB()
     existing = ExternalItemMap(
         system="grubops",
@@ -120,6 +120,47 @@ def test_matcher_refreshes_name_only_on_an_existing_row():
     )
     assert db.added == []  # nothing inserted
     assert existing.external_name == "New Name"  # only the name refreshed
+    assert existing.scope == "b"  # missing provider identity repaired
     assert existing.approved is True  # approval untouched
     assert existing.match_method == "manual"  # a human's correction stands
     assert summary.refreshed == 1
+
+
+def test_matcher_never_overwrites_an_existing_brand_scope():
+    db = _CaptureDB()
+    existing = ExternalItemMap(
+        system="grubops",
+        scope="human-brand",
+        mm_kind="product",
+        external_ref="r1",
+        external_type="RECIPE",
+        match_method="manual",
+        approved=True,
+    )
+
+    _upsert(
+        db,
+        existing,
+        SyncSummary(),
+        kind="product",
+        product_id=uuid.uuid4(),
+        option_id=None,
+        candidate=Candidate(
+            item_id="r1", name="Name", brand_id="provider-brand", grubops_type="RECIPE"
+        ),
+        score=1.0,
+        method="exact",
+    )
+
+    assert existing.scope == "human-brand"
+
+
+def test_approved_grubops_rows_have_a_database_brand_scope_guard():
+    constraint = next(
+        item
+        for item in ExternalItemMap.__table__.constraints
+        if item.name == "ck_external_item_map_grubops_scope"
+    )
+
+    assert "scope IS NOT NULL" in str(constraint.sqltext)
+    assert "btrim(scope) <> ''" in str(constraint.sqltext)

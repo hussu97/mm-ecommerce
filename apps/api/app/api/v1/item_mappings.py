@@ -326,6 +326,11 @@ async def update_mapping(
         )
     if row.external_ref is None or not str(row.external_ref).strip():
         raise BadRequestError("A mapping needs an external reference")
+    if row.system == "grubops" and row.approved and not (row.scope or "").strip():
+        raise BadRequestError(
+            "An approved GrubOps mapping needs its brand id; sync GrubOps "
+            "mappings first"
+        )
 
     await db.flush()
 

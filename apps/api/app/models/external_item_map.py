@@ -172,6 +172,13 @@ class ExternalItemMap(Base, UUIDMixin, TimestampMixin):
             "('RECIPE', 'MODIFIER', 'NESTED_MODIFIER')",
             name="ck_external_item_map_type",
         ),
+        # GrubOps identifiers are brand-scoped.  An approved mapping without the
+        # brand id generates an invalid push payload and is never actionable.
+        CheckConstraint(
+            "system <> 'grubops' OR NOT approved "
+            "OR (scope IS NOT NULL AND btrim(scope) <> '')",
+            name="ck_external_item_map_grubops_scope",
+        ),
         # At most one catalogue entity, and it must match `mm_kind` when set. A row
         # with none set is a proposal for a name we have seen but not yet mapped.
         CheckConstraint(

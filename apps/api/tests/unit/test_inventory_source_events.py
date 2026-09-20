@@ -115,6 +115,38 @@ async def test_retry_refuses_an_event_that_already_moved_stock():
         )
 
 
+@pytest.mark.asyncio
+async def test_missing_recipe_retry_records_the_generation_it_attempted(monkeypatch):
+    event = _event()
+    event.recipe_catalog_generation = 4
+    db = _db()
+    monkeypatch.setattr(
+        source_event_service.recipe_service,
+        "snapshot_order",
+        AsyncMock(
+            return_value=(
+                {"lines": [], "recipe_version_ids": []},
+                ["Product still has no active recipe"],
+            )
+        ),
+    )
+
+    result = await source_event_service.retry_event(
+        db,
+        event=event,
+        order=SimpleNamespace(),
+        user=None,
+        already_locked=True,
+        catalog_generation=5,
+    )
+
+    assert result is None
+    assert event.recipe_catalog_generation == 5
+    assert event.status == InventorySourceEventStatusEnum.PENDING.value
+    assert event.error_code == "missing_recipe"
+    db.flush.assert_awaited_once()
+
+
 # ── F-INV-3: a missing recipe on one line must not suppress the whole order ─────
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")

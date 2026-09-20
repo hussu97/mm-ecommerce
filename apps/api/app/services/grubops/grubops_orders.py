@@ -42,38 +42,86 @@ def _tick_seconds() -> int:
     return settings.GRUBOPS_ORDERS_TICK_SECONDS
 
 
-async def _ingest_one(db, summary: dict) -> bool:
-    """Upsert the ledger row for one summary, and ingest it if it is new or has
-    moved. Returns whether a GrubOps detail fetch was spent."""
-    grubops_order_id = str(summary.get("orderId"))
-    status = summary.get("status")
-    source = summary.get("source") or {}
+def _summary_needs_ingest(order_map: GrubOpsOrderMap, summary: dict) -> bool:
+    """Whether a summary is new or has advanced beyond our durable ledger."""
+    return not (
+        order_map.mm_order_id is not None
+        and order_map.last_grubops_status == summary.get("status")
+    )
 
-    # Upsert the map row first, so a create that fails still leaves a record of
-    # having seen the order (with a null mm_order_id to retry).
-    values = {
-        "grubops_order_id": grubops_order_id,
+
+def _map_values(summary: dict) -> dict:
+    source = summary.get("source") or {}
+    return {
+        "grubops_order_id": str(summary.get("orderId")),
         "external_id": summary.get("externalId"),
         "source_channel": source.get("channel"),
         "location_id": summary.get("locationId"),
     }
-    await db.execute(
-        pg_insert(GrubOpsOrderMap)
-        .values(**values)
-        .on_conflict_do_nothing(index_elements=["grubops_order_id"])
-    )
-    order_map = (
-        await db.execute(
-            select(GrubOpsOrderMap).where(
-                GrubOpsOrderMap.grubops_order_id == grubops_order_id
+
+
+async def _load_order_maps(db, summaries: list[dict]) -> dict[str, GrubOpsOrderMap]:
+    """Load the tick's ledger in bulk and durably insert genuinely new ids.
+
+    The normal steady-state pass is one SELECT for every summary, instead of two
+    statements per order.  New ledger rows are inserted in one statement and
+    committed before detail ingestion, preserving the promise that a failed
+    create still records that GrubOps showed us the order.
+    """
+    values_by_id: dict[str, dict] = {}
+    for summary in summaries:
+        values = _map_values(summary)
+        values_by_id.setdefault(values["grubops_order_id"], values)
+    if not values_by_id:
+        return {}
+
+    order_ids = list(values_by_id)
+    rows = list(
+        (
+            await db.execute(
+                select(GrubOpsOrderMap).where(
+                    GrubOpsOrderMap.grubops_order_id.in_(order_ids)
+                )
             )
         )
-    ).scalar_one()
+        .scalars()
+        .all()
+    )
+    by_id = {row.grubops_order_id: row for row in rows}
+    missing = [
+        values_by_id[order_id] for order_id in order_ids if order_id not in by_id
+    ]
+    if not missing:
+        return by_id
 
-    # Nothing to do if we have already ingested this exact status and the order
-    # exists — the common case on a busy board.
-    if order_map.mm_order_id is not None and order_map.last_grubops_status == status:
-        return False
+    await db.execute(
+        pg_insert(GrubOpsOrderMap)
+        .values(missing)
+        .on_conflict_do_nothing(index_elements=["grubops_order_id"])
+    )
+    # This scheduler owns the session.  Persist the sighting before a later
+    # provider/detail failure so the null-mm-order ledger survives for retry.
+    await db.commit()
+    inserted = list(
+        (
+            await db.execute(
+                select(GrubOpsOrderMap).where(
+                    GrubOpsOrderMap.grubops_order_id.in_(
+                        [values["grubops_order_id"] for values in missing]
+                    )
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id.update({row.grubops_order_id: row for row in inserted})
+    return by_id
+
+
+async def _ingest_one(db, summary: dict, order_map: GrubOpsOrderMap) -> bool:
+    """Fetch and ingest one summary already known to need work."""
+    grubops_order_id = str(summary.get("orderId"))
 
     info = await provider.get_order(grubops_order_id)
     if info is None:
@@ -115,9 +163,19 @@ async def sweep_once() -> int:
 
         touched = 0
         seen_ids: set[str] = set()
+        try:
+            order_maps = await _load_order_maps(db, summaries)
+        except Exception:  # noqa: BLE001 — housekeeping should still run
+            logger.exception("GrubOps: could not bulk-load the order ledger")
+            await db.rollback()
+            order_maps = {}
         for summary in summaries:
-            seen_ids.add(str(summary.get("orderId")))
-            # A SAVEPOINT and a commit per order (F-AGG-18). The whole sweep used
+            grubops_order_id = str(summary.get("orderId"))
+            seen_ids.add(grubops_order_id)
+            order_map = order_maps.get(grubops_order_id)
+            if order_map is None or not _summary_needs_ingest(order_map, summary):
+                continue
+            # A SAVEPOINT and a commit per CHANGED order (F-AGG-18). The whole sweep used
             # to accumulate every order's ingest in one transaction committed only
             # at the end, so a single order whose write aborted the transaction (a
             # constraint hit, a `get_order` shape the ingest choked on) poisoned it
@@ -130,7 +188,7 @@ async def sweep_once() -> int:
             # does not end the pass.
             try:
                 async with db.begin_nested():
-                    spent = await _ingest_one(db, summary)
+                    spent = await _ingest_one(db, summary, order_map)
                 await db.commit()
                 if spent:
                     touched += 1

@@ -517,6 +517,11 @@ def _upsert(
     """
     if row is not None:
         row.external_name = candidate.name
+        # Scope is provider identity, not a fuzzy catalogue decision.  Older
+        # rows predate the brand column; a fresh authoritative menu read can
+        # safely fill an absence, while never overwriting a non-empty scope.
+        if not (row.scope or "").strip():
+            row.scope = candidate.brand_id
         summary.refreshed += 1
         return
 

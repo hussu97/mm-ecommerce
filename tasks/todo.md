@@ -46,3 +46,20 @@ aggregator menu (prices = MM base_price parity). QR = branch WhatsApp.
 - No new env vars (fonts bundled, no external service) → no 5-place secret churn
 - No DB schema change → no migration
 - Commit author: Hussain Abbasi <h_abbasi97@hotmail.com>, no Co-Authored-By
+
+---
+
+# VM CPU BAU reduction (2026-09-20)
+
+Keep every existing poll/reconcile frequency and all functional sync paths while
+removing repeated no-op database and recipe-catalog work found in the production
+CPU profile.
+
+- [x] Gate missing-recipe retries on a durable recipe-catalog generation; bump it
+      transactionally on activation and stamp each attempted source event.
+- [x] Batch-load GrubOps order maps once per tick and skip savepoints/commits for
+      summaries whose status is already ingested.
+- [x] Backfill the two approved Lotus Cookie Melt GrubOps mappings with brand id
+      `6922ff03323715175fede66b`; reject future approved GrubOps rows without scope.
+- [x] Add focused regression tests and run migration/static checks.
+- [x] Commit with the repository's required author.

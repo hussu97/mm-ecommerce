@@ -290,13 +290,10 @@ async def test_a_cancel_is_attempted_directly_rather_than_climbed():
     assert order.pos_status == g.PosOrderStatusEnum.VOID.value
 
 
-@pytest.mark.asyncio
-async def test_a_known_order_at_the_same_status_costs_no_detail_fetch():
-    # The change detector: an order already ingested at this exact status must
-    # not spend a getOrderInfo call on the busy-board common case.
+def test_a_known_order_at_the_same_status_needs_no_ingest():
+    # The change detector runs before any savepoint, commit or getOrderInfo call
+    # on the busy-board common case.
     existing = SimpleNamespace(mm_order_id="mm1", last_grubops_status="OrderStarted")
-    db = _fake_db(existing, execute_result=existing)
-    fake_provider = SimpleNamespace(get_order=AsyncMock())
     summary = {
         "orderId": "123",
         "status": "OrderStarted",
@@ -304,10 +301,10 @@ async def test_a_known_order_at_the_same_status_costs_no_detail_fetch():
         "externalId": "e1",
         "locationId": "L",
     }
-    with patch.object(loop, "provider", fake_provider):
-        spent = await loop._ingest_one(db, summary)
-    assert spent is False
-    fake_provider.get_order.assert_not_awaited()
+    assert loop._summary_needs_ingest(existing, summary) is False
+
+    existing.last_grubops_status = "OrderAccepted"
+    assert loop._summary_needs_ingest(existing, summary) is True
 
 
 # ── a minimal fake async session ────────────────────────────────────────────
@@ -1024,7 +1021,7 @@ class _RecordingSession:
         return _Savepoint()
 
 
-def _wire_sweep(monkeypatch, db, *, summaries, ingest):
+def _wire_sweep(monkeypatch, db, *, summaries, ingest, order_maps=None):
     @asynccontextmanager
     async def fake_held(*_a, **_k):
         yield db
@@ -1032,6 +1029,16 @@ def _wire_sweep(monkeypatch, db, *, summaries, ingest):
     monkeypatch.setattr(loop.grubops_orders_service, "is_enabled", lambda: True)
     monkeypatch.setattr(loop.advisory_lock, "held_session", fake_held)
     monkeypatch.setattr(loop.provider, "list_orders", AsyncMock(return_value=summaries))
+    if order_maps is None:
+        order_maps = {
+            str(summary.get("orderId")): SimpleNamespace(
+                grubops_order_id=str(summary.get("orderId")),
+                mm_order_id=uuid.uuid4(),
+                last_grubops_status="previous-status",
+            )
+            for summary in summaries
+        }
+    monkeypatch.setattr(loop, "_load_order_maps", AsyncMock(return_value=order_maps))
     monkeypatch.setattr(loop, "_ingest_one", ingest)
     # Housekeeping sweeps are covered on their own; here they are quiet no-ops.
     monkeypatch.setattr(
@@ -1066,7 +1073,7 @@ async def test_sweep_isolates_a_poison_order_and_finishes_the_rest(monkeypatch):
     db = _RecordingSession()
     summaries = [{"orderId": "o1"}, {"orderId": "o2"}, {"orderId": "o3"}]
 
-    async def ingest(_db, summary):
+    async def ingest(_db, summary, _order_map):
         if summary["orderId"] == "o2":
             raise RuntimeError("aborted the transaction")
         return True
@@ -1083,3 +1090,35 @@ async def test_sweep_isolates_a_poison_order_and_finishes_the_rest(monkeypatch):
         "o1 and o3 committed, plus the three housekeeping sweeps"
     )
     assert db.rollbacks == 1, "only the poison order rolled back"
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_transactions_for_unchanged_summaries(monkeypatch):
+    db = _RecordingSession()
+    summaries = [
+        {"orderId": "o1", "status": "ACCEPTED"},
+        {"orderId": "o2", "status": "ACCEPTED"},
+    ]
+    order_maps = {
+        order_id: SimpleNamespace(
+            grubops_order_id=order_id,
+            mm_order_id=uuid.uuid4(),
+            last_grubops_status="ACCEPTED",
+        )
+        for order_id in ("o1", "o2")
+    }
+    ingest = AsyncMock(return_value=True)
+    _wire_sweep(
+        monkeypatch,
+        db,
+        summaries=summaries,
+        ingest=ingest,
+        order_maps=order_maps,
+    )
+
+    touched = await loop.sweep_once()
+
+    assert touched == 0
+    assert db.savepoints == 0
+    assert db.commits == 3, "only the three housekeeping sweeps commit"
+    ingest.assert_not_awaited()
