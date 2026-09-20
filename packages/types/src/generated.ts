@@ -32257,7 +32257,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: components["schemas"]["OrderStatusEnum"] | null;
-                /** @description Order number, email, customer name or phone */
+                /** @description Order number, marketplace reference, email, customer name or phone, or a product name or SKU held on the order */
                 search?: string | null;
                 /** @description `online` for the storefront, `counter` for the till, `aggregator` for a marketplace order. Omit for all — they are one ledger. */
                 channel?: string | null;

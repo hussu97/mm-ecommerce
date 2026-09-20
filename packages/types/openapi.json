@@ -55474,7 +55474,7 @@
             }
           },
           {
-            "description": "Order number, email, customer name or phone",
+            "description": "Order number, marketplace reference, email, customer name or phone, or a product name or SKU held on the order",
             "in": "query",
             "name": "search",
             "required": false,
@@ -55487,7 +55487,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Order number, email, customer name or phone",
+              "description": "Order number, marketplace reference, email, customer name or phone, or a product name or SKU held on the order",
               "title": "Search"
             }
           },
