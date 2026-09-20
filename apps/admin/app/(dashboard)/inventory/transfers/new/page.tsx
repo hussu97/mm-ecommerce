@@ -409,7 +409,7 @@ export default function NewTransferOrderPage() {
                                   className="w-16 border border-gray-300 px-1 py-0.5 text-right"
                                   placeholder="0"
                                 />
-                                <span className="text-[10px] normal-case text-gray-400 whitespace-nowrap" title={`Current stock at ${b.name}`}>
+                                <span className="text-xs normal-case text-gray-400 whitespace-nowrap" title={`Current stock at ${b.name}`}>
                                   in stock {formatQuantity(stockAt(item.id, b.id))}
                                 </span>
                               </div>
@@ -440,7 +440,7 @@ export default function NewTransferOrderPage() {
                                   const isBatch = meta?.basis === 'batch' && !!meta.batchYield;
                                   const qty = produceQty(item.id);
                                   return (
-                                    <span className="text-[10px] normal-case text-gray-400 whitespace-nowrap">
+                                    <span className="text-xs normal-case text-gray-400 whitespace-nowrap">
                                       {isBatch
                                         ? (qty > 0
                                           ? `batch → ${formatQuantity(produceUnits(item.id))} ${item.storage_unit}`
