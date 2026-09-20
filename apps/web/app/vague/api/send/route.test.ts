@@ -189,3 +189,60 @@ describe('the query string never leaves us (F-WEB-2)', () => {
     expect(sent().body.payload.url).toBe('/faq');
   });
 });
+
+describe('UTM campaign parameters survive (attribution)', () => {
+  it('keeps the utm_* params on the page url', async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: {
+          website: 'w-1',
+          url: '/?utm_source=qr_code&utm_medium=print&utm_campaign=flyer',
+        },
+      }),
+    );
+
+    expect(sent().body.payload.url).toBe(
+      '/?utm_source=qr_code&utm_medium=print&utm_campaign=flyer',
+    );
+  });
+
+  it('keeps the utm_* params but still cuts an email out of the same query', async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: {
+          website: 'w-1',
+          url: '/checkout/confirmation?order_number=MM-1&utm_source=newsletter&email=jane@example.com',
+        },
+      }),
+    );
+
+    expect(sent().body.payload.url).toBe('/checkout/confirmation?utm_source=newsletter');
+    expect(sent().raw).not.toContain('jane@example.com');
+    expect(sent().raw).not.toContain('MM-1');
+  });
+
+  it('keeps utm on the referrer too', async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: { website: 'w-1', url: '/', referrer: '/?utm_source=x&email=jane@example.com' },
+      }),
+    );
+
+    expect(sent().body.payload.referrer).toBe('/?utm_source=x');
+    expect(sent().raw).not.toContain('jane@example.com');
+  });
+
+  it('drops the query entirely when nothing utm remains', async () => {
+    await POST(
+      request(VISITOR, {
+        type: 'event',
+        payload: { website: 'w-1', url: '/products/brownie?ref=abc&order_number=MM-9' },
+      }),
+    );
+
+    expect(sent().body.payload.url).toBe('/products/brownie');
+  });
+});

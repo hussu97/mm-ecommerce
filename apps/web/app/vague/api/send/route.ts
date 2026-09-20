@@ -81,19 +81,40 @@ function getClientIp(headers: Headers): string | null {
 }
 
 /**
- * Drop the query string from a page URL before it leaves us.
+ * Drop the query string and fragment from a page URL before it leaves us —
+ * except the UTM campaign parameters, which are kept.
  *
  * The checkout, confirmation and track pages once carried the customer's email
  * (and order number) in the query string, and the tracker copies `window.location`
  * verbatim into `payload.url` — so the address was posted to Umami in plaintext
  * (F-WEB-2). The pages no longer put it there, but this is the backstop that
- * holds regardless of what any page does: analytics only ever needs the path, so
- * everything after `?` or `#` is cut here for every event. A value we cannot
- * parse is left exactly as it was — losing a path is better than losing the event.
+ * holds regardless of what any page does: everything after `?` or `#` is cut
+ * here for every event.
+ *
+ * The one exception is `utm_*`. Campaign parameters are the only thing analytics
+ * reads a query string for — they are how a QR code, a flyer or a paid link is
+ * attributed — and they carry no PII. Cutting them blinded Umami to where every
+ * campaign's traffic came from, so they are preserved while everything else (the
+ * email, the order number, anything a page might append in future) is still
+ * removed. A value we cannot parse is left exactly as it was — losing a path is
+ * better than losing the event.
  */
 function stripQuery(value: unknown): unknown {
   if (typeof value !== 'string' || !value) return value;
-  return value.split(/[?#]/, 1)[0];
+
+  // The fragment always comes last and is never needed — drop it outright.
+  const beforeHash = value.split('#', 1)[0];
+  const q = beforeHash.indexOf('?');
+  if (q === -1) return beforeHash;
+
+  const path = beforeHash.slice(0, q);
+  const utm = new URLSearchParams();
+  for (const [key, val] of new URLSearchParams(beforeHash.slice(q + 1))) {
+    if (key.toLowerCase().startsWith('utm_')) utm.append(key, val);
+  }
+
+  const kept = utm.toString();
+  return kept ? `${path}?${kept}` : path;
 }
 
 /**
