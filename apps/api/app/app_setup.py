@@ -159,6 +159,13 @@ def _configure_logging() -> None:
         log.propagate = False
     logging.root.setLevel(logging.INFO)
 
+    # These libraries log successful low-level work at INFO. Our own provider and
+    # request logs carry the useful business context; retaining the transport and
+    # font-subsetting success chatter only makes Python and dockerd format/write
+    # hundreds of redundant lines. Warnings and errors remain untouched.
+    for name in ("httpx", "httpcore", "fontTools", "weasyprint.progress"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
 
 async def start_storefront_schedulers() -> list[asyncio.Task]:
     """Spawn every storefront background loop and return its tasks.

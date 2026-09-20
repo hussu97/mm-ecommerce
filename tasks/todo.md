@@ -63,3 +63,30 @@ CPU profile.
       `6922ff03323715175fede66b`; reject future approved GrubOps rows without scope.
 - [x] Add focused regression tests and run migration/static checks.
 - [x] Commit with the repository's required author.
+
+---
+
+# VM CPU BAU reduction — second pass (2026-09-20)
+
+Keep every production scheduler and client polling cadence unchanged while
+removing redundant payload, query, and logging work.
+
+- [x] Change the aggregator daemon's 5-minute heal check to the existing
+      status-only endpoint; preserve the authoritative liveness policy and skip
+      browser relogin for API-refreshable channels.
+- [x] Collapse the POS app's two 20-second pending/active reads into one
+      `open_only=true` read and partition the identical result locally.
+- [x] Suppress successful `/ping` request logs and INFO chatter from HTTP/PDF
+      libraries while retaining errors and business-request access logs.
+- [x] Add focused backend and POS regression tests.
+- [x] Run format/static checks and affected test suites in both repositories.
+- [ ] Commit with the required author, push both changes directly to `main`, and
+      verify the backend deployment and production container health.
+
+## Review
+
+- Backend: 3,388 unit tests passed (12 skipped); aggregator worker: 199 passed;
+  focused CPU-path tests: 47 passed; Ruff and generated-contract freshness pass.
+- POS: complete `swift test` suite passed with zero failures; existing Swift 6
+  warnings remain unrelated to this change.
+- Production deploy/health verification pending the direct-to-main pushes.

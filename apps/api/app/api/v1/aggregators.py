@@ -216,11 +216,10 @@ async def worker_needs_heal(
     _: None = Depends(_require_push_token),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """Status-only session list for the VM heal cron.
+    """Status-only session list for worker heal checks.
 
     Same push-token auth as GET `/worker/sessions`, but never decrypts a blob —
-    the cron only needs to know whether any channel is not live before it
-    starts a worker.
+    the daemon only needs the API's liveness verdict before it enqueues a login.
     """
     return await session_store.list_heal_channels(db)
 

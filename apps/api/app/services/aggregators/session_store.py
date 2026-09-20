@@ -488,7 +488,8 @@ def _expiry_passed(exp: datetime | None, now: datetime) -> bool:
 async def list_heal_channels(db: AsyncSession) -> list[dict]:
     """Channel + status (+ expiry flags from columns). Never decrypts blobs.
 
-    The VM heal cron uses this to decide whether to start a worker at all.
+    The worker daemon and one-shot VM gate use this to decide whether to start
+    headed login work at all.
     Selecting only the status/expiry columns keeps the Fernet blobs off the
     wire and out of this path — hydrate remains a separate, decrypting read.
     """
@@ -503,25 +504,36 @@ async def list_heal_channels(db: AsyncSession) -> list[dict]:
         )
     ).all()
     now = utcnow()
-    return [
-        {
-            "channel": channel,
-            "status": status,
-            "token_expired": _expiry_passed(token_exp, now),
-            # Advisory-cookie channels (Talabat) report cookie_expired=False: their
-            # PerimeterX cookie's ~5-minute nominal TTL is not a liveness signal (it
-            # rotates/outlives it), so keying the 2-minute heal cron on it re-warmed
-            # talabat headed every 2 minutes all day, holding the shared warm flock
-            # and starving the other channels. Heal talabat on a non-live status or a
-            # real token expiry instead — same authority the API sweep now uses.
-            "cookie_expired": (
-                False
-                if policy.policy_for(channel).cookie_expiry_advisory
-                else _expiry_passed(cookie_exp, now)
-            ),
-        }
-        for channel, status, token_exp, cookie_exp in rows
-    ]
+    result: list[dict] = []
+    for channel, status, token_exp, cookie_exp in rows:
+        token_expired = _expiry_passed(token_exp, now)
+        # Advisory-cookie channels (Talabat) report cookie_expired=False: their
+        # PerimeterX cookie's ~5-minute nominal TTL is not a liveness signal (it
+        # rotates/outlives it), so keying the heal poll on it re-warmed Talabat
+        # all day. `unusable_reason_for` below applies the identical policy.
+        cookie_expired = (
+            False
+            if policy.policy_for(channel).cookie_expiry_advisory
+            else _expiry_passed(cookie_exp, now)
+        )
+        result.append(
+            {
+                "channel": channel,
+                "status": status,
+                "token_expired": token_expired,
+                "cookie_expired": cookie_expired,
+                "needs_heal": unusable_reason_for(
+                    channel=channel,
+                    status=status,
+                    token_expires_at=token_exp,
+                    cookie_expires_at=cookie_exp,
+                    now=now,
+                )
+                is not None,
+                "server_refreshable": policy.server_refreshable(channel),
+            }
+        )
+    return result
 
 
 async def list_worker_bundles(db: AsyncSession) -> list[dict]:

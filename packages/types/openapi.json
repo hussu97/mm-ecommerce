@@ -2373,7 +2373,7 @@
         "type": "object"
       },
       "AggregatorWorkerHealChannel": {
-        "description": "Status-only row for the VM heal cron \u2014 never cookies, tokens, or blobs.\n\n`token_expired` / `cookie_expired` are cheap column comparisons against now\n(a NULL expiry is unknown, not expired). The cron starts a worker when\n`status` is not `live` or either flag is true.",
+        "description": "Status-only row for worker heal checks \u2014 never cookies, tokens, or blobs.\n\n`token_expired` / `cookie_expired` are cheap column comparisons against now\n(a NULL expiry is unknown, not expired). `needs_heal` is the authoritative\npolicy result consumed by the always-on worker daemon and one-shot VM gate.",
         "properties": {
           "channel": {
             "title": "Channel",
@@ -2382,6 +2382,16 @@
           "cookie_expired": {
             "default": false,
             "title": "Cookie Expired",
+            "type": "boolean"
+          },
+          "needs_heal": {
+            "default": false,
+            "title": "Needs Heal",
+            "type": "boolean"
+          },
+          "server_refreshable": {
+            "default": false,
+            "title": "Server Refreshable",
             "type": "boolean"
           },
           "status": {
@@ -2450,6 +2460,11 @@
               }
             ],
             "title": "Last Warmed At"
+          },
+          "server_refreshable": {
+            "default": false,
+            "title": "Server Refreshable",
+            "type": "boolean"
           },
           "status": {
             "title": "Status",
@@ -38670,7 +38685,7 @@
     },
     "/api/v1/aggregators/worker/needs-heal": {
       "get": {
-        "description": "Status-only session list for the VM heal cron.\n\nSame push-token auth as GET `/worker/sessions`, but never decrypts a blob \u2014\nthe cron only needs to know whether any channel is not live before it\nstarts a worker.",
+        "description": "Status-only session list for worker heal checks.\n\nSame push-token auth as GET `/worker/sessions`, but never decrypts a blob \u2014\nthe daemon only needs the API's liveness verdict before it enqueues a login.",
         "operationId": "worker_needs_heal_api_v1_aggregators_worker_needs_heal_get",
         "parameters": [
           {

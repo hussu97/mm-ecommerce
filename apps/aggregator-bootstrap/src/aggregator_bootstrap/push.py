@@ -76,6 +76,24 @@ async def pull_sessions() -> list[dict[str, Any]]:
     return body.get("sessions") or []
 
 
+async def pull_session_health() -> list[dict[str, Any]]:
+    """GET the small, secret-free session-health rows used by the heal poll.
+
+    The daemon asks every five minutes. Hydrating cookies, tokens and browser
+    storage on every one of those reads transferred ~155 KB and decrypted every
+    session even when all channels were healthy. The API owns the liveness
+    policy, so this response includes its final `needs_heal` verdict.
+    """
+    url = f"{settings.AGGREGATOR_API_URL}/api/v1/aggregators/worker/needs-heal"
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+        body = resp.json()
+    if isinstance(body, list):
+        return body
+    return body.get("sessions") or []
+
+
 async def pull_keeta_hours() -> dict[str, Any]:
     """GET MM's weekly schedule per Keeta shop for the in-page hours write.
 

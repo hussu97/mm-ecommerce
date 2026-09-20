@@ -334,24 +334,34 @@ async def run_job_guarded(queue: JobQueue, job: Job) -> None:
 async def _heal_poll(queue: JobQueue) -> None:
     """Ask the API which sessions are dead and enqueue a RELOGIN for each.
 
-    Reuses `push.pull_sessions` + `reauth._channel_needs_reauth` so the daemon and
-    the ingest agree on "dead", and honours the per-channel reauth backoff so a
-    human-only channel is not re-driven every poll. A channel that went healthy on
-    its own has any standing backoff cleared, exactly as the one-shot heal did.
+    Reads the API's status-only verdict rather than hydrating/decrypting every
+    credential bundle on every five-minute poll. The API remains the one owner of
+    "dead" (including advisory cookie-expiry policy), and per-channel backoff still
+    keeps a human-only channel from being re-driven every poll. A channel that went
+    healthy on its own has any standing backoff cleared, exactly as before.
     """
     try:
-        bundles = await push.pull_sessions()
+        channels = await push.pull_session_health()
     except Exception:  # noqa: BLE001 — a transient API blip must not kill the loop
         logger.exception("daemon: heal poll could not read session health")
         return
-    for bundle in bundles:
-        ch = bundle.get("channel")
+    for channel in channels:
+        ch = channel.get("channel")
         if not ch:
             continue
-        if reauth._channel_needs_reauth(bundle) is None:
+        needs_heal = channel.get("needs_heal")
+        if needs_heal is None:
+            # Rolling-deploy compatibility with an API slot that still returns
+            # the original status/expiry-only response.
+            needs_heal = bool(
+                channel.get("status") != "live"
+                or channel.get("token_expired")
+                or channel.get("cookie_expired")
+            )
+        if not needs_heal:
             await asyncio.to_thread(reauth._clear_reauth_backoff, ch)
             continue
-        if bundle.get("server_refreshable"):
+        if channel.get("server_refreshable") or ch in _SERVER_REFRESHABLE_CHANNELS:
             # The API renews this channel itself over httpx (Deliveroo re-mints its
             # token before every sweep). A headed RELOGIN here would burn a Chrome
             # on this e2-small doing what the next API sweep does for free.

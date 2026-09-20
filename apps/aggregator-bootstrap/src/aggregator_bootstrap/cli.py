@@ -28,6 +28,11 @@ from .reauth import (
 from .warm import hydrate_then_warm, push_probe, warm_channel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# httpx emits one INFO line for every worker↔API request. The daemon's own logs
+# already record jobs, retries and failures with their business context, so the
+# transport success line is duplicate Docker-log I/O; warnings/errors remain.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("aggregator-bootstrap")
 
 app = typer.Typer(help="Aggregator session bootstrap/warmer worker.")

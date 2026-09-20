@@ -53,6 +53,12 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         latency_s = time.perf_counter() - start
 
         status = response.status_code
+        # Docker probes both API processes every ten seconds. Nginx/Docker retain
+        # the health state already, while logging each successful probe adds twelve
+        # application log writes per minute. A failed probe remains actionable and
+        # is therefore still logged below.
+        if request.url.path == "/ping" and status < 400:
+            return response
         level = (
             logging.ERROR
             if status >= 500

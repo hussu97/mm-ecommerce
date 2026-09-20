@@ -106,12 +106,16 @@ async def test_needs_heal_returns_status_only(client, monkeypatch):
                 "status": "live",
                 "token_expired": False,
                 "cookie_expired": False,
+                "needs_heal": False,
+                "server_refreshable": False,
             },
             {
                 "channel": "talabat",
                 "status": "needs_bootstrap",
                 "token_expired": False,
                 "cookie_expired": False,
+                "needs_heal": True,
+                "server_refreshable": False,
             },
         ]
 
@@ -128,6 +132,8 @@ async def test_needs_heal_returns_status_only(client, monkeypatch):
         "status": "live",
         "token_expired": False,
         "cookie_expired": False,
+        "needs_heal": False,
+        "server_refreshable": False,
     }
     assert body[1]["channel"] == "talabat"
     assert body[1]["status"] == "needs_bootstrap"
@@ -175,9 +181,11 @@ async def test_list_heal_channels_does_not_call_decrypt(monkeypatch):
     assert [r["channel"] for r in out] == ["noon", "talabat"]
     assert out[0]["status"] == "live"
     assert out[0]["token_expired"] is False
+    assert out[0]["needs_heal"] is False
     assert out[1]["status"] == "needs_bootstrap"
     assert out[1]["token_expired"] is True
     assert out[1]["cookie_expired"] is False
+    assert out[1]["needs_heal"] is True
 
 
 async def test_list_heal_channels_advisory_cookie_expiry_is_not_flagged():
@@ -202,3 +210,5 @@ async def test_list_heal_channels_advisory_cookie_expiry_is_not_flagged():
     assert by_ch["noon"]["cookie_expired"] is False
     assert by_ch["talabat"]["cookie_expired"] is False
     assert by_ch["deliveroo"]["cookie_expired"] is True
+    assert by_ch["deliveroo"]["needs_heal"] is True
+    assert by_ch["deliveroo"]["server_refreshable"] is True

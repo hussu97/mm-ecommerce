@@ -816,11 +816,10 @@ export interface paths {
         };
         /**
          * Worker Needs Heal
-         * @description Status-only session list for the VM heal cron.
+         * @description Status-only session list for worker heal checks.
          *
          *     Same push-token auth as GET `/worker/sessions`, but never decrypts a blob —
-         *     the cron only needs to know whether any channel is not live before it
-         *     starts a worker.
+         *     the daemon only needs the API's liveness verdict before it enqueues a login.
          */
         get: operations["worker_needs_heal_api_v1_aggregators_worker_needs_heal_get"];
         put?: never;
@@ -9713,11 +9712,11 @@ export interface components {
         };
         /**
          * AggregatorWorkerHealChannel
-         * @description Status-only row for the VM heal cron — never cookies, tokens, or blobs.
+         * @description Status-only row for worker heal checks — never cookies, tokens, or blobs.
          *
          *     `token_expired` / `cookie_expired` are cheap column comparisons against now
-         *     (a NULL expiry is unknown, not expired). The cron starts a worker when
-         *     `status` is not `live` or either flag is true.
+         *     (a NULL expiry is unknown, not expired). `needs_heal` is the authoritative
+         *     policy result consumed by the always-on worker daemon and one-shot VM gate.
          */
         AggregatorWorkerHealChannel: {
             /** Channel */
@@ -9727,6 +9726,16 @@ export interface components {
              * @default false
              */
             cookie_expired: boolean;
+            /**
+             * Needs Heal
+             * @default false
+             */
+            needs_heal: boolean;
+            /**
+             * Server Refreshable
+             * @default false
+             */
+            server_refreshable: boolean;
             /** Status */
             status: string;
             /**
@@ -9762,6 +9771,11 @@ export interface components {
             };
             /** Last Warmed At */
             last_warmed_at?: string | null;
+            /**
+             * Server Refreshable
+             * @default false
+             */
+            server_refreshable: boolean;
             /** Status */
             status: string;
             /** Storage State */

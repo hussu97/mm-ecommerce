@@ -67,20 +67,30 @@ class AggregatorWorkerSession(BaseModel):
     #: rule — its own copy drifted and missed that Talabat's rotating cookie
     #: expiry is advisory, which cost ~6x the re-logins it should have run.
     unusable_reason: str | None = None
+    #: The API can renew this channel without a headed browser. Published from
+    #: the channel policy so every worker path makes the same decision.
+    server_refreshable: bool = False
 
 
 class AggregatorWorkerHealChannel(BaseModel):
-    """Status-only row for the VM heal cron — never cookies, tokens, or blobs.
+    """Status-only row for worker heal checks — never cookies, tokens, or blobs.
 
     `token_expired` / `cookie_expired` are cheap column comparisons against now
-    (a NULL expiry is unknown, not expired). The cron starts a worker when
-    `status` is not `live` or either flag is true.
+    (a NULL expiry is unknown, not expired). `needs_heal` is the authoritative
+    policy result consumed by the always-on worker daemon and one-shot VM gate.
     """
 
     channel: str
     status: str
     token_expired: bool = False
     cookie_expired: bool = False
+    #: The API's authoritative liveness verdict. Keeping this server-side means
+    #: advisory cookie-expiry rules cannot drift into a second implementation in
+    #: the worker.
+    needs_heal: bool = False
+    #: A dead session may still need no browser: Deliveroo, for example, is
+    #: re-minted by the API immediately before its sweep.
+    server_refreshable: bool = False
 
 
 class AggregatorSessionResponse(BaseModel):

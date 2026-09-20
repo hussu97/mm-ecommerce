@@ -270,13 +270,17 @@ async def test_heal_poll_enqueues_relogin_for_dead_out_of_backoff(
 ):
     monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
 
-    async def _sessions():
+    async def _health():
         return [
-            {"channel": "noon", "status": "live"},
-            {"channel": "talabat", "status": "needs_bootstrap"},
+            {"channel": "noon", "needs_heal": False},
+            {
+                "channel": "talabat",
+                "needs_heal": True,
+                "server_refreshable": False,
+            },
         ]
 
-    monkeypatch.setattr(daemon.push, "pull_sessions", _sessions)
+    monkeypatch.setattr(daemon.push, "pull_session_health", _health)
     # Keep the healthy-channel clear offline.
     monkeypatch.setattr(reauth, "_clear_reauth_backoff", lambda ch: None)
 
@@ -288,13 +292,19 @@ async def test_heal_poll_enqueues_relogin_for_dead_out_of_backoff(
 async def test_heal_poll_respects_backoff(monkeypatch, tmp_path):
     monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
 
-    async def _sessions():
-        return [{"channel": "talabat", "status": "needs_bootstrap"}]
+    async def _health():
+        return [
+            {
+                "channel": "talabat",
+                "needs_heal": True,
+                "server_refreshable": False,
+            }
+        ]
 
     async def _noop_report(channel, backoff_until):
         return None
 
-    monkeypatch.setattr(daemon.push, "pull_sessions", _sessions)
+    monkeypatch.setattr(daemon.push, "pull_session_health", _health)
     monkeypatch.setattr(reauth.push, "report_reauth_backoff", _noop_report)
     # Arm a standing backoff via a thread — exactly how the daemon calls the sync,
     # asyncio.run-based helper — so its own run() does not clash with this loop.
@@ -303,6 +313,26 @@ async def test_heal_poll_respects_backoff(monkeypatch, tmp_path):
     q = JobQueue()
     await daemon._heal_poll(q)
     assert q.pending() == set()  # in backoff → not enqueued
+
+
+async def test_heal_poll_skips_api_refreshable_channel(monkeypatch, tmp_path):
+    """A dead Deliveroo session is renewed server-side, never with Chrome."""
+    monkeypatch.setattr(reauth.settings, "STORAGE_STATE_DIR", str(tmp_path))
+
+    async def _health():
+        return [
+            {
+                "channel": "deliveroo",
+                "needs_heal": True,
+                "server_refreshable": True,
+            }
+        ]
+
+    monkeypatch.setattr(daemon.push, "pull_session_health", _health)
+
+    q = JobQueue()
+    await daemon._heal_poll(q)
+    assert q.pending() == set()
 
 
 def test_daily_jobs_schedules_keeta_hours_after_finance(monkeypatch):
