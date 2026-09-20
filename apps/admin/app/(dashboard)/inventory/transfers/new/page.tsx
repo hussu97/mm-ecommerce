@@ -3,9 +3,11 @@
 // Raise a NEW transfer order (F-transfers-fanout). An admin picks one source
 // branch and allocates quantities to several destination branches at once in an
 // editable grid — item rows × one quantity column per OTHER active branch. The
-// source's on-hand is shown per item; when a row's total across branches exceeds
-// it, the row needs an explicit override (which posts a shortfall top-up
-// adjustment at create and needs the adjustments permission). Submitting fans
+// source's on-hand is shown per item, and each destination cell shows that
+// branch's own current stock beneath its input so the allocation can be judged
+// against what the destination already holds; when a row's total across branches
+// exceeds the source's on-hand, the row needs an explicit override (which posts a
+// shortfall top-up adjustment at create and needs the adjustments permission). Submitting fans
 // the order out into one child transfer per destination — no stock moves yet.
 //
 // The grid mirrors items/page.tsx (per-branch columns from activeBranches) and
@@ -106,17 +108,36 @@ export default function NewTransferOrderPage() {
     [activeBranches, sourceBranchId],
   );
 
-  // The source's on-hand per item — summed across its warehouses (a branch can
-  // hold several), so the shortfall check sees the whole branch.
+  // On-hand per item at every branch — itemId → branchId → quantity, summed
+  // across the branch's warehouses (a branch can hold several). Drives both the
+  // source's shortfall check and the read-only stock shown beside each
+  // destination's transfer input, so it is easy to see what a branch already
+  // holds before deciding how many units to send it.
+  const onHandByItemBranch = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
+    for (const level of levels) {
+      if (!level.branch_id) continue;
+      let byBranch = map.get(level.item_id);
+      if (!byBranch) { byBranch = new Map(); map.set(level.item_id, byBranch); }
+      byBranch.set(level.branch_id, (byBranch.get(level.branch_id) ?? 0) + Number(level.quantity));
+    }
+    return map;
+  }, [levels]);
+
+  // The source branch's on-hand per item — a slice of the per-branch map above.
   const onHandByItem = useMemo(() => {
     const map = new Map<string, number>();
     if (!sourceBranchId) return map;
-    for (const level of levels) {
-      if (level.branch_id !== sourceBranchId) continue;
-      map.set(level.item_id, (map.get(level.item_id) ?? 0) + Number(level.quantity));
+    for (const [itemId, byBranch] of onHandByItemBranch) {
+      const q = byBranch.get(sourceBranchId);
+      if (q !== undefined) map.set(itemId, q);
     }
     return map;
-  }, [levels, sourceBranchId]);
+  }, [onHandByItemBranch, sourceBranchId]);
+
+  // Current stock of an item at a given (destination) branch, 0 if none.
+  const stockAt = (itemId: string, branchId: string): number =>
+    onHandByItemBranch.get(itemId)?.get(branchId) ?? 0;
 
   const categoryMeta = useMemo(
     () => new Map(categories.map((c) => [c.id, { name: c.name, order: c.display_order }])),
@@ -375,13 +396,23 @@ export default function NewTransferOrderPage() {
                           </td>
                           {destinationBranches.map((b) => (
                             <td key={b.id} className="px-2 py-1 text-right">
-                              <input
-                                inputMode="decimal"
-                                value={row[b.id] ?? ''}
-                                onChange={(e) => setCell(item.id, b.id, e.target.value)}
-                                className="w-16 border border-gray-300 px-1 py-0.5 text-right"
-                                placeholder="0"
-                              />
+                              {/* Transfer input, with the branch's current
+                                  on-hand of this item read-only beneath it —
+                                  stock is per-branch, so knowing what the
+                                  destination already holds guides how many
+                                  units to send. */}
+                              <div className="flex flex-col items-end gap-0.5">
+                                <input
+                                  inputMode="decimal"
+                                  value={row[b.id] ?? ''}
+                                  onChange={(e) => setCell(item.id, b.id, e.target.value)}
+                                  className="w-16 border border-gray-300 px-1 py-0.5 text-right"
+                                  placeholder="0"
+                                />
+                                <span className="text-[10px] normal-case text-gray-400 whitespace-nowrap" title={`Current stock at ${b.name}`}>
+                                  in stock {formatQuantity(stockAt(item.id, b.id))}
+                                </span>
+                              </div>
                             </td>
                           ))}
                           <td className={`px-2 py-1 text-right tabular-nums bg-gray-50 ${total > 0 ? 'font-semibold text-gray-900' : 'text-gray-300'}`}>{formatQuantity(total)}</td>
