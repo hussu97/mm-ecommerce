@@ -104,6 +104,12 @@ export interface ResourcePageProps<T extends { id: string }> {
   expandedRow?: (row: T, reload: () => void) => React.ReactNode;
   /** Page-specific client-side filters, composed with the standard text search. */
   filterRows?: (row: T) => boolean;
+  /**
+   * A summary band under the header, computed from the rows the current search
+   * and filters leave — the whole filtered set, before pagination slices a page.
+   * So a total shown here reflects every matching row, not just the visible page.
+   */
+  summary?: (rows: T[]) => React.ReactNode;
   /** Page-specific stable ordering applied after filters and before pagination. */
   sortRows?: (rows: T[]) => T[];
   /**
@@ -138,6 +144,7 @@ export function ResourcePage<T extends { id: string }>({
   expandedRow,
   filterRows,
   sortRows,
+  summary,
   paginated = false,
   stickyHeader = false,
 }: ResourcePageProps<T>) {
@@ -305,6 +312,7 @@ export function ResourcePage<T extends { id: string }>({
       sort={sort}
       onSortChange={setSort}
       stickyHeader={stickyHeader}
+      summary={!loading && summary ? summary(visible) : undefined}
       expanded={expandedRow ? (row) => expandedRow(row, reload) : undefined}
       emptyMessage={emptyMessage}
       actions={

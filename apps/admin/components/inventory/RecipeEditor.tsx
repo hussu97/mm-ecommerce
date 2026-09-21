@@ -7,7 +7,7 @@ import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { ApiError } from '@/lib/api';
 import { inventoryApi, type RecipeVersion, type VersionedRecipe } from '@/lib/pos-api';
 import type { InventoryItem } from '@/lib/pos-types';
-import { formatQuantity } from '@/lib/utils';
+import { formatCost, formatQuantity } from '@/lib/utils';
 
 type OwnerKind = 'product' | 'modifier_option' | 'inventory_item';
 
@@ -72,6 +72,14 @@ export function RecipeEditor({
 
   const byId = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
 
+  // Each ingredient's current cost per its recipe (ingredient) unit — the
+  // weighted average of its surviving FIFO layers (current stock at PO costs),
+  // computed and quoted by the API so the editor never re-derives the cost.
+  const unitCostOf = useCallback(
+    (itemId: string): number => byId.get(itemId)?.ingredient_unit_cost ?? 0,
+    [byId],
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -135,6 +143,20 @@ export function RecipeEditor({
       );
     });
   }, [draft, savedLines, basis, batchYield, savedBasis, savedBatchYield]);
+
+  // A live cost estimate for the recipe as currently edited, from the quoted
+  // per-ingredient unit costs. The lines make one unit (unit basis) or one batch
+  // (batch basis), so the per-unit figure divides the batch cost by the yield.
+  // The saved, authoritative figure is what the recipes list shows.
+  const cost = useMemo(() => {
+    const basisTotal = draft.reduce(
+      (sum, line) => sum + Number(line.quantity || 0) * unitCostOf(line.item_id),
+      0,
+    );
+    const yieldNum = Number(batchYield);
+    const perUnit = basis === 'batch' && yieldNum > 0 ? basisTotal / yieldNum : basisTotal;
+    return { perUnit, perBatch: basis === 'batch' ? basisTotal : null };
+  }, [draft, basis, batchYield, unitCostOf]);
 
   const activeDraft = recipe?.versions.find((version) => version.status === 'draft') ?? null;
 
@@ -289,6 +311,24 @@ export function RecipeEditor({
         <span className="text-gray-500">{line.ingredient_unit || byId.get(line.item_id)?.ingredient_unit}</span>
       ),
     },
+    {
+      // The ingredient's current weighted-average cost per its recipe unit.
+      header: 'Unit cost',
+      className: 'w-28 text-right whitespace-nowrap',
+      render: (line) => (
+        <span className="tabular-nums text-gray-500">{formatCost(unitCostOf(line.item_id))}</span>
+      ),
+    },
+    {
+      // Quantity × the quoted unit cost — a live figure for the row as edited.
+      header: 'Line cost',
+      className: 'w-28 text-right whitespace-nowrap',
+      render: (line) => (
+        <span className="tabular-nums text-gray-700">
+          {formatCost(Number(line.quantity || 0) * unitCostOf(line.item_id))}
+        </span>
+      ),
+    },
   ];
 
   return (
@@ -368,6 +408,25 @@ export function RecipeEditor({
           ) : null
         }
       />
+
+      {draft.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-baseline justify-end gap-x-6 gap-y-1 rounded border border-primary/20 bg-primary/5 px-4 py-2.5">
+          <span className="text-[11px] uppercase tracking-widest text-gray-500 font-body">
+            Recipe cost
+          </span>
+          <span className="font-display text-primary tabular-nums">
+            {formatCost(cost.perUnit)} <span className="text-xs text-gray-400">/ unit</span>
+          </span>
+          {cost.perBatch != null && (
+            <span className="tabular-nums text-gray-600">
+              {formatCost(cost.perBatch)}{' '}
+              <span className="text-xs text-gray-400">
+                / batch{Number(batchYield) > 0 ? ` of ${batchYield}` : ''}
+              </span>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 grid gap-3 md:grid-cols-[1fr_150px_auto] md:items-end">
         <div className="space-y-2">

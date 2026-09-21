@@ -22,7 +22,7 @@ import { formatCost, formatQuantity, interactiveRowClass } from '@/lib/utils';
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
 const MADE_KINDS = new Set(['produced_good', 'semi_finished']);
 
-type BranchStock = { quantity: number; is_below_minimum: boolean };
+type BranchStock = { quantity: number; value: number; is_below_minimum: boolean };
 type StockPivot = Map<string, Map<string, BranchStock>>;
 
 export default function ItemsPage() {
@@ -48,8 +48,11 @@ export default function ItemsPage() {
   }, []);
 
   // Every item×branch level across the estate (no branch filter), pivoted to
-  // item → branch → { quantity, below-minimum } so each item row can show its
-  // stock at each branch and the filters/sort can reason across branches.
+  // item → branch → { quantity, value, below-minimum } so each item row can show
+  // its stock and its FIFO value at each branch and the filters/sort can reason
+  // across branches. A branch can hold more than one warehouse, so levels for
+  // the same branch are summed rather than overwritten (`total_value` is the
+  // server-computed per-warehouse valuation — we only add, never re-derive it).
   useEffect(() => {
     void inventoryApi.levels({ limit: 5000 })
       .then((levels: InventoryLevel[]) => {
@@ -58,9 +61,11 @@ export default function ItemsPage() {
           if (!level.branch_id) continue;
           let byBranch = next.get(level.item_id);
           if (!byBranch) { byBranch = new Map(); next.set(level.item_id, byBranch); }
+          const prev = byBranch.get(level.branch_id);
           byBranch.set(level.branch_id, {
-            quantity: Number(level.quantity),
-            is_below_minimum: level.is_below_minimum,
+            quantity: (prev?.quantity ?? 0) + Number(level.quantity),
+            value: (prev?.value ?? 0) + Number(level.total_value ?? 0),
+            is_below_minimum: (prev?.is_below_minimum ?? false) || level.is_below_minimum,
           });
         }
         setPivot(next);
@@ -82,6 +87,19 @@ export default function ItemsPage() {
 
   const stockOf = useCallback(
     (itemId: string, branchId: string): BranchStock | undefined => pivot.get(itemId)?.get(branchId),
+    [pivot],
+  );
+
+  // An item's total FIFO stock value across every branch — the sum of the
+  // server-quoted per-branch values, so the estate total is just an addition.
+  const itemValue = useCallback(
+    (itemId: string): number => {
+      const byBranch = pivot.get(itemId);
+      if (!byBranch) return 0;
+      let total = 0;
+      for (const cell of byBranch.values()) total += cell.value;
+      return total;
+    },
     [pivot],
   );
 
@@ -157,9 +175,16 @@ export default function ItemsPage() {
       const cell = stockOf(item.id, b.id);
       if (!cell) return <span className="text-gray-300">—</span>;
       return (
-        <span className={cell.is_below_minimum ? 'text-red-600 font-medium' : 'text-gray-700'}>
-          {formatQuantity(cell.quantity)}
-        </span>
+        <div className="leading-tight">
+          <span className={cell.is_below_minimum ? 'text-red-600 font-medium' : 'text-gray-700'}>
+            {formatQuantity(cell.quantity)}
+          </span>
+          {cell.value > 0 && (
+            <span className="block text-[10px] tabular-nums text-gray-400" title="Stock value at this branch">
+              {formatCost(cell.value)}
+            </span>
+          )}
+        </div>
       );
     },
   }));
@@ -178,6 +203,24 @@ export default function ItemsPage() {
       searchKeys={['name', 'sku']}
       toolbar={toolbar}
       filterRows={filterRows}
+      summary={(visibleItems) => {
+        // Total on-hand value of everything the current search + filters leave —
+        // the whole filtered set, not just the page. Pagination never changes it.
+        const total = visibleItems.reduce((sum, item) => sum + itemValue(item.id), 0);
+        return (
+          <div className="mb-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded border border-primary/20 bg-primary/5 px-4 py-2.5">
+            <span className="text-[11px] uppercase tracking-widest text-gray-500 font-body">
+              Total inventory value
+            </span>
+            <span className="font-display text-lg tabular-nums text-primary">
+              {formatCost(total)}
+            </span>
+            <span className="text-xs text-gray-500 font-body">
+              across {visibleItems.length} item{visibleItems.length === 1 ? '' : 's'} matching the current filters
+            </span>
+          </div>
+        );
+      }}
       rowActions={(item) => (
         <>
           {MADE_KINDS.has(item.kind) && (
@@ -248,6 +291,21 @@ export default function ItemsPage() {
               {formatCost(i.average_cost)}
             </button>
           ),
+        },
+        {
+          // On-hand FIFO value across every branch — the sum of the per-branch
+          // values shown in the branch columns (server-quoted; here only added).
+          header: 'Value',
+          className: 'text-right whitespace-nowrap',
+          sortable: true,
+          sortKey: 'stock-value',
+          sortAccessor: (i) => itemValue(i.id),
+          render: (i) => {
+            const value = itemValue(i.id);
+            return value > 0
+              ? <span className="tabular-nums font-medium text-gray-700">{formatCost(value)}</span>
+              : <span className="text-gray-300">—</span>;
+          },
         },
         { header: 'Kind', sortable: true, sortAccessor: (i) => i.kind, render: (i) => <Badge>{i.kind.replaceAll('_', ' ')}</Badge> },
         { header: 'Tracking', render: (i) => <Badge variant={i.tracking_mode === 'phantom' ? 'warning' : 'neutral'}>{i.tracking_mode}</Badge> },

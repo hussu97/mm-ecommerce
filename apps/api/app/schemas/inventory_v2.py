@@ -146,6 +146,13 @@ class RecipeOwnerRow(BaseModel):
     basis: RecipeBasis = "unit"
     # Owner units one batch makes; set only when basis == "batch".
     batch_yield: Decimal | None = None
+    # Cost to make one owner unit at current FIFO ingredient costs — the current
+    # version's lines priced at each ingredient's weighted-average cost (÷ the
+    # batch yield for a batch-basis recipe). ``batch_cost`` is the cost of one
+    # whole batch and is set only when basis == "batch". Both null when the owner
+    # has no recipe. Computed live; nothing about recipe cost is cached.
+    unit_cost: Decimal | None = None
+    batch_cost: Decimal | None = None
     line_count: int = 0
     # The lines of the current version (active if present, else draft) — a
     # read-only summary so the list shows each recipe's ingredients at a glance.

@@ -198,6 +198,11 @@ class InventoryItemResponse(ORMModel):
     #: The item's current cost per storage unit, derived from its FIFO layers
     #: (0 until first receipt/production). Populated by the endpoint, not a column.
     average_cost: Decimal = Decimal("0")
+    #: The same FIFO cost expressed per *ingredient* unit (``average_cost`` ÷ the
+    #: storage→ingredient factor, via ``canonical_cost_for_unit``). The recipe
+    #: console prices its lines in ingredient units, so it renders this rather
+    #: than repeating the conversion client-side (money math stays server-side).
+    ingredient_unit_cost: Decimal = Decimal("0")
     yield_percentage: Decimal
     is_product: bool
     kind: str

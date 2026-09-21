@@ -10,7 +10,7 @@ import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { inventoryApi, type RecipeOwnerRow } from '@/lib/pos-api';
-import { formatQuantity } from '@/lib/utils';
+import { formatCost, formatQuantity } from '@/lib/utils';
 
 type OwnerKind = 'product' | 'modifier_option' | 'inventory_item';
 type ActiveFilter = 'all' | 'active' | 'inactive';
@@ -58,6 +58,27 @@ function IngredientSummary({ row }: { row: RecipeOwnerRow }) {
         </div>
       ))}
       {extra > 0 && <div className="text-gray-400">+{extra} more</div>}
+    </div>
+  );
+}
+
+/** The recipe's rolled-up cost: per owner unit always, plus per batch when the
+ *  recipe is authored per batch. Both come pre-computed from the API. */
+function RecipeCost({ row }: { row: RecipeOwnerRow }) {
+  if (row.unit_cost == null) {
+    return <span className="text-gray-300">—</span>;
+  }
+  return (
+    <div className="text-xs font-body leading-tight">
+      <div className="tabular-nums text-gray-800">
+        {formatCost(row.unit_cost)} <span className="text-gray-400">/ unit</span>
+      </div>
+      {row.basis === 'batch' && row.batch_cost != null && (
+        <div className="tabular-nums text-gray-500">
+          {formatCost(row.batch_cost)}{' '}
+          <span className="text-gray-400">/ batch of {formatQuantity(row.batch_yield ?? '0')}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -214,6 +235,14 @@ export function RecipeOwnersPage({ ownerKind, noun, showKind, searchPlaceholder 
       sortable: true,
       sortKey: 'recipe_status',
       render: (row) => <RecipeStatusBadge row={row} />,
+    },
+    {
+      // The current version's cost at current FIFO ingredient costs — per owner
+      // unit, and per batch as well when the recipe is authored per batch.
+      header: 'Cost',
+      priority: 'meta',
+      className: 'whitespace-nowrap',
+      render: (row) => <RecipeCost row={row} />,
     },
     {
       header: 'Ingredients',

@@ -13310,6 +13310,11 @@ export interface components {
             id: string;
             /** Ingredient Unit */
             ingredient_unit: string;
+            /**
+             * Ingredient Unit Cost
+             * @default 0
+             */
+            ingredient_unit_cost: string;
             /** Is Active */
             is_active: boolean;
             /** Is Product */
@@ -18249,6 +18254,8 @@ export interface components {
              * @enum {string}
              */
             basis: "unit" | "batch";
+            /** Batch Cost */
+            batch_cost?: string | null;
             /** Batch Yield */
             batch_yield?: string | null;
             /** Draft Version Number */
@@ -18288,6 +18295,8 @@ export interface components {
             recipe_status: "none" | "draft" | "active";
             /** Secondary */
             secondary?: string | null;
+            /** Unit Cost */
+            unit_cost?: string | null;
         };
         /** RecipeReadinessResponse */
         RecipeReadinessResponse: {

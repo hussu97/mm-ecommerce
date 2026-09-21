@@ -1,49 +1,72 @@
-# Auto-approve inventory reports + variance email summary
+# Inventory & Recipe value visibility (admin)
 
-## Problem
-- Staff-submitted shift inventory reports with a variance go to `PENDING_APPROVAL`
-  and only reach the stock ledger once an admin approves. Reports sitting
-  un-posted leave the ledger un-reconciled and corrupt later stock movements.
-- Owner wants: auto-approve **and** post every report on submit, regardless of
-  variance; and the notification email (to fahimakhtarabbasi@gmail.com) should
-  list the items where there is a variance.
+## Goal
+More integrated cost/value visibility in the admin app. **No change to cost
+calculations or the FIFO cost-layer model** — reuse existing server-side cost
+services and surface the figures.
+
+## Findings (how cost already works)
+- Item cost = weighted avg of surviving FIFO layers per storage unit
+  (`cost_layer_service.item_average_cost/costs`). No catalogue cost column, no cache.
+- `InventoryLevel.total_value` (server-computed, per item×warehouse) is already
+  returned by `GET /inventory/levels` and already carried on the FE `InventoryLevel`
+  type — but the items page pivot drops it.
+- Recipe cost = each line priced at its ingredient's weighted-avg cost, converted
+  to the ingredient unit via `inventory_service.canonical_cost_for_unit` (mirrors
+  legacy `_recipe_response`). v2 recipe endpoints currently return no cost.
+- Produced items get a FIFO layer at production time (live component cost) — so a
+  produced item's inventory value already reflects recipe cost at production. No
+  change needed there; the recipe page shows the *current* theoretical unit cost.
 
 ## Plan
-- [x] Trace the submit → approval → post flow (`report_service.submit_report`,
-      `post_report`, `_notify_report_submitted`) and the email
-      (`email_service.send_inventory_report_submitted`,
-      `templates/emails/inventory_report_submitted.html`).
-- [x] `submit_report`: always set status APPROVED and call `post_report`; drop the
-      variance/opening-count `requires_approval` computation and the now-dead
-      threshold/settings lookup. Keep the confirmed-line and competing-movement
-      guards (unrelated to approval).
-- [x] `_notify_report_submitted`: drop `requires_approval`; build a per-line
-      variance summary (physical-count lines with non-zero variance) and pass it
-      to the email.
-- [x] `email_service.send_inventory_report_submitted`: drop `requires_approval`,
-      accept `variance_lines`, update subject to "posted".
-- [x] Template: report always auto-posted; add a variance-summary table
-      (Item / Expected / Counted / Variance / Value), with a clear "no variances"
-      line when empty.
-- [x] Update/extend tests (`test_inventory_report_review.py`).
-- [x] Run the touched tests, commit, push, open PR.
+
+### Backend (money math stays server-side — rule #10)
+- [ ] `InventoryItemResponse`: add `ingredient_unit_cost` (avg cost converted to
+      ingredient unit). Populate in `_items_with_cost` via `canonical_cost_for_unit`.
+- [ ] `RecipeOwnerRow`: add `unit_cost` + `batch_cost` (nullable). Compute in
+      `recipe_catalog_service.list_recipe_owners`: price current-version lines at
+      each ingredient's avg cost → basis total; unit = total (unit basis) or
+      total/batch_yield (batch basis); batch_cost set only for batch basis.
+- [ ] Regenerate `packages/types` (export_openapi + pnpm generate) — rule #8.
+
+### Frontend — Inventory Items page
+- [ ] Pivot: also capture per-branch value (sum `level.total_value`/quantity across
+      that branch's warehouses; OR the below-min flag).
+- [ ] Per-branch cell: show value under the quantity.
+- [ ] New per-item "Value" column (sum of branch values).
+- [ ] Total inventory value banner at top — updates with search/filters, NOT
+      pagination (computed from ResourcePage's pre-pagination `visible` set).
+- [ ] `ResourcePage`/`ListPage`: add optional `summary` slot fed the filtered rows.
+
+### Frontend — Recipes
+- [ ] `RecipeOwnersPage`: show recipe unit cost, and batch cost when basis=batch.
+- [ ] `RecipeEditor`: per-line unit cost (server-quoted `ingredient_unit_cost`) +
+      line cost, and a live recipe total (unit, and batch when applicable).
+- [ ] `pos-types.ts` `InventoryItem`: add `ingredient_unit_cost`.
+
+### Verify
+- [ ] Backend unit tests for the new cost fields; run touched tests + ruff.
+- [ ] `openapi.json`/`generated.ts` fresh (drift check green).
+- [ ] admin `tsc --noEmit`, lint, vitest for touched files.
+- [ ] Commit (author Hussain Abbasi), push to main as requested.
 
 ## Review
-- `submit_report` now always sets the report to APPROVED and posts it to the stock
-  ledger on submit — no report ever parks in PENDING_APPROVAL, so the ledger is
-  reconciled immediately and later stock movements are computed against fresh
-  on-hand. Removed the now-dead threshold/settings lookup and `requires_approval`
-  computation. Kept the confirmed-line and competing-movement guards untouched.
-- Added `_variance_summary(report)`: physical-count lines with a non-zero variance,
-  formatted (item, unit, expected, counted, signed variance, value).
-- `_notify_report_submitted` / `email_service.send_inventory_report_submitted`:
-  dropped `requires_approval`, pass `variance_lines`; subject is now "posted".
-- Template `inventory_report_submitted.html`: states the report auto-posted and
-  renders a variance-summary table (or a clear "no variances" line). Email still
-  goes to fahimakhtarabbasi@gmail.com (`INVENTORY_REPORT_RECIPIENTS`, unchanged).
-- No Pydantic schema / OpenAPI change (internal email helper only), so no
-  `@mm/types` regeneration needed. No new env var. Admin approve/reject endpoints
-  left intact for any legacy pending report.
-- Tests: 9 unit tests pass (email render with/without variance, `_variance_summary`
-  filtering, auto-post-with-large-variance); related report unit suites green;
-  integration posting tests skip locally (no DB) — CI covers them. ruff clean.
+- **No cost logic changed.** Every figure reuses existing server-side cost:
+  `cost_layer_service.item_average_costs` (weighted avg of surviving FIFO layers =
+  current stock at PO/production costs) and `inventory_service.canonical_cost_for_unit`
+  (storage→ingredient conversion). No cache table, no new rounding, no production path
+  touched. Produced items keep costing from their FIFO production layers as before.
+- **Inventory Items page**: total-value banner reflects the filtered set (not the
+  page — computed from ResourcePage's pre-pagination `visible`); each branch cell
+  shows its FIFO value under the qty; a per-item "Value" column sums the branches.
+  Values come straight from the server-quoted `InventoryLevel.total_value`; the
+  client only sums.
+- **Recipes list**: `RecipeOwnerRow` gains server-computed `unit_cost` (+ `batch_cost`
+  for batch-basis recipes); rendered as "/ unit" and "/ batch of N".
+- **Recipe editor**: per-line unit cost = the ingredient's server-quoted
+  `ingredient_unit_cost`; per-line and total figures are a live estimate for the
+  (possibly unsaved) edit — the authoritative saved figure is the recipes list.
+- **Verification**: full API suite 3875 passed / 5 skipped (real Postgres); new
+  recipe cost-rollup tests (unit-basis price, batch split-by-yield, absent/zero);
+  admin tsc + lint (0 errors) + 111 vitest; ruff check/format clean;
+  openapi.json/generated.ts regenerated and drift-check green.

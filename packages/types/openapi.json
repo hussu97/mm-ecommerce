@@ -12298,6 +12298,12 @@
             "title": "Ingredient Unit",
             "type": "string"
           },
+          "ingredient_unit_cost": {
+            "default": "0",
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Ingredient Unit Cost",
+            "type": "string"
+          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
@@ -27167,6 +27173,18 @@
             "title": "Basis",
             "type": "string"
           },
+          "batch_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Cost"
+          },
           "batch_yield": {
             "anyOf": [
               {
@@ -27258,6 +27276,18 @@
               }
             ],
             "title": "Secondary"
+          },
+          "unit_cost": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Cost"
           }
         },
         "required": [

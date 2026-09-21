@@ -14,14 +14,14 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.inventory import InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
-from app.services.inventory import recipe_catalog_service
+from app.services.inventory import cost_layer_service, recipe_catalog_service
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
@@ -272,3 +272,81 @@ async def test_modifier_option_lists_modifier_and_product_names(engine, seeded):
     assert row["secondary"] == f"{MARKER} Toppings"
     # product_names lists every product carrying the modifier, in name order.
     assert row["product_names"] == [f"{MARKER} Apple", f"{MARKER} Mango"]
+
+
+# ─── Recipe cost rollup ───────────────────────────────────────────────────────
+# `list_recipe_owners` prices the current version's lines at each ingredient's
+# weighted-average FIFO cost and reports the per-unit / per-batch figure. These
+# stub `item_average_costs` so the arithmetic is pinned without seeding real cost
+# layers (that path is covered by the FIFO tests); the seeded ingredient uses the
+# default storage→ingredient factor of 1, so cost-per-ingredient-unit == the
+# stubbed storage cost.
+
+
+def _stub_costs(mapping):
+    async def _item_average_costs(db, item_ids):
+        return {iid: mapping[iid] for iid in item_ids if iid in mapping}
+
+    return _item_average_costs
+
+
+async def test_cost_absent_without_recipe_zero_when_uncosted(engine, seeded):
+    items, _ = await _list(engine, "product")
+    by_name = {row["name"]: row for row in items}
+    # No recipe → no cost at all (not a misleading zero).
+    assert by_name[f"{MARKER} Mango"]["unit_cost"] is None
+    assert by_name[f"{MARKER} Mango"]["batch_cost"] is None
+    # A recipe whose ingredient has no costed stock → zero, and never a batch
+    # figure for a unit-basis recipe.
+    assert by_name[f"{MARKER} Apple"]["unit_cost"] == Decimal("0")
+    assert by_name[f"{MARKER} Apple"]["batch_cost"] is None
+
+
+async def test_unit_basis_cost_is_priced(engine, seeded, monkeypatch):
+    monkeypatch.setattr(
+        cost_layer_service,
+        "item_average_costs",
+        _stub_costs({seeded["ingredient"]: Decimal("10")}),
+    )
+    items, _ = await _list(engine, "product", recipe="with")
+    apple = next(row for row in items if row["name"] == f"{MARKER} Apple")
+    assert apple["basis"] == "unit"
+    # 2 g line × (10 per storage ÷ factor 1) = 20 per unit.
+    assert apple["unit_cost"] == Decimal("20")
+    assert apple["batch_cost"] is None
+
+
+async def test_batch_basis_splits_cost_by_yield(engine, seeded, monkeypatch):
+    # Turn the made item's draft recipe into a batch of 4 (a draft version is
+    # mutable, unlike a published one), then price it.
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        recipe = (
+            await db.execute(
+                select(Recipe).where(Recipe.inventory_item_id == seeded["made"])
+            )
+        ).scalar_one()
+        version = (
+            await db.execute(
+                select(RecipeVersion).where(
+                    RecipeVersion.recipe_id == recipe.id,
+                    RecipeVersion.status == "draft",
+                )
+            )
+        ).scalar_one()
+        version.basis = "batch"
+        version.batch_yield = Decimal("4")
+        await db.commit()
+
+    monkeypatch.setattr(
+        cost_layer_service,
+        "item_average_costs",
+        _stub_costs({seeded["ingredient"]: Decimal("10")}),
+    )
+    items, _ = await _list(engine, "inventory_item", recipe="with")
+    made = next(row for row in items if row["name"] == f"{MARKER} Cake Base")
+    assert made["basis"] == "batch"
+    assert made["batch_yield"] == Decimal("4")
+    # The lines make one batch: 2 × 10 = 20 per batch; 20 ÷ 4 = 5 per unit.
+    assert made["batch_cost"] == Decimal("20")
+    assert made["unit_cost"] == Decimal("5")

@@ -13,17 +13,21 @@ It only reads existing tables (owners + ``recipes``/``recipe_versions``/
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import and_, case, func, null, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import search as search_text
 from app.core.exceptions import BadRequestError
+from app.core.money import to_decimal
+from app.core.money import unit_cost as _cost
 from app.models.inventory import InventoryCategory, InventoryItem
 from app.models.inventory_v2 import Recipe, RecipeLine, RecipeVersion
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.product import Product
 from app.models.user import User
+from app.services.inventory import cost_layer_service, inventory_service
 
 # Only *made* inventory items can own a recipe — purchased kinds
 # (raw_material/packaging/resale_good) never do, so the inventory tab lists the
@@ -215,15 +219,19 @@ async def list_recipe_owners(
     # and ordered so the summary reads in the recipe's own display order.
     recipe_ids = [row.recipe_id for row in rows if row.recipe_id is not None]
     lines_by_version: dict[tuple[uuid.UUID, str], list[dict]] = {}
+    # The rolled-up cost of each shown version's lines, priced at each
+    # ingredient's current FIFO cost. This is the cost of the lines *as authored*
+    # — one owner unit for a unit-basis version, one whole batch for a
+    # batch-basis version — turned into unit/batch figures per row below.
+    cost_by_version: dict[tuple[uuid.UUID, str], Decimal] = {}
     if recipe_ids:
         line_rows = (
             await db.execute(
                 select(
                     RecipeVersion.recipe_id,
                     RecipeVersion.status,
-                    InventoryItem.name,
+                    InventoryItem,
                     RecipeLine.quantity,
-                    InventoryItem.ingredient_unit,
                 )
                 .select_from(RecipeVersion)
                 .join(RecipeLine, RecipeLine.recipe_version_id == RecipeVersion.id)
@@ -239,10 +247,22 @@ async def list_recipe_owners(
                 )
             )
         ).all()
-        for rid, status, name, quantity, unit in line_rows:
+        # One cost query for every ingredient on the page.
+        storage_costs = await cost_layer_service.item_average_costs(
+            db, [item.id for _rid, _status, item, _qty in line_rows]
+        )
+        for rid, status, item, quantity in line_rows:
             lines_by_version.setdefault((rid, status), []).append(
-                {"name": name, "quantity": quantity, "unit": unit}
+                {"name": item.name, "quantity": quantity, "unit": item.ingredient_unit}
             )
+            # Ingredient cost per its recipe (ingredient) unit, then × the line
+            # quantity — the same rollup the legacy product-recipe endpoint uses.
+            ingredient_cost = inventory_service.canonical_cost_for_unit(
+                item, storage_costs.get(item.id, Decimal("0")), "ingredient"
+            )
+            line_cost = to_decimal(quantity) * ingredient_cost
+            key = (rid, status)
+            cost_by_version[key] = cost_by_version.get(key, Decimal("0")) + line_cost
 
     # The basis + batch yield of each shown recipe's active/draft version — a
     # separate query so a version with no lines still reports its basis. Keyed
@@ -306,6 +326,21 @@ async def list_recipe_owners(
             if has_recipe and recipe_status != "none"
             else ("unit", None)
         )
+        # The current version's line cost, turned into per-unit / per-batch
+        # figures. A unit-basis version's lines already make one unit; a
+        # batch-basis version's lines make one batch, so the unit cost is that
+        # batch cost divided by the yield. Both are None when there is no recipe.
+        unit_cost: Decimal | None = None
+        batch_cost: Decimal | None = None
+        if has_recipe and recipe_status != "none":
+            basis_total = cost_by_version.get(
+                (row.recipe_id, recipe_status), Decimal("0")
+            )
+            if basis == "batch" and batch_yield and Decimal(str(batch_yield)) > 0:
+                batch_cost = _cost(basis_total)
+                unit_cost = _cost(basis_total / Decimal(str(batch_yield)))
+            else:
+                unit_cost = _cost(basis_total)
         items.append(
             {
                 "id": row.id,
@@ -320,6 +355,8 @@ async def list_recipe_owners(
                 "draft_version_number": row.draft_version,
                 "basis": basis,
                 "batch_yield": batch_yield,
+                "unit_cost": unit_cost,
+                "batch_cost": batch_cost,
                 "line_count": len(ingredients),
                 "ingredients": ingredients,
             }

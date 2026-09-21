@@ -387,7 +387,13 @@ async def _items_with_cost(
     out = []
     for item in items:
         response = InventoryItemResponse.model_validate(item)
-        response.average_cost = costs.get(item.id, Decimal("0"))
+        cost = costs.get(item.id, Decimal("0"))
+        response.average_cost = cost
+        # The per-ingredient-unit cost the recipe console prices lines in, derived
+        # here so the client never repeats the storage→ingredient conversion.
+        response.ingredient_unit_cost = inventory_service.canonical_cost_for_unit(
+            item, cost, "ingredient"
+        )
         response.suppliers = suppliers_by_item.get(item.id, [])
         out.append(response)
     return out

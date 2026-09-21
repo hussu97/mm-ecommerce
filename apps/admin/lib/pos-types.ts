@@ -406,6 +406,10 @@ export interface InventoryItem {
   // Cost is FIFO now: the item's current cost per storage unit, derived from its
   // cost layers (0 until first receipt/production). Not a stored column.
   average_cost: number;
+  // The same FIFO cost per *ingredient* unit (average_cost ÷ the storage→ingredient
+  // factor), computed server-side so the recipe console prices lines without
+  // repeating the conversion.
+  ingredient_unit_cost: number;
   yield_percentage: number;
   is_product: boolean;
   kind: 'raw_material' | 'packaging' | 'semi_finished' | 'produced_good' | 'resale_good';
