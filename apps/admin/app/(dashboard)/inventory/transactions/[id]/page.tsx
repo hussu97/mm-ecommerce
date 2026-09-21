@@ -11,7 +11,7 @@ import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type { Branch, InventoryTransaction } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
-import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { formatCost, formatDateTime, formatQuantity } from '@/lib/utils';
 
 const num = (v: unknown): number => Number(v ?? 0);
 
@@ -90,7 +90,7 @@ export default function TransactionDetailPage() {
         <Detail label="Business date" value={transaction.business_date} />
         <Detail label="Posted" value={transaction.posted_at ? formatDateTime(transaction.posted_at) : '—'} />
         <Detail label="Posted by" value={transaction.posted_by_name ?? '—'} />
-        <Detail label="Total value impact" value={formatCurrency(transaction.total_cost)} />
+        <Detail label="Total value impact" value={formatCost(transaction.total_cost)} />
       </div>
 
       <div className="overflow-x-auto border border-gray-200">
@@ -118,7 +118,7 @@ export default function TransactionDetailPage() {
                       <td className={`px-2 py-1 text-right tabular-nums ${delta < 0 ? 'text-red-600' : delta > 0 ? 'text-green-700' : 'text-gray-400'}`}>
                         {delta === 0 ? '—' : `${delta > 0 ? '+' : ''}${formatQuantity(delta)}`}
                       </td>
-                      <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(line.total_cost)}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{formatCost(line.total_cost)}</td>
                       <td className="px-2 py-1 text-gray-600">{line.notes ?? '—'}</td>
                     </tr>
                   );

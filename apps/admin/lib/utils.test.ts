@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cn, slugify, formatCurrency, formatDate, formatQuantity, csvCell } from './utils';
+import { cn, slugify, formatCurrency, formatCost, formatDate, formatQuantity, csvCell } from './utils';
 
 describe('cn', () => {
   it('joins class strings', () => {
@@ -58,6 +58,23 @@ describe('formatCurrency', () => {
   it('treats null and undefined as zero (the shape money() accepted)', () => {
     expect(formatCurrency(null)).toBe('AED 0.00');
     expect(formatCurrency(undefined)).toBe('AED 0.00');
+  });
+});
+
+describe('formatCost', () => {
+  it('shows four decimals so sub-cent unit costs survive', () => {
+    expect(formatCost(0.170625)).toBe('AED 0.1706');
+    expect(formatCost(0.009135)).toBe('AED 0.0091');
+  });
+
+  it('groups thousands and keeps four decimals', () => {
+    expect(formatCost(1234.5)).toBe('AED 1,234.5000');
+  });
+
+  it('accepts strings and treats null/undefined as zero', () => {
+    expect(formatCost('0.5')).toBe('AED 0.5000');
+    expect(formatCost(null)).toBe('AED 0.0000');
+    expect(formatCost(undefined)).toBe('AED 0.0000');
   });
 });
 

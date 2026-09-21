@@ -41,6 +41,24 @@ export function formatCurrency(amount: number | string | null | undefined): stri
 }
 
 /**
+ * The money formatter for inventory COST figures: "AED 0.1706".
+ *
+ * Unit costs and FIFO valuations carry sub-cent precision (a raw material can
+ * cost AED 0.0091 per gram), so a 2dp `formatCurrency` rounds them to "AED 0.01"
+ * and the cost breakdown stops adding up. Costs therefore show four decimals.
+ * Sales money — prices, order totals, payments, receipts — stays on
+ * `formatCurrency` (2dp): this is only for the cost/valuation side.
+ */
+const AED_COST = new Intl.NumberFormat('en-AE', {
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
+});
+
+export function formatCost(amount: number | string | null | undefined): string {
+  return `AED ${AED_COST.format(Number(amount ?? 0))}`;
+}
+
+/**
  * The one quantity formatter for the whole console: drops trailing zeros so a
  * stock figure reads "8.375" and "1", not "8.37500000".
  *

@@ -544,6 +544,10 @@ export interface CostLayer {
   remaining_quantity: number;
   unit_cost: number;
   received_at: string;
+  // Human source ref (PO-… for a purchase, ADJ-…/CAD-… for a manual
+  // reversal/adjustment) and the server-computed remaining × unit_cost.
+  source_reference: string | null;
+  line_value: number | null;
 }
 
 export interface ItemCostLayers {

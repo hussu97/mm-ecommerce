@@ -17,7 +17,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
-import { formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { formatCost, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
 const MADE_KINDS = new Set(['produced_good', 'semi_finished']);
@@ -234,7 +234,21 @@ export default function ItemsPage() {
             </span>
           ),
         },
-        { header: 'Cost', render: (i) => formatCurrency(i.average_cost) },
+        {
+          header: 'Cost',
+          // Highlighted + clickable: opens the cost-layer breakdown for the
+          // current on-hand (how this average is reached, and from which POs).
+          render: (i) => (
+            <button
+              type="button"
+              onClick={() => setCostItem(i)}
+              className="rounded bg-primary/10 px-2 py-0.5 font-medium text-primary hover:bg-primary/20"
+              title="Show cost breakdown"
+            >
+              {formatCost(i.average_cost)}
+            </button>
+          ),
+        },
         { header: 'Kind', sortable: true, sortAccessor: (i) => i.kind, render: (i) => <Badge>{i.kind.replaceAll('_', ' ')}</Badge> },
         { header: 'Tracking', render: (i) => <Badge variant={i.tracking_mode === 'phantom' ? 'warning' : 'neutral'}>{i.tracking_mode}</Badge> },
         { header: 'Min', className: 'text-right', sortable: true, sortAccessor: (i) => Number(i.minimum_level), render: (i) => Number(i.minimum_level) },
@@ -325,33 +339,54 @@ function CostLayersModal({ item, onClose }: { item: InventoryItem; onClose: () =
         <>
           <div className="mb-3 flex gap-6 text-sm">
             <div><span className="text-gray-500 font-body">On hand</span><br /><span className="font-display text-primary">{formatQuantity(data.total_quantity)} {item.storage_unit}</span></div>
-            <div><span className="text-gray-500 font-body">Value</span><br /><span className="font-display text-primary">{formatCurrency(data.total_value)}</span></div>
-            <div><span className="text-gray-500 font-body">Avg cost</span><br /><span className="font-display text-primary">{formatCurrency(data.average_cost)}</span></div>
+            <div><span className="text-gray-500 font-body">Value</span><br /><span className="font-display text-primary">{formatCost(data.total_value)}</span></div>
+            <div><span className="text-gray-500 font-body">Avg cost</span><br /><span className="font-display text-primary">{formatCost(data.average_cost)}</span></div>
           </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
                 <th className="py-2 text-left">Source</th>
+                <th className="py-2 text-left">Received</th>
                 <th className="py-2 text-left">Warehouse</th>
-                <th className="py-2 text-right">Remaining</th>
+                <th className="py-2 text-right">Qty</th>
+                <th className="py-2 text-center"> </th>
                 <th className="py-2 text-right">Unit cost</th>
-                <th className="py-2 text-right">Value</th>
-                <th className="py-2 text-right">Received</th>
+                <th className="py-2 text-right">= Value</th>
               </tr>
             </thead>
             <tbody>
               {data.layers.map((layer) => (
                 <tr key={layer.id} className={`border-b border-gray-100 ${interactiveRowClass}`}>
-                  <td className="py-2"><Badge>{layer.source_kind.replaceAll('_', ' ')}</Badge></td>
+                  <td className="py-2">
+                    {layer.source_reference
+                      ? <span className="font-medium text-gray-800">{layer.source_reference}</span>
+                      : <span className="text-gray-400">—</span>}
+                    <br /><span className="text-[10px] uppercase tracking-wide text-gray-400 font-body">{layer.source_kind.replaceAll('_', ' ')}</span>
+                  </td>
+                  <td className="py-2 text-gray-500">{layer.received_at.slice(0, 10)}</td>
                   <td className="py-2 text-gray-600">{layer.warehouse_name ?? '—'}</td>
-                  <td className="py-2 text-right">{formatQuantity(layer.remaining_quantity)}</td>
-                  <td className="py-2 text-right">{formatCurrency(layer.unit_cost)}</td>
-                  <td className="py-2 text-right">{formatCurrency(layer.remaining_quantity * layer.unit_cost)}</td>
-                  <td className="py-2 text-right text-gray-500">{layer.received_at.slice(0, 10)}</td>
+                  <td className="py-2 text-right tabular-nums">{formatQuantity(layer.remaining_quantity)}</td>
+                  <td className="py-2 text-center text-gray-400">×</td>
+                  <td className="py-2 text-right tabular-nums">{formatCost(layer.unit_cost)}</td>
+                  <td className="py-2 text-right tabular-nums">{formatCost(layer.line_value ?? layer.remaining_quantity * layer.unit_cost)}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-gray-300 font-medium">
+                <td className="py-2" colSpan={3}>Total on hand</td>
+                <td className="py-2 text-right tabular-nums">{formatQuantity(data.total_quantity)}</td>
+                <td />
+                <td />
+                <td className="py-2 text-right tabular-nums">{formatCost(data.total_value)}</td>
+              </tr>
+            </tfoot>
           </table>
+          <p className="mt-3 text-xs text-gray-500 font-body">
+            Average cost = total value ÷ on-hand qty ={' '}
+            {formatCost(data.total_value)} ÷ {formatQuantity(data.total_quantity)} {item.storage_unit} ={' '}
+            <span className="font-medium text-gray-800">{formatCost(data.average_cost)}</span> per {item.storage_unit}
+          </p>
         </>
       )}
     </Modal>

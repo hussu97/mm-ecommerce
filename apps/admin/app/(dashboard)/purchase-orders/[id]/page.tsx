@@ -13,7 +13,7 @@ import { inventoryApi } from '@/lib/pos-api';
 import type { PurchaseOrder, PurchaseOrderStatus } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Spinner } from '@/components/ui';
-import { formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
   PurchaseOrderStatus,
@@ -103,7 +103,7 @@ export default function PurchaseOrderDetailPage() {
                     {v === 0 ? '—' : `${v > 0 ? '+' : ''}${formatQuantity(v)}`}
                   </td>
                   <td className="px-2 py-1 text-xs text-gray-600">{item.variance_reason ?? ''}</td>
-                  <td className="px-2 py-1 text-right tabular-nums text-gray-500">{formatCurrency(item.unit_cost)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums text-gray-500">{formatCost(item.unit_cost)}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(item.total_cost)}</td>
                 </tr>
               );

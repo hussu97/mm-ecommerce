@@ -589,6 +589,13 @@ class CostLayerResponse(ORMModel):
     unit_cost: Decimal
     received_at: datetime
     warehouse_name: str | None = None
+    #: Human reference for where this layer's stock (and its cost) came from —
+    #: the PO number for a purchase, else the adjustment/reversal/count
+    #: transaction reference (ADJ-…, CAD-…). Paired with ``received_at`` (date).
+    source_reference: str | None = None
+    #: remaining_quantity × unit_cost, quantised server-side — the layer's
+    #: contribution to the item's on-hand value (the "math" the breakdown shows).
+    line_value: Decimal | None = None
 
 
 class ItemCostLayersResponse(BaseModel):
