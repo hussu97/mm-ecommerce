@@ -203,8 +203,11 @@ def test_provider_cancelled_but_paid_is_decided_by_net_payable_sign():
     assert not promote._provider_cancelled_but_paid(
         _agg(status="completed", net_payable=Decimal("37.42"))
     )
-    # A MERCHANT-initiated cancellation is OUR fault — a lost sale, not revenue —
-    # even when the provisional net_payable is still positive. It stays cancelled.
+    # A MERCHANT-funded cancellation is OUR cost — a lost sale, not revenue — even
+    # when the provisional net_payable is still positive. It stays cancelled. The
+    # shop rejecting ("Merchant") and a customer refund the shop honours ("User",
+    # e.g. AGG-20260920-083: wrong quantity, refunded by us) are both merchant-
+    # funded — the provisional net has not yet been clawed back by the statement.
     assert not promote._provider_cancelled_but_paid(
         _agg(
             status="cancelled",
@@ -212,13 +215,20 @@ def test_provider_cancelled_but_paid_is_decided_by_net_payable_sign():
             raw={"orderCancelSceneDesc": "Merchant"},
         )
     )
-    # Marketplace ("Customer service") and customer ("User") cancellations are not
-    # ours — those we were paid for we keep.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("48.10"),
+            raw={"orderCancelSceneDesc": "User"},
+        )
+    )
+    # Only Keeta's own desk ("Customer service") eats the cost while still paying us
+    # the net — that cancellation we keep as delivered.
     assert promote._provider_cancelled_but_paid(
         _agg(
             status="cancelled",
-            net_payable=Decimal("26.20"),
-            raw={"orderCancelSceneDesc": "User"},
+            net_payable=Decimal("37.42"),
+            raw={"orderCancelSceneDesc": "Customer service"},
         )
     )
 
