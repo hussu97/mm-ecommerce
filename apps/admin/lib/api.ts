@@ -167,6 +167,42 @@ export async function request<T>(path: string, options: RequestInit = {}, _retry
   return res.json() as Promise<T>;
 }
 
+/**
+ * A binary GET that goes through the same cookie auth and one-shot 401 refresh
+ * as `request()`, but returns the raw `Blob` (a file download) rather than JSON.
+ * Kept here so a download never re-implements `fetch` in a screen — the drift
+ * convention 9 exists to stop (a CSV download that threw on an expired session
+ * instead of refreshing).
+ */
+export async function requestBlob(
+  path: string,
+  options: RequestInit = {},
+  _retry = true,
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, { ...options, credentials: 'include' });
+  if (res.status === 401 && _retry) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return requestBlob(path, options, false);
+    if (
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/login')
+    ) {
+      window.location.assign(
+        loginPathFor(window.location.pathname, window.location.search),
+      );
+    }
+    throw new ApiError(401, 'Session expired. Please log in again.');
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    const detail = (body as { detail?: unknown }).detail;
+    const message =
+      typeof detail === 'string' ? detail : `HTTP ${res.status}`;
+    throw new ApiError(res.status, message, detail);
+  }
+  return res.blob();
+}
+
 // A missing payload is sent as `{}` rather than as no body at all: some POS
 // endpoints declare a body model whose fields are all optional, and those
 // accept an empty object where they would reject an absent body.
