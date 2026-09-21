@@ -1385,6 +1385,51 @@ async def pos_pending_production(
     return [await _serialise_production_order(db, o) for o in orders]
 
 
+@pos_production_router.get(
+    "/production/completed", response_model=list[ProductionOrderResponse]
+)
+async def pos_completed_production(
+    branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.production.manage")),
+):
+    """Finished production orders at this (source) branch — the till's read-only
+    history, mirroring completed transfers. Paged + searchable by reference or an
+    item's name/SKU."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    stmt = (
+        select(ProductionOrder)
+        .where(
+            ProductionOrder.source_branch_id == branch_id,
+            ProductionOrder.status == ProductionOrderStatusEnum.PRODUCED.value,
+        )
+        .options(selectinload(ProductionOrder.lines))
+        .order_by(ProductionOrder.created_at.desc(), ProductionOrder.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(ProductionOrder.reference).like(like),
+                exists().where(
+                    ProductionLine.production_order_id == ProductionOrder.id,
+                    ProductionLine.item_id == InventoryItem.id,
+                    or_(
+                        func.lower(InventoryItem.name).like(like),
+                        func.lower(InventoryItem.sku).like(like),
+                    ),
+                ),
+            )
+        )
+    orders = (await db.execute(stmt)).scalars().unique().all()
+    return [await _serialise_production_order(db, o) for o in orders]
+
+
 @pos_production_router.post(
     "/production/claim-autoprint", response_model=list[ProductionOrderResponse]
 )

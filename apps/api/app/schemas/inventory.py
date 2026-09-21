@@ -523,6 +523,26 @@ class PosPurchaseOrderCreate(BaseModel):
     items: list[PurchaseOrderLineInput] = Field(min_length=1)
 
 
+class PosInvoiceUpload(BaseModel):
+    """Attach/replace a PO's invoice image from the till. The image rides as
+    base64 in JSON (the till's API client is JSON-only, like create-and-receive),
+    rather than as a raw multipart body the way the admin browser upload does."""
+
+    # ~14M base64 chars ≈ a 10 MB file — bounded so a huge payload cannot exhaust
+    # worker memory when decoded.
+    invoice_image_base64: str = Field(max_length=14_000_000)
+    invoice_content_type: str = Field(max_length=100)
+
+
+class PurchaseOrderItemOption(BaseModel):
+    """One inventory item that appears on at least one purchase order — the
+    options for the "filter by item" picker on the PO list (admin and till)."""
+
+    id: UUID
+    name: str
+    sku: str | None = None
+
+
 class PurchaseOrderLineResponse(ORMModel):
     id: UUID
     item_id: UUID

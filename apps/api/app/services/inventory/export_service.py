@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, with_loader_criteria
 
 from app.models.category import Category
-from app.models.inventory import InventoryItem
+from app.models.inventory import InventoryItem, PurchaseOrder
 from app.models.inventory_v2 import Recipe, RecipeVersion, RecipeVersionStatusEnum
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderStatusEnum
@@ -30,6 +30,7 @@ __all__ = [
     "export_orders",
     "export_product_modifiers",
     "export_products",
+    "export_purchase_orders_workbook",
     "export_recipes",
     "export_recipes_workbook",
 ]
@@ -607,6 +608,58 @@ def _write_workbook_sheet(
         # Excel sheet protection is an editing guard, not a security boundary.
         # The importer independently selects only the editable worksheet.
         sheet.protection.sheet = True
+
+
+PURCHASE_ORDER_EXPORT_HEADERS = [
+    "reference",
+    "supplier",
+    "status",
+    "business_date",
+    "delivery_date",
+    "invoice_reference",
+    "invoice_attached",
+    "lines",
+    "net",
+    "vat",
+    "total_gross",
+    "total_cost",
+]
+
+
+def export_purchase_orders_workbook(
+    orders: Sequence[PurchaseOrder],
+    supplier_names: dict,
+) -> bytes:
+    """One row per purchase order, honouring whatever filters the caller applied.
+
+    Money columns are written as numbers so the operator can sum them; text
+    columns pass through ``_safe`` (formula-injection guard) in the shared sheet
+    writer. ``orders`` and their line items are already loaded by the caller."""
+    rows: list[list[str | int | float]] = []
+    for order in orders:
+        rows.append(
+            [
+                order.reference,
+                supplier_names.get(order.supplier_id, ""),
+                order.status.replace("_", " "),
+                order.business_date or "",
+                order.delivery_date.isoformat() if order.delivery_date else "",
+                order.supplier_reference or "",
+                "Yes" if order.invoice_object_key else "No",
+                len(order.items),
+                float(order.subtotal_net or 0),
+                float(order.vat_total or 0),
+                float(order.total_gross or 0),
+                float(order.total_cost or 0),
+            ]
+        )
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Purchase orders"
+    _write_workbook_sheet(sheet, PURCHASE_ORDER_EXPORT_HEADERS, rows, protected=False)
+    buf = io.BytesIO()
+    workbook.save(buf)
+    return buf.getvalue()
 
 
 async def export_recipes_workbook(db: AsyncSession) -> bytes:

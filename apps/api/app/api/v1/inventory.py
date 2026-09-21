@@ -6,9 +6,11 @@ import base64
 import binascii
 import logging
 import uuid
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy import delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -34,6 +36,7 @@ from app.models import (
     ProductionLine,
     ProductionOrder,
     PurchaseOrder,
+    PurchaseOrderItem,
     PurchaseOrderStatusEnum,
     Supplier,
     SupplierItem,
@@ -62,8 +65,10 @@ from app.schemas.inventory import (
     ItemCostLayersResponse,
     ItemSupplierRef,
     OpenCountRequest,
+    PosInvoiceUpload,
     PosPurchaseOrderCreate,
     PurchaseOrderCreate,
+    PurchaseOrderItemOption,
     PurchaseOrderResponse,
     PurchaseOrderUpdate,
     QuantityAdjustmentRequest,
@@ -87,6 +92,7 @@ from app.services import audit_service, crud_service, email_service
 from app.services.inventory import (
     access_service,
     cost_layer_service,
+    export_service,
     inventory_service,
     ledger_service,
     recipe_service,
@@ -1283,31 +1289,153 @@ async def _load_po(db: AsyncSession, po_id: uuid.UUID) -> PurchaseOrder:
     )
 
 
+def _apply_po_filters(
+    stmt,
+    *,
+    supplier_id: uuid.UUID | None = None,
+    status_filter: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    item_id: uuid.UUID | None = None,
+):
+    """The purchase-order WHERE clauses shared by the admin list and export so the
+    two never diverge on what a filter means. ``business_date`` is an ISO string,
+    so a date bound compares lexicographically (correct for ``YYYY-MM-DD``)."""
+    if supplier_id:
+        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
+    if status_filter:
+        stmt = stmt.where(PurchaseOrder.status == status_filter)
+    if date_from:
+        stmt = stmt.where(PurchaseOrder.business_date >= date_from.isoformat())
+    if date_to:
+        stmt = stmt.where(PurchaseOrder.business_date <= date_to.isoformat())
+    if item_id:
+        stmt = stmt.where(
+            exists().where(
+                PurchaseOrderItem.purchase_order_id == PurchaseOrder.id,
+                PurchaseOrderItem.item_id == item_id,
+            )
+        )
+    return stmt
+
+
+def _scope_po_to_access(stmt, user: User, branch_id: uuid.UUID | None):
+    """Restrict a PO query to the branches the caller may see (or the one asked
+    for). The caller must still ``assert_branch_access`` when a branch is given."""
+    if branch_id:
+        stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
+    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
+        stmt = stmt.where(
+            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
+        )
+    return stmt
+
+
 @purchase_orders_router.get("", response_model=list[PurchaseOrderResponse])
 async def list_purchase_orders(
     branch_id: uuid.UUID | None = None,
     supplier_id: uuid.UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
-    limit: int = Query(100, ge=1, le=1000),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    item_id: uuid.UUID | None = None,
+    limit: int = Query(1000, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require("inventory.purchase_orders.manage")),
 ):
     stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
     if branch_id:
         await access_service.assert_branch_access(db, user, branch_id)
-        stmt = stmt.where(PurchaseOrder.branch_id == branch_id)
-    elif not (user.is_admin or (user.role and user.role.is_super_admin)):
-        stmt = stmt.where(
-            PurchaseOrder.branch_id.in_(access_service.branch_ids_for(user))
-        )
-    if supplier_id:
-        stmt = stmt.where(PurchaseOrder.supplier_id == supplier_id)
-    if status_filter:
-        stmt = stmt.where(PurchaseOrder.status == status_filter)
+    stmt = _scope_po_to_access(stmt, user, branch_id)
+    stmt = _apply_po_filters(
+        stmt,
+        supplier_id=supplier_id,
+        status_filter=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        item_id=item_id,
+    )
     stmt = stmt.order_by(PurchaseOrder.created_at.desc()).limit(limit)
     orders = list((await db.execute(stmt)).scalars().unique().all())
 
     return await _serialise_po_list(db, orders)
+
+
+@purchase_orders_router.get(
+    "/item-options", response_model=list[PurchaseOrderItemOption]
+)
+async def list_purchase_order_item_options(
+    branch_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """The inventory items that appear on at least one purchase order the caller
+    can see — backs the "filter by item" picker on the PO list."""
+    if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
+    po_scope = _scope_po_to_access(select(PurchaseOrder.id), user, branch_id)
+    stmt = (
+        select(InventoryItem.id, InventoryItem.name, InventoryItem.sku)
+        .where(
+            exists().where(
+                PurchaseOrderItem.item_id == InventoryItem.id,
+                PurchaseOrderItem.purchase_order_id.in_(po_scope),
+            )
+        )
+        .order_by(InventoryItem.name)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [PurchaseOrderItemOption(id=r.id, name=r.name, sku=r.sku) for r in rows]
+
+
+@purchase_orders_router.get("/export")
+async def export_purchase_orders(
+    branch_id: uuid.UUID | None = None,
+    supplier_id: uuid.UUID | None = None,
+    status_filter: str | None = Query(None, alias="status"),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    item_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Download the filtered purchase orders as an .xlsx — same filters as the
+    list, so the workbook always matches what the user is looking at."""
+    if branch_id:
+        await access_service.assert_branch_access(db, user, branch_id)
+    stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
+    stmt = _scope_po_to_access(stmt, user, branch_id)
+    stmt = _apply_po_filters(
+        stmt,
+        supplier_id=supplier_id,
+        status_filter=status_filter,
+        date_from=date_from,
+        date_to=date_to,
+        item_id=item_id,
+    )
+    stmt = stmt.order_by(PurchaseOrder.created_at.desc())
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+    supplier_ids = {o.supplier_id for o in orders if o.supplier_id}
+    suppliers = (
+        {
+            s.id: s.name
+            for s in (
+                await db.execute(select(Supplier).where(Supplier.id.in_(supplier_ids)))
+            )
+            .scalars()
+            .all()
+        }
+        if supplier_ids
+        else {}
+    )
+    content = export_service.export_purchase_orders_workbook(orders, suppliers)
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": "attachment; filename=purchase-orders.xlsx"},
+    )
 
 
 @purchase_orders_router.post(
@@ -1681,20 +1809,12 @@ _INVOICE_EXT = {
 _INVOICE_MAX_BYTES = 10 * 1024 * 1024
 
 
-@purchase_orders_router.post("/{po_id}/invoice", response_model=PurchaseOrderResponse)
-async def upload_purchase_order_invoice(
-    po_id: uuid.UUID,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require("inventory.purchase_orders.manage")),
-):
-    """Attach an invoice image/PDF to a PO in the private finance bucket.
-
-    The body is the raw file bytes; the content type comes from the request
-    header. Stored under a deterministic key and signed on read — never public.
-    """
-    purchase_order = await _load_po(db, po_id)
-    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+async def _store_invoice_from_request(
+    db: AsyncSession, purchase_order: PurchaseOrder, request: Request
+) -> None:
+    """Read the raw request body as a PO invoice, validate its type/size, store it
+    in the private finance bucket under a deterministic key and drop any previous
+    object. Shared by the admin and till upload endpoints."""
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip()
     ext = _INVOICE_EXT.get(content_type)
     if ext is None:
@@ -1708,7 +1828,7 @@ async def upload_purchase_order_invoice(
         raise BadRequestError("No invoice file was uploaded")
     if len(body) > _INVOICE_MAX_BYTES:
         raise BadRequestError("Invoice file is too large (max 10 MB)")
-    key = _invoice_object_key(po_id, purchase_order.branch_id, ext)
+    key = _invoice_object_key(purchase_order.id, purchase_order.branch_id, ext)
     # A re-upload with a different extension writes a new key; delete the old
     # object so it does not orphan in the bucket.
     previous_key = purchase_order.invoice_object_key
@@ -1726,6 +1846,61 @@ async def upload_purchase_order_invoice(
     purchase_order.invoice_object_key = key
     purchase_order.invoice_content_type = content_type
     await db.flush()
+
+
+async def _store_invoice_from_base64(
+    db: AsyncSession,
+    purchase_order: PurchaseOrder,
+    invoice_image_base64: str,
+    invoice_content_type: str,
+) -> None:
+    """As ``_store_invoice_from_request`` but from a base64 payload (the till's
+    JSON client). Same validation, key and previous-object cleanup."""
+    content_type = (invoice_content_type or "").strip()
+    ext = _INVOICE_EXT.get(content_type)
+    if ext is None:
+        raise BadRequestError("Invoice must be a JPEG, PNG, WebP or PDF")
+    try:
+        body = base64.b64decode(invoice_image_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise BadRequestError("Invoice image is not valid base64") from exc
+    if not body:
+        raise BadRequestError("Invoice image is empty")
+    if len(body) > _INVOICE_MAX_BYTES:
+        raise BadRequestError("Invoice file is too large (max 10 MB)")
+    key = _invoice_object_key(purchase_order.id, purchase_order.branch_id, ext)
+    previous_key = purchase_order.invoice_object_key
+    object_storage.upload_object(
+        bucket=settings.GCS_INVOICE_BUCKET,
+        key=key,
+        body=body,
+        content_type=content_type,
+        cache_control="private, no-store",
+    )
+    if previous_key and previous_key != key:
+        object_storage.delete_object(
+            bucket=settings.GCS_INVOICE_BUCKET, key=previous_key
+        )
+    purchase_order.invoice_object_key = key
+    purchase_order.invoice_content_type = content_type
+    await db.flush()
+
+
+@purchase_orders_router.post("/{po_id}/invoice", response_model=PurchaseOrderResponse)
+async def upload_purchase_order_invoice(
+    po_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Attach an invoice image/PDF to a PO in the private finance bucket.
+
+    The body is the raw file bytes; the content type comes from the request
+    header. Stored under a deterministic key and signed on read — never public.
+    """
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    await _store_invoice_from_request(db, purchase_order, request)
     return await _serialise_po(db, await _load_po(db, po_id), sign_invoice=True)
 
 
@@ -1855,6 +2030,143 @@ async def pos_purchase_orders_to_receive(
         )
     orders = list((await db.execute(stmt)).scalars().unique().all())
     return await _serialise_po_list(db, orders)
+
+
+@pos_purchase_orders_router.get(
+    "/completed", response_model=list[PurchaseOrderResponse]
+)
+async def pos_completed_purchases(
+    branch_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: str | None = Query(None),
+    item_id: uuid.UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Received (closed) purchases at this branch — the till's read-only history,
+    mirroring completed transfers. Paged + searchable by PO reference, supplier
+    name or item name, and filterable to one item."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    stmt = (
+        select(PurchaseOrder)
+        .options(selectinload(PurchaseOrder.items))
+        .where(
+            PurchaseOrder.branch_id == branch_id,
+            PurchaseOrder.status == PurchaseOrderStatusEnum.CLOSED.value,
+        )
+        .order_by(
+            PurchaseOrder.created_at.desc(),
+            PurchaseOrder.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    if item_id:
+        stmt = stmt.where(
+            exists().where(
+                PurchaseOrderItem.purchase_order_id == PurchaseOrder.id,
+                PurchaseOrderItem.item_id == item_id,
+            )
+        )
+    if q and q.strip():
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(PurchaseOrder.reference).like(like),
+                exists().where(
+                    Supplier.id == PurchaseOrder.supplier_id,
+                    func.lower(Supplier.name).like(like),
+                ),
+                exists().where(
+                    PurchaseOrderItem.purchase_order_id == PurchaseOrder.id,
+                    PurchaseOrderItem.item_id == InventoryItem.id,
+                    func.lower(InventoryItem.name).like(like),
+                ),
+            )
+        )
+    orders = list((await db.execute(stmt)).scalars().unique().all())
+    return await _serialise_po_list(db, orders)
+
+
+@pos_purchase_orders_router.get(
+    "/item-options", response_model=list[PurchaseOrderItemOption]
+)
+async def pos_purchase_order_item_options(
+    branch_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Items that appear on at least one received purchase order at this branch —
+    backs the "filter by item" picker on the completed-purchases list."""
+    await access_service.assert_branch_access(db, user, branch_id)
+    po_scope = select(PurchaseOrder.id).where(
+        PurchaseOrder.branch_id == branch_id,
+        PurchaseOrder.status == PurchaseOrderStatusEnum.CLOSED.value,
+    )
+    stmt = (
+        select(InventoryItem.id, InventoryItem.name, InventoryItem.sku)
+        .where(
+            exists().where(
+                PurchaseOrderItem.item_id == InventoryItem.id,
+                PurchaseOrderItem.purchase_order_id.in_(po_scope),
+            )
+        )
+        .order_by(InventoryItem.name)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [PurchaseOrderItemOption(id=r.id, name=r.name, sku=r.sku) for r in rows]
+
+
+@pos_purchase_orders_router.get("/{po_id}", response_model=PurchaseOrderResponse)
+async def pos_get_purchase_order(
+    po_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """One purchase order for the till's detail screen, with a signed invoice URL."""
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    return await _serialise_po(db, purchase_order, sign_invoice=True)
+
+
+@pos_purchase_orders_router.put("/{po_id}", response_model=PurchaseOrderResponse)
+async def pos_update_purchase_order_invoice_ref(
+    po_id: uuid.UUID,
+    data: PurchaseOrderUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Correct the invoice/supplier reference from the till. Only that field (and
+    notes) can change here — the lines and money are frozen once received."""
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    changes = {
+        k: v
+        for k, v in data.model_dump(exclude_unset=True).items()
+        if k in {"supplier_reference", "notes"}
+    }
+    await crud_service.update(db, purchase_order, changes)
+    return await _serialise_po(db, await _load_po(db, po_id), sign_invoice=True)
+
+
+@pos_purchase_orders_router.post(
+    "/{po_id}/invoice", response_model=PurchaseOrderResponse
+)
+async def pos_upload_purchase_order_invoice(
+    po_id: uuid.UUID,
+    data: PosInvoiceUpload,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.manage")),
+):
+    """Attach or replace a PO's invoice image from the till (base64 JSON), same
+    private-bucket storage and guards as the admin upload."""
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    await _store_invoice_from_base64(
+        db, purchase_order, data.invoice_image_base64, data.invoice_content_type
+    )
+    return await _serialise_po(db, await _load_po(db, po_id), sign_invoice=True)
 
 
 @pos_purchase_orders_router.post(
