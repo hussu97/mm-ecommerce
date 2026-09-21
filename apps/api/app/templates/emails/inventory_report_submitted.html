@@ -1,16 +1,18 @@
 {#
   A shift inventory report has been submitted at a branch.
 
-  Sent to the office so the count can be reviewed — and, when the variance is
-  large enough to need approval, approved or rejected — from the admin console.
-  Always English: it is an internal notification and the admin it links to is
+  Every report now auto-posts to the stock ledger on submit, regardless of
+  variance — there is no approval to chase. Sent to the office so the count, and
+  in particular any variance between what was counted and what the system
+  expected on-hand, can be reviewed in the admin console after the fact. Always
+  English: it is an internal notification and the admin it links to is
   English-only.
 #}
 {% extends "base.html" %}
 {% import "_parts.html" as parts with context %}
 
-{% block title %}Inventory report submitted — {{ report_name }}{% endblock %}
-{% block preheader %}{{ branch_name }} &middot; {{ business_date }} &middot; {% if requires_approval %}needs approval{% else %}auto-posted{% endif %}{% endblock %}
+{% block title %}Inventory report posted — {{ report_name }}{% endblock %}
+{% block preheader %}{{ branch_name }} &middot; {{ business_date }} &middot; {% if variance_lines %}{{ variance_lines | length }} item(s) with variance{% else %}no variances{% endif %}{% endblock %}
 
 {% block content %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -23,12 +25,13 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr><td class="body-copy" style="padding-top: 26px;">
     <p>
-      {% if requires_approval %}
-        A count has been submitted and is <strong>waiting for approval</strong>.
-        The stock ledger updates once you approve it.
+      A count has been submitted and <strong>posted to the stock ledger</strong>
+      automatically.
+      {% if variance_lines %}
+        The items below were counted at a quantity that differs from what the
+        system expected on-hand — review them in the admin console.
       {% else %}
-        A count has been submitted and <strong>posted to the stock ledger</strong>
-        automatically (its variance was within the branch's approval threshold).
+        Every counted item matched the expected on-hand — no variances.
       {% endif %}
     </p>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
@@ -51,12 +54,34 @@
             <td class="kv-value" style="padding: 5px 0;">{{ status }}</td>
           </tr>
           <tr>
-            <td class="kv-label" style="padding: 5px 0;">Variance value</td>
+            <td class="kv-label" style="padding: 5px 0;">Total variance value</td>
             <td class="kv-value" style="padding: 5px 0;">AED {{ variance_cost }}</td>
           </tr>
         </table>
       </td></tr>
     </table>
+
+    {% if variance_lines %}
+    <p style="margin-top: 22px;"><strong>Items with variance</strong></p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td class="kv-label" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Item</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Expected</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Counted</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Variance</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Value (AED)</td>
+      </tr>
+      {% for line in variance_lines %}
+      <tr>
+        <td class="kv-value" style="padding: 6px 0;" dir="auto">{{ line.item_name }}{% if line.unit %} <span style="opacity: 0.6;">({{ line.unit }})</span>{% endif %}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.expected }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.counted }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;"><strong>{{ line.variance }}</strong></td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ line.variance_cost }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
   </td></tr>
 </table>
 
