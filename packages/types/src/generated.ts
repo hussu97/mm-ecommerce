@@ -4148,6 +4148,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/purchase-orders/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Purchase Orders
+         * @description Download the filtered purchase orders as an .xlsx — same filters as the
+         *     list, so the workbook always matches what the user is looking at.
+         */
+        get: operations["export_purchase_orders_api_v1_inventory_purchase_orders_export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/purchase-orders/item-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Purchase Order Item Options
+         * @description The inventory items that appear on at least one purchase order the caller
+         *     can see — backs the "filter by item" picker on the PO list.
+         */
+        get: operations["list_purchase_order_item_options_api_v1_inventory_purchase_orders_item_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/purchase-orders/{po_id}": {
         parameters: {
             query?: never;
@@ -17718,6 +17760,22 @@ export interface components {
             warehouse_id?: string | null;
         };
         /**
+         * PurchaseOrderItemOption
+         * @description One inventory item that appears on at least one purchase order — the
+         *     options for the "filter by item" picker on the PO list (admin and till).
+         */
+        PurchaseOrderItemOption: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Sku */
+            sku?: string | null;
+        };
+        /**
          * PurchaseOrderLineInput
          * @description One PO line. The user keys the quantity and the line's total cost.
          *
@@ -29253,6 +29311,9 @@ export interface operations {
                 branch_id?: string | null;
                 supplier_id?: string | null;
                 status?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                item_id?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -29301,6 +29362,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PurchaseOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_purchase_orders_api_v1_inventory_purchase_orders_export_get: {
+        parameters: {
+            query?: {
+                branch_id?: string | null;
+                supplier_id?: string | null;
+                status?: string | null;
+                date_from?: string | null;
+                date_to?: string | null;
+                item_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_purchase_order_item_options_api_v1_inventory_purchase_orders_item_options_get: {
+        parameters: {
+            query?: {
+                branch_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderItemOption"][];
                 };
             };
             /** @description Validation Error */
