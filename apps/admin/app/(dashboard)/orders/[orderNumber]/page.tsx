@@ -745,10 +745,13 @@ export default function OrderDetailPage() {
             </div>
           )}
 
-          {/* The two standardized actions. Packed while the order is at the shop
+          {/* The standardized actions. Packed while the order is at the shop
               (arrived_at_pos, or confirmed before the sweep lands it); Cancel
-              from either the shop or packed — GrubOps decides whether force-cancel
-              still lands once the rider has moved. */}
+              from the shop, packed, OR delivered — a marketplace/merchant refund
+              after handover ends the sale, but the ingest never rewinds a
+              delivered order on a scrape, so it is corrected here. `canCancel`
+              mirrors the server hatches (`AGGREGATOR_CANCELLABLE_FROM`); GrubOps
+              decides whether force-cancel still lands once the rider has moved. */}
           <div className="mt-4 flex gap-2">
             {(order.status === 'confirmed' || order.status === 'arrived_at_pos') && (
               <Button size="sm" onClick={() => updateStatus('packed')} loading={actionLoading}>
@@ -756,9 +759,7 @@ export default function OrderDetailPage() {
                 Mark Packed
               </Button>
             )}
-            {(order.status === 'confirmed' ||
-              order.status === 'arrived_at_pos' ||
-              order.status === 'packed') && (
+            {canCancel(order) && (
               <Button
                 variant="danger"
                 size="sm"
@@ -774,7 +775,7 @@ export default function OrderDetailPage() {
           {!(
             order.status === 'confirmed' ||
             order.status === 'arrived_at_pos' ||
-            order.status === 'packed'
+            canCancel(order)
           ) && (
             <p className="mt-3 text-xs font-body text-gray-400">
               This order is {order.status}. The aggregator delivered or cancelled it;

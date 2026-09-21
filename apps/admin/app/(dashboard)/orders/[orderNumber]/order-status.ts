@@ -78,15 +78,30 @@ const CANCELLABLE_FROM: OrderStatus[] = ['created', 'confirmed', 'arrived_at_pos
 const PACKED_CANCELLABLE_SOURCES = new Set(['online', 'aggregator']);
 
 /**
+ * Sources whose *delivered* order may still be cancelled — mirrors `delivered`
+ * being in `AGGREGATOR_CANCELLABLE_FROM` server-side. A marketplace order the
+ * aggregator or merchant refunded after handover (Keeta "Merchant"/"User"
+ * cancellation) ends the sale, but the promote ingest never rewinds a delivered
+ * order on a scrape, so a person corrects it here. Aggregator only: a delivered
+ * website order is refunded (see `canRefund`), and a delivered counter sale is
+ * finished on the till.
+ */
+const DELIVERED_CANCELLABLE_SOURCES = new Set(['aggregator']);
+
+/**
  * Whether to offer "Cancel Order", mirroring what `update_status` + `transition`
  * will actually accept. It is a function of BOTH status and source, because the
- * one interesting case — a `packed` order — turns on where it came from.
- * `conventions.test.ts` holds this in step with the Python hatches.
+ * interesting cases — a `packed` order, and a `delivered` marketplace order —
+ * turn on where it came from. `conventions.test.ts` holds this in step with the
+ * Python hatches.
  */
 export function canCancel(order: Pick<Order, 'status' | 'source'>): boolean {
   if (CANCELLABLE_FROM.includes(order.status as OrderStatus)) return true;
   if (order.status === 'packed') {
     return order.source != null && PACKED_CANCELLABLE_SOURCES.has(order.source);
+  }
+  if (order.status === 'delivered') {
+    return order.source != null && DELIVERED_CANCELLABLE_SOURCES.has(order.source);
   }
   return false;
 }

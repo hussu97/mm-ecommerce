@@ -2169,13 +2169,15 @@ async def update_status(
     # out of `VALID_TRANSITIONS` on purpose: that map is also read by the
     # courier webhooks, and a late `delivered` push must not resurrect an order
     # the shop has already written off.
-    # `extra_from` widens where a move may start for this one doorway. Three
-    # cases stack: the admin recovering a written-off order (delivered ←
+    # `extra_from` widens where a move may start for this one doorway. The cases
+    # stack: the admin recovering a written-off order (delivered ←
     # undelivered/cancelled); cancelling an aggregator order that is already
     # `packed` — the shop changed its mind after the rider was called, and
-    # GrubOps decides whether force-cancel still lands; and cancelling a
-    # `packed` (ready) *website* order from the counter/console, which refunds
-    # the card and cancels any booked MM courier. None belongs in
+    # GrubOps decides whether force-cancel still lands; cancelling a *delivered*
+    # aggregator order the marketplace/merchant refunded after handover (a
+    # label-only correction — no MM payment to refund, nothing to restock); and
+    # cancelling a `packed` (ready) *website* order from the counter/console,
+    # which refunds the card and cancels any booked MM courier. None belongs in
     # `VALID_TRANSITIONS` (the courier webhooks read that too); all are the
     # console's/counter's to allow.
     extra_from = set(order_lifecycle.ADMIN_RECOVERABLE.get(new_status, frozenset()))

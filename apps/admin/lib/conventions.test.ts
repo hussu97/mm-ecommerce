@@ -122,30 +122,51 @@ describe('F-ADM-16 — the Cancel button never offers what the server refuses', 
     expect(canCancel(order('packed', 'cashier'))).toBe(false);
   });
 
+  it('cancels a delivered order for a marketplace source only', () => {
+    // A delivered aggregator order the marketplace/merchant refunded after
+    // handover is corrected here (`delivered` is in `AGGREGATOR_CANCELLABLE_FROM`).
+    // A delivered website order is refunded, not cancelled; a delivered counter
+    // sale is finished on the till — neither offers Cancel.
+    expect(canCancel(order('delivered', 'aggregator'))).toBe(true);
+    expect(canCancel(order('delivered', 'online'))).toBe(false);
+    expect(canCancel(order('delivered', 'cashier'))).toBe(false);
+  });
+
   it('offers the live states for every source and offers nothing once shipped', () => {
     for (const source of ['cashier', 'online', 'aggregator']) {
       for (const status of ['created', 'confirmed', 'arrived_at_pos']) {
         expect(canCancel(order(status, source)), `${status}/${source}`).toBe(true);
       }
+      // `delivered` is the one exception, covered above: a marketplace order may
+      // be cancelled from it. Everything else, and every other source, offers
+      // nothing once shipped.
       for (const status of ['out_for_delivery', 'delivered', 'cancelled', 'refunded']) {
-        expect(canCancel(order(status, source)), `${status}/${source}`).toBe(false);
+        const expected = status === 'delivered' && source === 'aggregator';
+        expect(canCancel(order(status, source)), `${status}/${source}`).toBe(expected);
       }
     }
   });
 
-  it('matches the Python: a packed hatch exists for online+aggregator only', () => {
+  it('matches the Python: the packed hatch is online+aggregator, delivered aggregator-only', () => {
     const py = readFileSync(LIFECYCLE, 'utf8');
-    // Both source hatches are exactly {PACKED} …
-    for (const name of ['ONLINE_CANCELLABLE_FROM', 'AGGREGATOR_CANCELLABLE_FROM']) {
+    const statesOf = (name: string) => {
       const block = py.match(new RegExp(`${name}[^=]*=\\s*frozenset\\(\\s*\\{([^}]*)\\}`));
       expect(block, `${name} moved or was renamed`).toBeTruthy();
-      const states = [...block![1].matchAll(/OrderStatusEnum\.(\w+)/g)].map(m =>
-        m[1].toLowerCase(),
-      );
-      expect(states, `${name} is no longer just {PACKED} — revisit canCancel`).toEqual([
-        'packed',
-      ]);
-    }
+      return [...block![1].matchAll(/OrderStatusEnum\.(\w+)/g)]
+        .map(m => m[1].toLowerCase())
+        .sort();
+    };
+    // The website hatch stays exactly {PACKED} …
+    expect(
+      statesOf('ONLINE_CANCELLABLE_FROM'),
+      'ONLINE_CANCELLABLE_FROM changed — revisit canCancel',
+    ).toEqual(['packed']);
+    // … and the aggregator hatch is {PACKED, DELIVERED}: the shop changing its
+    // mind, plus correcting a post-handover marketplace/merchant refund.
+    expect(
+      statesOf('AGGREGATOR_CANCELLABLE_FROM'),
+      'AGGREGATOR_CANCELLABLE_FROM changed — revisit canCancel',
+    ).toEqual(['delivered', 'packed']);
     // … and there is no cashier hatch, which is why a packed counter order stays
     // uncancellable. If one is ever added, canCancel must learn about it.
     expect(py.includes('CASHIER_CANCELLABLE_FROM')).toBe(false);

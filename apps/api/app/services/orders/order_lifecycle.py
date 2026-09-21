@@ -228,19 +228,32 @@ ADMIN_RECOVERABLE: dict[OrderStatusEnum, frozenset[OrderStatusEnum]] = {
 
 
 #: Source states an *aggregator* order may be cancelled from, beyond what the map
-#: allows. `packed` is the one that matters: a packed aggregator order has had its
-#: rider called via the Foodics dispatch, and the shop can still change its mind —
-#: the cancel then declines the Foodics order if it is still pending, and voids
-#: it (console Void Order, `status = 7`) once accepted. See
-#: `foodics_orders_service.mirror_status_out`.
+#: allows. `packed` is one: a packed aggregator order has had its rider called via
+#: the Foodics dispatch, and the shop can still change its mind — the cancel then
+#: declines the Foodics order if it is still pending, and voids it (console Void
+#: Order, `status = 7`) once accepted. See `foodics_orders_service.mirror_status_out`.
+#:
+#: `delivered` is the other, and it is admin-only. A marketplace order the
+#: aggregator or merchant refunded after handover (Keeta's `orderCancelSceneDesc`
+#: "Merchant"/"User") ends the sale, but our copy sits `delivered` — the promote
+#: ingest deliberately never rewinds a delivered order on a scrape (a late status
+#: could resurrect one written off), so the only way to correct the record is a
+#: person on the order screen. It is safe here precisely because
+#: `delivered → cancelled` is a label-only move (order_lifecycle line ~610): the
+#: goods were handed over so there is no stock to restock, and an aggregator order
+#: carries no MM gateway payment so there is nothing to refund. Only the status and
+#: its audit trail change.
 #:
 #: Deliberately **not** in `VALID_TRANSITIONS`: that map is read by the courier
 #: webhooks, the register and the checkout, and an *MM-courier* packed order is
 #: boxed and its van is booked — cancelling it there is the wrong thing. This
 #: reaches the resolver through `extra_from`, the same escape hatch
-#: `ADMIN_RECOVERABLE` uses, and only for `source == aggregator`.
+#: `ADMIN_RECOVERABLE` uses, and only for `source == aggregator`. `AGGREGATOR_
+#: CANCELLABLE_FROM` is read ONLY by the admin doorway (`order_service.update_
+#: status`); the ingest paths carry their own `_CANCEL_EXTRA_FROM` ({packed}), so
+#: adding `delivered` here does not let a scrape auto-rewind a delivered order.
 AGGREGATOR_CANCELLABLE_FROM: frozenset[OrderStatusEnum] = frozenset(
-    {OrderStatusEnum.PACKED}
+    {OrderStatusEnum.PACKED, OrderStatusEnum.DELIVERED}
 )
 
 
@@ -596,16 +609,20 @@ async def _consequences(
         )
 
     # Cancelling an order that was *delivered* is a different act, and the guard
-    # above steps around all of it. The one route here is the admin refund path,
-    # which fully refunds a delivered order and then moves it to `cancelled` to
-    # say the sale was unwound. None of the reversals above apply: the goods were
-    # handed over, so there is no stock to put back and no box to un-pack; the
-    # van drove, so there is nothing to call off; the register already closed the
-    # check on delivery, so there is nothing to void; and the money has already
-    # gone back through `issue_admin_refund`, so the automatic refund below must
-    # not fire a second time (it is guarded on the same condition). The status
-    # label is the only thing that changes — and it changes here, inside
-    # `transition`, because canon rule 1 allows nowhere else to write it.
+    # above steps around all of it. Two routes reach here. One is the admin refund
+    # path, which fully refunds a delivered order and then moves it to `cancelled`
+    # to say the sale was unwound. The other is an admin cancelling a delivered
+    # *aggregator* order (`AGGREGATOR_CANCELLABLE_FROM`) the marketplace or merchant
+    # refunded after handover — the sale ended at the marketplace and MM holds no
+    # gateway payment to give back. None of the reversals above apply either way:
+    # the goods were handed over, so there is no stock to put back and no box to
+    # un-pack; the van drove, so there is nothing to call off; the register already
+    # closed the check on delivery, so there is nothing to void; and any money owed
+    # has already gone back (through `issue_admin_refund`, or at the marketplace for
+    # an aggregator order), so the automatic refund below must not fire (it is
+    # guarded on the same `previous != DELIVERED` condition). The status label is
+    # the only thing that changes — and it changes here, inside `transition`,
+    # because canon rule 1 allows nowhere else to write it.
     elif (
         new_status == OrderStatusEnum.CANCELLED
         and previous == OrderStatusEnum.DELIVERED
