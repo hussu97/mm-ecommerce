@@ -1204,6 +1204,11 @@ async def _serialise_production_order(
         if item is not None:
             line_payload.item_name = item.name
             line_payload.item_sku = item.sku
+            # Resolve the abstract unit kind ("storage"/"ingredient") to the
+            # item's real unit, so the printout/report show g/kg/piece.
+            line_payload.display_unit = (
+                item.ingredient_unit if line.unit == "ingredient" else item.storage_unit
+            )
             category = categories.get(item.category_id) if item.category_id else None
             if category is not None:
                 line_payload.category_name = category.name

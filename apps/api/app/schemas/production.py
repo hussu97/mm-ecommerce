@@ -102,6 +102,10 @@ class ProductionLineResponse(ORMModel):
     category_order: int | None = None
     #: The posted PRODUCTION movement's reference, backfilled for the report.
     production_reference: str | None = None
+    #: The item's real unit for this line's basis (g, kg, piece …), resolved from
+    #: the abstract ``unit`` kind — so the printout and report show the unit
+    #: instead of the literal word "storage".
+    display_unit: str | None = None
 
 
 class ProductionOrderResponse(ORMModel):

@@ -489,7 +489,7 @@ export interface SupplierItem {
 }
 
 export type PurchaseOrderStatus =
-  | 'draft' | 'pending' | 'approved' | 'declined' | 'partially_received' | 'closed';
+  | 'draft' | 'pending' | 'approved' | 'declined' | 'partially_received' | 'closed' | 'voided';
 
 export interface PurchaseOrderItem {
   id: string;
@@ -713,6 +713,9 @@ export interface ProductionLine {
   planned_basis_quantity: number | null;
   produced_basis_quantity: number | null;
   unit: string;
+  // The item's real unit for this line's basis (g, kg, piece …), resolved from
+  // the abstract `unit` kind — shown instead of the literal word "storage".
+  display_unit: string | null;
   status: ProductionLineStatus;
   cancel_note: string | null;
   production_transaction_id: string | null;

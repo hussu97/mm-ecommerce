@@ -116,6 +116,10 @@ class PurchaseOrderStatusEnum(str, enum.Enum):
     DECLINED = "declined"
     PARTIALLY_RECEIVED = "partially_received"
     CLOSED = "closed"
+    #: Cancelled after the fact. Any received stock is reversed and the weighted
+    #: -average cost restated; the row is kept for audit and excluded from
+    #: valuation/VAT/spend.
+    VOIDED = "voided"
 
 
 class InventoryCategory(Base, UUIDMixin, TimestampMixin):
@@ -810,6 +814,12 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    voided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    voided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 

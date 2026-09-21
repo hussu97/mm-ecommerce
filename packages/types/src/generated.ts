@@ -4264,6 +4264,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/purchase-orders/{po_id}/void": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Void Purchase Order
+         * @description Cancel a purchase order after the fact.
+         *
+         *     Any stock it received is reversed (which redraws the FIFO layers and restates
+         *     the item's weighted-average cost, booking a shortfall for anything already
+         *     consumed); the order moves to ``voided`` and drops off valuation, spend and
+         *     the VAT reclaim. Kept as an audit record — amounts and the invoice stay.
+         */
+        post: operations["void_purchase_order_api_v1_inventory_purchase_orders__po_id__void_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/recipe-owners/{owner_kind}": {
         parameters: {
             query?: never;
@@ -17024,6 +17049,8 @@ export interface components {
             category_name?: string | null;
             /** Category Order */
             category_order?: number | null;
+            /** Display Unit */
+            display_unit?: string | null;
             /**
              * Id
              * Format: uuid
@@ -17742,6 +17769,8 @@ export interface components {
             quantity: string;
             /** Received Quantity */
             received_quantity: string;
+            /** Storage Unit */
+            storage_unit?: string | null;
             /** Total Cost */
             total_cost: string;
             /** Unit */
@@ -21133,6 +21162,11 @@ export interface components {
         VoidOrderRequest: {
             /** Reason Id */
             reason_id?: string | null;
+        };
+        /** VoidPurchaseOrderRequest */
+        VoidPurchaseOrderRequest: {
+            /** Reason */
+            reason: string;
         };
         /** WarehouseCreate */
         WarehouseCreate: {
@@ -29480,6 +29514,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    void_purchase_order_api_v1_inventory_purchase_orders__po_id__void_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                po_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoidPurchaseOrderRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

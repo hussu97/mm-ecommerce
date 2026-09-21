@@ -22,13 +22,17 @@ const num = (value: unknown): number => Number(value ?? 0);
 // A line's quantity in its recipe basis: batches show "N batches (= M units)",
 // units show "M units". Falls back to owner units on legacy rows with no basis
 // count. `unitQty` is the owner-unit truth; `basisQty` is the entered basis count.
+// The item's real unit (g/kg/piece), resolved server-side; falls back to the
+// abstract kind on legacy rows the API served before `display_unit` existed.
+const unitLabel = (line: ProductionLine): string => line.display_unit ?? line.unit;
+
 const basisText = (line: ProductionLine, basisQty: number | null, unitQty: number | null): string => {
   if (unitQty == null) return '—';
   if (line.basis === 'batch') {
     const b = basisQty ?? unitQty;
-    return `${formatQuantity(b)} batch${b === 1 ? '' : 'es'} (= ${formatQuantity(unitQty)} ${line.unit})`;
+    return `${formatQuantity(b)} batch${b === 1 ? '' : 'es'} (= ${formatQuantity(unitQty)} ${unitLabel(line)})`;
   }
-  return `${formatQuantity(unitQty)} ${line.unit}`;
+  return `${formatQuantity(unitQty)} ${unitLabel(line)}`;
 };
 
 export default function ProductionOrderDetailPage() {
@@ -124,7 +128,7 @@ export default function ProductionOrderDetailPage() {
                         {line.item_name ?? line.item_id}
                         {line.item_sku && <span className="ml-1 text-xs text-gray-400">{line.item_sku}</span>}
                       </td>
-                      <td className="px-2 py-1 text-gray-500">{line.basis === 'batch' ? 'batch' : line.unit}</td>
+                      <td className="px-2 py-1 text-gray-500">{line.basis === 'batch' ? 'batch' : unitLabel(line)}</td>
                       <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{basisText(line, line.planned_basis_quantity, line.planned_quantity)}</td>
                       <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
                         {produced == null ? <span className="text-gray-300">—</span> : basisText(line, line.produced_basis_quantity, produced)}

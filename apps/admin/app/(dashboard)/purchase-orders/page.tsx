@@ -26,6 +26,7 @@ const STATUS_VARIANT: Record<
   declined: 'danger',
   partially_received: 'warning',
   closed: 'success',
+  voided: 'neutral',
 };
 
 interface DraftLine {
@@ -76,11 +77,20 @@ export default function PurchaseOrdersPage() {
     void load();
   }, [load]);
 
-  async function act(id: string, action: 'submit' | 'approve' | 'decline') {
+  async function act(id: string, action: 'submit' | 'approve' | 'decline' | 'void') {
     try {
       if (action === 'submit') await inventoryApi.submitPurchaseOrder(id);
       if (action === 'approve') await inventoryApi.approvePurchaseOrder(id);
       if (action === 'decline') await inventoryApi.declinePurchaseOrder(id);
+      if (action === 'void') {
+        // Voiding reverses received stock and its costing — confirm and capture
+        // a reason (the API requires one; it lands on the reversal trail).
+        const reason = window.prompt(
+          'Void this purchase order? Any received stock and its cost will be reversed.\n\nReason:',
+        );
+        if (!reason || !reason.trim()) return;
+        await inventoryApi.voidPurchaseOrder(id, reason.trim());
+      }
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Action failed.');
@@ -147,6 +157,13 @@ export default function PurchaseOrdersPage() {
               )}
               {(po.status === 'approved' || po.status === 'partially_received') && (
                 <RowAction onClick={() => setReceiving(po)}>Receive</RowAction>
+              )}
+              {(po.status === 'approved' ||
+                po.status === 'partially_received' ||
+                po.status === 'closed') && (
+                <RowAction danger onClick={() => act(po.id, 'void')}>
+                  Void
+                </RowAction>
               )}
             </>
           )}
