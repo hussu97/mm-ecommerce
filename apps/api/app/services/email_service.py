@@ -925,14 +925,21 @@ async def send_inventory_report_submitted(
     business_date: str,
     submitted_by: str,
     status: str,
-    requires_approval: bool,
     variance_cost: Decimal,
+    variance_lines: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Tell the office a shift inventory report was submitted, with a direct link
-    to review it in the admin console. Always English — it reaches the same people
-    the owner order notification does and links to the English-only admin."""
-    action = "needs approval" if requires_approval else "auto-posted"
-    subject = f"Inventory report {action} — {report_name} · {branch_name}"
+    """Tell the office a shift inventory report was submitted and posted to the
+    stock ledger, with a summary of the lines whose physical count differed from
+    the expected on-hand and a direct link to review it in the admin console.
+    Always English — it reaches the same people the owner order notification does
+    and links to the English-only admin.
+
+    Every report now auto-posts on submit, so there is no approval to chase; the
+    variance summary is what the office reviews. Each ``variance_lines`` entry
+    carries ``item_name``, ``unit``, ``expected``, ``counted``, ``variance`` and
+    ``variance_cost`` (all already-formatted strings); an empty list means every
+    counted item matched the expected on-hand."""
+    subject = f"Inventory report posted — {report_name} · {branch_name}"
     for recipient in INVENTORY_REPORT_RECIPIENTS:
         try:
             html = _render(
@@ -944,8 +951,8 @@ async def send_inventory_report_submitted(
                 business_date=business_date,
                 submitted_by=submitted_by,
                 status=status.replace("_", " "),
-                requires_approval=requires_approval,
                 variance_cost=_money(variance_cost),
+                variance_lines=variance_lines or [],
                 admin_report_url=_admin_report_url(report_id),
             )
             result = await asyncio.to_thread(_send, recipient, subject, html)

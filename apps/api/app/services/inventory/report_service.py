@@ -1469,77 +1469,62 @@ async def submit_report(
 
     # The reason/remark is an optional note, not a gate. Requiring one on every
     # variance made a 30-item count a wall of mandatory typing and stalled the
-    # close; the variance and its cost are already captured on the line and drive
-    # the approval thresholds below, which is where an unexplained swing is caught.
+    # close; the variance and its cost are already captured on the line and go out
+    # in the submission email below, which is where an unexplained swing is caught.
 
-    settings = (
-        await db.execute(
-            select(BranchInventorySettings).where(
-                BranchInventorySettings.branch_id == report.branch_id
-            )
-        )
-    ).scalar_one_or_none()
-    snapshot_cost_threshold = report.template_snapshot.get("approval_cost_threshold")
-    snapshot_percent_threshold = report.template_snapshot.get(
-        "approval_variance_percent"
-    )
-    cost_threshold = Decimal(
-        str(
-            snapshot_cost_threshold
-            if snapshot_cost_threshold is not None
-            else settings.approval_cost_threshold
-            if settings
-            else 100
-        )
-    )
-    percent_threshold = Decimal(
-        str(
-            snapshot_percent_threshold
-            if snapshot_percent_threshold is not None
-            else settings.approval_variance_percent
-            if settings
-            else 10
-        )
-    )
-    requires_approval = False
+    # Every submitted report is auto-approved and posted straight to the stock
+    # ledger, whatever its variance. Holding a variant report in PENDING_APPROVAL
+    # left the ledger un-reconciled until someone approved it, and the movements
+    # that followed a still-open report were computed against stale on-hand — the
+    # "problems in the stock movements" the shop kept hitting. The variance is not
+    # suppressed: it is captured on every line as before and summarised in the
+    # submission email so the office reviews it after the fact rather than the post
+    # waiting on that review. The per-branch approval thresholds
+    # (approval_cost_threshold / approval_variance_percent) are therefore no longer
+    # consulted here.
+    report.submitted_by = user.id
+    report.submitted_at = utcnow()
+    report.status = ShiftInventoryReportStatusEnum.APPROVED.value
+    await db.flush()
+    await post_report(db, report=report, user=user)
+    await _notify_report_submitted(db, report=report, submitter=user)
+    return report
+
+
+def _variance_summary(report: ShiftInventoryReport) -> list[dict[str, str]]:
+    """The physical-count lines whose counted quantity differs from the expected
+    on-hand, formatted for the submission email.
+
+    Only ``physical_count`` inputs carry a variance (a movement input posts a
+    figure, it does not reconcile against one), and a zero-variance line is
+    omitted so the email lists just the discrepancies. Quantities are trimmed of
+    trailing zeros for readability and the variance keeps its sign (a positive
+    figure means more was counted than expected)."""
+
+    def _fmt(value) -> str:
+        return f"{quantity(value).normalize():f}"
+
+    summary: list[dict[str, str]] = []
     for line in report.lines:
         if (line.source_summary or {}).get(
             "required_input", "physical_count"
         ) != "physical_count":
             continue
-        variance = abs(Decimal(str(line.variance_quantity or 0)))
-        expected = abs(Decimal(str(line.expected_quantity or 0)))
-        percent = (
-            Decimal("100")
-            if expected == 0 and variance
-            else variance / expected * 100
-            if expected
-            else 0
+        variance = quantity(line.variance_quantity or 0)
+        if variance == 0:
+            continue
+        summary.append(
+            {
+                "item_name": (line.source_summary or {}).get("item_name")
+                or str(line.item_id),
+                "unit": line.unit,
+                "expected": _fmt(line.expected_quantity or 0),
+                "counted": _fmt(line.entered_quantity or 0),
+                "variance": f"{'+' if variance > 0 else ''}{variance.normalize():f}",
+                "variance_cost": f"{money(line.variance_cost or 0):.2f}",
+            }
         )
-        requires_approval |= Decimal(str(line.variance_cost or 0)) >= cost_threshold
-        requires_approval |= percent >= percent_threshold and variance > 0
-        requires_approval |= (
-            expected == 0 and Decimal(str(line.entered_quantity or 0)) != 0
-        )
-    requires_approval |= report.template_snapshot.get(
-        "report_type"
-    ) != InventoryReportTypeEnum.SPOT_CHECK.value and report.template_snapshot.get(
-        "opening_count", False
-    )
-    report.submitted_by = user.id
-    report.submitted_at = utcnow()
-    report.status = (
-        ShiftInventoryReportStatusEnum.PENDING_APPROVAL.value
-        if requires_approval
-        else ShiftInventoryReportStatusEnum.APPROVED.value
-    )
-    await db.flush()
-    if not requires_approval:
-        await post_report(db, report=report, user=user)
-    await _notify_report_submitted(
-        db, report=report, submitter=user, requires_approval=requires_approval
-    )
-    return report
+    return summary
 
 
 async def _notify_report_submitted(
@@ -1547,11 +1532,12 @@ async def _notify_report_submitted(
     *,
     report: ShiftInventoryReport,
     submitter: User,
-    requires_approval: bool,
 ) -> None:
-    """Email the office a link to the report the moment it is submitted — whether
-    it auto-posted or is now waiting for approval. ``email_service`` never raises
-    and journals every attempt, so a mail outage cannot fail a till close."""
+    """Email the office the moment a report is submitted. Every report now
+    auto-posts to the stock ledger, so the mail carries a summary of the lines
+    whose physical count differed from the expected on-hand for after-the-fact
+    review. ``email_service`` never raises and journals every attempt, so a mail
+    outage cannot fail a till close."""
     branch = await db.get(Branch, report.branch_id)
     variance_cost = sum(
         (Decimal(str(line.variance_cost or 0)) for line in report.lines),
@@ -1564,8 +1550,8 @@ async def _notify_report_submitted(
         business_date=report.business_date,
         submitted_by=(submitter.display_name or submitter.email),
         status=report.status,
-        requires_approval=requires_approval,
         variance_cost=variance_cost,
+        variance_lines=_variance_summary(report),
     )
 
 
