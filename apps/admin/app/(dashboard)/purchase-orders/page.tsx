@@ -308,23 +308,15 @@ export default function PurchaseOrdersPage() {
               header: 'Invoice',
               render: (po) => (
                 <div className="flex flex-col gap-1.5 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-gray-700 truncate max-w-[140px]" title={po.supplier_reference ?? ''}>
-                      {po.supplier_reference || '—'}
-                    </span>
+                  <span className="truncate max-w-[180px] text-gray-700" title={po.supplier_reference ?? ''}>
+                    {po.supplier_reference || 'No reference'}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <RowAction icon="edit" onClick={() => setEditingInvoice(po)}>Edit</RowAction>
-                  </div>
-                  <div className="flex items-center gap-1.5">
                     {po.has_invoice ? (
-                      <>
-                        <RowAction icon="visibility" onClick={() => viewInvoice(po)}>View</RowAction>
-                        <RowAction icon="edit" onClick={() => setEditingInvoice(po)}>Replace</RowAction>
-                      </>
+                      <RowAction icon="visibility" onClick={() => viewInvoice(po)}>View</RowAction>
                     ) : (
-                      <>
-                        <span className="text-gray-400">No image</span>
-                        <RowAction icon="add_photo_alternate" onClick={() => setEditingInvoice(po)}>Add</RowAction>
-                      </>
+                      <span className="text-gray-400">No image</span>
                     )}
                   </div>
                 </div>

@@ -544,8 +544,8 @@ export function RowAction({
   children: React.ReactNode;
 }) {
   const className = cn(
-    'text-xs font-body font-medium rounded border px-2.5 py-1 transition-colors',
-    'inline-flex items-center justify-center gap-1 min-h-11 md:min-h-0',
+    'text-xs font-body font-medium rounded border px-2 py-1 leading-none transition-colors',
+    'inline-flex items-center justify-center gap-1 whitespace-nowrap align-middle',
     'disabled:opacity-40 disabled:cursor-not-allowed',
     danger
       ? 'border-red-200 text-red-600 hover:bg-red-50'
@@ -553,7 +553,7 @@ export function RowAction({
   );
   const body = (
     <>
-      {icon && <span className="material-icons text-[14px] leading-none">{icon}</span>}
+      {icon && <span className="material-icons text-[13px] leading-none">{icon}</span>}
       {children}
     </>
   );
