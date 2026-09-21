@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { branchesApi, inventoryApi } from '@/lib/pos-api';
 import type {
   Branch,
   InventoryItem,
   PurchaseOrder,
+  PurchaseOrderItemOption,
   PurchaseOrderStatus,
   Supplier,
   SupplierItem,
@@ -13,6 +14,7 @@ import type {
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
+import { InvoicePreview } from '@/components/ui/InvoicePreview';
 import { Modal } from '@/components/pos/ResourcePage';
 import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
@@ -26,7 +28,7 @@ const STATUS_VARIANT: Record<
   declined: 'danger',
   partially_received: 'warning',
   closed: 'success',
-  voided: 'neutral',
+  voided: 'danger',
 };
 
 interface DraftLine {
@@ -37,41 +39,85 @@ interface DraftLine {
 
 const VAT_RATE = 0.05;
 
+const STATUS_OPTIONS: { value: PurchaseOrderStatus; label: string }[] = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'declined', label: 'Declined' },
+  { value: 'partially_received', label: 'Partially received' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'voided', label: 'Voided' },
+];
+
 export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [itemOptions, setItemOptions] = useState<PurchaseOrderItemOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [creating, setCreating] = useState(false);
   const [receiving, setReceiving] = useState<PurchaseOrder | null>(null);
-  // Client-side paging: the list is fetched whole (server cap 1,000) and sliced
-  // here, so a busy purchasing week does not render every row at once (F-ADM).
+  const [editingInvoice, setEditingInvoice] = useState<PurchaseOrder | null>(null);
+  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  // Filters. Applied server-side so paging and the export always agree with what
+  // is on screen; an empty value means "no filter" (buildQs drops it).
+  const [statusFilter, setStatusFilter] = useState('');
+  const [itemFilter, setItemFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Client-side paging over the filtered set the server returns.
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
+
+  const filterParams = useMemo(
+    () => ({
+      status: statusFilter || undefined,
+      item_id: itemFilter || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+    }),
+    [statusFilter, itemFilter, dateFrom, dateTo],
+  );
+
+  // Reference data that does not change with a filter — loaded once.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      inventoryApi.suppliers(),
+      branchesApi.list(),
+      inventoryApi.items(),
+      inventoryApi.purchaseOrderItemOptions(),
+    ])
+      .then(([s, b, i, opts]) => {
+        if (cancelled) return;
+        setSuppliers(s);
+        setBranches(b);
+        setItems(i);
+        setItemOptions(opts);
+      })
+      .catch(() => { /* the orders load surfaces any auth/network error */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [o, s, b, i] = await Promise.all([
-        inventoryApi.purchaseOrders(),
-        inventoryApi.suppliers(),
-        branchesApi.list(),
-        inventoryApi.items(),
-      ]);
+      const o = await inventoryApi.purchaseOrders(filterParams);
       setOrders(o);
-      setSuppliers(s);
-      setBranches(b);
-      setItems(i);
+      setPage(1);
       setError('');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load purchase orders.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filterParams]);
 
   useEffect(() => {
     void load();
@@ -97,6 +143,38 @@ export default function PurchaseOrdersPage() {
     }
   }
 
+  // The list rows carry no signed invoice URL (signing every row is a per-row
+  // round-trip); fetch the single order, which signs it, then preview.
+  async function viewInvoice(po: PurchaseOrder) {
+    try {
+      const full = await inventoryApi.purchaseOrder(po.id);
+      if (full.invoice_url) setPreview({ url: full.invoice_url, title: po.reference });
+      else setError('No invoice image is attached.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load the invoice.');
+    }
+  }
+
+  async function exportXlsx() {
+    setExporting(true);
+    setError('');
+    try {
+      const blob = await inventoryApi.exportPurchaseOrders(filterParams);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'purchase-orders.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(orders.length / perPage));
   // Clamp rather than reset, so an approve/decline that shrinks the list never
   // strands the viewer on an empty page past the new end.
@@ -112,8 +190,50 @@ export default function PurchaseOrdersPage() {
             Submit → approve → receive. An unapproved order stays editable; approving requires a second person.
           </p>
         </div>
-        <Button onClick={() => setCreating(true)}>New Order</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={exportXlsx} loading={exporting}>Export</Button>
+          <Button onClick={() => setCreating(true)}>New Order</Button>
+        </div>
       </header>
+
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="w-40">
+          <Input label="From" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        </div>
+        <div className="w-40">
+          <Input label="To" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        </div>
+        <div className="w-48">
+          <Select
+            label="Status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            options={STATUS_OPTIONS}
+            placeholder="All statuses"
+          />
+        </div>
+        <div className="w-64">
+          <Select
+            label="Item"
+            value={itemFilter}
+            onChange={(e) => setItemFilter(e.target.value)}
+            options={itemOptions.map((o) => ({
+              value: o.id,
+              label: o.sku ? `${o.sku} — ${o.name}` : o.name,
+            }))}
+            placeholder="All items"
+          />
+        </div>
+        {(statusFilter || itemFilter || dateFrom || dateTo) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setStatusFilter(''); setItemFilter(''); setDateFrom(''); setDateTo(''); }}
+          >
+            Clear
+          </Button>
+        )}
+      </div>
 
       {notice && (
         <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -133,7 +253,7 @@ export default function PurchaseOrdersPage() {
         </div>
       ) : orders.length === 0 ? (
         <p className="py-16 text-center text-sm text-gray-400 font-body">
-          No purchase orders yet.
+          No purchase orders match these filters.
         </p>
       ) : (
         <>
@@ -182,6 +302,32 @@ export default function PurchaseOrdersPage() {
               sortAccessor: (po) => po.status,
               render: (po) => (
                 <Badge variant={STATUS_VARIANT[po.status]}>{po.status.replace(/_/g, ' ')}</Badge>
+              ),
+            },
+            {
+              header: 'Invoice',
+              render: (po) => (
+                <div className="flex flex-col gap-1.5 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-gray-700 truncate max-w-[140px]" title={po.supplier_reference ?? ''}>
+                      {po.supplier_reference || '—'}
+                    </span>
+                    <RowAction icon="edit" onClick={() => setEditingInvoice(po)}>Edit</RowAction>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {po.has_invoice ? (
+                      <>
+                        <RowAction icon="visibility" onClick={() => viewInvoice(po)}>View</RowAction>
+                        <RowAction icon="edit" onClick={() => setEditingInvoice(po)}>Replace</RowAction>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-gray-400">No image</span>
+                        <RowAction icon="add_photo_alternate" onClick={() => setEditingInvoice(po)}>Add</RowAction>
+                      </>
+                    )}
+                  </div>
+                </div>
               ),
             },
             { header: 'Lines', className: 'text-right', sortable: true, sortAccessor: (po) => po.items.length, render: (po) => po.items.length },
@@ -236,9 +382,102 @@ export default function PurchaseOrdersPage() {
           }}
         />
       )}
+
+      {editingInvoice && (
+        <EditInvoice
+          order={editingInvoice}
+          onClose={() => setEditingInvoice(null)}
+          onSaved={() => {
+            setEditingInvoice(null);
+            void load();
+          }}
+        />
+      )}
+
+      {preview && (
+        <InvoicePreview
+          url={preview.url}
+          title={preview.title}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }
+
+// Edit the invoice reference and/or (re)attach the invoice image from the list,
+// without opening the detail page. Mirrors the detail page's InvoicePanel.
+function EditInvoice({
+  order,
+  onClose,
+  onSaved,
+}: {
+  order: PurchaseOrder;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reference, setReference] = useState(order.supplier_reference ?? '');
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function save() {
+    setSaving(true);
+    setError('');
+    try {
+      if (reference.trim() !== (order.supplier_reference ?? '')) {
+        await inventoryApi.updatePurchaseOrder(order.id, {
+          supplier_reference: reference.trim() || null,
+        });
+      }
+      if (file) await inventoryApi.uploadPurchaseOrderInvoice(order.id, file);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Save failed.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Invoice — ${order.reference}`} onClose={onClose}>
+      <div className="space-y-4">
+        <Input
+          label="Invoice / supplier reference"
+          value={reference}
+          onChange={(e) => setReference(e.target.value)}
+          placeholder="Their PO / invoice no."
+        />
+        <div className="text-xs font-body">
+          <span className="mb-1 block text-gray-500">Invoice image</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="cursor-pointer rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+              {file ? 'Change file' : order.has_invoice ? 'Replace' : 'Choose file'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="hidden"
+              />
+            </label>
+            {file ? (
+              <span className="text-sm text-gray-600">{file.name}</span>
+            ) : order.has_invoice ? (
+              <span className="text-gray-400">An image is attached — choose a file to replace it.</span>
+            ) : (
+              <span className="text-gray-400">No image yet — JPEG, PNG, WebP or PDF.</span>
+            )}
+          </div>
+        </div>
+        {error && <p className="text-xs text-red-600 font-body">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} loading={saving}>Save</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 
 function CreateOrder({
   suppliers,

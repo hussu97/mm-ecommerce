@@ -515,18 +515,21 @@ export function DataTable<T>({
 }
 
 /**
- * A text button inside a row or card — "Edit", "Delete", "Resend".
+ * An action button inside a row or card — "Edit", "Delete", "Resend".
  *
  * Its own component because the console had this markup written out about forty
- * times, at `text-xs` with no height, which on a phone is a 16px-tall target
- * sitting 8px from its neighbour. Here it keeps the same compact look on
- * desktop and grows to a real target on a phone.
+ * times. It renders as a compact **outlined pill** (not a bare text link) so the
+ * tap targets read as distinct buttons and sit apart from each other — plain
+ * underlined text at `text-xs` was too easy to misclick, especially where two
+ * actions sat side by side. Keeps a real 44px target on a phone and stays
+ * compact on desktop; `danger` gets a red outline.
  */
 export function RowAction({
   onClick,
   href,
   danger,
   disabled,
+  icon,
   children,
 }: {
   onClick?: () => void;
@@ -536,25 +539,36 @@ export function RowAction({
   href?: string;
   danger?: boolean;
   disabled?: boolean;
+  /** Optional leading Material Icons glyph (e.g. "edit", "visibility"). */
+  icon?: string;
   children: React.ReactNode;
 }) {
   const className = cn(
-    'text-xs font-body hover:underline disabled:opacity-40 disabled:no-underline',
-    'inline-flex items-center justify-center min-h-11 min-w-11 md:min-h-0 md:min-w-0',
-    danger ? 'text-red-500' : 'text-primary',
+    'text-xs font-body font-medium rounded border px-2.5 py-1 transition-colors',
+    'inline-flex items-center justify-center gap-1 min-h-11 md:min-h-0',
+    'disabled:opacity-40 disabled:cursor-not-allowed',
+    danger
+      ? 'border-red-200 text-red-600 hover:bg-red-50'
+      : 'border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400',
+  );
+  const body = (
+    <>
+      {icon && <span className="material-icons text-[14px] leading-none">{icon}</span>}
+      {children}
+    </>
   );
   if (href && !disabled) {
     return (
       // Stop propagation so an action inside a navigable row/card does not also
       // trigger the row's own click.
       <Link href={href} onClick={e => e.stopPropagation()} className={className}>
-        {children}
+        {body}
       </Link>
     );
   }
   return (
     <button type="button" onClick={onClick} disabled={disabled} className={className}>
-      {children}
+      {body}
     </button>
   );
 }

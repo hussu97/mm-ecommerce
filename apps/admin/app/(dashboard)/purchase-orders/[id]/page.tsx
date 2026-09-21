@@ -13,6 +13,7 @@ import { inventoryApi } from '@/lib/pos-api';
 import type { PurchaseOrder, PurchaseOrderStatus } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Spinner } from '@/components/ui';
+import { InvoicePreview } from '@/components/ui/InvoicePreview';
 import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
@@ -25,7 +26,7 @@ const STATUS_VARIANT: Record<
   declined: 'danger',
   partially_received: 'warning',
   closed: 'success',
-  voided: 'neutral',
+  voided: 'danger',
 };
 
 export default function PurchaseOrderDetailPage() {
@@ -127,6 +128,7 @@ function InvoicePanel({ po, onSaved }: { po: PurchaseOrder; onSaved: () => void 
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [preview, setPreview] = useState(false);
 
   async function save() {
     setSaving(true);
@@ -162,9 +164,13 @@ function InvoicePanel({ po, onSaved }: { po: PurchaseOrder; onSaved: () => void 
           <span className="mb-1 block text-gray-500">Invoice image</span>
           <div className="flex flex-wrap items-center gap-3">
             {po.invoice_url && (
-              <a href={po.invoice_url} target="_blank" rel="noreferrer" className="text-primary hover:underline text-sm">
+              <button
+                type="button"
+                onClick={() => setPreview(true)}
+                className="text-primary hover:underline text-sm"
+              >
                 View current
-              </a>
+              </button>
             )}
             <label className="cursor-pointer rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
               {file ? 'Change file' : po.invoice_url ? 'Replace' : 'Choose file'}
@@ -183,6 +189,9 @@ function InvoicePanel({ po, onSaved }: { po: PurchaseOrder; onSaved: () => void 
         <Button size="sm" onClick={save} loading={saving}>Save invoice details</Button>
         {msg && <span className="text-xs text-gray-500">{msg}</span>}
       </div>
+      {preview && po.invoice_url && (
+        <InvoicePreview url={po.invoice_url} title={po.reference} onClose={() => setPreview(false)} />
+      )}
     </div>
   );
 }

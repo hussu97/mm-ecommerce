@@ -5,7 +5,7 @@
 // of that machinery, whose error handling rendered an object `detail` as
 // "[object Object]" and whose second refresh could race the first.
 
-import { api, buildQs, request } from './api';
+import { api, API_BASE, ApiError, buildQs, request } from './api';
 import type { Schemas } from '@mm/types';
 import type {
   Branch, BranchHoliday, BranchHolidayWrite, BusinessSettings, Charge, Device, DrawerOperation,
@@ -14,7 +14,7 @@ import type {
   InventoryCategory, InventoryItem, InventoryLevel, InventoryTransaction,
   KitchenFlow, PaymentMethod,
   PermissionCatalogue, Printer, ProducibleItemBasis, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
-  PurchaseOrder,
+  PurchaseOrder, PurchaseOrderItemOption,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
   Supplier, SupplierItem, ItemCostLayers, Tax,
   TaxGroup, Till, VatLedgerResponse, Warehouse, WeeklyHours, WeeklyHoursWrite,
@@ -255,8 +255,34 @@ export const inventoryApi = {
     api.post<InventoryTransaction>(`/inventory/transactions${buildQs({ post })}`, d),
   adjust: (d: Record<string, unknown>) => api.post<InventoryTransaction>('/inventory/transactions/adjust', d),
 
-  purchaseOrders: (params?: { branch_id?: string; supplier_id?: string; status?: string }) =>
-    api.get<PurchaseOrder[]>(`/inventory/purchase-orders${buildQs(params)}`),
+  purchaseOrders: (params?: {
+    branch_id?: string;
+    supplier_id?: string;
+    status?: string;
+    date_from?: string;
+    date_to?: string;
+    item_id?: string;
+  }) => api.get<PurchaseOrder[]>(`/inventory/purchase-orders${buildQs(params)}`),
+  purchaseOrderItemOptions: (params?: { branch_id?: string }) =>
+    api.get<PurchaseOrderItemOption[]>(
+      `/inventory/purchase-orders/item-options${buildQs(params)}`,
+    ),
+  // Returns the filtered workbook as a Blob; the caller triggers the download.
+  exportPurchaseOrders: async (params?: {
+    branch_id?: string;
+    supplier_id?: string;
+    status?: string;
+    date_from?: string;
+    date_to?: string;
+    item_id?: string;
+  }): Promise<Blob> => {
+    const res = await fetch(
+      `${API_BASE}/inventory/purchase-orders/export${buildQs(params)}`,
+      { credentials: 'include' },
+    );
+    if (!res.ok) throw new ApiError(res.status, 'Failed to export purchase orders.');
+    return res.blob();
+  },
   purchaseOrder: (id: string) => api.get<PurchaseOrder>(`/inventory/purchase-orders/${id}`),
   createPurchaseOrder: (d: Record<string, unknown>) => api.post<PurchaseOrder>('/inventory/purchase-orders', d),
   updatePurchaseOrder: (id: string, d: Record<string, unknown>) =>

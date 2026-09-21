@@ -523,6 +523,8 @@ export interface PurchaseOrder {
   supplier_reference: string | null;
   invoice_object_key: string | null;
   invoice_url: string | null;
+  // Whether an invoice image is attached — set on list rows without signing a URL.
+  has_invoice: boolean;
   additional_cost: number;
   subtotal_net: number;
   vat_total: number;
@@ -531,6 +533,12 @@ export interface PurchaseOrder {
   notes: string | null;
   items: PurchaseOrderItem[];
   created_at: string;
+}
+
+export interface PurchaseOrderItemOption {
+  id: string;
+  name: string;
+  sku: string | null;
 }
 
 export interface CostLayer {
