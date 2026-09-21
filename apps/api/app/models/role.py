@@ -72,6 +72,9 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         # Kept apart from `.manage` on purpose: whoever raises the order must
         # not be the one who approves it.
         ("inventory.purchase_orders.approve", "Approve purchase orders"),
+        # Voiding reverses received stock and its costing, so it is gated apart
+        # from raising/approving.
+        ("inventory.purchase_orders.void", "Void purchase orders"),
         ("inventory.reports.submit", "Submit and defer branch inventory reports"),
         ("inventory.counts.approve", "Approve stock counts and variances"),
         ("inventory.projection.rebuild", "Rebuild cached balances from the ledger"),

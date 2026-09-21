@@ -20,6 +20,8 @@ from app.models.inventory import (
     InventoryTransaction,
     InventoryTransactionItem,
     InventoryTransactionTypeEnum,
+    PurchaseOrder,
+    PurchaseOrderStatusEnum,
     TransactionStatusEnum,
 )
 from app.models.inventory_v2 import BranchInventorySettings
@@ -236,6 +238,65 @@ async def reverse_transaction(
         )
     await db.flush()
     return await inventory_service.post_transaction(db, transaction=reversal, user=user)
+
+
+async def void_purchase_order(
+    db: AsyncSession, *, purchase_order_id: uuid.UUID, user: User, reason: str
+) -> PurchaseOrder:
+    """
+    Void a purchase order: reverse any stock it received, then cancel it.
+
+    A received PO (``closed``/``partially_received``) has one or more posted
+    ``purchasing`` transactions linked by ``purchase_order_id``. Each is reversed
+    through :func:`reverse_transaction`, which redraws the FIFO layers and
+    restates the item's weighted-average cost — booking a shortfall for anything
+    already consumed — so both the quantity and the costing are undone. An
+    un-received PO has no such transaction, so voiding it only moves the status.
+
+    The move itself is validated and audit-stamped by
+    ``inventory_service.transition_purchase_order`` (raising if the order is
+    already terminal). Reversal is idempotent, so a retried void is safe. The
+    caller is responsible for recomputing the VAT window afterwards, so a PO
+    whose input VAT was already on the reclaim ledger drops off it.
+    """
+    purchase_order = (
+        await db.execute(
+            select(PurchaseOrder).where(PurchaseOrder.id == purchase_order_id)
+        )
+    ).scalar_one_or_none()
+    if purchase_order is None:
+        raise NotFoundError("Purchase order not found")
+
+    # Refuse early with the state-machine's message if this order can't be voided
+    # (already declined/voided), before we touch any stock.
+    inventory_service.assert_can_transition_purchase_order(
+        purchase_order, PurchaseOrderStatusEnum.VOIDED, user=user
+    )
+
+    posted_receipts = (
+        (
+            await db.execute(
+                select(InventoryTransaction).where(
+                    InventoryTransaction.purchase_order_id == purchase_order_id,
+                    InventoryTransaction.type
+                    == InventoryTransactionTypeEnum.PURCHASING.value,
+                    InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for receipt in posted_receipts:
+        await reverse_transaction(
+            db, transaction_id=receipt.id, user=user, reason=reason
+        )
+
+    await inventory_service.transition_purchase_order(
+        db, purchase_order, PurchaseOrderStatusEnum.VOIDED, user=user
+    )
+    await db.flush()
+    return purchase_order
 
 
 async def preview_stock_audit(db: AsyncSession, *, branch_id: uuid.UUID, rows) -> dict:

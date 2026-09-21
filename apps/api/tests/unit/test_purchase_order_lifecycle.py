@@ -51,34 +51,42 @@ def _po(status: PO, *, submitter_id=None) -> PurchaseOrder:
 
 
 class TestTheMap:
-    def test_a_draft_can_only_be_submitted(self):
+    def test_a_draft_can_be_submitted_or_voided(self):
         assert inventory_service.allowed_purchase_order_transitions(PO.DRAFT.value) == {
-            PO.PENDING
+            PO.PENDING,
+            PO.VOIDED,
         }
 
-    def test_a_submitted_order_can_be_approved_or_declined(self):
+    def test_a_submitted_order_can_be_approved_declined_or_voided(self):
         assert inventory_service.allowed_purchase_order_transitions(
             PO.PENDING.value
-        ) == {PO.APPROVED, PO.DECLINED}
+        ) == {PO.APPROVED, PO.DECLINED, PO.VOIDED}
 
-    def test_an_approved_order_can_only_be_received(self):
+    def test_an_approved_order_can_be_received_or_voided(self):
         """Receiving reaches one of two states from here; which one is decided
-        by what actually arrived."""
+        by what actually arrived. Voiding cancels it instead."""
         assert inventory_service.allowed_purchase_order_transitions(
             PO.APPROVED.value
-        ) == {PO.PARTIALLY_RECEIVED, PO.CLOSED}
+        ) == {PO.PARTIALLY_RECEIVED, PO.CLOSED, PO.VOIDED}
 
-    def test_a_partial_receipt_can_be_topped_up_or_closed(self):
+    def test_a_partial_receipt_can_be_topped_up_closed_or_voided(self):
         assert inventory_service.allowed_purchase_order_transitions(
             PO.PARTIALLY_RECEIVED.value
-        ) == {PO.PARTIALLY_RECEIVED, PO.CLOSED}
+        ) == {PO.PARTIALLY_RECEIVED, PO.CLOSED, PO.VOIDED}
 
-    @pytest.mark.parametrize("terminal", [PO.DECLINED, PO.CLOSED])
+    def test_a_closed_order_can_only_be_voided(self):
+        """`closed` is no longer a dead end: a received order can be voided,
+        which reverses its stock and restates the weighted-average cost."""
+        assert inventory_service.allowed_purchase_order_transitions(
+            PO.CLOSED.value
+        ) == {PO.VOIDED}
+
+    @pytest.mark.parametrize("terminal", [PO.DECLINED, PO.VOIDED])
     def test_the_endings_are_endings(self, terminal):
         """
-        No route from `declined` back to `draft`: the shop's answer to a
-        rejected order is a new one, not a quietly re-edited copy of the one
-        somebody already refused.
+        `declined` and `voided` are the true endings — no route out. The shop's
+        answer to a rejected or cancelled order is a new one, not a quietly
+        re-edited copy of the one somebody already refused or voided.
         """
         assert inventory_service.allowed_purchase_order_transitions(terminal.value) == (
             set()
@@ -131,6 +139,19 @@ class TestLegalMoves:
         assert order.status == PO.DECLINED.value
         assert order.approver_id == approver.id
         assert order.approved_at is None
+
+    async def test_voiding_stamps_who_and_when(self):
+        order = _po(PO.CLOSED, submitter_id=uuid.uuid4())
+        actor = _user()
+
+        moved = await inventory_service.transition_purchase_order(
+            AsyncMock(), order, PO.VOIDED, user=actor
+        )
+
+        assert moved is True
+        assert order.status == PO.VOIDED.value
+        assert order.voided_by == actor.id
+        assert order.voided_at is not None
 
     async def test_moving_to_where_it_already_is_changes_nothing(self):
         """The ordinary answer for a second partial receipt, and not an error."""

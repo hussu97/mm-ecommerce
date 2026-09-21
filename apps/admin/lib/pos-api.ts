@@ -264,6 +264,8 @@ export const inventoryApi = {
   submitPurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/submit`),
   approvePurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/approve`),
   declinePurchaseOrder: (id: string) => api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/decline`),
+  voidPurchaseOrder: (id: string, reason: string) =>
+    api.post<PurchaseOrder>(`/inventory/purchase-orders/${id}/void`, { reason }),
   receivePurchaseOrder: (
     id: string,
     lines: Array<{ purchase_order_item_id: string; quantity: number; variance_reason?: string | null }>,

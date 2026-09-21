@@ -959,6 +959,23 @@ PURCHASE_ORDER_MOVES: dict[PurchaseOrderStatusEnum, _Move] = {
         ),
         refusal="Purchase order is {status}; only approved orders can be received",
     ),
+    # Cancel a PO after the fact. Reachable from every non-terminal state:
+    # voiding a received order (closed/partially_received) reverses its stock and
+    # restates the weighted-average cost; voiding an un-received one (draft/
+    # pending/approved) just cancels the paperwork. `declined` and `voided`
+    # themselves are endings and cannot be voided again.
+    PurchaseOrderStatusEnum.VOIDED: _Move(
+        sources=frozenset(
+            {
+                PurchaseOrderStatusEnum.DRAFT,
+                PurchaseOrderStatusEnum.PENDING,
+                PurchaseOrderStatusEnum.APPROVED,
+                PurchaseOrderStatusEnum.PARTIALLY_RECEIVED,
+                PurchaseOrderStatusEnum.CLOSED,
+            }
+        ),
+        refusal="Purchase order is {status} and cannot be voided",
+    ),
 }
 
 
@@ -1144,6 +1161,9 @@ def _purchase_order_consequences(
         purchase_order.approved_at = utcnow()
     elif new_status == PurchaseOrderStatusEnum.DECLINED:
         purchase_order.approver_id = user.id
+    elif new_status == PurchaseOrderStatusEnum.VOIDED:
+        purchase_order.voided_by = user.id
+        purchase_order.voided_at = utcnow()
 
 
 async def build_po_lines(

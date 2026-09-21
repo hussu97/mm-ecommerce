@@ -31,6 +31,8 @@ from app.models import (
     Order,
     Product,
     ProductIngredient,
+    ProductionLine,
+    ProductionOrder,
     PurchaseOrder,
     PurchaseOrderStatusEnum,
     Supplier,
@@ -75,6 +77,7 @@ from app.schemas.inventory import (
     SupplierMappedItem,
     SupplierResponse,
     SupplierUpdate,
+    VoidPurchaseOrderRequest,
     WarehouseCreate,
     WarehouseResponse,
     WarehouseUpdate,
@@ -85,6 +88,7 @@ from app.services.inventory import (
     access_service,
     cost_layer_service,
     inventory_service,
+    ledger_service,
     recipe_service,
     supplier_service,
 )
@@ -696,6 +700,15 @@ async def _resolve_source_references(
         if t.source_type == "shift_inventory_report"
         and (parsed := _as_uuid(t.source_id)) is not None
     }
+    # Both the "Produced" and "Used in production" legs carry source_type
+    # "production_line" and a ProductionLine id; the ledger links back to the
+    # parent production order (the "report"), where every line sits.
+    production_line_ids = {
+        parsed
+        for t in transactions
+        if t.source_type == "production_line"
+        and (parsed := _as_uuid(t.source_id)) is not None
+    }
     order_ids = {t.order_id for t in transactions if t.order_id}
     po_ids = {t.purchase_order_id for t in transactions if t.purchase_order_id}
     reversed_ids = {
@@ -751,6 +764,26 @@ async def _resolve_source_references(
             name = (snapshot or {}).get("name") or "Inventory report"
             reports[rid] = f"{name} · {business_date}"
 
+    # A production movement's source is a line; the ledger shows the parent
+    # production order's reference and deep-links to it.
+    production_orders: dict[uuid.UUID, tuple[str, uuid.UUID]] = {}
+    if production_line_ids:
+        rows = (
+            await db.execute(
+                select(
+                    ProductionLine.id,
+                    ProductionOrder.reference,
+                    ProductionOrder.id,
+                )
+                .join(
+                    ProductionOrder,
+                    ProductionOrder.id == ProductionLine.production_order_id,
+                )
+                .where(ProductionLine.id.in_(production_line_ids))
+            )
+        ).all()
+        production_orders = {row[0]: (row[1], row[2]) for row in rows}
+
     # Each entry carries the human reference and, where a detail page exists, the
     # admin path to deep-link to.
     resolved: dict[uuid.UUID, dict[str, str | None]] = {}
@@ -794,7 +827,18 @@ async def _resolve_source_references(
                 "link": f"/orders/{orders[t.order_id]}",
             }
         elif t.purchase_order_id and t.purchase_order_id in pos:
-            resolved[t.id] = {"reference": pos[t.purchase_order_id], "link": None}
+            resolved[t.id] = {
+                "reference": pos[t.purchase_order_id],
+                "link": f"/purchase-orders/{t.purchase_order_id}",
+            }
+        elif t.source_type == "production_line" and (sid := _as_uuid(t.source_id)):
+            entry = production_orders.get(sid)
+            if entry:
+                ref, order_id = entry
+                resolved[t.id] = {
+                    "reference": ref,
+                    "link": f"/inventory/submissions/production/{order_id}",
+                }
         elif t.source_type == "bulk_stock_audit":
             # A manual stock count is its own source document — the audit IS the
             # transaction, so it references its own number and links to its own
@@ -1133,6 +1177,7 @@ async def _serialise_po(
         if item is not None:
             line.item_name = item.name
             line.item_sku = item.sku
+            line.storage_unit = item.storage_unit
     if suppliers_lookup is None:
         supplier = await db.get(Supplier, purchase_order.supplier_id)
     else:
@@ -1380,6 +1425,30 @@ async def decline_purchase_order(
     )
     await db.flush()
     return await _serialise_po(db, await _load_po(db, po_id))
+
+
+@purchase_orders_router.post("/{po_id}/void", response_model=PurchaseOrderResponse)
+async def void_purchase_order(
+    po_id: uuid.UUID,
+    data: VoidPurchaseOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.purchase_orders.void")),
+):
+    """Cancel a purchase order after the fact.
+
+    Any stock it received is reversed (which redraws the FIFO layers and restates
+    the item's weighted-average cost, booking a shortfall for anything already
+    consumed); the order moves to ``voided`` and drops off valuation, spend and
+    the VAT reclaim. Kept as an audit record — amounts and the invoice stay.
+    """
+    purchase_order = await _load_po(db, po_id)
+    await access_service.assert_branch_access(db, user, purchase_order.branch_id)
+    await ledger_service.void_purchase_order(
+        db, purchase_order_id=po_id, user=user, reason=data.reason
+    )
+    reloaded = await _load_po(db, po_id)
+    await _refresh_vat_ledger_for_po(db, reloaded)
+    return await _serialise_po(db, reloaded)
 
 
 @purchase_orders_router.post(

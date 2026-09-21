@@ -25,6 +25,7 @@ const STATUS_VARIANT: Record<
   declined: 'danger',
   partially_received: 'warning',
   closed: 'success',
+  voided: 'neutral',
 };
 
 export default function PurchaseOrderDetailPage() {

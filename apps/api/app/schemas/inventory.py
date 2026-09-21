@@ -538,6 +538,9 @@ class PurchaseOrderLineResponse(ORMModel):
     total_cost: Decimal
     item_name: str | None = None
     item_sku: str | None = None
+    #: The item's real purchase/stock unit (g, kg, piece …) — for display on the
+    #: till's receive screen, which otherwise only has the abstract ``unit`` kind.
+    storage_unit: str | None = None
 
 
 class PurchaseOrderResponse(ORMModel):
@@ -609,6 +612,12 @@ class ReceiveLine(BaseModel):
 
 class ReceivePurchaseOrderRequest(BaseModel):
     lines: list[ReceiveLine] = Field(min_length=1)
+
+
+class VoidPurchaseOrderRequest(BaseModel):
+    #: Why the order is being voided — recorded on the reversal transaction and
+    #: shown on the cost-adjustment trail.
+    reason: str = Field(min_length=1, max_length=500)
 
 
 # ─── Recipes ──────────────────────────────────────────────────────────────────

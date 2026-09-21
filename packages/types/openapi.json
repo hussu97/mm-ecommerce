@@ -23670,6 +23670,17 @@
             ],
             "title": "Category Order"
           },
+          "display_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Unit"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -25898,6 +25909,17 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Received Quantity",
             "type": "string"
+          },
+          "storage_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Unit"
           },
           "total_cost": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -35359,6 +35381,21 @@
           }
         },
         "title": "VoidOrderRequest",
+        "type": "object"
+      },
+      "VoidPurchaseOrderRequest": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "VoidPurchaseOrderRequest",
         "type": "object"
       },
       "WarehouseCreate": {
@@ -50552,6 +50589,65 @@
           }
         ],
         "summary": "Submit Purchase Order",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/purchase-orders/{po_id}/void": {
+      "post": {
+        "description": "Cancel a purchase order after the fact.\n\nAny stock it received is reversed (which redraws the FIFO layers and restates\nthe item's weighted-average cost, booking a shortfall for anything already\nconsumed); the order moves to ``voided`` and drops off valuation, spend and\nthe VAT reclaim. Kept as an audit record \u2014 amounts and the invoice stay.",
+        "operationId": "void_purchase_order_api_v1_inventory_purchase_orders__po_id__void_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "po_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Po Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoidPurchaseOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Void Purchase Order",
         "tags": [
           "Inventory"
         ]
