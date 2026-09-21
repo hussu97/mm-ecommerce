@@ -18,7 +18,7 @@ import type { Branch, InventoryItem, InventoryTransaction } from '@/lib/pos-type
 import { Button, Input, Pagination, Select } from '@/components/ui';
 import { DataTable } from '@/components/ui/DataTable';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { formatCurrency, formatQuantity } from '@/lib/utils';
+import { formatCost, formatQuantity } from '@/lib/utils';
 
 // ─── Branch selector ──────────────────────────────────────────────────────────
 
@@ -228,7 +228,7 @@ export function LedgerTab({ countOnly = false }: { countOnly?: boolean }) {
       // A revaluation moves value, not quantity: show the money, or the row reads
       // as "+0" with no visible number.
       if (row.type === 'cost_adjustment') {
-        return <span className="text-xs text-gray-600">Value {Number(row.total_cost) >= 0 ? '+' : ''}{formatCurrency(row.total_cost)}</span>;
+        return <span className="text-xs text-gray-600">Value {Number(row.total_cost) >= 0 ? '+' : ''}{formatCost(row.total_cost)}</span>;
       }
       return <div className="space-y-1">{row.items.map((line) => {
         const isCount = row.type === 'inventory_count' || row.type === 'opening_balance';

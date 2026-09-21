@@ -11568,6 +11568,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Line Value */
+            line_value?: string | null;
             /** Original Quantity */
             original_quantity: string;
             /** Posting Sequence */
@@ -11583,6 +11585,8 @@ export interface components {
             remaining_quantity: string;
             /** Source Kind */
             source_kind: string;
+            /** Source Reference */
+            source_reference?: string | null;
             /** Unit Cost */
             unit_cost: string;
             /**

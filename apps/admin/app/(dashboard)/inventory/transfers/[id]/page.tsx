@@ -19,7 +19,7 @@ import {
 import type { Branch } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
-import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { formatCost, formatDateTime, formatQuantity } from '@/lib/utils';
 import { transferStatusLabel, transferStatusVariant } from '../../_shared';
 
 type TotalLine = TransferOrder['total_by_item'][number];
@@ -238,8 +238,8 @@ export default function TransferOrderDetailPage() {
                         <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_quantity)}</td>
                         <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_sent)}</td>
                         <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(child.total_received)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.sent_value)}</td>
-                        <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(child.received_value)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatCost(child.sent_value)}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{formatCost(child.received_value)}</td>
                         <td className="px-2 py-1">
                           {child.has_sending_variance ? <Badge variant="danger">Sent ≠ requested</Badge> : <span className="text-gray-300">—</span>}
                         </td>
@@ -302,13 +302,13 @@ export default function TransferOrderDetailPage() {
                       <Link href={`/inventory/transactions/${adj.transaction_id}`} className="text-primary hover:underline">{adj.transaction_reference}</Link>
                     </td>
                     <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(adj.quantity)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(adj.unit_cost)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(adj.value)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{formatCost(adj.unit_cost)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{formatCost(adj.value)}</td>
                   </tr>
                 ))}
                 <tr className="border-t-2 border-gray-300 bg-gray-50 font-medium">
                   <td className="px-2 py-1" colSpan={4}>Adjustment total</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(report.adjustment_total)}</td>
+                  <td className="px-2 py-1 text-right tabular-nums">{formatCost(report.adjustment_total)}</td>
                 </tr>
               </tbody>
             </table>

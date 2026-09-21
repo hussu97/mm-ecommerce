@@ -6,7 +6,7 @@ import base64
 import binascii
 import logging
 import uuid
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import delete, exists, func, or_, select
@@ -461,15 +461,62 @@ async def get_item_cost_layers(
         )
     rows = list((await db.execute(stmt)).all())
 
+    # Resolve each layer's source to a human reference: the PO number for a
+    # purchase, else the reference of the transaction that created the layer
+    # (ADJ-… for a reversal/quantity adjustment, CAD-… for a cost adjustment, a
+    # count/opening/transfer reference otherwise). Two batched lookups, no N+1.
+    po_ids = {layer.purchase_order_id for layer, _ in rows if layer.purchase_order_id}
+    line_ids = {
+        layer.source_line_id for layer, _ in rows if not layer.purchase_order_id
+    }
+    po_refs: dict[uuid.UUID, str] = {}
+    if po_ids:
+        po_refs = dict(
+            (
+                await db.execute(
+                    select(PurchaseOrder.id, PurchaseOrder.reference).where(
+                        PurchaseOrder.id.in_(po_ids)
+                    )
+                )
+            ).all()
+        )
+    line_refs: dict[uuid.UUID, str] = {}
+    if line_ids:
+        line_refs = dict(
+            (
+                await db.execute(
+                    select(InventoryTransactionItem.id, InventoryTransaction.reference)
+                    .join(
+                        InventoryTransaction,
+                        InventoryTransaction.id
+                        == InventoryTransactionItem.transaction_id,
+                    )
+                    .where(InventoryTransactionItem.id.in_(line_ids))
+                )
+            ).all()
+        )
+
+    _FOUR_DP = Decimal("0.0001")
     layers: list[CostLayerResponse] = []
     total_qty = Decimal("0")
     total_value = Decimal("0")
     for layer, warehouse_name in rows:
         remaining = Decimal(str(layer.remaining_quantity))
+        # Per-layer value, quantised for a legible breakdown; the total is the sum
+        # of these so the displayed math (Σ qty×cost) adds up exactly.
+        line_value = (remaining * Decimal(str(layer.unit_cost))).quantize(
+            _FOUR_DP, rounding=ROUND_HALF_UP
+        )
         total_qty += remaining
-        total_value += remaining * Decimal(str(layer.unit_cost))
+        total_value += line_value
         response = CostLayerResponse.model_validate(layer)
         response.warehouse_name = warehouse_name
+        response.line_value = line_value
+        response.source_reference = (
+            po_refs.get(layer.purchase_order_id)
+            if layer.purchase_order_id
+            else line_refs.get(layer.source_line_id)
+        )
         layers.append(response)
     average = (
         (total_value / total_qty).quantize(Decimal("0.000001"))

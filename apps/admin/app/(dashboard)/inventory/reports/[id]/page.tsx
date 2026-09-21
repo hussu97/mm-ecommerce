@@ -7,7 +7,7 @@ import { inventoryApi, type ReportSave, type ShiftInventoryReport } from '@/lib/
 import { ApiError } from '@/lib/api';
 import { Badge, Button, Spinner } from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { formatCurrency, formatDateTime, formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { formatCost, formatDateTime, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 type ReportLine = ShiftInventoryReport['lines'][number];
 type GridColumn = { key: string; label: string; role: string; source: string; posts: string | null; editable: boolean };
@@ -254,7 +254,7 @@ export default function ReportDetailPage() {
         <Detail label="Submitted at" value={report.submitted_at ? formatDateTime(report.submitted_at) : '—'} />
         <Detail label="Approved by" value={report.approved_by_name ?? '—'} />
         <Detail label="Approved at" value={report.approved_at ? formatDateTime(report.approved_at) : '—'} />
-        <Detail label="Variance value" value={formatCurrency(varianceTotal)} />
+        <Detail label="Variance value" value={formatCost(varianceTotal)} />
         <Detail label="Progress" value={`${report.lines.filter((l) => l.confirmed).length}/${report.lines.length} confirmed`} />
         {report.notes && <Detail label="Notes" value={report.notes} />}
         {report.deferred_reason && <Detail label="Reason" value={report.deferred_reason} />}

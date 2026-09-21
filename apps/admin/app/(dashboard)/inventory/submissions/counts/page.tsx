@@ -22,7 +22,7 @@ import {
   type DataColumn,
   type SortState,
 } from '@/components/ui/DataTable';
-import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { formatCost, formatDateTime, formatQuantity } from '@/lib/utils';
 
 // Within [from, to] inclusive on the YYYY-MM-DD prefix; an empty bound is
 // ignored. A missing date is excluded once any bound is set.
@@ -96,7 +96,7 @@ export default function StockCountsPage() {
     { header: 'Reference', priority: 'primary', sortable: true, sortAccessor: (row) => row.reference, render: (row) => <span className="text-primary">{row.reference}</span> },
     { header: 'Items', className: 'text-right', sortable: true, sortAccessor: (row) => row.items.length, render: (row) => row.items.length },
     { header: 'Net delta', className: 'text-right', sortable: true, sortAccessor: (row) => netDelta(row), render: (row) => { const d = netDelta(row); return <span className={d < 0 ? 'text-red-600' : d > 0 ? 'text-green-700' : 'text-gray-400'}>{d === 0 ? '—' : `${d > 0 ? '+' : ''}${formatQuantity(d)}`}</span>; } },
-    { header: 'Value impact', className: 'text-right', sortable: true, sortAccessor: (row) => row.total_cost, render: (row) => formatCurrency(row.total_cost) },
+    { header: 'Value impact', className: 'text-right', sortable: true, sortAccessor: (row) => row.total_cost, render: (row) => formatCost(row.total_cost) },
   ], [branchName]);
 
   const visible = useMemo(() => {

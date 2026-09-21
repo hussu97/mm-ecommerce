@@ -14,7 +14,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Button, Input, Pagination, Select, Spinner } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal } from '@/components/pos/ResourcePage';
-import { formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { formatCost, formatCurrency, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 const STATUS_VARIANT: Record<
   PurchaseOrderStatus,
@@ -462,7 +462,7 @@ function CreateOrder({
                     onChange={(e) => updateLine(index, { entered_total: e.target.value })}
                   />
                 </td>
-                <td className="py-2 text-right text-gray-500">{formatCurrency(unit)}</td>
+                <td className="py-2 text-right text-gray-500">{formatCost(unit)}</td>
                 <td className="py-2 text-right">
                   {lines.length > 1 && (
                     <button

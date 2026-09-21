@@ -17,7 +17,7 @@ import {
   type DataColumn,
   type SortState,
 } from '@/components/ui/DataTable';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCost, formatDateTime } from '@/lib/utils';
 import { reportStatusVariant, reportVariance, SUBMISSION_STATUSES } from '../_shared';
 
 // Within [from, to] inclusive on the YYYY-MM-DD prefix; an empty bound is
@@ -71,7 +71,7 @@ export default function ShiftReportsPage() {
     { header: 'Report', priority: 'primary', sortable: true, sortAccessor: (row) => String(row.template_snapshot.name ?? row.template_id), render: (row) => String(row.template_snapshot.name ?? row.template_id) },
     { header: 'Status', sortable: true, sortAccessor: (row) => row.status, render: (row) => <Badge variant={reportStatusVariant(row.status)}>{row.status.replaceAll('_', ' ')}</Badge> },
     { header: 'Progress', render: (row) => `${row.lines.filter((line) => line.confirmed).length}/${row.lines.length}` },
-    { header: 'Variance value', className: 'text-right', sortable: true, sortAccessor: (row) => reportVariance(row), render: (row) => formatCurrency(reportVariance(row)) },
+    { header: 'Variance value', className: 'text-right', sortable: true, sortAccessor: (row) => reportVariance(row), render: (row) => formatCost(reportVariance(row)) },
   ], []);
 
   const visible = useMemo(() => {
