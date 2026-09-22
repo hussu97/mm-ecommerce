@@ -131,7 +131,7 @@ async def list_suppliers(
     stmt = select(Supplier).where(Supplier.deleted_at.is_(None))
     if not include_inactive:
         stmt = stmt.where(Supplier.is_active.is_(True))
-    stmt = stmt.order_by(Supplier.name)
+    stmt = stmt.order_by(func.lower(Supplier.name))
     suppliers = list((await db.execute(stmt)).scalars().unique().all())
 
     # Attach each supplier's mapped items in one query, so the list can show
@@ -1516,7 +1516,12 @@ async def create_purchase_order(
     db.add(purchase_order)
     await db.flush()
     await inventory_service.build_po_lines(
-        db, purchase_order, data.items, is_vat_deductible=supplier.is_vat_deductible
+        db,
+        purchase_order,
+        data.items,
+        is_vat_deductible=supplier.is_vat_deductible,
+        misc_lines=data.misc_items,
+        allows_misc=supplier.allows_misc_items,
     )
     return await _serialise_po(db, await _load_po(db, purchase_order.id))
 
@@ -1551,8 +1556,14 @@ async def update_purchase_order(
         # notes) can still be corrected, and the invoice image re-attached via its
         # own endpoint. Anything else is refused.
         editable_after_receipt = {"supplier_reference", "notes"}
-        changed = set(data.model_dump(exclude_unset=True, exclude={"items"}).keys())
-        if data.items is not None or (changed - editable_after_receipt):
+        changed = set(
+            data.model_dump(exclude_unset=True, exclude={"items", "misc_items"}).keys()
+        )
+        if (
+            data.items is not None
+            or data.misc_items is not None
+            or (changed - editable_after_receipt)
+        ):
             raise ConflictError(
                 "A received purchase order can only have its invoice details edited"
             )
@@ -1562,17 +1573,21 @@ async def update_purchase_order(
         )
 
     await crud_service.update(
-        db, purchase_order, data.model_dump(exclude={"items"}, exclude_unset=True)
+        db,
+        purchase_order,
+        data.model_dump(exclude={"items", "misc_items"}, exclude_unset=True),
     )
-    if data.items is not None:
+    if data.items is not None or data.misc_items is not None:
         supplier = await crud_service.get_or_404(
             db, Supplier, purchase_order.supplier_id
         )
         await inventory_service.build_po_lines(
             db,
             purchase_order,
-            data.items,
+            data.items or [],
             is_vat_deductible=supplier.is_vat_deductible,
+            misc_lines=data.misc_items or [],
+            allows_misc=supplier.allows_misc_items,
         )
     return await _serialise_po(db, await _load_po(db, po_id))
 
@@ -1956,7 +1971,7 @@ async def pos_list_suppliers(
     stmt = (
         select(Supplier)
         .where(Supplier.deleted_at.is_(None), Supplier.is_active.is_(True))
-        .order_by(Supplier.name)
+        .order_by(func.lower(Supplier.name))
     )
     return list((await db.execute(stmt)).scalars().unique().all())
 

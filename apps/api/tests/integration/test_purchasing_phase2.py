@@ -26,6 +26,7 @@ from app.models.inventory import (
     InventoryTransactionItem,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseOrderMiscItem,
     PurchaseOrderStatusEnum,
     Supplier,
     SupplierContact,
@@ -37,6 +38,7 @@ from app.models.user import User
 from app.schemas.inventory import (
     PosPurchaseOrderCreate,
     PurchaseOrderLineInput,
+    PurchaseOrderMiscLineInput,
     SupplierContactInput,
     SupplierCreate,
     SupplierItemUpsert,
@@ -285,6 +287,128 @@ async def test_deactivate_blocked_by_active_mapping_then_reversible(engine, env)
         # Reactivation flips it back.
         await supplier_service.reactivate_supplier(db, supplier)
         assert supplier.is_active is True
+        await db.rollback()
+
+
+async def test_po_misc_items_price_into_totals_and_dedup(engine, env):
+    """A tagged supplier's PO may carry non-inventory misc lines.
+
+    They split VAT and fold into the frozen PO totals like a normal line, but
+    are stored as PurchaseOrderMiscItem (no item_id, no FIFO layer). A misc name
+    that collides with an existing inventory item (normalized) is refused.
+    """
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db,
+            SupplierCreate(
+                name=f"{MARKER} Amazon",
+                is_vat_deductible=True,
+                allows_misc_items=True,
+            ),
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.DRAFT.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        await inventory_service.build_po_lines(
+            db,
+            po,
+            [
+                PurchaseOrderLineInput(
+                    item_id=raw_id, quantity=D("10"), entered_total=D("105")
+                )
+            ],
+            is_vat_deductible=True,
+            misc_lines=[
+                PurchaseOrderMiscLineInput(
+                    name="Gift wrap",
+                    quantity=D("2"),
+                    storage_unit="roll",
+                    entered_total=D("21"),
+                )
+            ],
+            allows_misc=True,
+        )
+        # Regular 105 (net 100 / vat 5) + misc 21 (net 20 / vat 1) = 126 / 120 / 6.
+        assert po.total_gross == D("126.00")
+        assert po.subtotal_net == D("120.00")
+        assert po.vat_total == D("6.00")
+        misc = (
+            await db.execute(
+                select(PurchaseOrderMiscItem).where(
+                    PurchaseOrderMiscItem.purchase_order_id == po.id
+                )
+            )
+        ).scalar_one()
+        assert misc.name == "Gift wrap"
+        assert misc.storage_unit == "roll"
+        assert misc.unit_cost == D("10.500000")  # 21 gross / 2
+        assert misc.vat_amount == D("1.00")
+
+        # A misc name matching an inventory item (env's raw is "Butter") is refused,
+        # case/space-insensitively.
+        with pytest.raises(BadRequestError, match="existing inventory item"):
+            await inventory_service.build_po_lines(
+                db,
+                po,
+                [],
+                is_vat_deductible=True,
+                misc_lines=[
+                    PurchaseOrderMiscLineInput(
+                        name="  BUTTER ",
+                        quantity=D("1"),
+                        storage_unit="pc",
+                        entered_total=D("5"),
+                    )
+                ],
+                allows_misc=True,
+            )
+        await db.rollback()
+
+
+async def test_po_misc_items_refused_when_supplier_not_tagged(engine, env):
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} Plain", is_vat_deductible=False)
+        )
+        po = PurchaseOrder(
+            reference=await inventory_service.next_inventory_reference(db, "PO"),
+            status=PurchaseOrderStatusEnum.DRAFT.value,
+            origin="admin",
+            supplier_id=supplier.id,
+            branch_id=branch_id,
+            business_date="2026-09-18",
+            creator_id=user_id,
+        )
+        db.add(po)
+        await db.flush()
+        with pytest.raises(BadRequestError, match="not set up for miscellaneous"):
+            await inventory_service.build_po_lines(
+                db,
+                po,
+                [],
+                is_vat_deductible=False,
+                misc_lines=[
+                    PurchaseOrderMiscLineInput(
+                        name="Random thing",
+                        quantity=D("1"),
+                        storage_unit="pc",
+                        entered_total=D("5"),
+                    )
+                ],
+                allows_misc=False,
+            )
         await db.rollback()
 
 

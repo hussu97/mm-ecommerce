@@ -210,6 +210,7 @@ function SupplierModal({
   const [paymentTerms, setPaymentTerms] = useState(String(supplier?.payment_terms_days ?? 0));
   const [vatDeductible, setVatDeductible] = useState(supplier?.is_vat_deductible ?? true);
   const [allowAnyItem, setAllowAnyItem] = useState(supplier?.allow_any_item ?? false);
+  const [allowsMiscItems, setAllowsMiscItems] = useState(supplier?.allows_misc_items ?? false);
   const [active, setActive] = useState(supplier?.is_active ?? true);
   const [contacts, setContacts] = useState<ContactDraft[]>(
     supplier?.contacts.map((c) => ({
@@ -285,6 +286,7 @@ function SupplierModal({
         payment_terms_days: Number(paymentTerms) || 0,
         is_vat_deductible: vatDeductible,
         allow_any_item: allowAnyItem,
+        allows_misc_items: allowsMiscItems,
         is_active: active,
         contacts: cleanContacts,
       };
@@ -324,6 +326,10 @@ function SupplierModal({
         <label className="flex items-center gap-2 text-sm font-body" title="Let a purchase order add any active item, not just the mapped ones below.">
           <input type="checkbox" checked={allowAnyItem} onChange={(e) => setAllowAnyItem(e.target.checked)} />
           Flexible item mapping
+        </label>
+        <label className="flex items-center gap-2 text-sm font-body" title="Allow free-text miscellaneous (non-inventory) lines on this supplier's purchase orders — e.g. one-off buys tracked only for expenses and VAT. The supplier appears in the PO picker even with no mapped items.">
+          <input type="checkbox" checked={allowsMiscItems} onChange={(e) => setAllowsMiscItems(e.target.checked)} />
+          Allows misc. items
         </label>
         <label className="flex items-center gap-2 text-sm font-body">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />

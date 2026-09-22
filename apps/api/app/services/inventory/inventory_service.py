@@ -60,6 +60,7 @@ from app.models.inventory import (
     InventoryTransactionTypeEnum,
     PurchaseOrder,
     PurchaseOrderItem,
+    PurchaseOrderMiscItem,
     PurchaseOrderStatusEnum,
     Supplier,
     TransactionStatusEnum,
@@ -1177,22 +1178,69 @@ def _purchase_order_consequences(
         purchase_order.voided_at = utcnow()
 
 
+def normalize_item_name(name: str) -> str:
+    """Fold a name for duplicate detection: lowercased, whitespace-collapsed."""
+    return " ".join((name or "").split()).lower()
+
+
+async def _assert_misc_names_not_inventory(db: AsyncSession, misc_lines) -> None:
+    """Refuse a misc line whose name collides with an existing inventory item.
+
+    Misc lines are deliberately outside inventory; letting one be named exactly
+    like a tracked item invites someone treating the two as the same thing, so a
+    normalized-name match against any non-deleted item is rejected up front.
+    """
+    if not misc_lines:
+        return
+    existing = {
+        normalize_item_name(name)
+        for (name,) in (
+            await db.execute(
+                select(InventoryItem.name).where(InventoryItem.deleted_at.is_(None))
+            )
+        ).all()
+    }
+    for line in misc_lines:
+        if normalize_item_name(line.name) in existing:
+            raise BadRequestError(
+                f'"{line.name}" matches an existing inventory item — a '
+                "miscellaneous line cannot duplicate a tracked item. Order it as "
+                "a normal item, or rename the misc line."
+            )
+
+
 async def build_po_lines(
     db: AsyncSession,
     purchase_order: PurchaseOrder,
     lines,
     *,
     is_vat_deductible: bool,
+    misc_lines=None,
+    allows_misc: bool = False,
 ) -> None:
     """Replace a PO's lines from input, splitting VAT and freezing its totals.
 
     Each input line carries the quantity and the VAT-inclusive line total; the
     per-unit cost (gross) and the recoverable VAT slice are derived here so both
     the admin create/edit and the till's create-and-receive price identically.
+
+    ``misc_lines`` are free-text, non-inventory lines (only for a supplier tagged
+    ``allows_misc``): they never lay a FIFO layer or move stock, but their money
+    is folded into the same frozen totals so purchase history and the VAT reclaim
+    (which reads the PO's totals, not its lines) include them.
     """
+    misc_lines = misc_lines or []
+    if misc_lines and not allows_misc:
+        raise BadRequestError("This supplier is not set up for miscellaneous items")
+    await _assert_misc_names_not_inventory(db, misc_lines)
     await db.execute(
         delete(PurchaseOrderItem).where(
             PurchaseOrderItem.purchase_order_id == purchase_order.id
+        )
+    )
+    await db.execute(
+        delete(PurchaseOrderMiscItem).where(
+            PurchaseOrderMiscItem.purchase_order_id == purchase_order.id
         )
     )
     subtotal_net = Decimal("0")
@@ -1224,6 +1272,25 @@ async def build_po_lines(
                 net_total=split.net_total,
                 unit_cost=split.unit_cost,
                 total_cost=split.total,
+            )
+        )
+    for misc in misc_lines:
+        split = supplier_service.split_line_vat(
+            misc.entered_total, misc.quantity, is_vat_deductible=is_vat_deductible
+        )
+        subtotal_net += split.net_total
+        vat_total += split.vat_amount
+        gross_total += split.total
+        db.add(
+            PurchaseOrderMiscItem(
+                purchase_order_id=purchase_order.id,
+                name=misc.name.strip(),
+                quantity=misc.quantity,
+                storage_unit=misc.storage_unit.strip(),
+                entered_total=split.total,
+                vat_amount=split.vat_amount,
+                net_total=split.net_total,
+                unit_cost=split.unit_cost,
             )
         )
     additional = Decimal(str(purchase_order.additional_cost or 0))
@@ -1276,7 +1343,12 @@ async def create_pos_purchase_order(
     db.add(purchase_order)
     await db.flush()
     await build_po_lines(
-        db, purchase_order, data.items, is_vat_deductible=supplier.is_vat_deductible
+        db,
+        purchase_order,
+        data.items,
+        is_vat_deductible=supplier.is_vat_deductible,
+        misc_lines=getattr(data, "misc_items", None),
+        allows_misc=supplier.allows_misc_items,
     )
     purchase_order = await _lock_purchase_order(db, purchase_order.id)
     received = {line.id: line.quantity for line in purchase_order.items}

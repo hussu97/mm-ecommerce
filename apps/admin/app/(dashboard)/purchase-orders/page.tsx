@@ -37,6 +37,13 @@ interface DraftLine {
   entered_total: string;
 }
 
+interface MiscDraft {
+  name: string;
+  quantity: string;
+  storage_unit: string;
+  entered_total: string;
+}
+
 const VAT_RATE = 0.05;
 
 const STATUS_OPTIONS: { value: PurchaseOrderStatus; label: string }[] = [
@@ -490,6 +497,7 @@ function CreateOrder({
   const [supplierReference, setSupplierReference] = useState('');
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [lines, setLines] = useState<DraftLine[]>([{ item_id: '', quantity: '1', entered_total: '0' }]);
+  const [miscLines, setMiscLines] = useState<MiscDraft[]>([]);
   // The items this supplier can supply — prefilled once a supplier is chosen.
   const [supplierItems, setSupplierItems] = useState<SupplierItem[] | null>(null);
   const [saving, setSaving] = useState(false);
@@ -522,11 +530,17 @@ function CreateOrder({
       ? items.filter((i) => mappedIds.has(i.id))
       : activeItems;
 
-  const grossTotal = lines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0);
+  const allowsMisc = supplier?.allows_misc_items ?? false;
+  const grossTotal =
+    lines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0) +
+    miscLines.reduce((sum, l) => sum + Number(l.entered_total || 0), 0);
   const vatTotal = vatDeductible ? grossTotal - grossTotal / (1 + VAT_RATE) : 0;
 
   function updateLine(index: number, patch: Partial<DraftLine>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+  function updateMisc(index: number, patch: Partial<MiscDraft>) {
+    setMiscLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
   // The unit for a chosen item, shown in its own column so the line reads cleanly.
@@ -540,8 +554,11 @@ function CreateOrder({
     const valid = lines.filter(
       (l) => l.item_id && Number(l.quantity) > 0 && Number(l.entered_total) > 0,
     );
-    if (!supplierId || !branchId || valid.length === 0) {
-      setError('Each line needs an item, a quantity and a total cost above zero.');
+    const validMisc = miscLines.filter(
+      (l) => l.name.trim() && l.storage_unit.trim() && Number(l.quantity) > 0 && Number(l.entered_total) > 0,
+    );
+    if (!supplierId || !branchId || (valid.length === 0 && validMisc.length === 0)) {
+      setError('Add at least one line (item or misc.) with a quantity and a total cost above zero.');
       return;
     }
     setSaving(true);
@@ -558,6 +575,12 @@ function CreateOrder({
           quantity: Number(l.quantity),
           entered_total: Number(l.entered_total),
           unit: 'storage',
+        })),
+        misc_items: validMisc.map((l) => ({
+          name: l.name.trim(),
+          quantity: Number(l.quantity),
+          storage_unit: l.storage_unit.trim(),
+          entered_total: Number(l.entered_total),
         })),
       });
     } catch (err) {
@@ -709,6 +732,60 @@ function CreateOrder({
           })}
         </tbody>
       </table>
+
+      {allowsMisc && (
+        <section className="mt-5">
+          <div className="mb-1 flex items-center justify-between">
+            <h3 className="text-[11px] uppercase tracking-widest text-gray-500 font-body">Miscellaneous items</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setMiscLines((prev) => [...prev, { name: '', quantity: '1', storage_unit: '', entered_total: '0' }])}
+            >
+              Add misc item
+            </Button>
+          </div>
+          <p className="mb-2 text-xs text-gray-400 font-body">
+            Non-inventory buys on this invoice — tracked for expenses and VAT only, never added to stock. The name can’t match an existing inventory item.
+          </p>
+          {miscLines.length > 0 && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
+                  <th className="py-2 text-left">Name</th>
+                  <th className="py-2 text-left w-24">Unit</th>
+                  <th className="py-2 text-right w-24">Qty</th>
+                  <th className="py-2 text-right w-36">Total cost</th>
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody>
+                {miscLines.map((line, index) => (
+                  <tr key={index} className={`border-b border-gray-100 ${interactiveRowClass}`}>
+                    <td className="py-2 pr-2">
+                      <Input value={line.name} onChange={(e) => updateMisc(index, { name: e.target.value })} placeholder="e.g. Gift wrap" />
+                    </td>
+                    <td className="py-2 pr-2">
+                      <Input value={line.storage_unit} onChange={(e) => updateMisc(index, { storage_unit: e.target.value })} placeholder="e.g. roll" />
+                    </td>
+                    <td className="py-2 pr-2">
+                      <Input type="number" step="0.0001" value={line.quantity} onChange={(e) => updateMisc(index, { quantity: e.target.value })} />
+                    </td>
+                    <td className="py-2 pr-2">
+                      <Input type="number" step="0.01" value={line.entered_total} onChange={(e) => updateMisc(index, { entered_total: e.target.value })} />
+                    </td>
+                    <td className="py-2 text-right">
+                      <button onClick={() => setMiscLines((prev) => prev.filter((_, i) => i !== index))} className="text-gray-400 hover:text-red-500">
+                        <span className="material-icons text-[16px]">close</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
 
       <div className="mt-3 flex items-center justify-between">
         <Button

@@ -25770,8 +25770,14 @@
             "items": {
               "$ref": "#/components/schemas/PurchaseOrderLineInput"
             },
-            "minItems": 1,
             "title": "Items",
+            "type": "array"
+          },
+          "misc_items": {
+            "items": {
+              "$ref": "#/components/schemas/PurchaseOrderMiscLineInput"
+            },
+            "title": "Misc Items",
             "type": "array"
           },
           "notes": {
@@ -25817,8 +25823,7 @@
         },
         "required": [
           "supplier_id",
-          "branch_id",
-          "items"
+          "branch_id"
         ],
         "title": "PurchaseOrderCreate",
         "type": "object"
@@ -26018,6 +26023,111 @@
         "title": "PurchaseOrderLineResponse",
         "type": "object"
       },
+      "PurchaseOrderMiscLineInput": {
+        "description": "One free-text, non-inventory PO line (supplier must allow misc items).\n\nThe user names it and keys quantity, its storage unit, and the VAT-inclusive\nline total. It never becomes an inventory item; the server derives the unit\ncost and recoverable VAT the same way it does for a regular line.",
+        "properties": {
+          "entered_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Entered Total"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "storage_unit": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Storage Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "quantity",
+          "storage_unit"
+        ],
+        "title": "PurchaseOrderMiscLineInput",
+        "type": "object"
+      },
+      "PurchaseOrderMiscLineResponse": {
+        "properties": {
+          "entered_total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Entered Total",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "net_total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Net Total",
+            "type": "string"
+          },
+          "quantity": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Quantity",
+            "type": "string"
+          },
+          "storage_unit": {
+            "title": "Storage Unit",
+            "type": "string"
+          },
+          "unit_cost": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Unit Cost",
+            "type": "string"
+          },
+          "vat_amount": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Vat Amount",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "quantity",
+          "storage_unit",
+          "entered_total",
+          "vat_amount",
+          "net_total",
+          "unit_cost"
+        ],
+        "title": "PurchaseOrderMiscLineResponse",
+        "type": "object"
+      },
       "PurchaseOrderResponse": {
         "properties": {
           "additional_cost": {
@@ -26125,6 +26235,14 @@
               "$ref": "#/components/schemas/PurchaseOrderLineResponse"
             },
             "title": "Items",
+            "type": "array"
+          },
+          "misc_items": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PurchaseOrderMiscLineResponse"
+            },
+            "title": "Misc Items",
             "type": "array"
           },
           "notes": {
@@ -26311,6 +26429,20 @@
               }
             ],
             "title": "Items"
+          },
+          "misc_items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PurchaseOrderMiscLineInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Misc Items"
           },
           "notes": {
             "anyOf": [
@@ -30731,6 +30863,11 @@
             "title": "Allow Any Item",
             "type": "boolean"
           },
+          "allows_misc_items": {
+            "default": false,
+            "title": "Allows Misc Items",
+            "type": "boolean"
+          },
           "contacts": {
             "items": {
               "$ref": "#/components/schemas/SupplierContactInput"
@@ -30989,6 +31126,11 @@
             "title": "Allow Any Item",
             "type": "boolean"
           },
+          "allows_misc_items": {
+            "default": false,
+            "title": "Allows Misc Items",
+            "type": "boolean"
+          },
           "contacts": {
             "default": [],
             "items": {
@@ -31121,6 +31263,17 @@
               }
             ],
             "title": "Allow Any Item"
+          },
+          "allows_misc_items": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allows Misc Items"
           },
           "contacts": {
             "anyOf": [

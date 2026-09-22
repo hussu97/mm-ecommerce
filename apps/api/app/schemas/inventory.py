@@ -281,6 +281,8 @@ class SupplierCreate(BaseModel):
     #: Flexible item mapping — allow a PO for this supplier to add any active
     #: purchasable item, not just the mapped ones.
     allow_any_item: bool = False
+    #: Allow free-text miscellaneous (non-inventory) lines on this supplier's POs.
+    allows_misc_items: bool = False
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int = Field(0, ge=0, le=365)
@@ -295,6 +297,7 @@ class SupplierUpdate(BaseModel):
     reference: str | None = Field(None, max_length=50)
     is_vat_deductible: bool | None = None
     allow_any_item: bool | None = None
+    allows_misc_items: bool | None = None
     address: str | None = None
     tax_number: str | None = Field(None, max_length=50)
     payment_terms_days: int | None = Field(None, ge=0, le=365)
@@ -319,6 +322,7 @@ class SupplierResponse(ORMModel):
     reference: str | None
     is_vat_deductible: bool
     allow_any_item: bool = False
+    allows_misc_items: bool = False
     address: str | None
     tax_number: str | None
     payment_terms_days: int
@@ -488,6 +492,20 @@ class PurchaseOrderLineInput(BaseModel):
     entered_total: Decimal = Field(Decimal("0"), ge=0)
 
 
+class PurchaseOrderMiscLineInput(BaseModel):
+    """One free-text, non-inventory PO line (supplier must allow misc items).
+
+    The user names it and keys quantity, its storage unit, and the VAT-inclusive
+    line total. It never becomes an inventory item; the server derives the unit
+    cost and recoverable VAT the same way it does for a regular line.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    quantity: Decimal = Field(gt=0)
+    storage_unit: str = Field(min_length=1, max_length=30)
+    entered_total: Decimal = Field(Decimal("0"), ge=0)
+
+
 class PurchaseOrderCreate(BaseModel):
     supplier_id: UUID
     branch_id: UUID
@@ -496,7 +514,14 @@ class PurchaseOrderCreate(BaseModel):
     supplier_reference: str | None = Field(None, max_length=100)
     additional_cost: Decimal = Field(Decimal("0"), ge=0)
     notes: str | None = None
-    items: list[PurchaseOrderLineInput] = Field(min_length=1)
+    items: list[PurchaseOrderLineInput] = Field(default_factory=list)
+    misc_items: list[PurchaseOrderMiscLineInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _needs_a_line(self):
+        if not self.items and not self.misc_items:
+            raise ValueError("A purchase order needs at least one line")
+        return self
 
 
 class PurchaseOrderUpdate(BaseModel):
@@ -507,6 +532,8 @@ class PurchaseOrderUpdate(BaseModel):
     additional_cost: Decimal | None = Field(None, ge=0)
     notes: str | None = None
     items: list[PurchaseOrderLineInput] | None = None
+    #: When present, replaces the whole misc-line set; omit to leave as-is.
+    misc_items: list[PurchaseOrderMiscLineInput] | None = None
 
 
 class PosPurchaseOrderCreate(BaseModel):
@@ -525,7 +552,14 @@ class PosPurchaseOrderCreate(BaseModel):
     # worker memory when decoded.
     invoice_image_base64: str | None = Field(None, max_length=14_000_000)
     invoice_content_type: str | None = Field(None, max_length=100)
-    items: list[PurchaseOrderLineInput] = Field(min_length=1)
+    items: list[PurchaseOrderLineInput] = Field(default_factory=list)
+    misc_items: list[PurchaseOrderMiscLineInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _needs_a_line(self):
+        if not self.items and not self.misc_items:
+            raise ValueError("A purchase order needs at least one line")
+        return self
 
 
 class PosInvoiceUpload(BaseModel):
@@ -568,6 +602,17 @@ class PurchaseOrderLineResponse(ORMModel):
     storage_unit: str | None = None
 
 
+class PurchaseOrderMiscLineResponse(ORMModel):
+    id: UUID
+    name: str
+    quantity: Decimal
+    storage_unit: str
+    entered_total: Decimal
+    vat_amount: Decimal
+    net_total: Decimal
+    unit_cost: Decimal
+
+
 class PurchaseOrderResponse(ORMModel):
     id: UUID
     reference: str
@@ -594,6 +639,7 @@ class PurchaseOrderResponse(ORMModel):
     created_at: datetime
     updated_at: datetime
     items: list[PurchaseOrderLineResponse] = []
+    misc_items: list[PurchaseOrderMiscLineResponse] = []
     supplier_name: str | None = None
     #: Whether an invoice image is attached — cheap for list rows to render an
     #: indicator without signing a URL for every row.

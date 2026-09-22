@@ -470,6 +470,10 @@ export interface Supplier {
   // Flexible item mapping: a PO for this supplier may add any active purchasable
   // item, not just the mapped ones.
   allow_any_item: boolean;
+  // When true, this supplier's POs may carry free-text miscellaneous
+  // (non-inventory) lines, and the supplier appears in the PO picker even with
+  // no mapped items.
+  allows_misc_items: boolean;
   address: string | null;
   tax_number: string | null;
   payment_terms_days: number;
@@ -513,6 +517,17 @@ export interface PurchaseOrderItem {
   item_sku: string | null;
 }
 
+export interface PurchaseOrderMiscItem {
+  id: string;
+  name: string;
+  quantity: number;
+  storage_unit: string;
+  entered_total: number;
+  vat_amount: number;
+  net_total: number;
+  unit_cost: number;
+}
+
 export interface PurchaseOrder {
   id: string;
   reference: string;
@@ -536,6 +551,7 @@ export interface PurchaseOrder {
   total_cost: number;
   notes: string | null;
   items: PurchaseOrderItem[];
+  misc_items: PurchaseOrderMiscItem[];
   created_at: string;
 }
 

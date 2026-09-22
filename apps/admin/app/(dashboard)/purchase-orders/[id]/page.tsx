@@ -113,6 +113,38 @@ export default function PurchaseOrderDetailPage() {
         </table>
       </div>
 
+      {po.misc_items.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs uppercase tracking-wider text-gray-400">
+            Miscellaneous items (not tracked as inventory)
+          </p>
+          <div className="overflow-x-auto border border-gray-200">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
+                <tr>
+                  <th className="px-2 py-1">Name</th>
+                  <th className="px-2 py-1">Unit</th>
+                  <th className="px-2 py-1 text-right">Qty</th>
+                  <th className="px-2 py-1 text-right">Unit cost</th>
+                  <th className="px-2 py-1 text-right">Line total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {po.misc_items.map((m) => (
+                  <tr key={m.id} className={`border-t border-gray-100 ${interactiveRowClass}`}>
+                    <td className="px-2 py-1 font-medium">{m.name}</td>
+                    <td className="px-2 py-1 text-gray-500">{m.storage_unit}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{formatQuantity(m.quantity)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums text-gray-500">{formatCost(m.unit_cost)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{formatCurrency(m.entered_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="ml-auto w-full max-w-xs space-y-1 text-sm">
         <Total label="Net" value={po.subtotal_net} />
         <Total label="VAT" value={po.vat_total} />

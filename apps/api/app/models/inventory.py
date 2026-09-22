@@ -32,6 +32,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -387,6 +388,14 @@ class Supplier(Base, UUIDMixin, TimestampMixin):
     #: supplier — the mapped items remain the suggested shortlist. When false, only
     #: mapped items may be ordered (the strict default).
     allow_any_item: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    #: When true, a purchase order for this supplier may carry free-text
+    #: **miscellaneous** lines (name/qty/unit/total) that are NOT inventory items
+    #: — one-off buys tracked only for expense history and VAT recovery. Such a
+    #: supplier (e.g. Amazon AE) shows up in the PO picker even with no mapped
+    #: items. See ``PurchaseOrderMiscItem``.
+    allows_misc_items: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -829,6 +838,15 @@ class PurchaseOrder(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    #: Free-text, non-inventory lines (only for suppliers with
+    #: ``allows_misc_items``). They never post to stock; they feed PO totals and
+    #: the VAT reclaim report only.
+    misc_items: Mapped[list[PurchaseOrderMiscItem]] = relationship(
+        "PurchaseOrderMiscItem",
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     @property
     def is_fully_received(self) -> bool:
@@ -914,6 +932,55 @@ class PurchaseOrderItem(Base, UUIDMixin):
 
     def __repr__(self) -> str:
         return f"<PurchaseOrderItem item={self.item_id} qty={self.quantity}>"
+
+
+class PurchaseOrderMiscItem(Base, UUIDMixin):
+    """A non-inventory line on a purchase order.
+
+    Bought from a supplier tagged ``allows_misc_items`` for a specific need, on
+    the same invoice as regular stock, but **never** tracked as inventory: no
+    ``item_id``, no FIFO layer, no stock movement. It exists only so the spend
+    shows in purchase history and its VAT is recoverable. Money mirrors
+    ``PurchaseOrderItem``: ``entered_total`` is gross (VAT-inclusive),
+    ``vat_amount`` the recoverable slice, ``net_total`` = gross − vat.
+    """
+
+    __tablename__ = "purchase_order_misc_items"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_purchase_order_misc_items_quantity"),
+    )
+
+    purchase_order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    quantity: Mapped[Any] = mapped_column(Numeric(16, 4), nullable=False)
+    storage_unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    entered_total: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    vat_amount: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    net_total: Mapped[Any] = mapped_column(
+        Numeric(16, 4), nullable=False, server_default="0"
+    )
+    unit_cost: Mapped[Any] = mapped_column(
+        Numeric(20, 10), nullable=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    purchase_order: Mapped[PurchaseOrder] = relationship(
+        "PurchaseOrder", back_populates="misc_items"
+    )
+
+    def __repr__(self) -> str:
+        return f"<PurchaseOrderMiscItem {self.name} qty={self.quantity}>"
 
 
 # ─── FIFO cost layers ───────────────────────────────────────────────────────────
