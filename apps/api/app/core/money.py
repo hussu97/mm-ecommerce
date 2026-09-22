@@ -50,9 +50,12 @@ QUANTITY = Decimal("0.0001")
 #: order's three VAT columns stop reconciling with each other. A rate is not a
 #: money figure and must not be rounded to the cent.
 RATE = Decimal("0.0001")
-#: Six places: a per-unit ingredient cost, where two places rounds a gram of
-#: vanilla to nothing and the error compounds over a batch.
-COST = Decimal("0.000001")
+#: Ten places: a per-unit ingredient cost. Two places rounds a gram of vanilla to
+#: nothing and the error compounds over a batch; even six can lose a real figure
+#: for a cost-per-gram divided out of a batch price, so per-unit cost is carried
+#: at ten places. The cost columns are Numeric(20,10) to match. Money totals still
+#: quantise to the cent through `money()`; this is only the per-unit basis.
+COST = Decimal("0.0000000001")
 
 ZERO = Decimal("0.00")
 

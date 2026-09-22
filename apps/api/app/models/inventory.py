@@ -338,7 +338,7 @@ class InventoryLevel(Base, UUIDMixin, TimestampMixin):
     #: Weighted-average cost per storage unit — the item's cost at this warehouse,
     #: derived from its surviving FIFO layers (the source of truth for valuation).
     average_cost: Mapped[Any] = mapped_column(
-        Numeric(16, 6), nullable=False, server_default="0"
+        Numeric(20, 10), nullable=False, server_default="0"
     )
     last_counted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -682,11 +682,11 @@ class InventoryTransactionItem(Base, UUIDMixin):
         Numeric(20, 6), nullable=False, server_default="0"
     )
     unit_cost: Mapped[Any] = mapped_column(
-        Numeric(16, 6), nullable=False, server_default="0"
+        Numeric(20, 10), nullable=False, server_default="0"
     )
     #: Moving-average cost immediately before this immutable movement.
     previous_unit_cost: Mapped[Any | None] = mapped_column(
-        Numeric(16, 6), nullable=True
+        Numeric(20, 10), nullable=True
     )
     total_cost: Mapped[Any] = mapped_column(
         Numeric(16, 4), nullable=False, server_default="0"
@@ -881,7 +881,7 @@ class PurchaseOrderItem(Base, UUIDMixin):
     #: Gross cost per storage unit (``entered_total ÷ quantity``) — the value that
     #: becomes the FIFO layer's unit cost on receipt.
     unit_cost: Mapped[Any] = mapped_column(
-        Numeric(16, 6), nullable=False, server_default="0"
+        Numeric(20, 10), nullable=False, server_default="0"
     )
     #: Gross line total (== ``entered_total``); kept for report continuity.
     total_cost: Mapped[Any] = mapped_column(
@@ -1015,7 +1015,7 @@ class InventoryCostLayer(Base, UUIDMixin, TimestampMixin):
     original_quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
     remaining_quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
     #: Per storage unit, net of recoverable VAT.
-    unit_cost: Mapped[Any] = mapped_column(Numeric(16, 6), nullable=False)
+    unit_cost: Mapped[Any] = mapped_column(Numeric(20, 10), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -1071,7 +1071,7 @@ class InventoryCostLayerConsumption(Base, UUIDMixin):
         nullable=False,
     )
     quantity: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
-    unit_cost: Mapped[Any] = mapped_column(Numeric(16, 6), nullable=False)
+    unit_cost: Mapped[Any] = mapped_column(Numeric(20, 10), nullable=False)
     total_cost: Mapped[Any] = mapped_column(Numeric(20, 4), nullable=False)
     posting_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     #: True when the layers ran dry (negative stock is allowed for this branch)
