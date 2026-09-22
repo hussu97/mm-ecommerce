@@ -60,3 +60,28 @@ async def test_non_keeta_text_address_is_never_sent_to_google(monkeypatch):
 
     assert address == {"address": "Some text", "city": "Dubai"}
     assert status is None
+
+
+async def test_geocoded_coordinates_survive_a_late_masked_keeta_address(monkeypatch):
+    async def geocode(_address):
+        return geo.GeocodingResult(
+            {"address": "***", "latitude": 25.2048, "longitude": 55.2708},
+            "resolved",
+        )
+
+    monkeypatch.setattr(ingest.address_geocoding, "geocode", geocode)
+    address, status = await ingest._address_for_upsert(
+        "keeta",
+        {"address": "***"},
+        {"address": "Jumeirah 1", "city": "Dubai"},
+        None,
+        retry_geocoding=True,
+    )
+
+    assert address == {
+        "address": "Jumeirah 1",
+        "city": "Dubai",
+        "latitude": 25.2048,
+        "longitude": 55.2708,
+    }
+    assert status == "resolved"

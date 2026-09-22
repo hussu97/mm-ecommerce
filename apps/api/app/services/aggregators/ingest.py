@@ -297,6 +297,35 @@ _PREFER_UNMASKED = (
 )
 
 
+def _merge_address_without_redaction(
+    existing: dict[str, Any] | None, proposed: dict[str, Any]
+) -> dict[str, Any]:
+    """Add useful proposed fields without replacing visible text with redaction.
+
+    A settled Keeta payload can redact an address after the live pull captured it.
+    A geocoding result derived from that payload adds valid coordinates, but the
+    JSONB conflict rule would otherwise keep the whole old object and lose those
+    coordinates. Merge at the field level so existing readable address parts win
+    while latitude/longitude still land.
+    """
+    if not existing:
+        return proposed
+    merged = dict(existing)
+    for key, value in proposed.items():
+        if value is None:
+            continue
+        current = merged.get(key)
+        if (
+            isinstance(value, str)
+            and "*" in value
+            and current is not None
+            and "*" not in str(current)
+        ):
+            continue
+        merged[key] = value
+    return merged
+
+
 def _prefer_unmasked_update(column: Any, proposed: Any) -> Any:
     """Update expression for a redactable column: keep the stored value when the
     incoming one is masked (contains `*`) and the stored one is real; else the
@@ -420,7 +449,10 @@ async def _address_for_upsert(
         return incoming_address, existing_geocode_status
 
     enriched = await address_geocoding.geocode(incoming_address)
-    return enriched.address, enriched.status
+    return (
+        _merge_address_without_redaction(existing_address, enriched.address),
+        enriched.status,
+    )
 
 
 async def upsert_order(
