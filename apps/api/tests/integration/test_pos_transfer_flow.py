@@ -193,6 +193,26 @@ async def _order(db, ids, quantity, *, override=False):
     )
 
 
+async def test_report_carries_the_items_real_unit_label(env):
+    """The serialised order resolves the abstract "storage" entry unit to the
+    item's real unit ("kg" here), so the report shows that, not the word
+    "storage" (child lines and the per-item totals)."""
+    from app.api.v1.operations import _serialise_order
+
+    _engine, Session, ids = env
+    async with Session() as db:
+        order = await _order(db, ids, 10)
+        await db.commit()
+        order_id = order.id
+
+    async with Session() as db:
+        order = await transfer_service.load_transfer_order(db, order_id)
+        payload = await _serialise_order(db, order)
+        assert payload.children[0].items[0].unit == "storage"
+        assert payload.children[0].items[0].display_unit == "kg"
+        assert payload.total_by_item[0].display_unit == "kg"
+
+
 async def test_creating_an_order_moves_no_stock_until_it_is_sent(env):
     _engine, Session, ids = env
     async with Session() as db:

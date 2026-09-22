@@ -179,7 +179,7 @@ export default function TransferOrderDetailPage() {
                   {group.lines.map((line) => (
                     <tr key={line.item_id} className="border-t border-gray-100">
                       <td className="px-2 py-1 font-medium sticky left-0 bg-white">{line.item_name ?? line.item_sku ?? line.item_id}</td>
-                      <td className="px-2 py-1 text-gray-500">{line.unit}</td>
+                      <td className="px-2 py-1 text-gray-500">{line.display_unit ?? line.unit}</td>
                       {children.map((child) => {
                         const qty = childQty.get(child.id)?.get(line.item_id);
                         return (
@@ -250,7 +250,9 @@ export default function TransferOrderDetailPage() {
                           <tr key={`${child.transfer_id}:${line.id}`} className="border-t border-gray-50 bg-gray-50/40 text-xs text-gray-600">
                             <td className="px-2 py-1 pl-6">
                               {line.item_name ?? line.item_sku ?? line.item_id}
-                              {line.unit && <span className="ml-1 text-gray-400">{line.unit}</span>}
+                              {(line.display_unit ?? line.unit) && (
+                                <span className="ml-1 text-gray-400">{line.display_unit ?? line.unit}</span>
+                              )}
                             </td>
                             <td className="px-2 py-1" />
                             <td className="px-2 py-1" />

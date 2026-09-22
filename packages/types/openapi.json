@@ -33822,6 +33822,17 @@
             ],
             "title": "Category Order"
           },
+          "display_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Unit"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -34416,6 +34427,17 @@
               }
             ],
             "title": "Category Order"
+          },
+          "display_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Unit"
           },
           "item_id": {
             "format": "uuid",

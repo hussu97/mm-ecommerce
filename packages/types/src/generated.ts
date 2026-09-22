@@ -20605,6 +20605,8 @@ export interface components {
             category_name?: string | null;
             /** Category Order */
             category_order?: number | null;
+            /** Display Unit */
+            display_unit?: string | null;
             /**
              * Id
              * Format: uuid
@@ -20843,6 +20845,8 @@ export interface components {
             category_name?: string | null;
             /** Category Order */
             category_order?: number | null;
+            /** Display Unit */
+            display_unit?: string | null;
             /**
              * Item Id
              * Format: uuid
