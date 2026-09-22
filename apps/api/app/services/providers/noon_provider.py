@@ -91,9 +91,25 @@ from app.services.providers.aggregator_base import (
 
 logger = logging.getLogger(__name__)
 
-#: UAE VAT on marketplace commission. noon reports commission VAT-exclusive; this
-#: grosses it up so `commission_amount` is VAT-inclusive like the other channels.
-_COMMISSION_VAT_RATE = Decimal("0.05")
+#: UAE VAT on noon's per-order fees. noon reports them VAT-exclusive; this grosses
+#: them up so commission, payment and cancellation fees are VAT-inclusive like the
+#: other channels and like the `orders.*_fee` contract. noon exposes no per-fee VAT
+#: in this feed (only the sale's `total_vat`), so the flat 5% is the basis.
+_FEE_VAT_RATE = Decimal("0.05")
+
+
+def _fee_incl_vat(value: Decimal | None) -> Decimal | None:
+    """A noon per-order fee grossed up to VAT-inclusive, None-preserving.
+
+    The same treatment `_commission_from` gives commission, applied to the
+    itemised payment / cancellation fees so they too land VAT-inclusive on the
+    order — `OrderEconomics.net` subtracts them verbatim as the real cost, and
+    booking them ex-VAT understated noon's take by the 5% fee VAT. None stays
+    None (unknown, not zero)."""
+    if value is None:
+        return None
+    return _money(value * (Decimal(1) + _FEE_VAT_RATE))
+
 
 _RMS = "https://restaurant.noon.partners"
 _ORDER_STATEMENT_URL = f"{_RMS}/_food-restaurant/finance/statement/orders"
@@ -1295,11 +1311,15 @@ class NoonClient(BaseAggregatorClient):
             gross_sales=gross,
             net_sales=gross,
             commission_amount=self._commission_from(row),
-            payment_fee=_abs(_num(_first(row, "payment_fee", "paymentFee"))),
+            # VAT-inclusive, like commission: noon reports these ex-VAT and the
+            # order contract is inclusive (see `_fee_incl_vat`).
+            payment_fee=_fee_incl_vat(
+                _abs(_num(_first(row, "payment_fee", "paymentFee")))
+            ),
             delivery_fee=_abs(_num(_first(row, "delivery_fee", "deliveryFee"))),
             vat_amount=_abs(_num(_first(row, "total_vat", "totalVat"))),
-            cancellation_fee=_abs(
-                _num(_first(row, "cancellation_fee", "cancellationFee"))
+            cancellation_fee=_fee_incl_vat(
+                _abs(_num(_first(row, "cancellation_fee", "cancellationFee")))
             ),
             refund_amount=refund,
             net_payable=_num(_first(row, "net_payable", "netPayable")),
@@ -1352,7 +1372,7 @@ class NoonClient(BaseAggregatorClient):
         value = abs(fees_exc_vat) - other
         if value <= 0:
             return Decimal(0)
-        return _money(value * (Decimal(1) + _COMMISSION_VAT_RATE))
+        return _money(value * (Decimal(1) + _FEE_VAT_RATE))
 
     #: Merchant-charged lines on noon's Tax Invoice that the PER-ORDER settlement
     #: feed never carries — `_statement_lines_from_order_row` emits only gross,

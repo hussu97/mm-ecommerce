@@ -624,6 +624,17 @@ class TestMergeOmsIntoRms:
         merged = _merge_oms_into_rms(self._oms(), self._rms())
         assert merged.net_payable == Decimal("35.37")
 
+    def test_payment_fee_is_grossed_to_vat_inclusive(self):
+        """noon reports the payment fee VAT-EXCLUSIVE (0.5); the order contract is
+        VAT-inclusive like every other channel, so it is grossed up by 5% to 0.53.
+        Booking it ex-VAT understated noon's take (see _fee_incl_vat)."""
+        merged = _merge_oms_into_rms(self._oms(), self._rms())
+        assert merged.payment_fee == Decimal("0.53")  # 0.5 * 1.05
+
+    def test_cancellation_fee_is_grossed_to_vat_inclusive(self):
+        rms = _CLIENT._order_from({**_RMS_ROW, "cancellation_fee": "2.0"})
+        assert rms.cancellation_fee == Decimal("2.10")  # 2.0 * 1.05
+
     def test_placed_at_comes_from_oms(self):
         merged = _merge_oms_into_rms(self._oms(), self._rms())
         assert merged.placed_at == datetime(2026, 4, 21, 22, 17, 14)
