@@ -562,6 +562,7 @@ _ORDER_WITH_TRACES = {
                     "houseNumber": "36 , Multibank",
                     "unitNumber": "36 ",
                     "buildingNumber": "",
+                    "point": {"latitude": 25.1872, "longitude": 55.2636},
                 },
             }
         ]
@@ -664,6 +665,8 @@ def test_customer_address_from_recipient_info():
     # Trailing space trimmed; empty buildingNumber dropped entirely.
     assert addr["unit"] == "36"
     assert "building" not in addr
+    assert addr["latitude"] == 25.1872
+    assert addr["longitude"] == 55.2636
     # Existing customer fields are untouched.
     assert order.customer_name == "J4P773781744"
     assert order.customer_phone == "+971521461759"

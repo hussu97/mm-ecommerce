@@ -431,10 +431,11 @@ async def _address_for_upsert(
         return None, None
 
     if address_geocoding.has_coordinate_values(incoming_address):
+        address = _merge_address_without_redaction(existing_address, incoming_address)
         return (
-            incoming_address,
+            address,
             "provided"
-            if address_geocoding.coordinates(incoming_address) is not None
+            if address_geocoding.coordinates(address) is not None
             else "outside_uae",
         )
 

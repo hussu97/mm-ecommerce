@@ -927,22 +927,29 @@ def _customer_address(row: dict[str, Any]) -> dict | None:
     """The delivery address from `recipientInfo`, structured with what is present.
 
     `addressName`/`addressLocation` carry the full delivery-address string; the
-    house/unit/building numbers are the finer parts. Empty and masked-away parts
-    are dropped (Keeta masks the address once an order is delivered, so a live
-    order is rich and a settled one may carry only fragments — we store whatever
-    the portal still exposes). None when there is no `recipientInfo` at all, or
-    nothing readable inside it.
+    house/unit/building numbers are the finer parts; and ``point`` is Keeta's
+    native delivery pin. Empty and masked-away parts are dropped (Keeta masks
+    the address once an order is delivered, so a live order is rich and a
+    settled one may carry only fragments — we store whatever the portal still
+    exposes). None when there is no `recipientInfo` at all, or nothing readable
+    inside it.
     """
     recipient = row.get("recipientInfo")
     if not isinstance(recipient, dict):
         return None
+    point = recipient.get("point")
+    point = point if isinstance(point, dict) else {}
     parts = {
         "address": _first_text(recipient, ("addressName", "addressLocation")),
         "building": _first_text(recipient, ("buildingNumber",)),
         "unit": _first_text(recipient, ("unitNumber",)),
         "house": _first_text(recipient, ("houseNumber",)),
+        "latitude": _get_value(point, "latitude"),
+        "longitude": _get_value(point, "longitude"),
     }
-    present = {key: value for key, value in parts.items() if value}
+    present = {
+        key: value for key, value in parts.items() if value is not None and value != ""
+    }
     return present or None
 
 

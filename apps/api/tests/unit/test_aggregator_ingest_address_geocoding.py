@@ -85,3 +85,26 @@ async def test_geocoded_coordinates_survive_a_late_masked_keeta_address(monkeypa
         "longitude": 55.2708,
     }
     assert status == "resolved"
+
+
+async def test_provider_pin_updates_coordinates_without_replacing_visible_address():
+    address, status = await ingest._address_for_upsert(
+        "keeta",
+        {"address": "***", "latitude": 25.2048, "longitude": 55.2708},
+        {
+            "address": "Jumeirah 1",
+            "city": "Dubai",
+            "latitude": 25.2,
+            "longitude": 55.2,
+        },
+        "resolved",
+        retry_geocoding=True,
+    )
+
+    assert address == {
+        "address": "Jumeirah 1",
+        "city": "Dubai",
+        "latitude": 25.2048,
+        "longitude": 55.2708,
+    }
+    assert status == "provided"
