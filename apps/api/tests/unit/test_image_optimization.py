@@ -108,6 +108,35 @@ def test_exif_rotation_is_applied_before_the_tag_is_dropped():
     assert Image.open(io.BytesIO(out)).size == (600, 1200)
 
 
+def _heic(size: tuple[int, int], colour=(180, 40, 60), quality: int = 60) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, colour).save(buf, "HEIF", quality=quality)
+    return buf.getvalue()
+
+
+def test_iphone_heic_is_decoded_and_stored_as_jpeg():
+    """An iPhone's native photo format must not land in the bucket as .heic —
+    browsers cannot render it. pillow-heif decodes it and it comes out JPEG."""
+    raw = _heic((3000, 2000))
+    out, content_type = optimize_image(raw, "image/heic")
+
+    assert content_type == "image/jpeg"
+    assert extension_for(content_type) == ".jpg"
+    assert Image.open(io.BytesIO(out)).format == "JPEG"
+    assert max(Image.open(io.BytesIO(out)).size) == MAX_DIMENSION
+
+
+def test_heic_is_never_kept_even_when_its_jpeg_reencode_is_larger():
+    """A small flat HEIC can compress tighter than the JPEG we make from it. The
+    'keep whichever is smaller' shortcut must not apply to a non-web type, or we
+    would store a .heic no browser can show."""
+    raw = _heic((64, 64))
+    out, content_type = optimize_image(raw, "image/heic")
+
+    assert content_type == "image/jpeg"
+    assert Image.open(io.BytesIO(out)).format == "JPEG"
+
+
 def test_a_file_the_encoder_cannot_improve_is_returned_untouched():
     raw = _jpeg((120, 120), quality=20)
     out, content_type = optimize_image(raw, "image/jpeg")

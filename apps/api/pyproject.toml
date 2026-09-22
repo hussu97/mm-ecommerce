@@ -31,6 +31,11 @@ dependencies = [
     "webauthn>=2.5.0",
     # Re-encodes admin image uploads before they reach R2 (app/core/images.py).
     "pillow>=11.0.0",
+    # Teaches Pillow to decode HEIC/HEIF so an iPhone photo uploaded raw (from
+    # the Files app / iCloud Drive, where iOS does NOT auto-transcode to JPEG the
+    # way Safari's Photos picker does) can be re-encoded to JPEG like any other
+    # upload. Ships manylinux wheels with libheif bundled, so no system package.
+    "pillow-heif>=0.18.0",
     # Validates phone numbers server-side (app/core/phone.py). The Python port
     # of Google's libphonenumber, carrying the same metadata the storefront's
     # `PhoneInput` already runs — so the untrusted side of the wire stops being

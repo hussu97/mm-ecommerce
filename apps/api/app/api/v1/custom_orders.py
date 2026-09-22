@@ -67,8 +67,18 @@ MAX_RANGE_DAYS = 400
 
 #: The reference photos an enquiry may carry. Image types the storefront can
 #: produce from a camera or a photo library, capped at the same 5 MB the admin
-#: uploader uses.
-_ENQUIRY_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+#: uploader uses. HEIC/HEIF are here because that is an iPhone's native photo
+#: format: Safari transcodes it to JPEG for a Photos-library pick, but a raw
+#: .heic from the Files app / iCloud Drive arrives as-is. `optimize_image`
+#: re-encodes both to JPEG (pillow-heif), so nothing browser-unrenderable is
+#: ever stored.
+_ENQUIRY_IMAGE_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
 _ENQUIRY_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 

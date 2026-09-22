@@ -14,6 +14,25 @@ import io
 
 from PIL import Image, ImageOps
 
+# Register HEIC/HEIF decoding into Pillow. An iPhone's default photo format is
+# HEIC; Safari transcodes it to JPEG when picked from the Photos library, but a
+# raw .heic uploaded from the Files app / iCloud Drive arrives undecodable to
+# stock Pillow. With the opener registered, `Image.open` reads it and the normal
+# re-encode below turns it into a JPEG, so callers never store a .heic that a
+# browser cannot render.
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except Exception:  # pragma: no cover - absence just means no HEIC decode
+    pass
+
+# The declared upload types that are already browser-renderable as-is. optimize
+# only keeps the original bytes for these; anything else (HEIC) must come out as
+# the re-encoded JPEG/PNG even if that is larger, or a browser gets a file it
+# cannot show.
+_WEB_SAFE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+
 # Wide enough for a full-bleed banner on a 2x desktop, and comfortably above any
 # slot the storefront actually renders a product into.
 MAX_DIMENSION = 1600
@@ -82,8 +101,10 @@ def optimize_image(data: bytes, content_type: str) -> tuple[bytes, str]:
     optimized = buf.getvalue()
 
     # An already-tuned asset can come out larger than it went in. Keep whichever
-    # is smaller, and keep the original's type when we keep the original.
-    if len(optimized) >= len(data):
+    # is smaller, and keep the original's type when we keep the original — but
+    # only when that original is a browser-renderable type. A HEIC that happens
+    # to be smaller than its JPEG re-encode must still be stored as the JPEG.
+    if len(optimized) >= len(data) and content_type in _WEB_SAFE_TYPES:
         return data, content_type
 
     return optimized, out_type
