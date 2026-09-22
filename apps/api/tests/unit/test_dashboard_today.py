@@ -36,6 +36,9 @@ class _Result:
     def all(self):
         return self._rows
 
+    def one(self):
+        return self._rows[0]
+
 
 class _DB:
     """Answers each `execute` from a queue of prepared result rows."""
@@ -114,6 +117,36 @@ async def test_range_bounds_span_and_prior_window(monkeypatch):
     assert prior_end == end - timedelta(days=7)
 
 
+async def test_explicit_today_uses_the_same_elapsed_window_as_live_view(monkeypatch):
+    """The Today chip cannot compare a partial day against all of yesterday."""
+
+    async def _tz(_db):
+        return ZoneInfo("Asia/Dubai")
+
+    now = datetime(2026, 8, 25, 10, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(mod.business_day_service, "resolve_timezone", _tz)
+    monkeypatch.setattr(
+        mod.business_day_service, "shop_today", lambda tz=None: date(2026, 8, 25)
+    )
+    monkeypatch.setattr(mod, "utcnow", lambda: now)
+
+    (
+        from_date,
+        to_date,
+        _tzn,
+        start,
+        end,
+        prior_start,
+        prior_end,
+    ) = await mod._range_bounds(_DB([]), "2026-08-25", "2026-08-25")
+
+    assert from_date == date(2026, 8, 25)
+    assert to_date == "2026-08-25"
+    assert end == now
+    assert prior_start == start - timedelta(days=1)
+    assert prior_end == now - timedelta(days=1)
+
+
 async def test_range_bounds_rejects_a_half_range(monkeypatch):
     async def _tz(_db):
         return ZoneInfo("Asia/Dubai")
@@ -140,6 +173,11 @@ async def test_range_bounds_rejects_a_half_range(monkeypatch):
 )
 def test_growth_guards_the_off_nothing_case(current, prior, expected):
     assert mod._growth(current, prior) == expected
+
+
+async def test_fee_totals_round_known_fees_and_flag_pending_costs():
+    out = await mod._fee_totals(_DB([_Result([("13.456", 1)])]), start=_A, end=_B)
+    assert out == (13.46, True)
 
 
 # ── breakdown maps labels and rounds money once ───────────────────────────────

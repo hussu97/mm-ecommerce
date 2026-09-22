@@ -618,8 +618,17 @@ export interface DashboardSummary {
   revenue: number;
   avg_order_value: number;
   delivered: number;
+  /** Known VAT-inclusive cost of sale for the selected window. */
+  total_fees: number;
+  /** Some orders have not settled their main marketplace or courier charge. */
+  fees_pending: boolean;
+  /** Known fees as a percentage of revenue; a floor when fees_pending is true. */
+  fee_rate: number;
   orders_growth: number;
   revenue_growth: number;
+  avg_order_value_growth: number;
+  delivered_growth: number;
+  total_fees_growth: number;
 }
 
 export interface DashboardOps {

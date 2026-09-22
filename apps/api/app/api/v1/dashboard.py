@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Integer, Text, and_, case, cast, func, select
+from sqlalchemy import Integer, Text, and_, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
@@ -329,6 +329,76 @@ async def _window_totals(
         )
     ).one()
     return int(result[0]), float(money(result[1]))
+
+
+async def _fee_totals(
+    db: AsyncSession,
+    *,
+    start,
+    end,
+    statuses=None,
+    couriers=None,
+    branch_ids=None,
+    legal_entity_ids=None,
+    category_ids=None,
+) -> tuple[float, bool]:
+    """Known total cost of sale and whether the figure is still incomplete.
+
+    This is the headline equivalent of each courier tile's fee rate: every
+    VAT-inclusive order fee plus an owned delivery's invoiced cost, falling back
+    to its quote. A missing marketplace commission or courier amount is not zero;
+    it means the displayed total is a floor, and is surfaced as such to the user.
+    """
+    courier_cost = func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost, 0)
+    fee_total = func.coalesce(
+        func.sum(
+            func.coalesce(Order.aggregator_fee, 0)
+            + func.coalesce(Order.cancellation_fee, 0)
+            + func.coalesce(Order.marketing_fee, 0)
+            + courier_cost
+            + func.coalesce(Order.payment_fee, 0)
+        ),
+        0,
+    )
+    missing_dominant_fee = or_(
+        and_(
+            Order.source == OrderSourceEnum.AGGREGATOR.value,
+            Order.aggregator_fee.is_(None),
+        ),
+        and_(
+            Order.source == OrderSourceEnum.ONLINE.value,
+            Order.delivery_method == DeliveryMethodEnum.DELIVERY.value,
+            OrderDelivery.cost_total.is_(None),
+            OrderDelivery.quoted_cost.is_(None),
+        ),
+    )
+    result = (
+        await db.execute(
+            select(
+                fee_total,
+                func.count(case((missing_dominant_fee, 1))).label("pending"),
+            )
+            .select_from(Order)
+            .outerjoin(OrderDelivery, OrderDelivery.order_id == Order.id)
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                order_query.active_or_fulfilled_clause(),
+                *(
+                    c
+                    for c in (
+                        Order.status.in_(statuses) if statuses else None,
+                        order_query.courier_clause(couriers),
+                        _branch_clause(branch_ids),
+                        _legal_entity_clause(legal_entity_ids),
+                        order_query.category_clause(category_ids),
+                    )
+                    if c is not None
+                ),
+            )
+        )
+    ).one()
+    return float(money(result[0])), int(result[1]) > 0
 
 
 async def _series(
@@ -741,9 +811,11 @@ async def _range_bounds(
     Returns `(from_date, to_date, tz_name, start, end, prior_start, prior_end)`.
 
     With no dates it is the live trading day exactly as before — midnight-to-now,
-    grown against the same elapsed clock window yesterday, `to_date` None. With a
-    range it is [from 00:00, to 23:59:59.999999] in the shop's timezone, grown
-    against the immediately-preceding window of the same number of days.
+    grown against the same elapsed clock window yesterday, `to_date` None. The
+    explicit Today preset uses that same live window, so it cannot show a
+    different percentage from the default dashboard. Other ranges are [from
+    00:00, to 23:59:59.999999] in the shop's timezone, grown against the
+    immediately-preceding window of the same number of days.
     """
     tz = await business_day_service.resolve_timezone(db)
     if not date_from and not date_to:
@@ -775,6 +847,17 @@ async def _range_bounds(
     start = datetime(d_from.year, d_from.month, d_from.day, tzinfo=tz).astimezone(
         timezone.utc
     )
+    if d_from == d_to == business_day_service.shop_today(tz):
+        now = utcnow()
+        return (
+            d_from,
+            d_to.isoformat(),
+            str(tz),
+            start,
+            now,
+            start - timedelta(days=1),
+            now - timedelta(days=1),
+        )
     # End = the last instant of `to`'s local day (start of the day after, minus a
     # microsecond) so the inclusive `created_at <= end` filters own the whole day.
     end_local = datetime(d_to.year, d_to.month, d_to.day, tzinfo=tz) + timedelta(days=1)
@@ -863,6 +946,26 @@ async def dashboard_today(
         legal_entity_ids=entities,
         category_ids=cats,
     )
+    fees_cur, fees_pending = await _fee_totals(
+        db,
+        start=start,
+        end=end,
+        statuses=picked,
+        couriers=carriers,
+        branch_ids=branches,
+        legal_entity_ids=entities,
+        category_ids=cats,
+    )
+    fees_prev, _fees_prev_pending = await _fee_totals(
+        db,
+        start=prior_start,
+        end=prior_end,
+        statuses=picked,
+        couriers=carriers,
+        branch_ids=branches,
+        legal_entity_ids=entities,
+        category_ids=cats,
+    )
 
     delivered_clause = order_query.courier_clause(carriers)
     delivered = await _count(
@@ -875,14 +978,33 @@ async def dashboard_today(
             *dim_clauses,
         ),
     )
+    delivered_prev = await _count(
+        db,
+        select(func.count(Order.id)).where(
+            Order.created_at >= prior_start,
+            Order.created_at <= prior_end,
+            order_query.fulfilled_clause(),
+            *([delivered_clause] if delivered_clause is not None else []),
+            *dim_clauses,
+        ),
+    )
 
     summary = DashboardSummary(
         orders=orders_cur,
         revenue=revenue_cur,
         avg_order_value=round(revenue_cur / orders_cur, 2) if orders_cur else 0.0,
         delivered=delivered,
+        total_fees=fees_cur,
+        fees_pending=fees_pending,
+        fee_rate=round(fees_cur / revenue_cur * 100, 1) if revenue_cur else 0.0,
         orders_growth=_growth(orders_cur, orders_prev),
         revenue_growth=_growth(revenue_cur, revenue_prev),
+        avg_order_value_growth=_growth(
+            revenue_cur / orders_cur if orders_cur else 0.0,
+            revenue_prev / orders_prev if orders_prev else 0.0,
+        ),
+        delivered_growth=_growth(delivered, delivered_prev),
+        total_fees_growth=_growth(fees_cur, fees_prev),
     )
 
     # by_status keeps the FULL status spread (cancellations included) regardless

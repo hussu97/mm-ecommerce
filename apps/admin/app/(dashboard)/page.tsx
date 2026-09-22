@@ -23,7 +23,15 @@ import {
   type OrderFilters,
 } from '@/lib/order-filters';
 import { DateRangePresets } from '@/components/orders/DateRangePresets';
-import { formatCurrency, formatTime, formatTimeAgo, cn, interactiveRowClass } from '@/lib/utils';
+import {
+  formatCurrency,
+  formatTime,
+  formatTimeAgo,
+  cn,
+  interactiveRowClass,
+  isoDay,
+  shopTodayAnchor,
+} from '@/lib/utils';
 
 // Recharts is client-only and heavy — lazy-load the pieces the trend charts use,
 // the same pattern the analytics page follows.
@@ -81,6 +89,11 @@ function MetricCard({
   href,
   growth,
   growthTitle,
+  secondaryGrowth,
+  secondaryGrowthLabel,
+  secondaryGrowthTitle,
+  valueDetail,
+  valueSuffix,
   loading,
 }: {
   label: string;
@@ -89,6 +102,11 @@ function MetricCard({
   href: string;
   growth?: Growth;
   growthTitle: string;
+  secondaryGrowth?: Growth;
+  secondaryGrowthLabel?: string;
+  secondaryGrowthTitle?: string;
+  valueDetail?: string;
+  valueSuffix?: string;
   loading?: boolean;
 }) {
   return (
@@ -102,7 +120,17 @@ function MetricCard({
         </span>
         {!loading && <GrowthPill value={growth} title={growthTitle} />}
       </div>
-      <div className="font-display text-2xl text-gray-800 mb-1">{loading ? '—' : value}</div>
+      <div className="flex items-baseline gap-1.5 mb-1">
+        <div className="font-display text-2xl text-gray-800">{loading ? '—' : value}</div>
+        {!loading && valueSuffix && <span className="text-xs font-body text-gray-400">{valueSuffix}</span>}
+      </div>
+      {!loading && valueDetail && <div className="text-[10px] font-body text-gray-400 -mt-0.5 mb-1">{valueDetail}</div>}
+      {!loading && secondaryGrowthLabel && secondaryGrowth !== undefined && secondaryGrowth !== 0 && (
+        <div className="flex items-center gap-1 text-[10px] font-body text-gray-400 -mt-0.5 mb-1">
+          <span>{secondaryGrowthLabel}</span>
+          <GrowthPill value={secondaryGrowth} title={secondaryGrowthTitle ?? growthTitle} />
+        </div>
+      )}
       <div className="text-[11px] font-body uppercase tracking-widest text-gray-400">{label}</div>
     </Link>
   );
@@ -458,8 +486,11 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput]);
 
-  const isLive = !filters.from && !filters.to;
-  const isRange = Boolean(filters.from && filters.to);
+  const shopToday = isoDay(shopTodayAnchor());
+  const isCurrentDay =
+    (!filters.from && !filters.to) || (filters.from === shopToday && filters.to === shopToday);
+  const isRange = Boolean(filters.from && filters.to) && !isCurrentDay;
+  const hasExplicitDates = Boolean(filters.from || filters.to);
   const searching = filters.search.length > 0;
 
   const dashParams = toDashboardParams(filters);
@@ -495,10 +526,10 @@ export default function DashboardPage() {
   // current-day view — a historical range does not move, so polling it is noise.
   useEffect(() => {
     void load();
-    if (!isLive) return;
+    if (!isCurrentDay) return;
     const id = setInterval(() => void load(), REFRESH_MS);
     return () => clearInterval(id);
-  }, [load, isLive]);
+  }, [load, isCurrentDay]);
 
   const s = data?.summary;
   const ops = data?.ops;
@@ -574,7 +605,7 @@ export default function DashboardPage() {
             className="px-3 h-10 border border-gray-300 bg-white text-sm font-body outline-none focus:border-primary"
           />
         </div>
-        {!isLive && (
+        {hasExplicitDates && (
           <button
             onClick={() => patch({ from: '', to: '' })}
             className="h-10 px-3 text-xs font-body uppercase tracking-wider text-gray-500 border border-gray-300 hover:bg-gray-50 transition-colors"
@@ -653,18 +684,24 @@ export default function DashboardPage() {
         />
         <MetricCard
           label={isRange ? 'Orders' : 'Orders Today'}
-          value={String(s?.orders ?? 0)}
+          value={`${s?.orders ?? 0} (${s?.delivered ?? 0} delivered)`}
           icon="receipt_long"
           href={href()}
           growth={s?.orders_growth}
           growthTitle={growthTitle}
+          secondaryGrowth={s?.delivered_growth}
+          secondaryGrowthLabel="Delivered"
+          secondaryGrowthTitle={`Delivered ${growthTitle}`}
           loading={loading}
         />
         <MetricCard
-          label="Delivered"
-          value={String(s?.delivered ?? 0)}
-          icon="check_circle"
-          href={href({ statuses: ['delivered'] })}
+          label="Total Fees"
+          value={formatCurrency(s?.total_fees ?? 0)}
+          valueSuffix={`${s?.fee_rate ?? 0}%${s?.fees_pending ? '+' : ''}`}
+          valueDetail={s?.fees_pending ? '+ fees pending' : undefined}
+          icon="payments"
+          href={href()}
+          growth={s?.total_fees_growth}
           growthTitle={growthTitle}
           loading={loading}
         />
@@ -673,6 +710,7 @@ export default function DashboardPage() {
           value={formatCurrency(s?.avg_order_value ?? 0)}
           icon="trending_up"
           href="/analytics"
+          growth={s?.avg_order_value_growth}
           growthTitle={growthTitle}
           loading={loading}
         />

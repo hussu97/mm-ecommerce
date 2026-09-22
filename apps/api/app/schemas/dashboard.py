@@ -97,10 +97,21 @@ class DashboardSummary(BaseModel):
     avg_order_value: float
     #: Of today's orders, how many have reached `delivered`.
     delivered: int
+    #: Known VAT-inclusive cost of sale: marketplace and payment fees plus the
+    #: courier's invoiced (or quoted) delivery cost.
+    total_fees: float
+    #: Whether some orders still lack their dominant cost, making total_fees and
+    #: fee_rate a floor rather than the final number for the window.
+    fees_pending: bool
+    #: Known total fees as a percentage of revenue.
+    fee_rate: float
     #: Percentage change against the same elapsed window yesterday. `0.0` when
     #: yesterday's figure was zero — there is no growth rate off nothing.
     orders_growth: float
     revenue_growth: float
+    avg_order_value_growth: float
+    delivered_growth: float
+    total_fees_growth: float
 
 
 class DashboardOps(BaseModel):

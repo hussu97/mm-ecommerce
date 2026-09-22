@@ -12263,8 +12263,16 @@ export interface components {
         DashboardSummary: {
             /** Avg Order Value */
             avg_order_value: number;
+            /** Avg Order Value Growth */
+            avg_order_value_growth: number;
             /** Delivered */
             delivered: number;
+            /** Delivered Growth */
+            delivered_growth: number;
+            /** Fee Rate */
+            fee_rate: number;
+            /** Fees Pending */
+            fees_pending: boolean;
             /** Orders */
             orders: number;
             /** Orders Growth */
@@ -12273,6 +12281,10 @@ export interface components {
             revenue: number;
             /** Revenue Growth */
             revenue_growth: number;
+            /** Total Fees */
+            total_fees: number;
+            /** Total Fees Growth */
+            total_fees_growth: number;
         };
         /** DashboardTodayResponse */
         DashboardTodayResponse: {

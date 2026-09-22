@@ -9134,9 +9134,25 @@
             "title": "Avg Order Value",
             "type": "number"
           },
+          "avg_order_value_growth": {
+            "title": "Avg Order Value Growth",
+            "type": "number"
+          },
           "delivered": {
             "title": "Delivered",
             "type": "integer"
+          },
+          "delivered_growth": {
+            "title": "Delivered Growth",
+            "type": "number"
+          },
+          "fee_rate": {
+            "title": "Fee Rate",
+            "type": "number"
+          },
+          "fees_pending": {
+            "title": "Fees Pending",
+            "type": "boolean"
           },
           "orders": {
             "title": "Orders",
@@ -9153,6 +9169,14 @@
           "revenue_growth": {
             "title": "Revenue Growth",
             "type": "number"
+          },
+          "total_fees": {
+            "title": "Total Fees",
+            "type": "number"
+          },
+          "total_fees_growth": {
+            "title": "Total Fees Growth",
+            "type": "number"
           }
         },
         "required": [
@@ -9160,8 +9184,14 @@
           "revenue",
           "avg_order_value",
           "delivered",
+          "total_fees",
+          "fees_pending",
+          "fee_rate",
           "orders_growth",
-          "revenue_growth"
+          "revenue_growth",
+          "avg_order_value_growth",
+          "delivered_growth",
+          "total_fees_growth"
         ],
         "title": "DashboardSummary",
         "type": "object"
