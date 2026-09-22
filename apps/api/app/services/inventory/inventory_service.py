@@ -1578,18 +1578,19 @@ async def adjust_cost(
         business_date=business_date,
         notes=notes,
         creator_id=user.id,
+        # Seed the collection so the line append does not trigger an implicit
+        # selectin load on the flushed transaction (MissingGreenlet under async).
+        items=[
+            InventoryTransactionItem(
+                item_id=item_id,
+                quantity=_q(quantity),
+                unit="storage",
+                conversion_factor=Decimal("1"),
+                unit_cost=_c(new_average_cost),
+            )
+        ],
     )
     db.add(transaction)
-    await db.flush()
-    transaction.items.append(
-        InventoryTransactionItem(
-            item_id=item_id,
-            quantity=_q(quantity),
-            unit="storage",
-            conversion_factor=Decimal("1"),
-            unit_cost=_c(new_average_cost),
-        )
-    )
     await db.flush()
     await post_transaction(db, transaction=transaction, user=user)
 

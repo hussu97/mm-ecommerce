@@ -733,6 +733,21 @@ class CostAdjustmentResponse(BaseModel):
     notes: str | None
 
 
+class ResetCostFromRecipeRequest(BaseModel):
+    notes: str | None = None
+
+
+class ResetCostFromRecipeResponse(BaseModel):
+    item_id: str
+    #: The recipe's current cost per ingredient unit (the FIFO cost of its
+    #: expanded ingredients) — the figure the revaluation was based on.
+    recipe_unit_cost: Decimal
+    #: That cost expressed per storage unit, which is what stock levels carry.
+    storage_unit_cost: Decimal
+    levels_adjusted: int
+    adjustments: list[CostAdjustmentResponse]
+
+
 class QuantityAdjustmentRequest(BaseModel):
     branch_id: UUID
     item_id: UUID

@@ -18,6 +18,7 @@ import { Badge, Spinner } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
 import { RecipeButton } from '@/components/inventory/RecipeButton';
+import { useConfirm, useToast } from '@/components/ui/feedback';
 import { formatCost, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
@@ -31,6 +32,33 @@ export default function ItemsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [pivot, setPivot] = useState<StockPivot>(new Map());
   const [costItem, setCostItem] = useState<InventoryItem | null>(null);
+  const confirm = useConfirm();
+  const toast = useToast();
+
+  // Revalue every on-hand unit of a made item to its current recipe cost — the
+  // FIFO cost of its ingredients. For a produced/semi-finished good whose stock
+  // entered at zero or a stale cost, this restates it to what a fresh production
+  // would carry, across every branch, leaving a cost-adjustment trail.
+  const resetCostFromRecipe = async (item: InventoryItem, reload: () => void) => {
+    if (
+      !(await confirm({
+        title: 'Reset cost from recipe',
+        message: `Revalue all on-hand ${item.name} to its current recipe cost (the FIFO cost of its ingredients), across every branch? This posts a cost adjustment.`,
+        confirmLabel: 'Reset cost',
+      }))
+    )
+      return;
+    try {
+      const result = await inventoryApi.resetCostFromRecipe(item.id);
+      const branches = result.levels_adjusted === 1 ? 'branch' : 'branches';
+      toast.success(
+        `${item.name} revalued to ${formatCost(Number(result.storage_unit_cost))}/unit across ${result.levels_adjusted} ${branches}.`,
+      );
+      reload();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not reset the cost.');
+    }
+  };
   const [categoryId, setCategoryId] = useState('');
   const [kind, setKind] = useState('');
   const [trackingMode, setTrackingMode] = useState('');
@@ -222,12 +250,15 @@ export default function ItemsPage() {
           </div>
         );
       }}
-      rowActions={(item) => (
+      rowActions={(item, reload) => (
         <>
           {MADE_KINDS.has(item.kind) && (
             <RecipeButton ownerId={item.id} ownerKind="inventory_item" ownerLabel={item.name}>
               {(open) => <RowAction onClick={open}>Recipe</RowAction>}
             </RecipeButton>
+          )}
+          {MADE_KINDS.has(item.kind) && (
+            <RowAction onClick={() => resetCostFromRecipe(item, reload)}>Reset cost</RowAction>
           )}
           {item.tracking_mode !== 'phantom' && (
             <RowAction onClick={() => setCostItem(item)}>Cost</RowAction>
