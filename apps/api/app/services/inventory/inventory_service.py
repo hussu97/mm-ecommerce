@@ -1535,7 +1535,7 @@ async def adjust_cost(
     item_id: uuid.UUID,
     warehouse_id: uuid.UUID | None,
     new_average_cost: Decimal,
-    user: User,
+    user: User | None = None,
     notes: str | None = None,
 ) -> dict:
     """
@@ -1577,7 +1577,7 @@ async def adjust_cost(
         warehouse_id=level.warehouse_id,
         business_date=business_date,
         notes=notes,
-        creator_id=user.id,
+        creator_id=user.id if user else None,
         # Seed the collection so the line append does not trigger an implicit
         # selectin load on the flushed transaction (MissingGreenlet under async).
         items=[
@@ -1602,7 +1602,7 @@ async def adjust_cost(
         "new_average_cost": new_average_cost,
         # What the revaluation did to the books, which is the point of it.
         "value_change": (new_average_cost - previous) * quantity,
-        "adjusted_by": user.display_name or user.email,
+        "adjusted_by": (user.display_name or user.email) if user else "system",
         "notes": notes,
     }
 
