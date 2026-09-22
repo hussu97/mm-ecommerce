@@ -216,8 +216,9 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
         error={errors.approxKg}
       />
 
-      {/* Inspiration photos — up to four, from the camera or the photo library.
-          `capture` hints the rear camera on mobile without blocking the library. */}
+      {/* Inspiration photos — up to four, chosen from the device's photo library
+          or files. No `capture`, so mobile opens the library/file picker rather
+          than forcing the camera. */}
       <div>
         <label className="block text-xs font-medium uppercase tracking-wider text-gray-600 mb-1.5">
           {c.images_label ?? (locale === 'ar' ? 'صور للإلهام — اختياري' : 'Inspiration photos — optional')}
@@ -252,7 +253,6 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
           ref={fileInput}
           type="file"
           accept="image/jpeg,image/png,image/webp"
-          capture="environment"
           multiple
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}
