@@ -182,12 +182,13 @@ body {
     <span class="section-title">{{ section.title }}</span>
     <span class="section-rule"></span>
   </div>
-  {% if section.columns %}
+  {% for block in section.blocks %}
+  {% if block.columns %}
   <div class="colhead">
-    {% for col in section.columns %}<span class="cell">{{ col }}</span>{% endfor %}
+    {% for col in block.columns %}<span class="cell">{{ col }}</span>{% endfor %}
   </div>
   {% endif %}
-  {% for item in section.items %}
+  {% for item in block.items %}
   <div class="item">
     {% if item.image_data_uri %}<img class="thumb" src="{{ item.image_data_uri }}" alt="" />{% endif %}
     <div class="body">
@@ -202,17 +203,17 @@ body {
       {% endif %}
     </div>
     <div class="price">
-      {% if section.columns and item.column_prices %}
+      {% if block.columns and item.column_prices %}
       <div class="cells">
         {% for p in item.column_prices %}
         <span class="cell {{ 'empty' if not p else '' }}">{{ p or '·' }}</span>
         {% endfor %}
       </div>
-      {% elif section.columns and item.single_price %}
-      {# One price in a sized section: centre it across the whole grid so it
+      {% elif block.columns and item.single_price %}
+      {# One price in a sized block: centre it across the whole grid so it
          stays inside the columns instead of floating past them. #}
       <div class="cells">
-        <span class="cell" style="width: {{ section.columns|length * 16 }}mm">{{ item.single_price }}</span>
+        <span class="cell" style="width: {{ block.columns|length * 16 }}mm">{{ item.single_price }}</span>
       </div>
       {% elif item.single_price %}
       {% if item.price_prefix %}<span class="pfx">{{ item.price_prefix }}</span>{% endif %}
@@ -220,6 +221,7 @@ body {
       {% endif %}
     </div>
   </div>
+  {% endfor %}
   {% endfor %}
 </div>
 {% endfor %}

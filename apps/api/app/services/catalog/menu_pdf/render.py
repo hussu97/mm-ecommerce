@@ -89,9 +89,10 @@ async def prepare_menu_assets(document: MenuDocument) -> None:
 
     wants: dict[str, int] = {}
     for section in document.sections:
-        for item in section.items:
-            if item.image_url:
-                wants[item.image_url] = _THUMB_MAX
+        for block in section.blocks:
+            for item in block.items:
+                if item.image_url:
+                    wants[item.image_url] = _THUMB_MAX
     if document.logo_url:
         wants[document.logo_url] = _LOGO_MAX
 
@@ -108,9 +109,10 @@ async def prepare_menu_assets(document: MenuDocument) -> None:
     by_url = dict(results)
 
     for section in document.sections:
-        for item in section.items:
-            if item.image_url:
-                item.image_data_uri = by_url.get(item.image_url)
+        for block in section.blocks:
+            for item in block.items:
+                if item.image_url:
+                    item.image_data_uri = by_url.get(item.image_url)
     if document.logo_url:
         document.logo_data_uri = by_url.get(document.logo_url)
 

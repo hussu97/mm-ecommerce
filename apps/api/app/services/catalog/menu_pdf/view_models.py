@@ -32,11 +32,25 @@ class MenuItem:
 
 
 @dataclass
+class MenuColumnBlock:
+    """One run of items inside a section that share a size signature.
+
+    A block prints its `columns` (e.g. ``S / M / L``) as a single header row and
+    every item's `column_prices` lines up under it. `columns is None` is a plain
+    block — single-price rows or lone-variant chips — with no header. Splitting a
+    section into blocks is what lets a "Hot Coffee" section carry both an S/M/L
+    grid and a Single/Double grid without repeating the sizes on every line.
+    """
+
+    columns: list[str] | None
+    items: list[MenuItem]
+
+
+@dataclass
 class MenuSection:
     title: str
     icon_key: str
-    items: list[MenuItem]
-    columns: list[str] | None  # size-column headers, when the section aligns
+    blocks: list[MenuColumnBlock]
 
 
 @dataclass

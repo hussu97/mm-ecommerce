@@ -11,7 +11,6 @@ does).
 from __future__ import annotations
 
 import uuid
-from collections import Counter
 from decimal import Decimal
 from typing import Any
 
@@ -25,13 +24,20 @@ from app.services.catalog import menu_group_service, product_service
 from app.services.orders import tax_identity_service
 
 from .icons import icon_key_for
-from .theme import theme_for_entity_reference
-from .view_models import MenuDocument, MenuItem, MenuSection, Variant
+from .theme import MELTING_MOMENTS_THEME, Theme, theme_for_entity_reference
+from .view_models import MenuColumnBlock, MenuDocument, MenuItem, MenuSection, Variant
 
-# A section prints an aligned size-column grid (S/M/L) instead of inline chips
-# only when the sizes are shared enough to line up — otherwise the grid is mostly
-# blanks. Below this share of the section's variant items, fall back to inline.
-_COLUMN_SHARE_THRESHOLD = 0.6
+# Menu-PDF-only brand presentation, keyed by legal-entity `reference`. The Barsha
+# counter is booked under the Najm (Attibassi) trade licence for VAT, but its
+# *menu* trades as "Melting Moments Cafe" with the Melting Moments look. This is a
+# presentation override on the printed menu alone — the entity row is untouched,
+# so receipts and the VAT return keep the legal Attibassi identity.
+_MM_CAFE_LOGO = (
+    "https://storage.googleapis.com/mm-product-images/logos/melting-moments-cafe.png"
+)
+_MENU_BRAND_OVERRIDES: dict[str, tuple[str, str, Theme]] = {
+    "najm": ("Melting Moments Cafe", _MM_CAFE_LOGO, MELTING_MOMENTS_THEME),
+}
 
 
 _STRINGS = {
@@ -179,33 +185,63 @@ def _build_item(product: Product, lang: str) -> MenuItem:
     )
 
 
-def _apply_column_layout(section: MenuSection) -> None:
-    """Give the section an aligned size-column grid when its items line up.
+def _signature(item: MenuItem) -> tuple[str, ...] | None:
+    """The item's size set as an ordered label tuple, or None for a plain row."""
+    return tuple(v.label for v in item.variants) if item.variants else None
 
-    The reference coffee menu lists S/M/L once as column headers and prints each
-    drink's three prices under them. That only reads well when the drinks share a
-    size set — so we take the most common variant-label tuple and use it as the
-    columns iff enough of the section's variant items match it; the rest keep
-    their inline chips.
+
+def _build_blocks(items: list[MenuItem]) -> list[MenuColumnBlock]:
+    """Cluster a section's items so each unique size set prints one shared header.
+
+    The reference coffee menu lists ``S / M / L`` once as column headers and
+    prints each drink's prices under them. When a section mixes size sets — some
+    drinks S/M/L, some Single/Double — every distinct set gets its own header
+    block instead of repeating the sizes on every line (the standardisation the
+    hot-coffee menu wants). Blocks keep first-appearance order; single-price and
+    lone-variant items collapse into one plain (header-less) block.
+
+    A size set that is a strict subset of exactly one other set is folded into
+    that superset's block — an M/L drink aligns under the S/M/L header with the S
+    cell left blank — rather than printing a near-duplicate header of its own.
     """
-    variant_items = [it for it in section.items if it.variants]
-    if len(variant_items) < 2:
-        return
-    tuples = Counter(tuple(v.label for v in it.variants) for it in variant_items)
-    best, count = tuples.most_common(1)[0]
-    if len(best) < 2 or count / len(variant_items) < _COLUMN_SHARE_THRESHOLD:
-        return
-    columns = list(best)
-    section.columns = columns
-    col_set = set(columns)
-    # Align any item whose sizes are a *subset* of the columns — an item priced
-    # only M/L in an S/M/L section fills those two cells and leaves S blank —
-    # rather than only an exact match, which used to drop such an item onto the
-    # single-price path and float its number past the grid.
-    for it in section.items:
-        if it.variants and {v.label for v in it.variants} <= col_set:
-            by_label = {v.label: v.price for v in it.variants}
-            it.column_prices = [by_label.get(lbl) for lbl in columns]
+    order: list[tuple[str, ...] | None] = []
+    groups: dict[tuple[str, ...] | None, list[MenuItem]] = {}
+    for it in items:
+        sig = _signature(it)
+        if sig not in groups:
+            groups[sig] = []
+            order.append(sig)
+        groups[sig].append(it)
+
+    sized = [s for s in order if s is not None and len(s) >= 2]
+    fold: dict[tuple[str, ...], tuple[str, ...]] = {}
+    for s in sized:
+        supersets = [o for o in sized if o != s and set(s) < set(o)]
+        if len(supersets) == 1:
+            fold[s] = supersets[0]
+
+    blocks: list[MenuColumnBlock] = []
+    emitted: set[tuple[str, ...] | None] = set()
+    for sig in order:
+        if sig in emitted or sig in fold:
+            continue
+        members = list(groups[sig])
+        if sig is not None and len(sig) >= 2:
+            for sub, sup in fold.items():
+                if sup == sig:
+                    members.extend(groups[sub])
+                    emitted.add(sub)
+            columns = list(sig)
+            for it in members:
+                by_label = {v.label: v.price for v in it.variants}
+                it.column_prices = [by_label.get(lbl) for lbl in columns]
+            blocks.append(MenuColumnBlock(columns=columns, items=members))
+        else:
+            # Single-price rows and lone-variant items (a size set of one) keep
+            # their inline treatment under one header-less block.
+            blocks.append(MenuColumnBlock(columns=None, items=members))
+        emitted.add(sig)
+    return blocks
 
 
 async def _load_products(db: AsyncSession, ids: list[uuid.UUID]) -> dict:
@@ -265,10 +301,8 @@ def _collect_sections(
         section = MenuSection(
             title=title or node["name"],
             icon_key=icon_key_for(node["name"]),
-            items=items,
-            columns=None,
+            blocks=_build_blocks(items),
         )
-        _apply_column_layout(section)
         result.append((node["name"], section))
     for child in node.get("children", []):
         result.extend(_collect_sections(child, products, lang))
@@ -300,6 +334,9 @@ async def _resolve_brand(db: AsyncSession, root: MenuGroup):
         db, branch_id=root.branch_id, source="cashier"
     )
     if entity is not None:
+        override = _MENU_BRAND_OVERRIDES.get(entity.reference)
+        if override is not None:
+            return override
         return (
             entity.brand_name,
             entity.logo_url,

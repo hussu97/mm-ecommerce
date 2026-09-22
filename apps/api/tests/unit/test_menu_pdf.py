@@ -21,7 +21,11 @@ from app.services.catalog.menu_pdf.theme import (
     MELTING_MOMENTS_THEME,
     theme_for_entity_reference,
 )
-from app.services.catalog.menu_pdf.view_models import MenuItem, MenuSection
+from app.services.catalog.menu_pdf.view_models import (
+    MenuColumnBlock,
+    MenuItem,
+    MenuSection,
+)
 
 
 def _opt(name, price, order=0, active=True, translations=None):
@@ -190,38 +194,66 @@ def _variant_item(pairs):
     )
 
 
-def test_column_layout_applies_when_sizes_line_up():
-    section = MenuSection(
-        title="Hot",
-        icon_key="coffee",
-        columns=None,
-        items=[
+def test_build_blocks_one_shared_header_when_sizes_line_up():
+    blocks = B._build_blocks(
+        [
             _variant_item([("S", "14"), ("M", "16"), ("L", "18")]),
             _variant_item([("S", "16"), ("M", "18"), ("L", "20")]),
-        ],
+        ]
     )
-    B._apply_column_layout(section)
-    assert section.columns == ["S", "M", "L"]
-    assert section.items[0].column_prices == ["14", "16", "18"]
-    assert section.items[1].column_prices == ["16", "18", "20"]
+    assert len(blocks) == 1
+    assert blocks[0].columns == ["S", "M", "L"]
+    assert blocks[0].items[0].column_prices == ["14", "16", "18"]
+    assert blocks[0].items[1].column_prices == ["16", "18", "20"]
 
 
-def test_column_layout_aligns_a_subset_of_sizes():
-    # An item priced only M/L in an S/M/L section fills those cells, S blank —
-    # instead of overflowing onto the single-price path past the grid.
-    section = MenuSection(
-        title="Hot",
-        icon_key="coffee",
-        columns=None,
-        items=[
+def test_build_blocks_folds_subset_sizes_into_superset():
+    # An item priced only M/L rides under the S/M/L header, S cell blank —
+    # instead of printing a near-duplicate header of its own.
+    blocks = B._build_blocks(
+        [
             _variant_item([("S", "14"), ("M", "16"), ("L", "18")]),
             _variant_item([("S", "16"), ("M", "18"), ("L", "20")]),
             _variant_item([("M", "15"), ("L", "18")]),
-        ],
+        ]
     )
-    B._apply_column_layout(section)
-    assert section.columns == ["S", "M", "L"]
-    assert section.items[2].column_prices == [None, "15", "18"]
+    assert len(blocks) == 1
+    assert blocks[0].columns == ["S", "M", "L"]
+    assert blocks[0].items[2].column_prices == [None, "15", "18"]
+
+
+def test_build_blocks_splits_distinct_size_sets_into_separate_headers():
+    # The hot-coffee standardisation: S/M/L and Single/Double each print one
+    # header of their own instead of repeating the sizes on every line.
+    blocks = B._build_blocks(
+        [
+            _variant_item([("S", "14"), ("M", "16"), ("L", "18")]),
+            _variant_item([("Single", "12"), ("Double", "14")]),
+            _variant_item([("S", "15"), ("M", "17"), ("L", "19")]),
+        ]
+    )
+    assert [b.columns for b in blocks] == [["S", "M", "L"], ["Single", "Double"]]
+    assert [len(b.items) for b in blocks] == [2, 1]
+    assert blocks[0].items[1].column_prices == ["15", "17", "19"]
+    assert blocks[1].items[0].column_prices == ["12", "14"]
+
+
+def test_build_blocks_single_price_items_form_one_plain_block():
+    item = MenuItem(
+        name="Water",
+        description=None,
+        image_url=None,
+        image_data_uri=None,
+        single_price="5",
+        price_prefix=None,
+        variants=[],
+        column_prices=None,
+        calories=None,
+    )
+    blocks = B._build_blocks([item])
+    assert len(blocks) == 1
+    assert blocks[0].columns is None
+    assert blocks[0].items[0].single_price == "5"
 
 
 def test_collect_sections_skips_pdf_excluded_products():
@@ -238,29 +270,24 @@ def test_collect_sections_skips_pdf_excluded_products():
     sections = B._collect_sections(node, products, "en")
     assert len(sections) == 1
     _, section = sections[0]
-    assert [it.name for it in section.items] == ["Latte"]
+    names = [it.name for block in section.blocks for it in block.items]
+    assert names == ["Latte"]
 
 
-def test_column_layout_skipped_when_sizes_disagree():
-    section = MenuSection(
-        title="Mixed",
-        icon_key="coffee",
-        columns=None,
-        items=[
-            _variant_item([("S", "14"), ("M", "16"), ("L", "18")]),
-            _variant_item([("Single", "12"), ("Double", "14")]),
-        ],
-    )
-    B._apply_column_layout(section)
-    assert section.columns is None
-    assert all(it.column_prices is None for it in section.items)
+def test_barsha_najm_menu_brand_override():
+    # Barsha's menu prints "Melting Moments Cafe" with the MM look, though the
+    # entity (receipts) stays Attibassi — a menu-PDF-only presentation override.
+    name, logo, theme = B._MENU_BRAND_OVERRIDES["najm"]
+    assert name == "Melting Moments Cafe"
+    assert logo.endswith("/logos/melting-moments-cafe.png")
+    assert theme is MELTING_MOMENTS_THEME
 
 
 # ── section ordering (extras demoted) ──────────────────────────────────────────
 
 
 def _named_section(title):
-    return MenuSection(title=title, icon_key="default", items=[], columns=None)
+    return MenuSection(title=title, icon_key="default", blocks=[])
 
 
 def test_extras_detection():
@@ -337,18 +364,22 @@ def test_render_smoke_produces_pdf():
             MenuSection(
                 title="Coffee",
                 icon_key="coffee",
-                columns=None,
-                items=[
-                    MenuItem(
-                        name="Latte",
-                        description="Smooth",
-                        image_url=None,
-                        image_data_uri=None,
-                        single_price="15",
-                        price_prefix=None,
-                        variants=[],
-                        column_prices=None,
-                        calories=None,
+                blocks=[
+                    MenuColumnBlock(
+                        columns=None,
+                        items=[
+                            MenuItem(
+                                name="Latte",
+                                description="Smooth",
+                                image_url=None,
+                                image_data_uri=None,
+                                single_price="15",
+                                price_prefix=None,
+                                variants=[],
+                                column_prices=None,
+                                calories=None,
+                            )
+                        ],
                     )
                 ],
             )
