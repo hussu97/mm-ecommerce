@@ -249,6 +249,13 @@ class TestOrderFromOms:
         o = _CLIENT._order_from_oms(_OMS_ORDER_SINGLE_MOD)
         assert o.delivery_fee == Decimal("3.9")
 
+    def test_oms_payment_fee_is_grossed_to_vat_inclusive(self):
+        """noon's OMS `orderPostpaidFee` is reported VAT-EXCLUSIVE, like the
+        settled RMS payment fee, so it is grossed up by 5% to land VAT-inclusive
+        on the order (see _fee_incl_vat)."""
+        o = _CLIENT._order_from_oms({**_OMS_ORDER_SINGLE_MOD, "orderPostpaidFee": 1.0})
+        assert o.payment_fee == Decimal("1.05")  # 1.0 * 1.05
+
     def test_returns_none_for_missing_order_nr(self):
         assert _CLIENT._order_from_oms({"orderSubtotal": 10}) is None
 

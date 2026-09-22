@@ -965,7 +965,9 @@ class NoonClient(BaseAggregatorClient):
             gross_sales=gross,
             net_sales=gross,
             commission_amount=None,
-            payment_fee=_abs(_num(order.get("orderPostpaidFee"))),
+            # VAT-inclusive, like the settled RMS payment fee: noon's OMS
+            # `orderPostpaidFee` is reported ex-VAT too (see `_fee_incl_vat`).
+            payment_fee=_fee_incl_vat(_abs(_num(order.get("orderPostpaidFee")))),
             delivery_fee=_abs(_num(order.get("orderDeliveryFeeOutlet"))),
             vat_amount=None,
             cancellation_fee=None,
