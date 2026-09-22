@@ -159,3 +159,120 @@ async def test_recipe_workbook_includes_all_valid_owners_in_a_protected_referenc
         ),
         ("inventory_item", str(inventory_item.id), "RM-BUTTER", "Butter"),
     ]
+
+
+def test_purchase_orders_workbook_has_header_and_lines_sheets_sorted_by_delivery():
+    """Two sheets — PO level and per-line — both delivery-date ascending, and the
+    lines sheet splits inventory from miscellaneous lines with all their money."""
+    import datetime
+
+    supplier_id = uuid.uuid4()
+    item_id = uuid.uuid4()
+    item = SimpleNamespace(id=item_id, name="Butter", sku="RM-1", storage_unit="g")
+
+    later = SimpleNamespace(
+        reference="PO-2",
+        supplier_id=supplier_id,
+        status="closed",
+        business_date="2026-09-20",
+        delivery_date=datetime.date(2026, 9, 25),
+        supplier_reference="INV9",
+        invoice_object_key="k",
+        subtotal_net=Decimal("100"),
+        vat_total=Decimal("5"),
+        total_gross=Decimal("105"),
+        additional_cost=Decimal("0"),
+        total_cost=Decimal("105"),
+        items=[
+            SimpleNamespace(
+                item_id=item_id,
+                quantity=Decimal("10"),
+                unit="storage",
+                unit_cost=Decimal("10.5"),
+                net_total=Decimal("100"),
+                vat_amount=Decimal("5"),
+                entered_total=Decimal("105"),
+                total_cost=Decimal("105"),
+            )
+        ],
+        misc_items=[
+            SimpleNamespace(
+                name="Gift wrap",
+                quantity=Decimal("2"),
+                storage_unit="roll",
+                unit_cost=Decimal("10.5"),
+                net_total=Decimal("20"),
+                vat_amount=Decimal("1"),
+                entered_total=Decimal("21"),
+            )
+        ],
+    )
+    earlier = SimpleNamespace(
+        reference="PO-1",
+        supplier_id=supplier_id,
+        status="pending",
+        business_date="2026-09-19",
+        delivery_date=datetime.date(2026, 9, 22),
+        supplier_reference=None,
+        invoice_object_key=None,
+        subtotal_net=Decimal("50"),
+        vat_total=Decimal("0"),
+        total_gross=Decimal("50"),
+        additional_cost=Decimal("0"),
+        total_cost=Decimal("50"),
+        items=[],
+        misc_items=[],
+    )
+    undated = SimpleNamespace(
+        reference="PO-3",
+        supplier_id=supplier_id,
+        status="draft",
+        business_date="2026-09-18",
+        delivery_date=None,
+        supplier_reference=None,
+        invoice_object_key=None,
+        subtotal_net=Decimal("0"),
+        vat_total=Decimal("0"),
+        total_gross=Decimal("0"),
+        additional_cost=Decimal("0"),
+        total_cost=Decimal("0"),
+        items=[],
+        misc_items=[],
+    )
+
+    content = export_service.export_purchase_orders_workbook(
+        [later, earlier, undated], {supplier_id: "Carrefour"}, {item_id: item}
+    )
+    workbook = load_workbook(io.BytesIO(content), data_only=True)
+    assert workbook.sheetnames == ["Purchase orders", "Lines"]
+
+    header = workbook["Purchase orders"]
+    # Delivery date ascending; the undated PO sorts last.
+    assert [r[0] for r in header.iter_rows(min_row=2, values_only=True)] == [
+        "PO-1",
+        "PO-2",
+        "PO-3",
+    ]
+
+    lines = workbook["Lines"]
+    assert list(lines[1][i].value for i in (7, 8, 9, 10, 11, 12, 13, 14, 15)) == [
+        "line_type",
+        "item_name",
+        "sku",
+        "quantity",
+        "storage_unit",
+        "unit_cost",
+        "net",
+        "vat",
+        "gross",
+    ]
+    body = list(lines.iter_rows(min_row=2, values_only=True))
+    # Only PO-2 has lines: one inventory, one misc.
+    assert [(r[0], r[7], r[8], r[9]) for r in body] == [
+        ("PO-2", "Inventory item", "Butter", "RM-1"),
+        ("PO-2", "Miscellaneous", "Gift wrap", None),
+    ]
+    inv = body[0]
+    assert (inv[10], inv[11], inv[13], inv[14], inv[15]) == (10, "g", 100, 5, 105)
+    misc = body[1]
+    assert (misc[10], misc[11], misc[13], misc[14], misc[15]) == (2, "roll", 20, 1, 21)

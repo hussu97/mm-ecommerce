@@ -626,45 +626,152 @@ PURCHASE_ORDER_EXPORT_HEADERS = [
     "delivery_date",
     "invoice_reference",
     "invoice_attached",
-    "lines",
+    "item_lines",
+    "misc_lines",
     "net",
     "vat",
     "total_gross",
+    "additional_cost",
     "total_cost",
 ]
+
+#: The lines sheet: one row per line (inventory OR misc), carrying the PO header
+#: fields so each row is self-contained, then the line's own detail, then the
+#: PO-level totals for context.
+PURCHASE_ORDER_LINE_EXPORT_HEADERS = [
+    "po_reference",
+    "supplier",
+    "status",
+    "business_date",
+    "delivery_date",
+    "invoice_reference",
+    "invoice_attached",
+    "line_type",
+    "item_name",
+    "sku",
+    "quantity",
+    "storage_unit",
+    "unit_cost",
+    "net",
+    "vat",
+    "gross",
+    "po_additional_cost",
+    "po_net",
+    "po_vat",
+    "po_total_gross",
+    "po_total_cost",
+]
+
+
+def _po_sort_key(order: PurchaseOrder) -> tuple[date, str]:
+    """Delivery date ascending, undated last, then by reference for stability."""
+    return (order.delivery_date or date.max, order.reference or "")
 
 
 def export_purchase_orders_workbook(
     orders: Sequence[PurchaseOrder],
     supplier_names: dict,
+    items_lookup: dict | None = None,
 ) -> bytes:
-    """One row per purchase order, honouring whatever filters the caller applied.
+    """Two sheets: one row per purchase order, and one row per line.
 
-    Money columns are written as numbers so the operator can sum them; text
-    columns pass through ``_safe`` (formula-injection guard) in the shared sheet
-    writer. ``orders`` and their line items are already loaded by the caller."""
-    rows: list[list[str | int | float]] = []
-    for order in orders:
-        rows.append(
+    Both are sorted by delivery date ascending (undated orders last). The lines
+    sheet splits inventory lines from miscellaneous (non-inventory) lines with a
+    ``line_type`` column, and repeats the PO header fields and totals on each row
+    so a line stands alone. Money columns are written as numbers so the operator
+    can sum them; text passes through ``_safe`` in the shared sheet writer.
+    ``orders``, their items and misc_items are already loaded by the caller."""
+    items_lookup = items_lookup or {}
+    ordered = sorted(orders, key=_po_sort_key)
+
+    header_rows: list[list[str | int | float]] = []
+    line_rows: list[list[str | int | float]] = []
+    for order in ordered:
+        supplier = supplier_names.get(order.supplier_id, "")
+        status = order.status.replace("_", " ")
+        delivery = order.delivery_date.isoformat() if order.delivery_date else ""
+        invoice_ref = order.supplier_reference or ""
+        invoice_attached = "Yes" if order.invoice_object_key else "No"
+        header_rows.append(
             [
                 order.reference,
-                supplier_names.get(order.supplier_id, ""),
-                order.status.replace("_", " "),
+                supplier,
+                status,
                 order.business_date or "",
-                order.delivery_date.isoformat() if order.delivery_date else "",
-                order.supplier_reference or "",
-                "Yes" if order.invoice_object_key else "No",
+                delivery,
+                invoice_ref,
+                invoice_attached,
                 len(order.items),
+                len(order.misc_items),
                 float(order.subtotal_net or 0),
                 float(order.vat_total or 0),
                 float(order.total_gross or 0),
+                float(order.additional_cost or 0),
                 float(order.total_cost or 0),
             ]
         )
+
+        # The PO header block repeated on every line row of this order.
+        po_prefix: list[str | int | float] = [
+            order.reference,
+            supplier,
+            status,
+            order.business_date or "",
+            delivery,
+            invoice_ref,
+            invoice_attached,
+        ]
+        po_totals: list[str | int | float] = [
+            float(order.additional_cost or 0),
+            float(order.subtotal_net or 0),
+            float(order.vat_total or 0),
+            float(order.total_gross or 0),
+            float(order.total_cost or 0),
+        ]
+        for line in order.items:
+            item = items_lookup.get(line.item_id)
+            line_rows.append(
+                po_prefix
+                + [
+                    "Inventory item",
+                    item.name if item else "",
+                    (item.sku or "") if item else "",
+                    float(line.quantity or 0),
+                    (item.storage_unit or "") if item else "",
+                    float(line.unit_cost or 0),
+                    float(line.net_total or 0),
+                    float(line.vat_amount or 0),
+                    float(line.entered_total or 0),
+                ]
+                + po_totals
+            )
+        for misc in order.misc_items:
+            line_rows.append(
+                po_prefix
+                + [
+                    "Miscellaneous",
+                    misc.name,
+                    "",
+                    float(misc.quantity or 0),
+                    misc.storage_unit or "",
+                    float(misc.unit_cost or 0),
+                    float(misc.net_total or 0),
+                    float(misc.vat_amount or 0),
+                    float(misc.entered_total or 0),
+                ]
+                + po_totals
+            )
+
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Purchase orders"
-    _write_workbook_sheet(sheet, PURCHASE_ORDER_EXPORT_HEADERS, rows, protected=False)
+    _write_workbook_sheet(
+        sheet, PURCHASE_ORDER_EXPORT_HEADERS, header_rows, protected=False
+    )
+    lines_sheet = workbook.create_sheet("Lines")
+    _write_workbook_sheet(
+        lines_sheet, PURCHASE_ORDER_LINE_EXPORT_HEADERS, line_rows, protected=False
+    )
     buf = io.BytesIO()
     workbook.save(buf)
     return buf.getvalue()

@@ -1441,7 +1441,10 @@ async def export_purchase_orders(
     list, so the workbook always matches what the user is looking at."""
     if branch_id:
         await access_service.assert_branch_access(db, user, branch_id)
-    stmt = select(PurchaseOrder).options(selectinload(PurchaseOrder.items))
+    stmt = select(PurchaseOrder).options(
+        selectinload(PurchaseOrder.items),
+        selectinload(PurchaseOrder.misc_items),
+    )
     stmt = _scope_po_to_access(stmt, user, branch_id)
     stmt = _apply_po_filters(
         stmt,
@@ -1466,7 +1469,25 @@ async def export_purchase_orders(
         if supplier_ids
         else {}
     )
-    content = export_service.export_purchase_orders_workbook(orders, suppliers)
+    # The lines sheet needs each inventory line's item name/SKU/unit — one query.
+    line_item_ids = {line.item_id for o in orders for line in o.items}
+    items_lookup = (
+        {
+            i.id: i
+            for i in (
+                await db.execute(
+                    select(InventoryItem).where(InventoryItem.id.in_(line_item_ids))
+                )
+            )
+            .scalars()
+            .all()
+        }
+        if line_item_ids
+        else {}
+    )
+    content = export_service.export_purchase_orders_workbook(
+        orders, suppliers, items_lookup
+    )
     return Response(
         content=content,
         media_type=(
