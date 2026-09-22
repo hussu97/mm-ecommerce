@@ -163,6 +163,12 @@ async def _backfill_lines(
             continue
         payload.item_name = item.name
         payload.item_sku = item.sku
+        # Resolve the abstract entry unit to the item's real label, so the report
+        # shows "pcs"/"kg" instead of the literal word "storage" (same rule the
+        # production report uses).
+        payload.display_unit = (
+            item.ingredient_unit if line.unit == "ingredient" else item.storage_unit
+        )
         category = categories.get(item.category_id) if item.category_id else None
         if category is not None:
             payload.category_name = category.name
@@ -215,6 +221,15 @@ async def _serialise_order(
                     item_name=item.name if item else None,
                     item_sku=item.sku if item else None,
                     unit=line.unit,
+                    display_unit=(
+                        (
+                            item.ingredient_unit
+                            if line.unit == "ingredient"
+                            else item.storage_unit
+                        )
+                        if item
+                        else None
+                    ),
                     total_quantity=qty,
                     category_name=category.name if category else None,
                     category_order=(

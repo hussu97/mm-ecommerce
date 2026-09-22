@@ -114,7 +114,13 @@ class TransferLineResponse(ORMModel):
     approved_quantity: Decimal | None
     sent_quantity: Decimal
     received_quantity: Decimal
+    #: The abstract entry unit ("storage"/"ingredient"). Prefer ``display_unit``
+    #: for showing to a person.
     unit: str
+    #: The item's real unit label for this line's entry unit (its storage_unit for
+    #: a "storage" line, ingredient_unit for an "ingredient" line) — e.g. "pcs",
+    #: "kg" — so the UI shows that instead of the literal word "storage".
+    display_unit: str | None = None
     notes: str | None
     variance_reason: str | None = None
     item_name: str | None = None
@@ -153,6 +159,8 @@ class TransferOrderTotalLine(BaseModel):
     item_name: str | None = None
     item_sku: str | None = None
     unit: str
+    #: Real unit label for display (see TransferLineResponse.display_unit).
+    display_unit: str | None = None
     total_quantity: Decimal
     category_name: str | None = None
     category_order: int | None = None
