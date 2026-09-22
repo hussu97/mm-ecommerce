@@ -8,6 +8,7 @@ import type { Product } from '@/lib/types';
 import { ProductForm } from '@/components/products/ProductForm';
 import { Spinner } from '@/components/ui';
 import { BranchStockPanel } from '@/components/products/BranchStock';
+import { RecipeButton } from '@/components/inventory/RecipeButton';
 
 export default function EditProductPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
@@ -54,19 +55,24 @@ export default function EditProductPage({ params }: { params: Promise<{ slug: st
       </div>
       <ProductForm product={product} />
 
-      {/* Recipes now live in their own section; this just deep-links to it. */}
+      {/* The recipe opens in a popup right here — no hop to the recipes section. */}
       <section className="mt-8 flex items-center justify-between border border-gray-200 bg-white px-4 py-3">
         <div>
           <h2 className="font-display text-lg text-gray-800">Recipe</h2>
           <p className="text-xs font-body text-gray-400">The inventory items used to make one {product.name}.</p>
         </div>
-        <Link
-          href={`/recipes/products?open=${product.id}`}
-          className="inline-flex items-center gap-1 text-xs font-body text-primary hover:underline"
-        >
-          <span className="material-icons text-[16px]">menu_book</span>
-          Manage recipe
-        </Link>
+        <RecipeButton ownerId={product.id} ownerKind="product" ownerLabel={product.name}>
+          {(open) => (
+            <button
+              type="button"
+              onClick={open}
+              className="inline-flex items-center gap-1 text-xs font-body text-primary hover:underline"
+            >
+              <span className="material-icons text-[16px]">menu_book</span>
+              Manage recipe
+            </button>
+          )}
+        </RecipeButton>
       </section>
 
       {/*

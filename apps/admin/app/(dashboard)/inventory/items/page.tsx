@@ -17,6 +17,7 @@ import { ApiError } from '@/lib/api';
 import { Badge, Spinner } from '@/components/ui';
 import { Modal, ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
+import { RecipeButton } from '@/components/inventory/RecipeButton';
 import { formatCost, formatQuantity, interactiveRowClass } from '@/lib/utils';
 
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
@@ -224,7 +225,9 @@ export default function ItemsPage() {
       rowActions={(item) => (
         <>
           {MADE_KINDS.has(item.kind) && (
-            <RowAction href={`/recipes/inventory?open=${item.id}`}>Recipe</RowAction>
+            <RecipeButton ownerId={item.id} ownerKind="inventory_item" ownerLabel={item.name}>
+              {(open) => <RowAction onClick={open}>Recipe</RowAction>}
+            </RecipeButton>
           )}
           {item.tracking_mode !== 'phantom' && (
             <RowAction onClick={() => setCostItem(item)}>Cost</RowAction>

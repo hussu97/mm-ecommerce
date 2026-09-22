@@ -1,8 +1,8 @@
 'use client';
 
 import { Fragment, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { modifiersApi, bulkApi, ApiError } from '@/lib/api';
+import { RecipeButton } from '@/components/inventory/RecipeButton';
 import type { Modifier, ModifierOption } from '@/lib/types';
 import { Badge, Button, Input, Pagination, TabBar, LoadError} from '@/components/ui';
 import { useConfirm, useToast } from '@/components/ui/feedback';
@@ -539,9 +539,11 @@ export default function ModifiersPage() {
                                       <td className="py-2 text-right">
                                         <div className="flex items-center justify-end gap-1">
                                           <Button size="sm" variant="ghost" onClick={() => openEditOption(m.id, opt)}>Edit</Button>
-                                          <Link href={`/recipes/modifiers?open=${opt.id}`}>
-                                            <Button size="sm" variant="ghost">Recipe</Button>
-                                          </Link>
+                                          <RecipeButton ownerId={opt.id} ownerKind="modifier_option" ownerLabel={opt.name}>
+                                            {(open) => (
+                                              <Button size="sm" variant="ghost" onClick={open}>Recipe</Button>
+                                            )}
+                                          </RecipeButton>
                                           <Button
                                             size="sm"
                                             variant="danger"
