@@ -252,6 +252,12 @@ def live_carts_query(
     )
 
 
+def _now() -> datetime:
+    """The wall clock, behind one seam so a test can pin it and assert an exact
+    ``idle_minutes`` rather than a wall-clock window that flakes under a slow CI."""
+    return datetime.now(timezone.utc)
+
+
 @router.get("/live-carts", response_model=LiveCartsResponse)
 async def get_live_carts(
     page: int = Query(1, ge=1),
@@ -301,7 +307,7 @@ async def get_live_carts(
     has no expiry, so without it this grows to every basket ever abandoned and
     the page nobody wants is the one the database works hardest for.
     """
-    now = datetime.now(timezone.utc)
+    now = _now()
     stmt = live_carts_query(
         now,
         search=search,

@@ -37,11 +37,17 @@ from app.services import cart_service
 
 #: Real wall-clock, not a fixed instant.
 #:
-#: The handler asks the clock itself — a route cannot take a `now` parameter
-#: without also offering it as a query string — so the fixtures are written
-#: relative to the same clock and the one assertion about a duration allows a
-#: minute of slack for the test's own runtime.
+#: The handler asks the clock itself, so the fixtures are written relative to the
+#: same clock. The autouse fixture below pins that clock to this `NOW`, so a
+#: duration derived from it is exact rather than a wall-clock window that flakes
+#: when a slow CI runner adds a minute between import and the assertion.
 NOW = datetime.now(timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _pin_clock(monkeypatch):
+    """Pin the handler's wall clock to NOW so idle durations are deterministic."""
+    monkeypatch.setattr(analytics, "_now", lambda: NOW)
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -346,7 +352,8 @@ async def test_a_live_basket_carries_its_value_its_fees_and_its_promo():
     assert row.email == "typed@example.com"
     assert row.email_source == "checkout"
     assert row.item_count == 2
-    assert 119 <= row.idle_minutes <= 121
+    # Clock pinned to NOW (see _pin_clock), so exactly two hours idle.
+    assert row.idle_minutes == 120
 
 
 async def test_a_small_basket_shows_the_surcharge_it_would_attract():
