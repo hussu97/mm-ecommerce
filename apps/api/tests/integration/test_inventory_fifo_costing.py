@@ -488,6 +488,91 @@ async def _sum_layers(db, item_id, warehouse_id):
     return D(str(row[0])), D(str(row[1]))
 
 
+async def test_first_purchase_prices_tracked_zero_cost_stock(engine, env):
+    """The eggs/whipping-cream case: stock that already has *layers*, all at zero.
+
+    Go-live seeds a raw ingredient with zero-cost opening / count layers (a real
+    layer exists, so ``backfill`` finds no untracked gap to fill). The first
+    priced purchase must still lift the surviving zero-cost stock to that cost —
+    otherwise the old units sit at zero and are consumed at zero COGS before the
+    priced stock is ever touched. Only what is still on hand is lifted; stock
+    already issued at zero stays issued at zero. A rebuild reproduces it.
+    """
+    branch_id, warehouse_id, user_id, item_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        # Go-live opening balance keyed with no price: a zero-cost *layer* exists.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.OPENING_BALANCE,
+            quantity="100",
+            unit_cost="0",
+        )
+        # 40 consumed before any cost was known — booked at zero, and must stay so.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS,
+            quantity="40",
+            unit_cost="0",
+        )
+        assert await _remaining_layers(db, item_id, warehouse_id) == [
+            (D("60.000000"), D("0.000000")),
+        ]
+
+        # First priced PO: 50 @ 3. The 60 surviving zero-cost units are lifted to
+        # 3, then the 50 received join them — 110 units, all at 3.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.PURCHASING,
+            quantity="50",
+            unit_cost="3",
+        )
+        level = await _level(db, item_id, warehouse_id)
+        assert level.quantity == D("110.0000")
+        assert level.average_cost == D("3.000000")
+        assert await _remaining_layers(db, item_id, warehouse_id) == [
+            (D("60.000000"), D("3.000000")),
+            (D("50.000000"), D("3.000000")),
+        ]
+
+        # A second priced PO must NOT re-price anything — value already exists.
+        await _post(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            kind=InventoryTransactionTypeEnum.PURCHASING,
+            quantity="10",
+            unit_cost="9",
+        )
+        assert await _remaining_layers(db, item_id, warehouse_id) == [
+            (D("60.000000"), D("3.000000")),
+            (D("50.000000"), D("3.000000")),
+            (D("10.000000"), D("9.000000")),
+        ]
+
+        # The lift lives in the forward path, so a rebuild reproduces it: no drift.
+        drifts = await ledger_service.reconcile_levels(
+            db, branch_id=branch_id, apply=False
+        )
+        assert [d for d in drifts if d.item_id == item_id] == []
+        await db.rollback()
+
+
 async def test_opening_balance_with_a_cost_lays_a_layer_at_that_cost(engine, env):
     """Cost is FIFO: an item carries no catalogue fallback any more, so an opening
     balance is valued at the cost it is keyed with. Entering a real go-live cost

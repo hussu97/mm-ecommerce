@@ -350,6 +350,17 @@ async def _forward_line_costing(
                 and unit_cost_canonical == 0
             ):
                 unit_cost_canonical = inventory_item_cost_for_unit(item, "storage")
+            # First real cost for an item whose stock on hand is still valued at
+            # zero (opening balances, count overages, receipts keyed before it was
+            # ever priced): lift that older stock to this cost before laying the
+            # new layer, so a raw ingredient's shelf stock is not stranded at zero
+            # and consumed at zero COGS. No-op once any real value exists.
+            await cost_layer_service.seed_cost_on_uncosted_layers(
+                db,
+                item=item,
+                warehouse_id=warehouse_id,
+                unit_cost=unit_cost_canonical,
+            )
             await cost_layer_service.backfill_uncosted_stock(
                 db,
                 transaction=transaction,

@@ -286,6 +286,44 @@ async def backfill_uncosted_stock(
     )
 
 
+async def seed_cost_on_uncosted_layers(
+    db: AsyncSession,
+    *,
+    item: InventoryItem,
+    warehouse_id: uuid.UUID,
+    unit_cost: Decimal,
+) -> Decimal:
+    """Price pre-existing *uncosted* stock at the first real cost we learn.
+
+    Sibling to :func:`backfill_uncosted_stock`. That one covers stock with **no
+    layer at all**; this one covers stock that *has* layers but where every
+    surviving one is valued at zero — an opening balance keyed with no price, a
+    count overage or a receipt booked before the item had ever been costed. Zero
+    there does not mean the stock was free, it means we did not yet know what it
+    was worth, and the moment a priced receipt lands its cost is the best figure
+    we have for that older stock. So the surviving zero-cost layers are lifted to
+    it — absolutely, since there is no non-zero FIFO spread to preserve.
+
+    Fires only while the item is **wholly uncosted** at this warehouse (Σ value
+    still zero): once any real value exists this is a no-op, so a later receipt
+    never re-prices older layers and a genuine mix is left alone. It runs inside
+    the forward costing path, so a rebuild reproduces it for free — the same
+    reason ``backfill_uncosted_stock`` needs no ledger line of its own. Returns
+    the value added.
+    """
+    if unit_cost <= 0:
+        return Decimal("0.00")
+    total_qty, total_value = await remaining_totals(db, item.id, warehouse_id)
+    if total_qty <= 0 or total_value > 0:
+        return Decimal("0.00")
+    layers = await _active_layers(db, item.id, warehouse_id, for_update=True)
+    target = _c(unit_cost)
+    for layer in layers:
+        layer.unit_cost = target
+    await db.flush()
+    return _money(target * total_qty)
+
+
 async def consume_fifo(
     db: AsyncSession,
     *,
