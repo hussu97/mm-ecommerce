@@ -72,7 +72,19 @@ RUN groupadd -r api && useradd -r -g api -d /app -s /sbin/nologin api
 # Copy application source (chown avoids a separate RUN layer)
 COPY --chown=api:api apps/api/ .
 
+# WeasyPrint/Pango (the menu-group PDFs) rebuilds the whole font cache on every
+# render unless fontconfig has a writable cache dir. The non-root `api` user's
+# HOME is /app with no writable .cache and /var/cache/fontconfig is root-owned,
+# so fontconfig found nowhere to write ("No writable cache directories") and
+# re-scanned every font on each render — a ~96s menu PDF. Point the XDG cache at
+# a dir the api user owns, then pre-build it so even the first render in a fresh
+# container is fast (fc-cache ships with the image's fontconfig already).
+ENV XDG_CACHE_HOME=/app/.cache
+RUN mkdir -p /app/.cache/fontconfig && chown -R api:api /app/.cache
+
 USER api
+
+RUN fc-cache -f
 
 EXPOSE 8000
 
