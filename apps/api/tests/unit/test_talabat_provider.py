@@ -1508,7 +1508,7 @@ def _unpriced_multi_item_order(order_id="TB-9001", vendor="793319", n=2):
     )
 
 
-def _detail_envelope(order_id, order_value, items):
+def _detail_envelope(order_id, order_value, items, billing=None):
     return {
         "orders": {
             "order": {
@@ -1516,9 +1516,25 @@ def _detail_envelope(order_id, order_value, items):
                     "orderId": order_id,
                     "orderValue": order_value,
                     "items": items,
-                }
+                },
+                "billing": billing,
             }
         }
+    }
+
+
+def _billing(commission=None, payment_fee=None, marketing=None, net=None, wait=None):
+    """A GetOrderDetails.billing block with only the fields a test needs."""
+    return {
+        "billingStatus": "PAID",
+        "estimatedVendorNetRevenue": net,
+        "payment": {"paymentFee": payment_fee},
+        "expense": {
+            "commissionAmountGross": commission,
+            "waitTimeFee": {"totalCharge": wait},
+            "vendorCancellationFee": {"grossAmount": None},
+        },
+        "revenue": {"marketingFees": {"total": marketing}},
     }
 
 
@@ -1526,15 +1542,16 @@ def _list_envelope(rows, next_token=""):
     return {"orders": {"listOrders": {"nextPageToken": next_token, "orders": rows}}}
 
 
-def _patch_graphql(monkeypatch, client, *, list_rows, details):
+def _patch_graphql(monkeypatch, client, *, list_rows, details, billings=None):
     """Route _graphql by operation_name to canned ListOrders / GetOrderDetails."""
+    billings = billings or {}
 
     async def fake_graphql(session, *, endpoint, query, variables, operation_name):
         if operation_name == "ListOrders":
             return _list_envelope(list_rows)
         if operation_name == "GetOrderDetails":
             oid = variables["params"]["orderId"]
-            return _detail_envelope(oid, *details[oid])
+            return _detail_envelope(oid, *details[oid], billing=billings.get(oid))
         raise AssertionError(f"unexpected op {operation_name}")
 
     monkeypatch.setattr(client, "_graphql", fake_graphql)
@@ -1582,7 +1599,7 @@ async def test_enrich_overlays_real_prices_on_multi_item(monkeypatch):
         ],
         details={"TB-9001": (115, detail_items)},
     )
-    out = await client._enrich_line_prices(
+    out = await client._enrich_orders(
         SimpleNamespace(tokens=None), [order], since=since, until=until
     )
     (o,) = out
@@ -1644,7 +1661,7 @@ async def test_enrich_box_and_quantity_modifier(monkeypatch):
         ],
         details={"TB-BOX": (115, box_items)},
     )
-    (o,) = await client._enrich_line_prices(
+    (o,) = await client._enrich_orders(
         SimpleNamespace(tokens=None),
         [box],
         since=datetime(2026, 9, 17),
@@ -1688,7 +1705,7 @@ async def test_enrich_reconciliation_mismatch_keeps_csv(monkeypatch):
         ],
         details={"TB-BAD": (100, bad_items)},
     )
-    (o,) = await client._enrich_line_prices(
+    (o,) = await client._enrich_orders(
         SimpleNamespace(tokens=None),
         [order],
         since=datetime(2026, 9, 19),
@@ -1698,18 +1715,14 @@ async def test_enrich_reconciliation_mismatch_keeps_csv(monkeypatch):
     assert all(it.unit_price is None for it in o.items)
 
 
-@pytest.mark.asyncio
-async def test_enrich_single_item_order_not_fetched(monkeypatch):
-    client = TalabatClient()
-    # Single-item order already carries the subtotal (amount_is_known=True) -> the
-    # enrichment must not fetch it at all.
-    priced = StandardOrder(
-        external_order_id="TB-SOLO",
-        external_outlet_id="793319",
+def _priced_single_item_order(order_id="TB-SOLO", vendor="793319"):
+    return StandardOrder(
+        external_order_id=order_id,
+        external_outlet_id=vendor,
         gross_sales=Decimal("40.00"),
         items=[
             StandardOrderItem(
-                source_key="TB-SOLO:1",
+                source_key=f"{order_id}:1",
                 item_name="Brookie Cookie Melt (250 grams)",
                 quantity=Decimal("1"),
                 unit_price=Decimal("40"),
@@ -1718,21 +1731,120 @@ async def test_enrich_single_item_order_not_fetched(monkeypatch):
             )
         ],
     )
-    called = {"n": 0}
 
-    async def fake_graphql(session, **kwargs):
-        called["n"] += 1
-        raise AssertionError("should not be called for a fully-priced order")
+
+@pytest.mark.asyncio
+async def test_enrich_single_item_unbilled_only_lists(monkeypatch):
+    client = TalabatClient()
+    # A fully-priced, not-yet-billed single-item order: the cheap ListOrders runs
+    # (it is how we learn there are no fees yet), but no GetOrderDetail is fetched
+    # and the order is returned untouched.
+    priced = _priced_single_item_order()
+    ops: list[str] = []
+
+    async def fake_graphql(session, *, endpoint, query, variables, operation_name):
+        ops.append(operation_name)
+        if operation_name == "ListOrders":
+            return _list_envelope(
+                [
+                    {
+                        "orderId": "TB-SOLO",
+                        "vendorId": "793319",
+                        "placedTimestamp": "2026-09-19T09:00:00Z",
+                        "subtotal": 40,
+                        "billableStatus": "PENDING",
+                        "billing": None,
+                    }
+                ]
+            )
+        raise AssertionError(f"should not fetch {operation_name} for an unbilled order")
 
     monkeypatch.setattr(client, "_graphql", fake_graphql)
-    out = await client._enrich_line_prices(
+    out = await client._enrich_orders(
         SimpleNamespace(tokens=None),
         [priced],
         since=datetime(2026, 9, 19),
         until=datetime(2026, 9, 19),
     )
     assert out[0] is priced
-    assert called["n"] == 0
+    assert ops == ["ListOrders"]
+
+
+@pytest.mark.asyncio
+async def test_enrich_single_item_billed_gets_full_fees(monkeypatch):
+    client = TalabatClient()
+    # A billed single-item order: fees come from the detail (payment fee + Pro
+    # loyalty + net), while its one already-priced line is left untouched.
+    priced = _priced_single_item_order()
+    _patch_graphql(
+        monkeypatch,
+        client,
+        list_rows=[
+            {
+                "orderId": "TB-SOLO",
+                "vendorId": "793319",
+                "placedTimestamp": "2026-09-19T09:00:00Z",
+                "subtotal": 40,
+                "billableStatus": "BILLABLE",
+                "billing": {"commissionAmount": 12.6, "netRevenue": 22.56},
+            }
+        ],
+        details={"TB-SOLO": (40, [])},
+        billings={
+            "TB-SOLO": _billing(
+                commission=12.6, payment_fee=0.84, marketing=4, net=22.56
+            )
+        },
+    )
+    (o,) = await client._enrich_orders(
+        SimpleNamespace(tokens=None),
+        [priced],
+        since=datetime(2026, 9, 19),
+        until=datetime(2026, 9, 19),
+    )
+    assert o.commission_amount == Decimal("12.6")
+    assert o.payment_fee == Decimal("0.84")
+    assert o.marketing_fee == Decimal("4")
+    assert o.net_payable == Decimal("22.56")
+    # The single priced line is preserved verbatim.
+    assert [it.item_name for it in o.items] == ["Brookie Cookie Melt (250 grams)"]
+    assert o.items[0].gross_sales == Decimal("40")
+
+
+@pytest.mark.asyncio
+async def test_enrich_falls_back_to_list_fees_when_detail_capped(monkeypatch):
+    client = TalabatClient()
+    # If the detail fan-out is capped, a billed order still lands commission + net
+    # from the cheap list overlay (payment fee/marketing are left for the bundle).
+    priced = _priced_single_item_order()
+    monkeypatch.setattr(_tp, "_MAX_DETAIL_FETCHES", 0)
+
+    async def fake_graphql(session, *, endpoint, query, variables, operation_name):
+        if operation_name == "ListOrders":
+            return _list_envelope(
+                [
+                    {
+                        "orderId": "TB-SOLO",
+                        "vendorId": "793319",
+                        "placedTimestamp": "2026-09-19T09:00:00Z",
+                        "subtotal": 40,
+                        "billableStatus": "BILLABLE",
+                        "billing": {"commissionAmount": 12.6, "netRevenue": 26.44},
+                    }
+                ]
+            )
+        raise AssertionError("detail must not be fetched once capped")
+
+    monkeypatch.setattr(client, "_graphql", fake_graphql)
+    (o,) = await client._enrich_orders(
+        SimpleNamespace(tokens=None),
+        [priced],
+        since=datetime(2026, 9, 19),
+        until=datetime(2026, 9, 19),
+    )
+    assert o.commission_amount == Decimal("12.6")
+    assert o.net_payable == Decimal("26.44")
+    assert o.payment_fee is None
 
 
 @pytest.mark.asyncio
@@ -1745,7 +1857,7 @@ async def test_enrich_disabled_flag_is_noop(monkeypatch):
         raise AssertionError("must not touch the portal when disabled")
 
     monkeypatch.setattr(client, "_graphql", boom)
-    out = await client._enrich_line_prices(
+    out = await client._enrich_orders(
         SimpleNamespace(tokens=None),
         [order],
         since=datetime(2026, 9, 19),

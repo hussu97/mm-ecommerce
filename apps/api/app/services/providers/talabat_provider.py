@@ -167,14 +167,19 @@ query ListExports($input: ListExportsReq!) {
 }
 """.strip()
 
-# ── Order list + detail (per-line prices the Report Builder CSV omits) ─────────
-# The CSV export carries only the order `Subtotal`, not per-line money, so a
-# multi-item order lands with `amount_is_known=False` and every line at 0. These
-# two GraphQL ops (on the SAME `_FINANCE_GRAPHQL` host/session as the finance
-# queries) recover the real per-line prices. `ListOrders` gives the EXACT
-# `placedTimestamp` (to the second) that `GetOrderDetails` requires as a lookup
-# key — the CSV's minute-precision "Order received at" is not enough. Captured
-# live from the partner-app bundle 2026-09-19.
+# ── Order list + detail (per-order fees + per-line prices the CSV omits) ───────
+# The Report Builder CSV (the sales-sweep source) is missing two things the
+# marketplace's own order list carries. (1) FEES: the CSV ships the fee columns
+# (`Commission`, `Online Payment Fee`, `Payout Amount`, …) but leaves them 0.00 —
+# the export is generated before the order is billed, so every historical order
+# lands with zero fees. `ListOrders.billing` answers the real `commissionAmount`
+# (the 30% cut) and `netRevenue` (the vendor's estimated earnings) the DAY AFTER,
+# inside our rolling window. (2) PER-LINE MONEY: the CSV has only the order
+# `Subtotal`, so a MULTI-item order lands `amount_is_known=False` — recovered from
+# `GetOrderDetails`. `ListOrders` also gives the EXACT `placedTimestamp` (to the
+# second) that `GetOrderDetails` keys on; the CSV's minute precision is not enough.
+# Both ops are on the SAME `_FINANCE_GRAPHQL` host/session as the finance queries.
+# Captured live from the partner-app bundle 2026-09-22.
 _LIST_ORDERS_QUERY = """
 query ListOrders($params: ListOrdersReq!) {
   orders {
@@ -185,6 +190,12 @@ query ListOrders($params: ListOrdersReq!) {
         vendorId
         placedTimestamp
         subtotal
+        billableStatus
+        billing {
+          commissionAmount
+          netRevenue
+          __typename
+        }
         __typename
       }
       __typename
@@ -194,6 +205,14 @@ query ListOrders($params: ListOrdersReq!) {
 }
 """.strip()
 
+#: `GetOrderDetails` is the only source of the FULL per-order fee split: the CSV
+#: ships zeros and `ListOrders` gives only commission + the vendor's net, not the
+#: components. `billing` here itemises every fee Talabat takes — the card
+#: `payment.paymentFee`, the Talabat-Pro/loyalty `revenue.marketingFees.total`
+#: (a flat 4 AED on a Pro order), an avoidable `expense.waitTimeFee.totalCharge`,
+#: a `expense.vendorCancellationFee` — alongside the commission and
+#: `estimatedVendorNetRevenue` (== `ListOrders.netRevenue`). Populated the day
+#: after the order (`billingStatus` leaves `NOT_PAID`), inside our rolling window.
 _GET_ORDER_DETAILS_QUERY = """
 query GetOrderDetails($params: OrderReq!) {
   orders {
@@ -216,6 +235,34 @@ query GetOrderDetails($params: OrderReq!) {
         }
         __typename
       }
+      billing {
+        billingStatus
+        estimatedVendorNetRevenue
+        payment {
+          paymentFee
+          __typename
+        }
+        expense {
+          commissionAmountGross
+          waitTimeFee {
+            totalCharge
+            __typename
+          }
+          vendorCancellationFee {
+            grossAmount
+            __typename
+          }
+          __typename
+        }
+        revenue {
+          marketingFees {
+            total
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
       __typename
     }
     __typename
@@ -227,7 +274,8 @@ query GetOrderDetails($params: OrderReq!) {
 _LIST_ORDERS_PAGE_SIZE = 50
 _MAX_LIST_ORDERS_PAGES = 40
 #: Never fan out more than this many per-order detail calls in one sweep — a
-#: guard against an unexpectedly large unpriced-order set hammering the portal.
+#: guard against an unexpectedly large billed/unpriced-order set hammering the
+#: portal. A month backfill runs day-by-day (each day well under this).
 _MAX_DETAIL_FETCHES = 200
 
 _LIST_PAYOUTS_QUERY = """
@@ -1245,26 +1293,28 @@ class TalabatClient(BaseAggregatorClient):
             )
         csv_text = await self._download_csv(session, download_url)
         orders = self._orders_from_csv(csv_text)
-        orders = await self._enrich_line_prices(
-            session, orders, since=since, until=until
-        )
+        orders = await self._enrich_orders(session, orders, since=since, until=until)
         return SalesResult(orders=orders, truncation_note=truncation_note)
 
-    # ── per-line price enrichment (order detail) ──────────────────────────────
-    async def _list_order_timestamps(
+    # ── per-order fee + per-line price enrichment (order list / detail) ───────
+    async def _list_orders_meta(
         self,
         session: LoadedSession,
         *,
         vendor_ids: list[str],
         since: datetime,
         until: datetime,
-    ) -> dict[str, str]:
-        """`orderId -> exact RFC3339 placedTimestamp` from `ListOrders`.
+    ) -> dict[str, dict[str, Any]]:
+        """`orderId -> {placed, subtotal, commission, net_revenue, billable}`.
 
-        `GetOrderDetails` keys on the placed instant to the SECOND; the CSV only
-        carries minute precision (and can even round to the wrong minute), so the
-        exact value must come from here. Scoped to the vendors that actually have
-        an order needing enrichment, over the sweep's own window.
+        The marketplace's own order list is the sales sweep's ONLY source of
+        per-order fees: the Report Builder CSV carries the fee columns but leaves
+        them 0.00 (it is generated before the order is billed), whereas
+        `billing.commissionAmount` / `billing.netRevenue` here are the real cut
+        and the vendor's estimated earnings, landing the day after the order and
+        so inside our rolling window. `placedTimestamp` is also the exact instant
+        (to the SECOND) `GetOrderDetails` keys on — the CSV's minute precision is
+        not enough. Scoped to the vendors that actually have orders this sweep.
         """
         entity = self._global_entity_id(session)
         codes = [{"globalEntityId": entity, "vendorId": v} for v in vendor_ids]
@@ -1272,7 +1322,7 @@ class TalabatClient(BaseAggregatorClient):
         # `until` is the last day to include; make `to` exclusive-safe by covering
         # the whole day.
         time_to = (until.date() + timedelta(days=1)).isoformat() + "T00:00:00.000Z"
-        out: dict[str, str] = {}
+        out: dict[str, dict[str, Any]] = {}
         page_token: str | None = None
         for _ in range(_MAX_LIST_ORDERS_PAGES):
             pagination: dict[str, Any] = {"pageSize": _LIST_ORDERS_PAGE_SIZE}
@@ -1295,23 +1345,64 @@ class TalabatClient(BaseAggregatorClient):
             listing = (data.get("orders") or {}).get("listOrders") or {}
             for row in listing.get("orders") or []:
                 oid = str(row.get("orderId") or "").strip()
-                placed = str(row.get("placedTimestamp") or "").strip()
-                if oid and placed:
-                    out[oid] = placed
+                if not oid:
+                    continue
+                billing = row.get("billing") or {}
+                out[oid] = {
+                    "placed": str(row.get("placedTimestamp") or "").strip() or None,
+                    "subtotal": _money(row.get("subtotal")),
+                    "commission": _money(billing.get("commissionAmount")),
+                    "net_revenue": _money(billing.get("netRevenue")),
+                    "billable": str(row.get("billableStatus") or "").strip().upper()
+                    == "BILLABLE",
+                }
             page_token = (listing.get("nextPageToken") or "").strip() or None
             if not page_token:
                 break
         return out
 
-    async def _fetch_order_detail_items(
+    @staticmethod
+    def _fees_from_billing(billing: dict[str, Any]) -> dict[str, Decimal]:
+        """The per-order fee columns from a `GetOrderDetails.billing` block.
+
+        Every value is stored as a POSITIVE magnitude (as the CSV columns and the
+        rest of `aggregator_order` do — the sign lives in the column's meaning,
+        not the number). Only fields the marketplace actually reported are
+        returned, so a null never overwrites a value a richer pull already stored.
+        Marketing here is the Talabat-Pro/loyalty fee (a flat 4 AED on a Pro
+        order), distinct from the percentage commission and payment fee.
+        """
+        payment = billing.get("payment") or {}
+        expense = billing.get("expense") or {}
+        revenue = billing.get("revenue") or {}
+        marketing = revenue.get("marketingFees") or {}
+        cancellation = expense.get("vendorCancellationFee") or {}
+
+        def mag(value: Any) -> Decimal | None:
+            parsed = _money(value)
+            return abs(parsed) if parsed is not None else None
+
+        fees: dict[str, Decimal] = {}
+        for field_name, value in (
+            ("commission_amount", mag(expense.get("commissionAmountGross"))),
+            ("payment_fee", mag(payment.get("paymentFee"))),
+            ("marketing_fee", mag(marketing.get("total"))),
+            ("cancellation_fee", mag(cancellation.get("grossAmount"))),
+            ("net_payable", _money(billing.get("estimatedVendorNetRevenue"))),
+        ):
+            if value is not None:
+                fees[field_name] = value
+        return fees
+
+    async def _fetch_order_detail(
         self,
         session: LoadedSession,
         *,
         order_id: str,
         vendor_id: str,
         placed_timestamp: str,
-    ) -> tuple[Decimal | None, list[StandardOrderItem]]:
-        """`(orderValue, priced line items)` from `GetOrderDetails`.
+    ) -> tuple[Decimal | None, list[StandardOrderItem], dict[str, Decimal]]:
+        """`(orderValue, priced line items, fees)` from `GetOrderDetails`.
 
         Each line's price is `unitPrice` on the base item; a box's price sits on
         the parent item with its contents as zero-priced `options`, and a
@@ -1319,6 +1410,10 @@ class TalabatClient(BaseAggregatorClient):
         base item then being 0. Both reconstruct correctly via promote's existing
         `base_price + Σ(option price × qty)`, so both are represented as a base
         `StandardOrderItem` plus `StandardModifier` options.
+
+        `fees` is the full per-order fee split (see `_fees_from_billing`), empty
+        until the order is billed (`billingStatus == NOT_PAID` leaves every value
+        null).
         """
         entity = self._global_entity_id(session)
         data = await self._graphql(
@@ -1338,7 +1433,9 @@ class TalabatClient(BaseAggregatorClient):
             },
             operation_name="GetOrderDetails",
         )
-        order = ((data.get("orders") or {}).get("order") or {}).get("order") or {}
+        detail = (data.get("orders") or {}).get("order") or {}
+        order = detail.get("order") or {}
+        fees = self._fees_from_billing(detail.get("billing") or {})
         order_value = _money(order.get("orderValue"))
         items: list[StandardOrderItem] = []
         for index, raw in enumerate(order.get("items") or [], start=1):
@@ -1375,9 +1472,42 @@ class TalabatClient(BaseAggregatorClient):
                     modifiers=modifiers,
                 )
             )
-        return order_value, items
+        return order_value, items, fees
 
-    async def _enrich_line_prices(
+    @staticmethod
+    def _list_order_fee_patches(
+        orders: list[StandardOrder], meta: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Decimal]]:
+        """Fallback fee overlay from `ListOrders.billing`, as `{oid: {field: v}}`.
+
+        The list carries only the two fees it answers directly — `commission_amount`
+        (the cut) and `net_payable` (the vendor's estimated earnings), both exact
+        and the whole point: the CSV leaves them 0.00. It does NOT split the
+        payment fee / Pro-loyalty / wait-time components, so those come from the
+        order detail (`_fetch_order_detail`). This overlay is the cheap floor that
+        still lands commission + net when the detail fan-out is capped, fails, or
+        is switched off. Unbilled orders carry no cut yet, so they are skipped.
+        """
+        patches: dict[str, dict[str, Decimal]] = {}
+        if not meta:
+            return patches
+        for order in orders:
+            if not order.external_order_id:
+                continue
+            row = meta.get(order.external_order_id)
+            if not row:
+                continue
+            commission = row.get("commission")
+            net = row.get("net_revenue")
+            if commission is None or net is None:
+                continue
+            patches[order.external_order_id] = {
+                "commission_amount": commission,
+                "net_payable": net,
+            }
+        return patches
+
+    async def _enrich_orders(
         self,
         session: LoadedSession,
         orders: list[StandardOrder],
@@ -1385,54 +1515,80 @@ class TalabatClient(BaseAggregatorClient):
         since: datetime,
         until: datetime,
     ) -> list[StandardOrder]:
-        """Overlay real per-line prices onto orders the CSV left unpriced.
+        """Overlay per-order fees, and real per-line prices, from the order detail.
 
-        The Report Builder CSV omits per-line money, so a MULTI-item order lands
-        with every line `amount_is_known=False` (a single-item order already gets
-        the subtotal). For exactly those orders, fetch the marketplace's own order
-        detail and replace the price-less lines with priced ones. Fail-soft: any
-        error leaves the CSV lines untouched — this must never break the sales
-        sweep — and a rebuilt line set is accepted only when it reconciles to the
-        detail's `orderValue` AND the CSV `Subtotal`, so a mismatch never silently
-        rewrites the money.
+        The Report Builder CSV ships the fee columns at 0.00 and omits per-line
+        money; both are recovered from the marketplace's own order list/detail.
+
+        FEES: `ListOrders.billing` gives commission + net for every billed order
+        cheaply (one paged list). The FULL split — card payment fee, Talabat-Pro
+        loyalty, avoidable-wait-time, cancellation — is only on `GetOrderDetails`,
+        so we fan out to each BILLED order for the exact breakdown, falling back to
+        the list's commission + net if a detail call is capped or fails. Fanning
+        only to billed orders (the list already says which) keeps the count small:
+        fees land the day after an order, so a sweep's freshest orders are skipped
+        until they bill.
+
+        PER-LINE PRICES: a MULTI-item order lands `amount_is_known=False`; for
+        those the same detail call rebuilds priced lines, accepted only when they
+        reconcile to BOTH the detail total and the CSV subtotal.
+
+        The whole step is the single kill-switch `TALABAT_ORDER_DETAIL_ENRICH`
+        (on by default) and capped by `_MAX_DETAIL_FETCHES`. Fail-soft throughout:
+        any portal error leaves the CSV order untouched, so this never breaks the
+        sales sweep.
         """
         if not settings.TALABAT_ORDER_DETAIL_ENRICH:
             return orders
-        needing = [
-            o
-            for o in orders
-            if o.external_order_id
-            and o.external_outlet_id
-            and any(not it.amount_is_known for it in o.items)
-        ]
-        if not needing:
+        vendor_ids = sorted(
+            {
+                str(o.external_outlet_id)
+                for o in orders
+                if o.external_order_id and o.external_outlet_id
+            }
+        )
+        if not vendor_ids:
             return orders
-        vendor_ids = sorted({str(o.external_outlet_id) for o in needing})
         try:
-            placed_map = await self._list_order_timestamps(
+            meta = await self._list_orders_meta(
                 session, vendor_ids=vendor_ids, since=since, until=until
             )
         except (AggregatorUnavailableError, AggregatorAuthError) as exc:
             logger.warning(
-                "talabat order-detail: ListOrders failed, skipping (%s)", exc
+                "talabat order-list: ListOrders failed, skipping enrichment (%s)", exc
             )
             return orders
 
+        # Cheap floor: commission + net for every billed order.
+        fee_patches = self._list_order_fee_patches(orders, meta)
+
         replacements: dict[str, list[StandardOrderItem]] = {}
+        # Fan out to billed orders (for the full fee split) and to any unpriced
+        # order (for its line prices) — the union, so neither is starved.
+        targets = [
+            o
+            for o in orders
+            if o.external_order_id
+            and o.external_outlet_id
+            and (
+                (meta.get(o.external_order_id) or {}).get("commission") is not None
+                or any(not it.amount_is_known for it in o.items)
+            )
+        ]
         fetched = 0
-        for order in needing:
+        for order in targets:
             if fetched >= _MAX_DETAIL_FETCHES:
                 logger.warning(
                     "talabat order-detail: hit fetch cap %s, leaving rest on CSV",
                     _MAX_DETAIL_FETCHES,
                 )
                 break
-            placed = placed_map.get(order.external_order_id)
+            placed = (meta.get(order.external_order_id) or {}).get("placed")
             if not placed:
                 continue
             fetched += 1
             try:
-                order_value, items = await self._fetch_order_detail_items(
+                order_value, items, fees = await self._fetch_order_detail(
                     session,
                     order_id=order.external_order_id,
                     vendor_id=str(order.external_outlet_id),
@@ -1445,13 +1601,18 @@ class TalabatClient(BaseAggregatorClient):
                     exc,
                 )
                 continue
+            # Exact per-order fee split overrides the list's commission + net.
+            if fees:
+                fee_patches.setdefault(order.external_order_id, {}).update(fees)
+            # Line-price rebuild — only for an unpriced order, and only when it
+            # reconciles to the detail's own total AND the CSV subtotal.
+            if not any(not it.amount_is_known for it in order.items):
+                continue
             if not items or order_value is None:
                 continue
             line_sum = sum(
                 ((it.gross_sales or Decimal("0")) for it in items), Decimal("0")
             )
-            # Only trust a rebuild that reconciles to the detail's own total AND
-            # the CSV subtotal (the finance number) — otherwise leave the CSV line.
             if line_sum != order_value:
                 logger.warning(
                     "talabat order-detail %s: line sum %s != orderValue %s, keeping CSV",
@@ -1470,14 +1631,22 @@ class TalabatClient(BaseAggregatorClient):
                 continue
             replacements[order.external_order_id] = items
 
-        if not replacements:
+        if not fee_patches and not replacements:
             return orders
-        return [
-            replace(o, items=replacements[o.external_order_id])
-            if o.external_order_id in replacements
-            else o
-            for o in orders
-        ]
+        out: list[StandardOrder] = []
+        for o in orders:
+            oid = o.external_order_id or ""
+            patch = fee_patches.get(oid)
+            items = replacements.get(oid)
+            if patch and items:
+                out.append(replace(o, items=items, **patch))
+            elif patch:
+                out.append(replace(o, **patch))
+            elif items:
+                out.append(replace(o, items=items))
+            else:
+                out.append(o)
+        return out
 
     async def _poll_export_ready(
         self, session: LoadedSession, *, export_id: str
