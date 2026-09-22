@@ -164,7 +164,8 @@ export default function SuppliersPage() {
               },
               { header: 'Contacts', render: (s) => (s.contacts.length ? `${s.contacts.length}` : '—') },
               { header: 'VAT', render: (s) => (s.is_vat_deductible ? <Badge variant="info">Deductible</Badge> : <span className="text-gray-400">—</span>) },
-              { header: 'Terms', sortable: true, sortAccessor: (s) => s.payment_terms_days, render: (s) => `${s.payment_terms_days} days` },
+              { header: 'Flexible items', render: (s) => (s.allow_any_item ? <Badge variant="info">Any item</Badge> : <span className="text-gray-400">—</span>) },
+              { header: 'Misc. items', render: (s) => (s.allows_misc_items ? <Badge variant="info">Allowed</Badge> : <span className="text-gray-400">—</span>) },
               { header: 'Status', sortable: true, sortAccessor: (s) => (s.is_active && !s.deleted_at ? 'Active' : 'Inactive'), render: (s) => <StatusBadge active={s.is_active && !s.deleted_at} /> },
             ]}
           />

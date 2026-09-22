@@ -492,7 +492,11 @@ function CreateOrder({
   onSaved: (message?: string) => void;
 }) {
   const [supplierId, setSupplierId] = useState('');
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
+  // Sharjah is the kitchen that raises almost every PO, so default to it (falling
+  // back to the first branch if it isn't in the list).
+  const [branchId, setBranchId] = useState(
+    () => branches.find((b) => b.name.toLowerCase().includes('sharjah'))?.id ?? branches[0]?.id ?? '',
+  );
   const [deliveryDate, setDeliveryDate] = useState('');
   const [supplierReference, setSupplierReference] = useState('');
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
@@ -733,8 +737,18 @@ function CreateOrder({
         </tbody>
       </table>
 
+      <div className="mt-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setLines((prev) => [...prev, { item_id: '', quantity: '1', entered_total: '0' }])}
+        >
+          Add item line
+        </Button>
+      </div>
+
       {allowsMisc && (
-        <section className="mt-5">
+        <section className="mt-5 border-t border-gray-100 pt-4">
           <div className="mb-1 flex items-center justify-between">
             <h3 className="text-[11px] uppercase tracking-widest text-gray-500 font-body">Miscellaneous items</h3>
             <Button
@@ -787,14 +801,7 @@ function CreateOrder({
         </section>
       )}
 
-      <div className="mt-3 flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setLines((prev) => [...prev, { item_id: '', quantity: '1', entered_total: '0' }])}
-        >
-          Add line
-        </Button>
+      <div className="mt-4 flex items-center justify-end border-t border-gray-100 pt-3">
         <div className="text-right">
           {vatDeductible && (
             <p className="text-xs text-gray-500 font-body">
