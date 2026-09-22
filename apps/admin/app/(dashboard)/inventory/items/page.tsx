@@ -263,9 +263,6 @@ export default function ItemsPage() {
           {MADE_KINDS.has(item.kind) && (
             <RowAction onClick={() => resetCostFromRecipe(item, reload)}>Reset cost</RowAction>
           )}
-          {item.tracking_mode !== 'phantom' && (
-            <RowAction onClick={() => setCostItem(item)}>Cost</RowAction>
-          )}
         </>
       )}
       defaults={{
