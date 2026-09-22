@@ -34,6 +34,8 @@ x-api-environment: &api-environment
   FROM_EMAIL: ${FROM_EMAIL:-noreply@meltingmomentscakes.com}
   GCS_IMAGE_BUCKET: ${GCS_IMAGE_BUCKET:-mm-product-images}
   GCS_INVOICE_BUCKET: ${GCS_INVOICE_BUCKET:-melting-moments-data}
+  GOOGLE_GEOCODING_BILLING_PROJECT: ${GOOGLE_GEOCODING_BILLING_PROJECT:-}
+  GOOGLE_GEOCODING_TIMEOUT_SECONDS: ${GOOGLE_GEOCODING_TIMEOUT_SECONDS:-5.0}
   CORS_ORIGINS: ${CORS_ORIGINS}
   # No `:-*` default: an unset ALLOWED_HOSTS must fail the container closed on
   # boot (validate_production_secrets rejects a wildcard/empty host list in

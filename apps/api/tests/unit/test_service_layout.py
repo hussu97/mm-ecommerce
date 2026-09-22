@@ -60,6 +60,10 @@ CROSS_CUTTING = {
     # canonical order channel, then serves the admin read model. It spans
     # identity/auth and orders, so it has no single domain package.
     "customer_service",
+    # The delivery-area cache joins customer identity, canonical orders, and live
+    # delivery-zone geometry for the admin map; it is deliberately not an orders
+    # or delivery writer, so it has no one domain package.
+    "customer_delivery_area_service",
     # Storefront custom-order enquiry: a lead, not a booking. It belongs to no
     # ordering domain (it deliberately never touches orders/custom_orders) — it
     # captures a message and hands off to email, so it sits beside its sibling.

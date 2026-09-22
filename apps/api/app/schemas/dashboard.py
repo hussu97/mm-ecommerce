@@ -105,6 +105,12 @@ class DashboardSummary(BaseModel):
     fees_pending: bool
     #: Known total fees as a percentage of revenue.
     fee_rate: float
+    #: Confirmed courier costs for delivery orders in the selected window.
+    courier_fees: float
+    #: Courier quotes not yet confirmed as an actual cost.
+    pending_courier_fees: float
+    #: Confirmed plus pending courier cost as a percentage of revenue.
+    courier_fee_rate: float
     #: Percentage change against the same elapsed window yesterday. `0.0` when
     #: yesterday's figure was zero — there is no growth rate off nothing.
     orders_growth: float
@@ -112,6 +118,7 @@ class DashboardSummary(BaseModel):
     avg_order_value_growth: float
     delivered_growth: float
     total_fees_growth: float
+    courier_fees_growth: float
 
 
 class DashboardOps(BaseModel):

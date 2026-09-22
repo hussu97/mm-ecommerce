@@ -703,7 +703,13 @@ export default function DashboardPage() {
           label="Total Fees"
           value={formatCurrency(s?.total_fees ?? 0)}
           valueSuffix={`${s?.fee_rate ?? 0}%${s?.fees_pending ? '+' : ''}`}
-          valueDetail={s?.fees_pending ? '+ fees pending' : undefined}
+          valueDetail={[
+            `Courier ${formatCurrency(s?.courier_fees ?? 0)}`,
+            (s?.pending_courier_fees ?? 0) > 0
+              ? `+ ${formatCurrency(s?.pending_courier_fees ?? 0)} estimated`
+              : null,
+            s?.fees_pending ? '+ other fees pending' : null,
+          ].filter(Boolean).join(' · ')}
           icon="payments"
           href={href()}
           growth={s?.total_fees_growth}

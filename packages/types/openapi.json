@@ -8786,6 +8786,203 @@
         "title": "CustomerBreakdown",
         "type": "object"
       },
+      "CustomerDeliveryAreaCell": {
+        "description": "One compact heat-map bucket, never an individual address.",
+        "properties": {
+          "aov": {
+            "title": "Aov",
+            "type": "number"
+          },
+          "channel_breakdown": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CustomerDeliveryAreaChannelMetrics"
+            },
+            "title": "Channel Breakdown",
+            "type": "object"
+          },
+          "customer_count": {
+            "title": "Customer Count",
+            "type": "integer"
+          },
+          "latitude": {
+            "title": "Latitude",
+            "type": "number"
+          },
+          "longitude": {
+            "title": "Longitude",
+            "type": "number"
+          },
+          "order_count": {
+            "title": "Order Count",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "customer_count",
+          "order_count",
+          "revenue",
+          "aov",
+          "channel_breakdown",
+          "latitude",
+          "longitude"
+        ],
+        "title": "CustomerDeliveryAreaCell",
+        "type": "object"
+      },
+      "CustomerDeliveryAreaChannelMetrics": {
+        "properties": {
+          "aov": {
+            "title": "Aov",
+            "type": "number"
+          },
+          "customer_count": {
+            "title": "Customer Count",
+            "type": "integer"
+          },
+          "order_count": {
+            "title": "Order Count",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "customer_count",
+          "order_count",
+          "revenue",
+          "aov"
+        ],
+        "title": "CustomerDeliveryAreaChannelMetrics",
+        "type": "object"
+      },
+      "CustomerDeliveryAreaZone": {
+        "properties": {
+          "aov": {
+            "title": "Aov",
+            "type": "number"
+          },
+          "channel_breakdown": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CustomerDeliveryAreaChannelMetrics"
+            },
+            "title": "Channel Breakdown",
+            "type": "object"
+          },
+          "customer_count": {
+            "title": "Customer Count",
+            "type": "integer"
+          },
+          "fulfilment_provider": {
+            "title": "Fulfilment Provider",
+            "type": "string"
+          },
+          "geometry": {
+            "additionalProperties": true,
+            "title": "Geometry",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order_count": {
+            "title": "Order Count",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "customer_count",
+          "order_count",
+          "revenue",
+          "aov",
+          "channel_breakdown",
+          "id",
+          "name",
+          "fulfilment_provider",
+          "geometry"
+        ],
+        "title": "CustomerDeliveryAreaZone",
+        "type": "object"
+      },
+      "CustomerDeliveryAreas": {
+        "description": "Live zones plus filtered, privacy-preserving delivery-demand cells.",
+        "properties": {
+          "aov": {
+            "title": "Aov",
+            "type": "number"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerDeliveryAreaCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "customer_count": {
+            "title": "Customer Count",
+            "type": "integer"
+          },
+          "order_count": {
+            "title": "Order Count",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          },
+          "source_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Source Counts",
+            "type": "object"
+          },
+          "version_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Name"
+          },
+          "zones": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerDeliveryAreaZone"
+            },
+            "title": "Zones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "version_name",
+          "zones",
+          "cells",
+          "customer_count",
+          "order_count",
+          "revenue",
+          "aov",
+          "source_counts"
+        ],
+        "title": "CustomerDeliveryAreas",
+        "type": "object"
+      },
       "CustomerOrderHistoryRow": {
         "properties": {
           "courier": {
@@ -9138,6 +9335,18 @@
             "title": "Avg Order Value Growth",
             "type": "number"
           },
+          "courier_fee_rate": {
+            "title": "Courier Fee Rate",
+            "type": "number"
+          },
+          "courier_fees": {
+            "title": "Courier Fees",
+            "type": "number"
+          },
+          "courier_fees_growth": {
+            "title": "Courier Fees Growth",
+            "type": "number"
+          },
           "delivered": {
             "title": "Delivered",
             "type": "integer"
@@ -9160,6 +9369,10 @@
           },
           "orders_growth": {
             "title": "Orders Growth",
+            "type": "number"
+          },
+          "pending_courier_fees": {
+            "title": "Pending Courier Fees",
             "type": "number"
           },
           "revenue": {
@@ -9187,11 +9400,15 @@
           "total_fees",
           "fees_pending",
           "fee_rate",
+          "courier_fees",
+          "pending_courier_fees",
+          "courier_fee_rate",
           "orders_growth",
           "revenue_growth",
           "avg_order_value_growth",
           "delivered_growth",
-          "total_fees_growth"
+          "total_fees_growth",
+          "courier_fees_growth"
         ],
         "title": "DashboardSummary",
         "type": "object"
@@ -66649,6 +66866,99 @@
           }
         ],
         "summary": "List Customers",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/api/v1/users/admin/delivery-areas": {
+      "get": {
+        "description": "Show demand density over the current live delivery-zone geometry.\n\nThe same customer/date filter contract as ``/admin/all`` makes the two\ncustomer tabs one workspace, while map cells stay aggregate-only and never\nexpose individual customer coordinates.",
+        "operationId": "customer_delivery_areas_api_v1_users_admin_delivery_areas_get",
+        "parameters": [
+          {
+            "description": "Search by name, email, or phone",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Search by name, email, or phone",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "ISO date",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date",
+              "title": "Date From"
+            }
+          },
+          {
+            "description": "ISO date",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date",
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDeliveryAreas"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Customer Delivery Areas",
         "tags": [
           "Users"
         ]

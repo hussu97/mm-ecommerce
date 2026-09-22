@@ -20,12 +20,13 @@ from app.models.order import Order
 from app.models.user import User as UserModel
 from app.schemas.courier import CourierBadge
 from app.schemas.customer import (
+    CustomerDeliveryAreas,
     CustomerOrderHistoryRow,
     CustomerSummary,
     PaginatedCustomerOrders,
     PaginatedCustomers,
 )
-from app.services import customer_service
+from app.services import customer_delivery_area_service, customer_service
 from app.services.orders import order_query
 from app.services.pos import business_day_service
 
@@ -206,6 +207,32 @@ async def list_customers(
         page=page,
         per_page=per_page,
         pages=max(1, (total + per_page - 1) // per_page),
+    )
+
+
+@router.get("/admin/delivery-areas", response_model=CustomerDeliveryAreas)
+async def customer_delivery_areas(
+    search: str | None = Query(None, description="Search by name, email, or phone"),
+    date_from: str | None = Query(None, description="ISO date"),
+    date_to: str | None = Query(None, description="ISO date"),
+    db: AsyncSession = Depends(get_db),
+    _admin: UserModel = Depends(require("customers.read")),
+) -> CustomerDeliveryAreas:
+    """Show demand density over the current live delivery-zone geometry.
+
+    The same customer/date filter contract as ``/admin/all`` makes the two
+    customer tabs one workspace, while map cells stay aggregate-only and never
+    expose individual customer coordinates.
+    """
+    await customer_service.refresh_if_dirty(db)
+    bounds = await business_day_service.range_bounds(db, date_from, date_to)
+    return CustomerDeliveryAreas.model_validate(
+        await customer_delivery_area_service.load(
+            db,
+            search=search,
+            start=bounds[0] if bounds else None,
+            end=bounds[1] if bounds else None,
+        )
     )
 
 

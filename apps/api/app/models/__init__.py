@@ -65,6 +65,7 @@ from .custom_order_enquiry import CustomOrderEnquiry  # noqa: F401
 from .customer_cache import (  # noqa: F401
     CustomerCache,
     CustomerCacheState,
+    CustomerDeliveryAreaCache,
     CustomerOrderCache,
 )
 from .daily_sales_send import DailySalesSend  # noqa: F401

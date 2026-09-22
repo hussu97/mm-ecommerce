@@ -16,6 +16,9 @@ dependencies = [
     "httpx[http2]>=0.28.0",
     "stripe>=11.0.0",
     "resend>=2.0.0",
+    # Explicit direct dependency: the geocoding worker uses the VM's attached
+    # service account through Application Default Credentials (not an API key).
+    "google-auth>=2.0",
     "google-cloud-storage>=2.18",
     "jinja2>=3.1.0",
     # Writes the stylesheet onto the elements before an email is sent

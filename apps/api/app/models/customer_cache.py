@@ -68,3 +68,35 @@ class CustomerOrderCache(Base):
         primary_key=True,
         unique=True,
     )
+
+
+class CustomerDeliveryAreaCache(Base, TimestampMixin):
+    """One geocoded delivery order behind the customer delivery-area map.
+
+    This remains a cache rather than a second order/address source of truth:
+    ``customer_service.refresh_if_dirty`` rebuilds it from the canonical order
+    ledger together with ``customer_cache``. Keeping the point at order grain
+    lets the map answer distinct-customer density, revenue, and AOV for any
+    date range without reading or parsing address JSON on every request.
+    """
+
+    __tablename__ = "customer_delivery_area_cache"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customer_cache.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
+    longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
+    order_created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    order_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    source_channel: Mapped[str] = mapped_column(String(32), nullable=False)

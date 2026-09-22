@@ -284,6 +284,21 @@ class TestCustomerAddressFromOms:
         o = _CLIENT._order_from_oms(_OMS_ORDER_UNASSIGNED)
         assert o.customer_address == {"lat": 25.2, "lng": 55.3}
 
+    def test_normalises_noon_e7_coordinates(self):
+        order = {
+            **_OMS_ORDER_UNASSIGNED,
+            "customerInfo": {
+                **_OMS_ORDER_UNASSIGNED["customerInfo"],
+                "addressLat": "250045035",
+                "addressLng": "551324881",
+            },
+        }
+
+        parsed = _CLIENT._order_from_oms(order)
+
+        assert parsed is not None
+        assert parsed.customer_address == {"lat": 25.0045035, "lng": 55.1324881}
+
     def test_none_when_no_customer_info(self):
         o = _CLIENT._order_from_oms(_OMS_ORDER_NO_ITEMS)
         assert o.customer_address is None

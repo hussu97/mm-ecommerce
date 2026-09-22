@@ -13,13 +13,127 @@ import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useOrderFilters } from '@/lib/order-filters';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { DeliveryAreasMap } from '@/components/customers/DeliveryAreasMap';
 
 type CustomerSummary = Schemas['CustomerSummary'];
 type CustomerOrder = Schemas['CustomerOrderHistoryRow'];
 type CustomerOrdersPage = Schemas['PaginatedCustomerOrders'];
+type CustomerDeliveryAreas = Schemas['CustomerDeliveryAreas'];
+type CustomerTab = 'directory' | 'delivery-areas';
+
+function DeliveryAreasPanel({
+  search,
+  dateFrom,
+  dateTo,
+}: {
+  search: string;
+  dateFrom?: string;
+  dateTo?: string;
+}) {
+  const [areas, setAreas] = useState<CustomerDeliveryAreas | null>(null);
+  const [metric, setMetric] = useState<'customer_count' | 'revenue' | 'aov'>('customer_count');
+  const [showChannelBreakdown, setShowChannelBreakdown] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setAreas(await customersApi.deliveryAreas({
+        search: search || undefined,
+        date_from: dateFrom,
+        date_to: dateTo,
+      }));
+    } catch (loadError) {
+      setError((loadError as Error).message || 'Could not load delivery areas.');
+    } finally {
+      setLoading(false);
+    }
+  }, [dateFrom, dateTo, search]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (loading) return <div className="flex justify-center py-20"><Spinner /></div>;
+  if (error) return <LoadError message={error} onRetry={() => void load()} />;
+  if (!areas) return null;
+
+  const metricLabel = metric === 'customer_count' ? 'Customers' : metric === 'revenue' ? 'Revenue' : 'AOV';
+  const metricValue = metric === 'customer_count'
+    ? `${areas.customer_count}`
+    : metric === 'revenue'
+      ? formatCurrency(areas.revenue)
+      : formatCurrency(areas.aov);
+  const sourceLabel = Object.entries(areas.source_counts)
+    .map(([source, count]) => `${count} ${source}`)
+    .join(' · ');
+
+  return (
+    <section aria-label="Delivery area demand">
+      <div className="mb-4 flex flex-col gap-4 border-y border-gray-200 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex divide-x divide-gray-200">
+          <div className="pr-5">
+            <p className="text-[10px] font-body uppercase tracking-widest text-gray-400">Metric</p>
+            <p className="mt-1 text-xl font-display text-gray-800">{metricValue}</p>
+            <p className="text-xs font-body text-gray-500">{metricLabel.toLowerCase()} in plotted areas</p>
+          </div>
+          <div className="px-5">
+            <p className="text-[10px] font-body uppercase tracking-widest text-gray-400">Orders</p>
+            <p className="mt-1 text-xl font-display text-gray-800">{areas.order_count}</p>
+            <p className="text-xs font-body text-gray-500">geocoded delivery orders</p>
+          </div>
+          <div className="pl-5">
+            <p className="text-[10px] font-body uppercase tracking-widest text-gray-400">Live map</p>
+            <p className="mt-1 text-sm font-body text-gray-800">{areas.version_name ?? 'No published map'}</p>
+            <p className="text-xs font-body text-gray-500">{areas.zones.length} delivery zones</p>
+          </div>
+        </div>
+        <div className="flex flex-col items-start gap-2 lg:items-end">
+          <p className="mb-1.5 text-[10px] font-body uppercase tracking-widest text-gray-400">Heat by</p>
+          <div className="flex border border-gray-300 bg-white p-0.5">
+            {[
+              ['customer_count', 'Customers'],
+              ['revenue', 'Revenue'],
+              ['aov', 'AOV'],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMetric(value as typeof metric)}
+                className={`px-3 py-1.5 text-[11px] font-body transition-colors ${metric === value ? 'bg-gray-800 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-body text-gray-600">
+            <input
+              type="checkbox"
+              checked={showChannelBreakdown}
+              onChange={event => setShowChannelBreakdown(event.target.checked)}
+              className="h-3.5 w-3.5 accent-gray-800"
+            />
+            Show channel breakdown on zone hover
+          </label>
+        </div>
+      </div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-xs font-body text-gray-500">Warm areas have more {metric === 'customer_count' ? 'customers' : metric === 'revenue' ? 'revenue' : 'higher order values'}; cool areas have less.</p>
+        <div className="flex items-center gap-1.5 text-[10px] font-body uppercase tracking-widest text-gray-400"><span className="h-2 w-12 bg-gradient-to-r from-blue-600 via-amber-400 to-rose-600" />Cold · Warm</div>
+      </div>
+      <DeliveryAreasMap
+        data={areas}
+        metric={metric}
+        showChannelBreakdown={showChannelBreakdown}
+      />
+      <p className="mt-2 text-[11px] font-body text-gray-400">Each glow combines delivery orders within an approximately 2 km area; no individual home pins are shown.{sourceLabel ? ` Sources: ${sourceLabel}.` : ''}</p>
+    </section>
+  );
+}
 
 export default function CustomersPage() {
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<CustomerTab>('directory');
   const [sort, setSort] = useState<SortState>({ key: 'latest_order_at', direction: 'desc' });
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerSummary | null>(null);
   const [history, setHistory] = useState<CustomerOrdersPage | null>(null);
@@ -87,7 +201,7 @@ export default function CustomersPage() {
 
   return (
     <div>
-      <LoadError message={loadError} onRetry={refetch} />
+      {activeTab === 'directory' && <LoadError message={loadError} onRetry={refetch} />}
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="font-display text-2xl text-gray-800">Customers</h1>
@@ -143,7 +257,31 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {loading ? (
+      <div className="mb-5 flex gap-5 border-b border-gray-200" role="tablist" aria-label="Customer views">
+        {[
+          ['directory', 'Customer directory'],
+          ['delivery-areas', 'Delivery areas'],
+        ].map(([tab, label]) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab}
+            onClick={() => setActiveTab(tab as CustomerTab)}
+            className={`-mb-px border-b-2 px-0.5 pb-2.5 text-sm font-body transition-colors ${activeTab === tab ? 'border-primary text-gray-800' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'delivery-areas' ? (
+        <DeliveryAreasPanel
+          search={debouncedSearch}
+          dateFrom={hasCompleteDateRange ? filters.from : undefined}
+          dateTo={hasCompleteDateRange ? filters.to : undefined}
+        />
+      ) : loading ? (
         <div className="flex justify-center py-16"><Spinner /></div>
       ) : (
         <DataTable<CustomerSummary>
@@ -229,15 +367,17 @@ export default function CustomersPage() {
         />
       )}
 
-      <Pagination
-        page={page}
-        pages={pages}
-        total={total}
-        perPage={perPage}
-        onPageChange={setPage}
-        onPerPageChange={setPerPage}
-        label="customers"
-      />
+      {activeTab === 'directory' && (
+        <Pagination
+          page={page}
+          pages={pages}
+          total={total}
+          perPage={perPage}
+          onPageChange={setPage}
+          onPerPageChange={setPerPage}
+          label="customers"
+        />
+      )}
 
       {selectedCustomer && (
         <Modal title={`Order history — ${selectedCustomer.name || selectedCustomer.email || selectedCustomer.phone || 'Customer'}`} onClose={closeOrders} wide>

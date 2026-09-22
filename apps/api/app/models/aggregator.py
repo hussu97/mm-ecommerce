@@ -552,6 +552,12 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
     customer_address: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
     )
+    #: Outcome of the one optional address-to-coordinate lookup. A terminal
+    #: result prevents ordinary rolling pulls from paying Google for the same
+    #: address again; a human-triggered backfill may deliberately retry it.
+    address_geocode_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
     #: The marketplace's own rider for this order — a name and a mobile — captured
     #: at the provider edge, the same little the GrubOps ingest surfaces on
     #: `orders.aggregator_driver_*`. Promotion copies these onto the MM order. Null
@@ -601,6 +607,11 @@ class AggregatorOrder(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint("channel", "external_order_id", name="uq_aggregator_order"),
         CheckConstraint(
             f"channel IN ({_CHANNELS_SQL})", name="ck_aggregator_order_channel"
+        ),
+        CheckConstraint(
+            "address_geocode_status IS NULL OR address_geocode_status IN "
+            "('provided', 'resolved', 'failed', 'outside_uae', 'not_configured')",
+            name="ck_aggregator_order_address_geocode_status",
         ),
         Index("ix_aggregator_order_business_date", "channel", "business_date"),
         Index("ix_aggregator_order_promoted", "channel", "promoted_at"),

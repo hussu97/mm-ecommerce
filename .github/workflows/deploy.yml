@@ -531,6 +531,8 @@ jobs:
           FROM_EMAIL=${{ secrets.FROM_EMAIL }}
           GCS_IMAGE_BUCKET=${{ secrets.GCS_IMAGE_BUCKET || 'mm-product-images' }}
           GCS_INVOICE_BUCKET=${{ secrets.GCS_INVOICE_BUCKET || 'melting-moments-data' }}
+          GOOGLE_GEOCODING_BILLING_PROJECT=${{ vars.GOOGLE_GEOCODING_BILLING_PROJECT }}
+          GOOGLE_GEOCODING_TIMEOUT_SECONDS=${{ secrets.GOOGLE_GEOCODING_TIMEOUT_SECONDS || '5.0' }}
           TABBY_API_KEY=${{ secrets.TABBY_API_KEY }}
           TABBY_PUBLIC_KEY=${{ secrets.TABBY_PUBLIC_KEY }}
           TABBY_MERCHANT_CODE=${{ secrets.TABBY_MERCHANT_CODE }}

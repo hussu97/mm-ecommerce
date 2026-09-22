@@ -74,6 +74,7 @@ from app.models.aggregator import (
 from app.models.base import utcnow
 from app.services.aggregators import (
     _isolation,
+    address_geocoding,
     crypto,
     policy,
     reconcile,
@@ -272,6 +273,7 @@ _PRESERVE_IF_NULL = (
     "refund_amount",
     "net_payable",
     "statement_id",
+    "address_geocode_status",
     # customer_name/phone/address + driver_name/phone are handled by
     # _PREFER_UNMASKED (which also COALESCEs); driver_status is a plain word.
     "driver_status",
@@ -373,7 +375,75 @@ def _aware_business(dt: datetime | None) -> datetime | None:
 _UNMAPPED_OUTLETS_WARNED: set[tuple[str, str]] = set()
 
 
-async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> None:
+async def _address_for_upsert(
+    incoming_address: dict[str, Any] | None,
+    existing_address: dict[str, Any] | None,
+    existing_geocode_status: str | None,
+    *,
+    retry_geocoding: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Choose the address to persist without repeating paid geocoding work."""
+    if address_geocoding.coordinates(existing_address) is not None and (
+        address_geocoding.coordinates(incoming_address) is None
+    ):
+        # A later source response often keeps the text but drops its original
+        # pin. The previously stored, validated address is richer and costs no
+        # Google request, so it wins.
+        return existing_address, existing_geocode_status or "provided"
+
+    if incoming_address is None:
+        return None, None
+
+    if address_geocoding.has_coordinate_values(incoming_address):
+        return (
+            incoming_address,
+            "provided"
+            if address_geocoding.coordinates(incoming_address) is not None
+            else "outside_uae",
+        )
+
+    if not retry_geocoding and existing_geocode_status in {
+        "failed",
+        "outside_uae",
+        "not_configured",
+    }:
+        return incoming_address, existing_geocode_status
+
+    enriched = await address_geocoding.geocode(incoming_address)
+    return enriched.address, enriched.status
+
+
+async def upsert_order(
+    db: AsyncSession,
+    channel: str,
+    order: StandardOrder,
+    *,
+    retry_geocoding: bool = False,
+) -> None:
+    """Upsert one marketplace order and enrich a missing address pin once.
+
+    Ordinary rolling pulls do not retry terminal geocoding outcomes. Explicit
+    ranged backfills pass ``retry_geocoding=True`` — an intentional operator
+    action that may spend quota after correcting a provider address.
+    """
+    existing = await db.execute(
+        select(
+            AggregatorOrder.customer_address,
+            AggregatorOrder.address_geocode_status,
+        ).where(
+            AggregatorOrder.channel == channel,
+            AggregatorOrder.external_order_id == order.external_order_id,
+        )
+    )
+    existing_address, existing_geocode_status = existing.one_or_none() or (None, None)
+    existing_address = address_geocoding.normalise_coordinates(existing_address)
+    incoming_address = address_geocoding.normalise_coordinates(order.customer_address)
+    address, geocode_status = await _address_for_upsert(
+        incoming_address,
+        existing_address,
+        existing_geocode_status,
+        retry_geocoding=retry_geocoding,
+    )
     branch_id = await _branch_for(db, channel, order.external_outlet_id)
     # An order whose outlet does not resolve to a branch is stored with branch_id
     # NULL and then NEVER promoted (promote_channel filters branch_id IS NULL), so
@@ -410,11 +480,8 @@ async def upsert_order(db: AsyncSession, channel: str, order: StandardOrder) -> 
         "customer_name": order.customer_name,
         "customer_phone": customer_phone.e164 or order.customer_phone,
         "customer_phone_country": customer_phone.country,
-        "customer_address": (
-            _json_safe(order.customer_address)
-            if order.customer_address is not None
-            else None
-        ),
+        "customer_address": (_json_safe(address) if address is not None else None),
+        "address_geocode_status": geocode_status,
         "driver_name": order.driver_name,
         "driver_phone": order.driver_phone,
         "driver_status": order.driver_status,
@@ -1386,7 +1453,9 @@ async def _persist_channel_mode(
             # leaves the surrounding transaction usable.
             try:
                 async with db.begin_nested():
-                    await upsert_order(db, channel, order)
+                    await upsert_order(
+                        db, channel, order, retry_geocoding=commit_each_day
+                    )
                 written += 1
             except _SYSTEMIC_DB_ERRORS:
                 # Wrong for EVERY row, not just this one — a lost connection, a
@@ -1977,7 +2046,7 @@ async def _renormalize_stored(
             continue
         if order is None:
             continue
-        await upsert_order(db, channel, order)
+        await upsert_order(db, channel, order, retry_geocoding=True)
         count += 1
     return count
 

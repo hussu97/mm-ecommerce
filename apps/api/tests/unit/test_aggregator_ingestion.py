@@ -1730,7 +1730,7 @@ async def test_renormalize_stored_reingests_each_row_from_raw(monkeypatch):
     )
     captured = []
 
-    async def fake_upsert(_db, channel, order):
+    async def fake_upsert(_db, channel, order, **_kwargs):
         captured.append((channel, order.external_order_id))
 
     monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
@@ -1783,7 +1783,7 @@ async def test_fetch_and_persist_isolates_one_malformed_order(monkeypatch):
     db = MagicMock()
     db.begin_nested = lambda: _FakeSavepoint()
 
-    async def fake_upsert(_db, _channel, order):
+    async def fake_upsert(_db, _channel, order, **_kwargs):
         if order.external_order_id == "BAD":
             raise ValueError("unparseable order")
 
@@ -1813,7 +1813,7 @@ async def test_fetch_and_persist_reraises_systemic_db_error(monkeypatch):
     db = MagicMock()
     db.begin_nested = lambda: _FakeSavepoint()
 
-    async def fake_upsert(_db, _channel, _order):
+    async def fake_upsert(_db, _channel, _order, **_kwargs):
         raise ProgrammingError(
             "INSERT ...", {}, Exception('column "marketing_fee" does not exist')
         )
@@ -1855,7 +1855,7 @@ async def test_commit_each_day_commits_once_per_business_date(monkeypatch):
     db.begin_nested = lambda: _FakeSavepoint()
     db.commit = AsyncMock()
 
-    async def fake_upsert(_db, _channel, _order):
+    async def fake_upsert(_db, _channel, _order, **_kwargs):
         return None
 
     monkeypatch.setattr(ingest, "upsert_order", fake_upsert)
@@ -1891,7 +1891,7 @@ async def test_commit_each_day_persists_earlier_days_before_a_systemic_failure(
     db.begin_nested = lambda: _FakeSavepoint()
     db.commit = AsyncMock()
 
-    async def fake_upsert(_db, _channel, order):
+    async def fake_upsert(_db, _channel, order, **_kwargs):
         if order.business_date == "2026-09-02":
             raise ProgrammingError("INSERT ...", {}, Exception("connection reset"))
 

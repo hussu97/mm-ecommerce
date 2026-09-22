@@ -401,6 +401,67 @@ async def _fee_totals(
     return float(money(result[0])), int(result[1]) > 0
 
 
+async def _courier_fee_totals(
+    db: AsyncSession,
+    *,
+    start,
+    end,
+    statuses=None,
+    couriers=None,
+    branch_ids=None,
+    legal_entity_ids=None,
+    category_ids=None,
+) -> tuple[float, float]:
+    """Return confirmed courier costs and their still-unconfirmed quotes.
+
+    The total-fee tile remains the cost-of-sale headline. These figures expose its
+    courier component without ever presenting a quote as an invoiced cost.
+    """
+    confirmed = func.coalesce(
+        func.sum(
+            case(
+                (OrderDelivery.cost_total.is_not(None), OrderDelivery.cost_total),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    pending = func.coalesce(
+        func.sum(
+            case(
+                (
+                    and_(
+                        OrderDelivery.cost_total.is_(None),
+                        OrderDelivery.quoted_cost.is_not(None),
+                    ),
+                    OrderDelivery.quoted_cost,
+                ),
+                else_=0,
+            )
+        ),
+        0,
+    )
+    result = (
+        await db.execute(
+            select(confirmed, pending)
+            .select_from(Order)
+            .join(OrderDelivery, OrderDelivery.order_id == Order.id)
+            .where(
+                Order.created_at >= start,
+                Order.created_at <= end,
+                *_filters(
+                    statuses,
+                    couriers,
+                    branch_ids,
+                    legal_entity_ids,
+                    category_ids,
+                ),
+            )
+        )
+    ).one()
+    return float(money(result[0])), float(money(result[1]))
+
+
 async def _series(
     db: AsyncSession,
     *,
@@ -966,6 +1027,26 @@ async def dashboard_today(
         legal_entity_ids=entities,
         category_ids=cats,
     )
+    courier_fees_cur, pending_courier_fees_cur = await _courier_fee_totals(
+        db,
+        start=start,
+        end=end,
+        statuses=picked,
+        couriers=carriers,
+        branch_ids=branches,
+        legal_entity_ids=entities,
+        category_ids=cats,
+    )
+    courier_fees_prev, pending_courier_fees_prev = await _courier_fee_totals(
+        db,
+        start=prior_start,
+        end=prior_end,
+        statuses=picked,
+        couriers=carriers,
+        branch_ids=branches,
+        legal_entity_ids=entities,
+        category_ids=cats,
+    )
 
     delivered_clause = order_query.courier_clause(carriers)
     delivered = await _count(
@@ -997,6 +1078,13 @@ async def dashboard_today(
         total_fees=fees_cur,
         fees_pending=fees_pending,
         fee_rate=round(fees_cur / revenue_cur * 100, 1) if revenue_cur else 0.0,
+        courier_fees=courier_fees_cur,
+        pending_courier_fees=pending_courier_fees_cur,
+        courier_fee_rate=round(
+            (courier_fees_cur + pending_courier_fees_cur) / revenue_cur * 100, 1
+        )
+        if revenue_cur
+        else 0.0,
         orders_growth=_growth(orders_cur, orders_prev),
         revenue_growth=_growth(revenue_cur, revenue_prev),
         avg_order_value_growth=_growth(
@@ -1005,6 +1093,10 @@ async def dashboard_today(
         ),
         delivered_growth=_growth(delivered, delivered_prev),
         total_fees_growth=_growth(fees_cur, fees_prev),
+        courier_fees_growth=_growth(
+            courier_fees_cur + pending_courier_fees_cur,
+            courier_fees_prev + pending_courier_fees_prev,
+        ),
     )
 
     # by_status keeps the FULL status spread (cancellations included) regardless

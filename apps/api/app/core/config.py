@@ -147,6 +147,12 @@ class Settings(BaseSettings):
     # other finance/data documents. Access is via ADC (the VM service account).
     GCS_INVOICE_BUCKET: str = "melting-moments-data"
 
+    # ── Google Maps Geocoding (aggregator address enrichment) ───────────────
+    #: Billing/quota project for OAuth calls made as the VM service account.
+    #: Empty keeps address enrichment off; aggregator ingestion still succeeds.
+    GOOGLE_GEOCODING_BILLING_PROJECT: str = ""
+    GOOGLE_GEOCODING_TIMEOUT_SECONDS: float = 5.0
+
     # ── Tabby (BNPL) ─────────────────────────────────────────────────────────
     TABBY_API_KEY: str = ""
     TABBY_PUBLIC_KEY: str = ""

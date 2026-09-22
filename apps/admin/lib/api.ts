@@ -43,6 +43,7 @@ type OrderInventoryConsumption = Schemas['OrderInventoryConsumptionResponse'];
 type InventoryTransactionResponse = Schemas['InventoryTransactionResponse'];
 type PaginatedCustomers = Schemas['PaginatedCustomers'];
 type PaginatedCustomerOrders = Schemas['PaginatedCustomerOrders'];
+type CustomerDeliveryAreas = Schemas['CustomerDeliveryAreas'];
 
 // The unified external-system item map (GrubOps + every aggregator) — one table,
 // one generic API. Names straight from the generated contract (rule 8).
@@ -780,6 +781,8 @@ export const customersApi = {
     api.get<PaginatedCustomers>(`/users/admin/all${buildQs(params)}`),
   orders: (customerId: string, params?: { page?: number; per_page?: number }) =>
     api.get<PaginatedCustomerOrders>(`/users/admin/${customerId}/orders${buildQs(params)}`),
+  deliveryAreas: (params?: { search?: string; date_from?: string; date_to?: string }) =>
+    api.get<CustomerDeliveryAreas>(`/users/admin/delivery-areas${buildQs(params)}`),
 };
 
 // ─── Custom-order enquiries (storefront leads) ──────────────────────────────────

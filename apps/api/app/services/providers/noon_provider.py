@@ -58,7 +58,7 @@ import json
 import logging
 from dataclasses import replace
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -202,6 +202,26 @@ def _agent_str(value: Any) -> str | None:
     return text
 
 
+def _coordinate_degrees(value: Any) -> float | None:
+    """Normalise noon's decimal-degree or E7 integer coordinate encoding.
+
+    OMS currently returns customerInfo.addressLat/addressLng as E7 integers
+    (for example ``250045035`` means ``25.0045035``), while historic payloads
+    and test fixtures use ordinary decimal degrees. Magnitude, not endpoint,
+    determines the format: neither a latitude nor longitude in decimal degrees
+    can exceed 180.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if abs(number) > 180:
+        number /= Decimal("10000000")
+    return float(number)
+
+
 def _customer_address_from(info: dict[str, Any]) -> dict[str, Any] | None:
     """The end-customer's delivery address from OMS `customerInfo`, as the
     `{"area":..., "city":..., "street":..., "lat":..., "lng":...}` shape the
@@ -214,8 +234,8 @@ def _customer_address_from(info: dict[str, Any]) -> dict[str, Any] | None:
         "area": _str_or_none(info.get("addressArea")),
         "city": _str_or_none(info.get("addressCity")),
         "street": _str_or_none(info.get("addressStreet")),
-        "lat": info.get("addressLat"),
-        "lng": info.get("addressLng"),
+        "lat": _coordinate_degrees(info.get("addressLat")),
+        "lng": _coordinate_degrees(info.get("addressLng")),
     }
     address = {k: v for k, v in candidates.items() if v not in (None, "")}
     return address or None

@@ -624,11 +624,18 @@ export interface DashboardSummary {
   fees_pending: boolean;
   /** Known fees as a percentage of revenue; a floor when fees_pending is true. */
   fee_rate: number;
+  /** Confirmed courier costs for delivery orders in the selected window. */
+  courier_fees: number;
+  /** Courier quotes that have not yet settled into an actual cost. */
+  pending_courier_fees: number;
+  /** Confirmed plus pending courier fees as a percentage of revenue. */
+  courier_fee_rate: number;
   orders_growth: number;
   revenue_growth: number;
   avg_order_value_growth: number;
   delivered_growth: number;
   total_fees_growth: number;
+  courier_fees_growth: number;
 }
 
 export interface DashboardOps {

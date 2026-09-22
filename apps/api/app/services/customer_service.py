@@ -13,7 +13,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Iterable
 
 from sqlalchemy import delete, select
@@ -23,6 +23,7 @@ from app.core.phone import describe_phone
 from app.models.customer_cache import (
     CustomerCache,
     CustomerCacheState,
+    CustomerDeliveryAreaCache,
     CustomerOrderCache,
 )
 from app.models.order import Order, OrderStatusEnum
@@ -71,6 +72,35 @@ def _order_name(order: Order) -> str | None:
     return normalise_customer_name(
         " ".join(str(snapshot.get(k) or "") for k in ("first_name", "last_name"))
     )
+
+
+def _uae_coordinates(snapshot: dict | None) -> tuple[Decimal, Decimal] | None:
+    """The coordinate spellings marketplace and website snapshots use, safely.
+
+    A map pin outside the country is not a customer delivery location. Keeping
+    that test here as well as in aggregator enrichment protects historical rows
+    that predate the enrichment path and avoids a stray geocoder result making
+    the UAE map frame itself around another country.
+    """
+    if not isinstance(snapshot, dict):
+        return None
+    try:
+        latitude = Decimal(str(snapshot.get("latitude", snapshot.get("lat"))))
+        longitude = Decimal(str(snapshot.get("longitude", snapshot.get("lng"))))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    # Noon Food persists the same coordinates as E7 integers in historic OMS
+    # snapshots. Decimal degrees cannot exceed 180, so magnitude is a stable
+    # discriminator without needing a channel-specific cache schema.
+    if abs(latitude) > 180:
+        latitude /= Decimal("10000000")
+    if abs(longitude) > 180:
+        longitude /= Decimal("10000000")
+    if not (Decimal("22.5") <= latitude <= Decimal("26.5")):
+        return None
+    if not (Decimal("51.3") <= longitude <= Decimal("56.7")):
+        return None
+    return latitude, longitude
 
 
 @dataclass
@@ -212,6 +242,7 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
             )
         )
 
+    await db.execute(delete(CustomerDeliveryAreaCache))
     await db.execute(delete(CustomerOrderCache))
     await db.execute(delete(CustomerCache))
 
@@ -245,6 +276,29 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
         for source in order_sources:
             db.add(
                 CustomerOrderCache(customer_id=customer_id, order_id=source.order.id)
+            )
+            # Counter/pickup orders have no useful drop-off, and a cancelled
+            # order neither belongs in customer revenue nor in delivery demand.
+            if source.order.status == OrderStatusEnum.CANCELLED:
+                continue
+            coordinates = _uae_coordinates(source.order.shipping_address_snapshot)
+            if coordinates is None:
+                continue
+            latitude, longitude = coordinates
+            db.add(
+                CustomerDeliveryAreaCache(
+                    customer_id=customer_id,
+                    order_id=source.order.id,
+                    latitude=latitude,
+                    longitude=longitude,
+                    order_created_at=source.order.created_at,
+                    order_value=Decimal(source.order.total),
+                    source_channel=(
+                        source.order.aggregator_channel or "aggregator"
+                        if source.order.source == "aggregator"
+                        else source.order.source
+                    ),
+                )
             )
 
     state.dirty = False

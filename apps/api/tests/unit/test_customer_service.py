@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from app.services.customer_service import _components, _Source, normalise_customer_name
+from app.services.customer_service import (
+    _components,
+    _Source,
+    _uae_coordinates,
+    normalise_customer_name,
+)
 
 
 def _source(
@@ -110,3 +116,19 @@ def test_components_link_a_registered_account_to_its_orders_without_a_name():
     assert [[source.key for source in group] for group in groups] == [
         ["user:1", "order:1"]
     ]
+
+
+def test_delivery_area_cache_accepts_both_website_and_marketplace_coordinate_spellings():
+    assert _uae_coordinates({"latitude": "25.2048", "longitude": "55.2708"}) == (
+        Decimal("25.2048"),
+        Decimal("55.2708"),
+    )
+    assert _uae_coordinates({"lat": 25.2048, "lng": 55.2708}) == (
+        Decimal("25.2048"),
+        Decimal("55.2708"),
+    )
+    assert _uae_coordinates({"lat": 250045035, "lng": 551324881}) == (
+        Decimal("25.0045035"),
+        Decimal("55.1324881"),
+    )
+    assert _uae_coordinates({"latitude": 51.5072, "longitude": -0.1276}) is None

@@ -180,6 +180,13 @@ async def test_fee_totals_round_known_fees_and_flag_pending_costs():
     assert out == (13.46, True)
 
 
+async def test_courier_fee_totals_keep_quotes_pending_until_cost_is_known():
+    out = await mod._courier_fee_totals(
+        _DB([_Result([("13.456", "7.891")])]), start=_A, end=_B
+    )
+    assert out == (13.46, 7.89)
+
+
 # ── breakdown maps labels and rounds money once ───────────────────────────────
 
 

@@ -8699,6 +8699,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/admin/delivery-areas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer Delivery Areas
+         * @description Show demand density over the current live delivery-zone geometry.
+         *
+         *     The same customer/date filter contract as ``/admin/all`` makes the two
+         *     customer tabs one workspace, while map cells stay aggregate-only and never
+         *     expose individual customer coordinates.
+         */
+        get: operations["customer_delivery_areas_api_v1_users_admin_delivery_areas_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/admin/{customer_id}/orders": {
         parameters: {
             query?: never;
@@ -12149,6 +12173,88 @@ export interface components {
             /** Returning Customers */
             returning_customers: number;
         };
+        /**
+         * CustomerDeliveryAreaCell
+         * @description One compact heat-map bucket, never an individual address.
+         */
+        CustomerDeliveryAreaCell: {
+            /** Aov */
+            aov: number;
+            /** Channel Breakdown */
+            channel_breakdown: {
+                [key: string]: components["schemas"]["CustomerDeliveryAreaChannelMetrics"];
+            };
+            /** Customer Count */
+            customer_count: number;
+            /** Latitude */
+            latitude: number;
+            /** Longitude */
+            longitude: number;
+            /** Order Count */
+            order_count: number;
+            /** Revenue */
+            revenue: number;
+        };
+        /** CustomerDeliveryAreaChannelMetrics */
+        CustomerDeliveryAreaChannelMetrics: {
+            /** Aov */
+            aov: number;
+            /** Customer Count */
+            customer_count: number;
+            /** Order Count */
+            order_count: number;
+            /** Revenue */
+            revenue: number;
+        };
+        /** CustomerDeliveryAreaZone */
+        CustomerDeliveryAreaZone: {
+            /** Aov */
+            aov: number;
+            /** Channel Breakdown */
+            channel_breakdown: {
+                [key: string]: components["schemas"]["CustomerDeliveryAreaChannelMetrics"];
+            };
+            /** Customer Count */
+            customer_count: number;
+            /** Fulfilment Provider */
+            fulfilment_provider: string;
+            /** Geometry */
+            geometry: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Order Count */
+            order_count: number;
+            /** Revenue */
+            revenue: number;
+        };
+        /**
+         * CustomerDeliveryAreas
+         * @description Live zones plus filtered, privacy-preserving delivery-demand cells.
+         */
+        CustomerDeliveryAreas: {
+            /** Aov */
+            aov: number;
+            /** Cells */
+            cells: components["schemas"]["CustomerDeliveryAreaCell"][];
+            /** Customer Count */
+            customer_count: number;
+            /** Order Count */
+            order_count: number;
+            /** Revenue */
+            revenue: number;
+            /** Source Counts */
+            source_counts: {
+                [key: string]: number;
+            };
+            /** Version Name */
+            version_name: string | null;
+            /** Zones */
+            zones: components["schemas"]["CustomerDeliveryAreaZone"][];
+        };
         /** CustomerOrderHistoryRow */
         CustomerOrderHistoryRow: {
             courier?: components["schemas"]["CourierBadge"] | null;
@@ -12265,6 +12371,12 @@ export interface components {
             avg_order_value: number;
             /** Avg Order Value Growth */
             avg_order_value_growth: number;
+            /** Courier Fee Rate */
+            courier_fee_rate: number;
+            /** Courier Fees */
+            courier_fees: number;
+            /** Courier Fees Growth */
+            courier_fees_growth: number;
             /** Delivered */
             delivered: number;
             /** Delivered Growth */
@@ -12277,6 +12389,8 @@ export interface components {
             orders: number;
             /** Orders Growth */
             orders_growth: number;
+            /** Pending Courier Fees */
+            pending_courier_fees: number;
             /** Revenue */
             revenue: number;
             /** Revenue Growth */
@@ -38502,6 +38616,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedCustomers"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    customer_delivery_areas_api_v1_users_admin_delivery_areas_get: {
+        parameters: {
+            query?: {
+                /** @description Search by name, email, or phone */
+                search?: string | null;
+                /** @description ISO date */
+                date_from?: string | null;
+                /** @description ISO date */
+                date_to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerDeliveryAreas"];
                 };
             };
             /** @description Validation Error */

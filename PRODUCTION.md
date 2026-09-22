@@ -482,6 +482,8 @@ up the VM identity from the metadata server.
 |--------|-------|
 | `GCS_IMAGE_BUCKET` | `mm-product-images` (public-read product images) |
 | `GCS_INVOICE_BUCKET` | `melting-moments-data` (private invoices/data) |
+| `GOOGLE_GEOCODING_BILLING_PROJECT` | Maps-billing GCP project ID (optional; uses VM service-account OAuth) |
+| `GOOGLE_GEOCODING_TIMEOUT_SECONDS` | `5.0` |
 
 ---
 
@@ -762,6 +764,20 @@ at a different bucket.
 |--------|-----------------|-------|
 | `GCS_IMAGE_BUCKET` | `mm-product-images` | Public-read product images |
 | `GCS_INVOICE_BUCKET` | `melting-moments-data` | Private invoices/data (signed-URL downloads) |
+
+#### Google Maps Geocoding (marketplace address enrichment)
+
+The API container uses Application Default Credentials from the VM's attached
+service account — no API key or service-account key file is deployed. Enable
+Geocoding API v4 and billing in the listed project, give that VM service account
+`roles/serviceusage.serviceUsageConsumer` on it, and ensure the VM has the
+`cloud-platform` access scope. This grants the minimal quota-consumer permission;
+the service only requests the narrower Maps geocoding OAuth scope.
+
+| Setting | Production value | Notes |
+|--------|-----------------|-------|
+| `GOOGLE_GEOCODING_BILLING_PROJECT` | GCP project ID | Used as `X-Goog-User-Project` for Maps billing and quota. Empty means missing marketplace pins stay unpinned without failing ingestion. |
+| `GOOGLE_GEOCODING_TIMEOUT_SECONDS` | `5.0` | Request timeout; an upstream failure is recorded as a no-retry address result. |
 
 #### BNPL — Tabby
 
