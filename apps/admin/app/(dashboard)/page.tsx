@@ -97,7 +97,7 @@ function MetricCard({
   loading,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   icon: string;
   href: string;
   growth?: Growth;
@@ -684,7 +684,12 @@ export default function DashboardPage() {
         />
         <MetricCard
           label={isRange ? 'Orders' : 'Orders Today'}
-          value={`${s?.orders ?? 0} (${s?.delivered ?? 0} delivered)`}
+          value={
+            <>
+              {s?.orders ?? 0}
+              <span className="text-sm font-body text-gray-400"> ({s?.delivered ?? 0} delivered)</span>
+            </>
+          }
           icon="receipt_long"
           href={href()}
           growth={s?.orders_growth}

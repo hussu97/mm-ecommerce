@@ -16,6 +16,32 @@ import { DateRangePresets } from '@/components/orders/DateRangePresets';
 import type { OrderFilters } from '@/lib/order-filters';
 import { hasAnyFilter } from '@/lib/order-filters';
 
+type StatusTone = 'success' | 'warning' | 'danger' | 'info';
+
+// Keep the filters in the same visual language as the Status column. Seeing a
+// red "Cancelled" chip or green "Delivered" chip before selecting it makes the
+// filter scan like the order table rather than like a second legend to learn.
+const STATUS_TONE: Record<string, StatusTone> = {
+  created: 'warning',
+  confirmed: 'info',
+  arrived_at_pos: 'info',
+  packed: 'info',
+  out_for_delivery: 'info',
+  delivered: 'success',
+  undelivered: 'danger',
+  cancelled: 'danger',
+  payment_failed: 'danger',
+  refunded: 'warning',
+  disputed: 'danger',
+};
+
+const TONE_CLASSES: Record<StatusTone, string> = {
+  success: 'border-green-200 bg-green-50 text-green-700 hover:border-green-300',
+  warning: 'border-yellow-200 bg-yellow-50 text-yellow-700 hover:border-yellow-300',
+  danger: 'border-red-200 bg-red-50 text-red-600 hover:border-red-300',
+  info: 'border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-300',
+};
+
 export const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'created', label: 'Created' },
   { value: 'confirmed', label: 'Confirmed' },
@@ -35,10 +61,12 @@ export const STATUS_OPTIONS: { value: string; label: string }[] = [
 function Chip({
   on,
   onClick,
+  tone,
   children,
 }: {
   on: boolean;
   onClick: () => void;
+  tone?: StatusTone;
   children: React.ReactNode;
 }) {
   return (
@@ -50,9 +78,12 @@ function Chip({
         'inline-flex items-center gap-1.5 border px-2.5 py-1 text-xs font-body transition-colors',
         // A real thumb target on a phone; compact again at a desk.
         'min-h-[var(--tap-min)] md:min-h-0',
-        on
-          ? 'border-primary bg-primary/5 text-primary'
-          : 'border-gray-200 text-gray-600 hover:border-gray-300',
+        tone
+          ? TONE_CLASSES[tone]
+          : on
+            ? 'border-primary bg-primary/5 text-primary'
+            : 'border-gray-200 text-gray-600 hover:border-gray-300',
+        on && tone && 'ring-1 ring-current',
       )}
     >
       {children}
@@ -154,6 +185,7 @@ export function OrderFilterBar({
               key={s.value}
               on={filters.statuses.includes(s.value)}
               onClick={() => onToggleStatus(s.value)}
+              tone={STATUS_TONE[s.value]}
             >
               {s.label}
             </Chip>
