@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Schemas } from '@mm/types';
 
 type DeliveryAreas = Schemas['CustomerDeliveryAreas'];
@@ -9,6 +9,9 @@ type Metric = 'customer_count' | 'revenue' | 'aov';
 const WIDTH = 1000;
 const HEIGHT = 660;
 const PADDING = 26;
+const ZOOM_STEP = 1.18;
+const MIN_SCALE = 1;
+const MAX_SCALE = 40;
 
 function geometryPoints(geometry: Record<string, unknown>): [number, number][] {
   const coordinates = geometry.coordinates;
@@ -60,6 +63,10 @@ export function DeliveryAreasMap({
   showChannelBreakdown: boolean;
 }) {
   const [hovered, setHovered] = useState<DeliveryAreas['zones'][number] | null>(null);
+  const [view, setView] = useState({ x: 0, y: 0, w: WIDTH, h: HEIGHT });
+  const [panning, setPanning] = useState<{ x: number; y: number } | null>(null);
+  const [cursor, setCursor] = useState({ x: 0, y: 0, width: WIDTH });
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const projection = useMemo(() => {
     const points = data.zones.flatMap(zone => geometryPoints(zone.geometry));
     if (!points.length) return null;
@@ -80,13 +87,65 @@ export function DeliveryAreasMap({
   }, [data.zones]);
 
   const maxValue = Math.max(...data.zones.map(zone => zone[metric]), 1);
+  const zoomedIn = view.w < WIDTH;
   if (!projection) {
     return <div className="flex h-80 items-center justify-center text-sm font-body text-gray-400">No geocoded delivery addresses match these filters.</div>;
   }
 
+  function toViewBox(e: { clientX: number; clientY: number }) {
+    const box = svgRef.current?.getBoundingClientRect();
+    if (!box) return { x: 0, y: 0 };
+    return {
+      x: view.x + ((e.clientX - box.left) / box.width) * view.w,
+      y: view.y + ((e.clientY - box.top) / box.height) * view.h,
+    };
+  }
+
+  function zoomAt(anchor: { x: number; y: number }, factor: number) {
+    setView(current => {
+      const scale = WIDTH / current.w;
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+      const w = WIDTH / next;
+      const h = HEIGHT / next;
+      const xFraction = (anchor.x - current.x) / current.w;
+      const yFraction = (anchor.y - current.y) / current.h;
+      return {
+        w,
+        h,
+        x: Math.min(Math.max(anchor.x - xFraction * w, 0), WIDTH - w),
+        y: Math.min(Math.max(anchor.y - yFraction * h, 0), HEIGHT - h),
+      };
+    });
+  }
+
   return (
     <div className="relative overflow-hidden border border-gray-200 bg-[#fbfaf9]">
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="block h-auto w-full" aria-label="Delivery-zone demand heat map">
+      <svg
+        ref={svgRef}
+        viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+        className={`block h-auto w-full select-none ${panning ? 'cursor-grabbing' : zoomedIn ? 'cursor-grab' : 'cursor-crosshair'}`}
+        aria-label="Delivery-zone demand heat map"
+        onWheel={event => {
+          if (!event.ctrlKey && !event.metaKey && !event.shiftKey) return;
+          zoomAt(toViewBox(event), event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
+        }}
+        onMouseDown={event => setPanning(toViewBox(event))}
+        onMouseUp={() => setPanning(null)}
+        onDoubleClick={() => setView({ x: 0, y: 0, w: WIDTH, h: HEIGHT })}
+        onMouseLeave={() => { setHovered(null); setPanning(null); }}
+        onMouseMove={event => {
+          const box = event.currentTarget.getBoundingClientRect();
+          setCursor({ x: event.clientX - box.left, y: event.clientY - box.top, width: box.width });
+          if (!panning) return;
+          const at = toViewBox(event);
+          setPanning(at);
+          setView(current => ({
+            ...current,
+            x: Math.min(Math.max(current.x - (at.x - panning.x), 0), WIDTH - current.w),
+            y: Math.min(Math.max(current.y - (at.y - panning.y), 0), HEIGHT - current.h),
+          }));
+        }}
+      >
         {data.zones.map(zone => (
           <path
             key={zone.id}
@@ -98,12 +157,42 @@ export function DeliveryAreasMap({
             strokeLinejoin="round"
             className="cursor-crosshair transition-all duration-200"
             onMouseEnter={() => setHovered(zone)}
-            onMouseLeave={() => setHovered(null)}
           />
         ))}
       </svg>
+      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1">
+        {[
+          ['+', () => zoomAt({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, ZOOM_STEP)],
+          ['−', () => zoomAt({ x: view.x + view.w / 2, y: view.y + view.h / 2 }, 1 / ZOOM_STEP)],
+        ].map(([label, onClick]) => (
+          <button
+            key={label as string}
+            type="button"
+            onClick={onClick as () => void}
+            className="h-6 w-6 border border-gray-300 bg-white/90 text-sm leading-none text-gray-600 hover:bg-white"
+          >
+            {label as string}
+          </button>
+        ))}
+        {zoomedIn && (
+          <button
+            type="button"
+            onClick={() => setView({ x: 0, y: 0, w: WIDTH, h: HEIGHT })}
+            className="h-6 w-6 border border-gray-300 bg-white/90 text-[10px] leading-none text-gray-500 hover:bg-white"
+            title="Fit all delivery zones"
+          >
+            ⤢
+          </button>
+        )}
+      </div>
       {hovered && (
-        <div className="pointer-events-none absolute bottom-3 left-3 border border-gray-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur">
+        <div
+          className="pointer-events-none absolute z-10 border border-gray-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur"
+          style={{
+            left: Math.max(0, Math.min(cursor.x + 14, cursor.width - 220)),
+            top: Math.max(0, cursor.y - 10),
+          }}
+        >
           <p className="text-[10px] font-body uppercase tracking-widest text-gray-400">{hovered.name}</p>
           {!showChannelBreakdown ? (
             <>
