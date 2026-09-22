@@ -35,7 +35,10 @@ export interface CaterFormCopy {
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+// HEIC/HEIF are an iPhone's native photo format. Safari hands us a JPEG when the
+// photo is picked from the library, but a raw .heic (Files app / iCloud Drive)
+// arrives as image/heic — the API re-encodes it to JPEG, so accept it here too.
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
 
 interface Picked {
   file: File;
@@ -71,7 +74,7 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
         break;
       }
       if (!ALLOWED_TYPES.includes(file.type)) {
-        rejected = 'Please use JPG, PNG or WEBP images.';
+        rejected = 'Please use a JPG, PNG, WEBP or HEIC image.';
         continue;
       }
       if (file.size > MAX_IMAGE_BYTES) {
@@ -104,7 +107,9 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
     if (!phone.trim() || !isValidPhone(phone)) e.phone = t('checkout.valid_phone_required');
     if (!description.trim())
       e.description = locale === 'ar' ? 'الوصف مطلوب' : 'Please describe what you’d like';
-    if (approxKg && !(Number(approxKg) > 0)) e.approxKg = 'Enter a valid weight';
+    if (!approxKg.trim())
+      e.approxKg = locale === 'ar' ? 'الوزن التقريبي أو عدد الحصص مطلوب' : 'Approx. weight or servings is required';
+    else if (!(Number(approxKg) > 0)) e.approxKg = locale === 'ar' ? 'أدخل قيمة صحيحة' : 'Enter a valid number';
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -206,7 +211,7 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
       />
 
       <Input
-        label={c.kg_label ?? (locale === 'ar' ? 'الوزن التقريبي (كجم) — اختياري' : 'Approx. weight (kg) — optional')}
+        label={c.kg_label ?? (locale === 'ar' ? 'الوزن التقريبي (كجم) / عدد الحصص' : 'Approx. weight (kg) / servings')}
         type="number"
         min="0"
         step="0.5"
@@ -252,7 +257,7 @@ export function CaterEnquiryForm({ copy, locale }: { copy?: CaterFormCopy; local
         <input
           ref={fileInput}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
           multiple
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}
