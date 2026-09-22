@@ -602,6 +602,11 @@ export interface DashboardCourierRow {
   logo_url: string | null;
   orders: number;
   revenue: number;
+  /** Fees as a percentage of this carrier's revenue (VAT-inclusive): an
+   * aggregator's commission + cancellation + marketing, a website courier's
+   * delivery charge, plus the payment fee on every card/prepaid order. Null when
+   * the carrier had no revenue in the window. */
+  fee_rate: number | null;
 }
 
 export interface DashboardSummary {

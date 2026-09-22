@@ -4785,6 +4785,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/suppliers/{supplier_id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate Supplier
+         * @description Flip a supplier to inactive (moves it to the inactive tab).
+         *
+         *     Refused while any active item is still mapped to it; leaves purchase-order
+         *     history untouched. Reversible via ``/reactivate``.
+         */
+        post: operations["deactivate_supplier_api_v1_inventory_suppliers__supplier_id__deactivate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/suppliers/{supplier_id}/items": {
         parameters: {
             query?: never;
@@ -4797,6 +4820,26 @@ export interface paths {
         /** Set Supplier Items */
         put: operations["set_supplier_items_api_v1_inventory_suppliers__supplier_id__items_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inventory/suppliers/{supplier_id}/reactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reactivate Supplier
+         * @description Bring an inactive supplier back to the active tab.
+         */
+        post: operations["reactivate_supplier_api_v1_inventory_suppliers__supplier_id__reactivate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11710,6 +11753,8 @@ export interface components {
         CourierBreakdownRow: {
             /** Code */
             code: string;
+            /** Fee Rate */
+            fee_rate?: number | null;
             /** Label */
             label: string;
             /** Logo Url */
@@ -17776,7 +17821,9 @@ export interface components {
             /** Delivery Date */
             delivery_date?: string | null;
             /** Items */
-            items: components["schemas"]["PurchaseOrderLineInput"][];
+            items?: components["schemas"]["PurchaseOrderLineInput"][];
+            /** Misc Items */
+            misc_items?: components["schemas"]["PurchaseOrderMiscLineInput"][];
             /** Notes */
             notes?: string | null;
             /**
@@ -17872,6 +17919,49 @@ export interface components {
             /** Vat Amount */
             vat_amount: string;
         };
+        /**
+         * PurchaseOrderMiscLineInput
+         * @description One free-text, non-inventory PO line (supplier must allow misc items).
+         *
+         *     The user names it and keys quantity, its storage unit, and the VAT-inclusive
+         *     line total. It never becomes an inventory item; the server derives the unit
+         *     cost and recoverable VAT the same way it does for a regular line.
+         */
+        PurchaseOrderMiscLineInput: {
+            /**
+             * Entered Total
+             * @default 0
+             */
+            entered_total: number | string;
+            /** Name */
+            name: string;
+            /** Quantity */
+            quantity: number | string;
+            /** Storage Unit */
+            storage_unit: string;
+        };
+        /** PurchaseOrderMiscLineResponse */
+        PurchaseOrderMiscLineResponse: {
+            /** Entered Total */
+            entered_total: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Net Total */
+            net_total: string;
+            /** Quantity */
+            quantity: string;
+            /** Storage Unit */
+            storage_unit: string;
+            /** Unit Cost */
+            unit_cost: string;
+            /** Vat Amount */
+            vat_amount: string;
+        };
         /** PurchaseOrderResponse */
         PurchaseOrderResponse: {
             /** Additional Cost */
@@ -17915,6 +18005,11 @@ export interface components {
              * @default []
              */
             items: components["schemas"]["PurchaseOrderLineResponse"][];
+            /**
+             * Misc Items
+             * @default []
+             */
+            misc_items: components["schemas"]["PurchaseOrderMiscLineResponse"][];
             /** Notes */
             notes: string | null;
             /** Origin */
@@ -17960,6 +18055,8 @@ export interface components {
             delivery_date?: string | null;
             /** Items */
             items?: components["schemas"]["PurchaseOrderLineInput"][] | null;
+            /** Misc Items */
+            misc_items?: components["schemas"]["PurchaseOrderMiscLineInput"][] | null;
             /** Notes */
             notes?: string | null;
             /** Supplier Id */
@@ -19528,6 +19625,11 @@ export interface components {
              * @default false
              */
             allow_any_item: boolean;
+            /**
+             * Allows Misc Items
+             * @default false
+             */
+            allows_misc_items: boolean;
             /** Contacts */
             contacts?: components["schemas"]["SupplierContactInput"][];
             /**
@@ -19631,6 +19733,11 @@ export interface components {
              */
             allow_any_item: boolean;
             /**
+             * Allows Misc Items
+             * @default false
+             */
+            allows_misc_items: boolean;
+            /**
              * Contacts
              * @default []
              */
@@ -19678,6 +19785,8 @@ export interface components {
             address?: string | null;
             /** Allow Any Item */
             allow_any_item?: boolean | null;
+            /** Allows Misc Items */
+            allows_misc_items?: boolean | null;
             /** Contacts */
             contacts?: components["schemas"]["SupplierContactInput"][] | null;
             /** Is Active */
@@ -30724,6 +30833,37 @@ export interface operations {
             };
         };
     };
+    deactivate_supplier_api_v1_inventory_suppliers__supplier_id__deactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                supplier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_supplier_items_api_v1_inventory_suppliers__supplier_id__items_get: {
         parameters: {
             query?: never;
@@ -30777,6 +30917,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SupplierItemResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reactivate_supplier_api_v1_inventory_suppliers__supplier_id__reactivate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                supplier_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierResponse"];
                 };
             };
             /** @description Validation Error */

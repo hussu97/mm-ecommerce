@@ -731,6 +731,17 @@ export default function DashboardPage() {
                     <div className="text-xs font-body text-gray-600">{row.label}</div>
                     <div className="font-display text-sm text-gray-800">
                       {row.orders} · <span className="text-gray-500">{formatCurrency(row.revenue)}</span>
+                      {row.fee_rate != null && (
+                        <>
+                          {' · '}
+                          <span
+                            className="text-amber-600"
+                            title="Fees as a % of this carrier's revenue (VAT incl.): aggregator commission + cancellation + marketing, website delivery charge, plus payment fees on card/prepaid orders"
+                          >
+                            {row.fee_rate.toFixed(1)}% fees
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </button>

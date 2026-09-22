@@ -214,15 +214,84 @@ async def test_by_category_labels_ids_and_buckets_the_uncategorised():
 
 
 async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
-    # (source, aggregator_channel, total, delivery_method, dispatch provider) for
-    # delivered orders.
+    # (source, aggregator_channel, total, delivery_method, dispatch provider,
+    #  aggregator_fee, cancellation_fee, marketing_fee, delivery_fee, payment_fee)
+    # for delivered orders. Fees are VAT-inclusive as stamped.
     rows = [
-        ("aggregator", "Talabat", "40.00", "delivery", None),
-        ("aggregator", "Talabat", "30.00", "delivery", None),
-        ("aggregator", "Keeta 2.0", "25.00", "delivery", None),  # noise → keeta
-        ("cashier", None, "50.00", "delivery", None),  # the register → counter
-        ("online", None, "20.00", "delivery", "lalamove"),  # dispatched courier
-        ("online", None, "34.00", "pickup", None),  # store pickup → website_pickup
+        # Talabat: commission + payment fee on each; rate = (14+6)/70 = ~28.57%.
+        (
+            "aggregator",
+            "Talabat",
+            "40.00",
+            "delivery",
+            None,
+            "8.00",
+            None,
+            None,
+            "0.00",
+            "3.00",
+        ),
+        (
+            "aggregator",
+            "Talabat",
+            "30.00",
+            "delivery",
+            None,
+            "6.00",
+            None,
+            None,
+            "0.00",
+            "3.00",
+        ),
+        (
+            "aggregator",
+            "Keeta 2.0",
+            "25.00",
+            "delivery",
+            None,
+            None,
+            None,
+            None,
+            "0.00",
+            None,
+        ),  # → keeta, not scraped yet
+        (
+            "cashier",
+            None,
+            "50.00",
+            "delivery",
+            None,
+            None,
+            None,
+            None,
+            "0.00",
+            "0.00",
+        ),  # counter cash → 0%
+        # Website dispatched courier: delivery charge + card fee; (5+1.5)/20 = 32.5%.
+        (
+            "online",
+            None,
+            "20.00",
+            "delivery",
+            "lalamove",
+            None,
+            None,
+            None,
+            "5.00",
+            "1.50",
+        ),
+        (
+            "online",
+            None,
+            "34.00",
+            "pickup",
+            None,
+            None,
+            None,
+            None,
+            "0.00",
+            "1.00",
+        ),  # store pickup → payment only
     ]
     out = await mod._by_courier(_DB([_Result(rows)]), start=_A, end=_B)
 
@@ -244,3 +313,11 @@ async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
         "talabat.png"
     )
     assert by_code["talabat"].label == "Talabat"
+    # Fee rate = VAT-inclusive stamped fees / revenue. Aggregator = commission +
+    # payment fee; website courier = delivery charge + payment fee; counter = 0;
+    # a not-yet-scraped channel contributes null fees as zero.
+    assert by_code["talabat"].fee_rate == 28.57  # (11 + 9) / 70
+    assert by_code["lalamove"].fee_rate == 32.5  # (5 + 1.5) / 20
+    assert by_code["counter"].fee_rate == 0.0
+    assert by_code["keeta"].fee_rate == 0.0  # statement not scraped yet
+    assert by_code["website_pickup"].fee_rate == 2.94  # 1.0 / 34

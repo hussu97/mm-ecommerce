@@ -7560,6 +7560,17 @@
             "title": "Code",
             "type": "string"
           },
+          "fee_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Rate"
+          },
           "label": {
             "title": "Label",
             "type": "string"

@@ -620,6 +620,17 @@ async def _by_courier(
                 Order.total,
                 Order.delivery_method,
                 provider.label("provider"),
+                # Every VAT-inclusive fee stamped on the order. Summed uniformly:
+                # each is null/zero on the channels it does not apply to, so one
+                # sum yields the right composition per carrier — commission +
+                # cancellation + marketing for an aggregator, the delivery charge
+                # for a website courier, and the payment fee on any card/prepaid
+                # order whatever the carrier.
+                Order.aggregator_fee,
+                Order.cancellation_fee,
+                Order.marketing_fee,
+                Order.delivery_fee,
+                Order.payment_fee,
             ).where(
                 Order.created_at >= start,
                 Order.created_at <= end,
@@ -637,8 +648,22 @@ async def _by_courier(
         )
     ).all()
 
-    totals: dict[str, list] = {code: [0, 0.0] for code in order_query.ALL_COURIER_CODES}
-    for source, channel, total, method, prov in rows:
+    # [orders, revenue, fees] per code.
+    totals: dict[str, list] = {
+        code: [0, 0.0, 0.0] for code in order_query.ALL_COURIER_CODES
+    }
+    for (
+        source,
+        channel,
+        total,
+        method,
+        prov,
+        aggregator_fee,
+        cancellation_fee,
+        marketing_fee,
+        delivery_fee,
+        payment_fee,
+    ) in rows:
         code = order_query.courier_code_for(
             getattr(source, "value", source),
             channel,
@@ -649,6 +674,15 @@ async def _by_courier(
             continue
         totals[code][0] += 1
         totals[code][1] += float(total or 0)
+        # null ≠ 0 for the order economics, but for a windowed rate an unscraped
+        # statement simply contributes nothing yet (documented on the schema).
+        totals[code][2] += (
+            float(aggregator_fee or 0)
+            + float(cancellation_fee or 0)
+            + float(marketing_fee or 0)
+            + float(delivery_fee or 0)
+            + float(payment_fee or 0)
+        )
 
     out = [
         CourierBreakdownRow(
@@ -661,8 +695,9 @@ async def _by_courier(
             ),
             orders=orders,
             revenue=float(money(revenue)),
+            fee_rate=(float(money(fees / revenue * 100)) if revenue > 0 else None),
         )
-        for code, (orders, revenue) in totals.items()
+        for code, (orders, revenue, fees) in totals.items()
         if orders > 0
     ]
     out.sort(key=lambda r: r.orders, reverse=True)

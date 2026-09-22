@@ -71,6 +71,16 @@ class CourierBreakdownRow(BaseModel):
     logo_url: str | None = None
     orders: int
     revenue: float
+    #: What this carrier's orders cost us, as a percentage of their revenue —
+    #: the fee rate on the tile. All VAT-inclusive, summed from the fees already
+    #: stamped on each order (`order_fees.stamp`): an aggregator's marketplace
+    #: commission + cancellation + merchant-funded marketing, a website courier's
+    #: delivery charge, and the payment-processing fee on every card/prepaid order
+    #: whatever the carrier. Null when the carrier's revenue in the window is zero
+    #: (no rate off nothing). A channel whose statement is not scraped yet
+    #: contributes null fees as zero, so today's aggregator rate reads low until
+    #: the settlement lands — the same "null ≠ 0" caveat the order economics carry.
+    fee_rate: float | None = None
 
 
 class DashboardSummary(BaseModel):
