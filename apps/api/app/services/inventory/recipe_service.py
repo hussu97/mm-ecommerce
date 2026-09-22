@@ -720,28 +720,28 @@ async def expand_owner(
     return totals, used_versions
 
 
-async def recipe_unit_cost(
+async def owner_recipe_unit_cost(
     db: AsyncSession,
     *,
-    item_id: uuid.UUID,
+    kind: str,
+    owner_id: uuid.UUID,
     catalog: ActiveRecipeCatalog | None = None,
 ) -> Decimal | None:
-    """The current cost of **one ingredient unit** of a made item, from its active
-    recipe.
+    """The current cost of **one owner unit** from its active recipe.
 
     The recipe is expanded to its leaf ingredients — through nested phantom
     sub-recipes, batch yield and per-line waste — and each leaf is priced at its
     estate-wide FIFO average cost. That is the same basis the recipe console
-    displays and the same rollup a production run books, so a "reset from recipe"
-    lands on the cost a fresh production of this item would carry.
+    displays and the same rollup a production run books, so it is the live cost of
+    making one of this owner (an inventory item, a product, or a modifier option).
 
-    Returns ``None`` when the item has no active recipe (nothing to cost from).
+    Returns ``None`` when the owner has no active recipe (nothing to cost from).
     """
     from app.services.inventory import cost_layer_service, inventory_service
 
     try:
         expanded, _ = await expand_owner(
-            db, kind="inventory_item", owner_id=item_id, catalog=catalog
+            db, kind=kind, owner_id=owner_id, catalog=catalog
         )
     except NotFoundError:
         return None
@@ -763,6 +763,40 @@ async def recipe_unit_cost(
         )
         total += Decimal(str(line.quantity)) * ingredient_cost
     return quantize_cost(total)
+
+
+async def recipe_unit_cost(
+    db: AsyncSession,
+    *,
+    item_id: uuid.UUID,
+    catalog: ActiveRecipeCatalog | None = None,
+) -> Decimal | None:
+    """Live per-ingredient-unit cost of a made inventory item (see
+    :func:`owner_recipe_unit_cost`). ``None`` when it has no active recipe."""
+    return await owner_recipe_unit_cost(
+        db,
+        kind=RecipeOwnerKindEnum.INVENTORY_ITEM.value,
+        owner_id=item_id,
+        catalog=catalog,
+    )
+
+
+async def product_recipe_unit_cost(
+    db: AsyncSession,
+    *,
+    product_id: uuid.UUID,
+    catalog: ActiveRecipeCatalog | None = None,
+) -> Decimal | None:
+    """Live cost of one unit of a product, from its active recipe's ingredient FIFO
+    cost. ``None`` when the product has no active recipe. This replaces the stale,
+    CSV-imported ``Product.cost`` column, which was dropped in favour of costing a
+    product live the same way its inventory-item cousins are."""
+    return await owner_recipe_unit_cost(
+        db,
+        kind=RecipeOwnerKindEnum.PRODUCT.value,
+        owner_id=product_id,
+        catalog=catalog,
+    )
 
 
 async def reset_item_cost_from_recipe(
