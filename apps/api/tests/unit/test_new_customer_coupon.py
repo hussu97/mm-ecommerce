@@ -315,6 +315,37 @@ async def test_redemptions_also_ignore_a_declined_card():
     assert _excluded_statuses(db) == {"cancelled", "payment_failed"}
 
 
+# ── the gate counts website orders only, not aggregator/counter ───────────────
+
+
+async def test_first_order_count_is_scoped_to_website_orders():
+    """
+    A promo code is a storefront thing. A customer's Keeta / Talabat / counter
+    history is a different channel and must not spend a website coupon's
+    first-order slot — the phone with two Keeta orders and no website order that
+    was wrongly refused the new-customer code.
+    """
+    db = _capture_db(0)
+    await promo_code_service.orders_placed_by(
+        db, user_id=None, email=None, phone="+971505767714"
+    )
+    assert _asked_for(db)["source_1"] == "online"
+
+
+async def test_redemption_count_is_scoped_to_website_orders():
+    """The per-user redemption gate states the same scope explicitly, so the two
+    gates cannot drift even though a non-website order carries no promo code."""
+    db = _capture_db(0)
+    await promo_code_service._redemptions_by(
+        db,
+        _promo(code="WELCOME15", code_ar=None),
+        user_id=None,
+        email=None,
+        phone="+971505767714",
+    )
+    assert _asked_for(db)["source_1"] == "online"
+
+
 # ── the two spellings are one coupon ──────────────────────────────────────────
 
 

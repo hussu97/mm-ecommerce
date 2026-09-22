@@ -12,6 +12,7 @@ from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.money import money
 from app.core.phone import phone_identities
 from app.models.order import DeliveryMethodEnum, Order, OrderStatusEnum
+from app.models.pos_order import OrderSourceEnum
 from app.models.promo_code import DiscountTypeEnum, PromoCode
 from app.schemas.promo_code import (
     PromoCodeAdvertResponse,
@@ -111,7 +112,14 @@ async def orders_placed_by(
     phone: str | None,
 ) -> int:
     """
-    How many orders this person has placed, under any of the names we know them by.
+    How many **website** orders this person has placed, under any of the names we
+    know them by.
+
+    Website only, deliberately: a promo code is a storefront thing and its
+    new-customer / per-user gates must judge the customer's history *on the
+    storefront*. Their aggregator orders (Keeta, Talabat, …) and counter sales are
+    a different channel with its own pricing and must not spend a website coupon's
+    first-order slot — see `_WEBSITE_ONLY`.
 
     Three identities, OR'd, because no single one of them holds. The account is
     useless on its own: guest checkout mints a fresh `users` row per session, so
@@ -174,7 +182,11 @@ async def orders_placed_by(
     result = await db.execute(
         select(func.count())
         .select_from(Order)
-        .where(or_(*identities), Order.status.not_in(_UNPLACED_STATUSES))
+        .where(
+            or_(*identities),
+            Order.status.not_in(_UNPLACED_STATUSES),
+            _WEBSITE_ONLY,
+        )
     )
     return int(result.scalar() or 0)
 
@@ -185,6 +197,18 @@ async def orders_placed_by(
 #: neither spends a coupon nor uses up a first-order slot. Anything else — in
 #: flight or delivered — counts.
 _UNPLACED_STATUSES = (OrderStatusEnum.CANCELLED, OrderStatusEnum.PAYMENT_FAILED)
+
+#: Both per-customer coupon gates count **website** orders only. A promo code
+#: lives on the storefront: it is never applied to an aggregator order (those
+#: arrive from Keeta/Talabat/etc. via GrubOps and carry the marketplace's own
+#: pricing) nor to a counter sale. Counting those against the storefront's
+#: new-customer / per-user limits punished a genuine first-time website buyer for
+#: having ordered on Keeta — e.g. a phone with two Keeta orders and no website
+#: order was refused the new-customer code. `_redemptions_by` is already
+#: implicitly website-only (an aggregator/counter order carries no
+#: `promo_code_used`), but it states the scope explicitly too so the two gates
+#: cannot drift.
+_WEBSITE_ONLY = Order.source == OrderSourceEnum.ONLINE.value
 
 
 async def _redemptions_by(
@@ -236,6 +260,7 @@ async def _redemptions_by(
             or_(*identities),
             Order.promo_code_used.in_(codes),
             Order.status.not_in(_UNPLACED_STATUSES),
+            _WEBSITE_ONLY,
         )
     )
     return int(result.scalar() or 0)
