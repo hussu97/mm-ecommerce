@@ -51,8 +51,11 @@ export default function ItemsPage() {
     try {
       const result = await inventoryApi.resetCostFromRecipe(item.id);
       const branches = result.levels_adjusted === 1 ? 'branch' : 'branches';
+      const skipped = result.levels_skipped
+        ? ` (${result.levels_skipped} skipped — recipe not costed there)`
+        : '';
       toast.success(
-        `${item.name} revalued to ${formatCost(Number(result.storage_unit_cost))}/unit across ${result.levels_adjusted} ${branches}.`,
+        `${item.name} revalued from its recipe across ${result.levels_adjusted} ${branches}${skipped}.`,
       );
       reload();
     } catch (err) {

@@ -18740,10 +18740,8 @@ export interface components {
             item_id: string;
             /** Levels Adjusted */
             levels_adjusted: number;
-            /** Recipe Unit Cost */
-            recipe_unit_cost: string;
-            /** Storage Unit Cost */
-            storage_unit_cost: string;
+            /** Levels Skipped */
+            levels_skipped: number;
         };
         /** ReturnItemRequest */
         ReturnItemRequest: {

@@ -229,9 +229,11 @@ async def test_reset_restates_on_hand_to_current_recipe_cost(env):
         )
         await db.commit()
         assert result["levels_adjusted"] == 1
-        assert Decimal(str(result["storage_unit_cost"])) == Decimal("5.5")
+        assert result["levels_skipped"] == 0
+        adj = result["adjustments"][0]
+        assert Decimal(str(adj["new_average_cost"])) == Decimal("5.5")
         # 10 units revalued from 0 to 5.50 = +55.00 on the books.
-        assert Decimal(str(result["adjustments"][0]["value_change"])) == Decimal("55")
+        assert Decimal(str(adj["value_change"])) == Decimal("55")
 
     async with Session() as db:
         assert await _level_cost(db, ids.made, ids.wh) == Decimal("5.5")

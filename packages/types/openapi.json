@@ -28330,22 +28330,15 @@
             "title": "Levels Adjusted",
             "type": "integer"
           },
-          "recipe_unit_cost": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Recipe Unit Cost",
-            "type": "string"
-          },
-          "storage_unit_cost": {
-            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-            "title": "Storage Unit Cost",
-            "type": "string"
+          "levels_skipped": {
+            "title": "Levels Skipped",
+            "type": "integer"
           }
         },
         "required": [
           "item_id",
-          "recipe_unit_cost",
-          "storage_unit_cost",
           "levels_adjusted",
+          "levels_skipped",
           "adjustments"
         ],
         "title": "ResetCostFromRecipeResponse",

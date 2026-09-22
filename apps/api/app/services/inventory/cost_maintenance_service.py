@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, heartbeat
+from app.core.exceptions import AppError
 from app.core.money import unit_cost as _c
 from app.models.branch import Branch
 from app.models.inventory import InventoryItem, InventoryLevel, Warehouse
@@ -85,6 +86,10 @@ async def sweep_zero_cost_recipe_stock(
             .where(
                 InventoryLevel.quantity > 0,
                 InventoryLevel.average_cost == 0,
+                # Skip warehouses that can no longer be posted to — adjust_cost
+                # rejects them, and one such level must not poison the sweep.
+                Warehouse.deleted_at.is_(None),
+                Warehouse.is_active.is_(True),
                 InventoryLevel.item_id.in_(active_recipe_item_ids),
             )
         )
@@ -92,40 +97,47 @@ async def sweep_zero_cost_recipe_stock(
     if not rows:
         return []
 
-    # One recipe graph for the whole sweep; recipe cost is computed once per item.
+    # One recipe graph for the whole sweep (expansion is reused); the cost itself
+    # is computed per level against that branch's own ingredient levels, so a
+    # branch is never revalued using another branch's ingredient prices.
     catalog = await recipe_service.load_active_catalog(db)
-    per_ingredient_cost: dict = {}
 
     fixed: list[dict] = []
     for level, warehouse, branch, item in rows:
-        if item.id not in per_ingredient_cost:
-            per_ingredient_cost[item.id] = await recipe_service.recipe_unit_cost(
-                db, item_id=item.id, catalog=catalog
-            )
-        per_ingredient = per_ingredient_cost[item.id]
+        per_ingredient = await recipe_service.recipe_unit_cost(
+            db, item_id=item.id, warehouse_id=warehouse.id, catalog=catalog
+        )
         if not per_ingredient or per_ingredient <= 0:
-            # Ingredients themselves are still uncosted — nothing to anchor to yet.
+            # Ingredients still uncosted at this branch — nothing to anchor to yet.
             continue
         factor = Decimal(str(item.storage_to_ingredient_factor or 1))
         storage_cost = _c(per_ingredient * factor)
-        result = await inventory_service.adjust_cost(
-            db,
-            branch=branch,
-            item_id=item.id,
-            warehouse_id=warehouse.id,
-            new_average_cost=storage_cost,
-            user=None,
-            notes="Auto-recost from recipe (zero-cost stock)",
-        )
-        fixed.append(
-            {
-                "item_id": str(item.id),
-                "item_name": item.name,
-                "branch": branch.name,
-                "new_average_cost": storage_cost,
-                "value_change": result["value_change"],
-            }
-        )
+        # Savepoint each level so one that cannot be posted (a race, a guard) is
+        # skipped without rolling back the levels already healed this tick.
+        try:
+            async with db.begin_nested():
+                result = await inventory_service.adjust_cost(
+                    db,
+                    branch=branch,
+                    item_id=item.id,
+                    warehouse_id=warehouse.id,
+                    new_average_cost=storage_cost,
+                    user=None,
+                    notes="Auto-recost from recipe (zero-cost stock)",
+                )
+            fixed.append(
+                {
+                    "item_id": str(item.id),
+                    "item_name": item.name,
+                    "branch": branch.name,
+                    "new_average_cost": storage_cost,
+                    "value_change": result["value_change"],
+                }
+            )
+        except AppError as exc:
+            logger.info(
+                "Recost sweep: skipped %s @ %s — %s", item.name, branch.name, exc
+            )
     return fixed
 
 

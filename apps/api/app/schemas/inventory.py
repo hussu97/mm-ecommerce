@@ -739,12 +739,12 @@ class ResetCostFromRecipeRequest(BaseModel):
 
 class ResetCostFromRecipeResponse(BaseModel):
     item_id: str
-    #: The recipe's current cost per ingredient unit (the FIFO cost of its
-    #: expanded ingredients) — the figure the revaluation was based on.
-    recipe_unit_cost: Decimal
-    #: That cost expressed per storage unit, which is what stock levels carry.
-    storage_unit_cost: Decimal
+    #: How many branch stock levels were revalued to their per-branch recipe cost.
     levels_adjusted: int
+    #: Levels left untouched because the recipe priced to zero there (ingredients
+    #: not costed at that branch) or the revaluation could not be applied.
+    levels_skipped: int
+    #: One entry per revalued level, each carrying that branch's new average cost.
     adjustments: list[CostAdjustmentResponse]
 
 

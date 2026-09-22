@@ -7,6 +7,7 @@ good's raw materials being consumed once at production and again at sale.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -17,7 +18,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import (
+    AppError,
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+)
 from app.core.money import quantity as quantize_quantity
 from app.core.money import unit_cost as quantize_cost
 from app.models.base import utcnow
@@ -42,6 +48,8 @@ from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -725,15 +733,21 @@ async def owner_recipe_unit_cost(
     *,
     kind: str,
     owner_id: uuid.UUID,
+    warehouse_id: uuid.UUID | None = None,
     catalog: ActiveRecipeCatalog | None = None,
 ) -> Decimal | None:
     """The current cost of **one owner unit** from its active recipe.
 
     The recipe is expanded to its leaf ingredients — through nested phantom
     sub-recipes, batch yield and per-line waste — and each leaf is priced at its
-    estate-wide FIFO average cost. That is the same basis the recipe console
-    displays and the same rollup a production run books, so it is the live cost of
-    making one of this owner (an inventory item, a product, or a modifier option).
+    FIFO average cost.
+
+    When ``warehouse_id`` is given, each ingredient is priced at **that
+    warehouse's** ``InventoryLevel.average_cost`` — exactly the per-branch basis
+    ``transfer_service.produce`` books, so revaluing a branch's stock lands on
+    what making it *there* actually cost. When it is ``None`` the ingredients are
+    priced estate-wide (the blended figure the recipe console shows) — used for a
+    catalogue-level product cost, not for revaluing a specific branch's stock.
 
     Returns ``None`` when the owner has no active recipe (nothing to cost from).
     """
@@ -747,9 +761,15 @@ async def owner_recipe_unit_cost(
         return None
     if not expanded:
         return Decimal("0")
-    storage_costs = await cost_layer_service.item_average_costs(
-        db, [line.item_id for line in expanded.values()]
-    )
+    if warehouse_id is None:
+        storage_costs = await cost_layer_service.item_average_costs(
+            db, [line.item_id for line in expanded.values()]
+        )
+    else:
+        storage_costs = {}
+        for line in expanded.values():
+            level = await inventory_service.level_for(db, line.item_id, warehouse_id)
+            storage_costs[line.item_id] = Decimal(str(level.average_cost or 0))
     total = Decimal("0")
     for line in expanded.values():
         ingredient = await db.get(InventoryItem, line.item_id)
@@ -769,14 +789,17 @@ async def recipe_unit_cost(
     db: AsyncSession,
     *,
     item_id: uuid.UUID,
+    warehouse_id: uuid.UUID | None = None,
     catalog: ActiveRecipeCatalog | None = None,
 ) -> Decimal | None:
     """Live per-ingredient-unit cost of a made inventory item (see
-    :func:`owner_recipe_unit_cost`). ``None`` when it has no active recipe."""
+    :func:`owner_recipe_unit_cost`). Pass ``warehouse_id`` to price ingredients at
+    that branch's levels. ``None`` when it has no active recipe."""
     return await owner_recipe_unit_cost(
         db,
         kind=RecipeOwnerKindEnum.INVENTORY_ITEM.value,
         owner_id=item_id,
+        warehouse_id=warehouse_id,
         catalog=catalog,
     )
 
@@ -808,57 +831,80 @@ async def reset_item_cost_from_recipe(
 ) -> dict[str, Any]:
     """Revalue every on-hand unit of a made item to its current recipe cost.
 
-    Computes the recipe's current per-unit cost (:func:`recipe_unit_cost`) and
-    applies it to each of the item's stock levels through the standard
-    cost-adjustment path (``inventory_service.adjust_cost``). That posts a
-    COST_ADJUSTMENT and rescales the FIFO layers — the sanctioned way to restate
-    on-hand value — rather than editing an immutable ledger line. One recipe cost
-    is applied estate-wide, across every branch that stocks the item.
+    Each branch's stock is revalued to the recipe cost computed from **that
+    branch's own** ingredient FIFO costs — the same per-branch basis a production
+    run books there — through the standard cost-adjustment path
+    (``inventory_service.adjust_cost``: a COST_ADJUSTMENT that rescales the FIFO
+    layers, never an edit of an immutable ledger line). A branch whose recipe
+    prices to zero (its ingredients are not costed there) is left untouched rather
+    than zeroed, and each branch is savepointed so one bad level cannot abort the
+    rest. Only active (non-deleted) warehouses are touched.
     """
     from app.services.inventory import inventory_service
 
     item = await db.get(InventoryItem, item_id)
     if item is None:
         raise NotFoundError("Inventory item not found")
-    per_ingredient_unit = await recipe_unit_cost(db, item_id=item_id)
-    if per_ingredient_unit is None:
+    # Establish the item even has an active recipe before walking its levels, so
+    # "no recipe" and "recipe prices to zero everywhere" give distinct errors.
+    if await recipe_unit_cost(db, item_id=item_id) is None:
         raise BadRequestError("This item has no active recipe to cost from")
-    if per_ingredient_unit <= 0:
-        raise BadRequestError(
-            "The recipe's ingredients have no cost yet, so there is nothing to "
-            "reset the cost to. Cost the ingredients first."
-        )
-    # Stock levels are valued per storage unit; the recipe cost is per ingredient
-    # unit, so scale it up by the item's factor (storage = ingredient × factor).
-    factor = Decimal(str(item.storage_to_ingredient_factor or 1))
-    storage_cost = quantize_cost(per_ingredient_unit * factor)
 
+    factor = Decimal(str(item.storage_to_ingredient_factor or 1))
     rows = (
         await db.execute(
             select(InventoryLevel, Warehouse, Branch)
             .join(Warehouse, Warehouse.id == InventoryLevel.warehouse_id)
             .join(Branch, Branch.id == Warehouse.branch_id)
-            .where(InventoryLevel.item_id == item_id)
+            .where(
+                InventoryLevel.item_id == item_id,
+                Warehouse.deleted_at.is_(None),
+                Warehouse.is_active.is_(True),
+            )
         )
     ).all()
+
     adjustments: list[dict[str, Any]] = []
+    skipped = 0
     for _level, warehouse, branch in rows:
-        adjustments.append(
-            await inventory_service.adjust_cost(
-                db,
-                branch=branch,
-                item_id=item_id,
-                warehouse_id=warehouse.id,
-                new_average_cost=storage_cost,
-                user=user,
-                notes=notes or "Reset from current recipe cost",
+        # Cost from this branch's own ingredient levels — estate-wide blending
+        # would misstate a branch that sources cheaper/dearer than another.
+        per_ingredient_unit = await recipe_unit_cost(
+            db, item_id=item_id, warehouse_id=warehouse.id
+        )
+        if not per_ingredient_unit or per_ingredient_unit <= 0:
+            skipped += 1
+            continue
+        # Levels are valued per storage unit; recipe cost is per ingredient unit,
+        # so scale up by the item's factor (storage = ingredient × factor).
+        storage_cost = quantize_cost(per_ingredient_unit * factor)
+        try:
+            async with db.begin_nested():
+                result = await inventory_service.adjust_cost(
+                    db,
+                    branch=branch,
+                    item_id=item_id,
+                    warehouse_id=warehouse.id,
+                    new_average_cost=storage_cost,
+                    user=user,
+                    notes=notes or "Reset from current recipe cost",
+                )
+            adjustments.append(result)
+        except AppError as exc:
+            skipped += 1
+            logger.info(
+                "reset-from-recipe: skipped %s @ %s — %s", item_id, branch.name, exc
             )
+
+    if not adjustments:
+        raise BadRequestError(
+            "Nothing to revalue: this item holds no stock at a branch whose recipe "
+            "ingredients are costed. Cost the ingredients first."
         )
     return {
         "item_id": str(item_id),
-        "recipe_unit_cost": per_ingredient_unit,
-        "storage_unit_cost": storage_cost,
         "levels_adjusted": len(adjustments),
+        "levels_skipped": skipped,
         "adjustments": adjustments,
     }
 
