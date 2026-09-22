@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { inventoryApi } from '@/lib/pos-api';
 import type { InventoryItem, Supplier, SupplierContact, SupplierItem } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Button, Input, Pagination, Spinner, Textarea } from '@/components/ui';
+import { Badge, Button, Input, Pagination, Spinner, TabBar, Textarea } from '@/components/ui';
 import { DataTable, RowAction } from '@/components/ui/DataTable';
 import { Modal, StatusBadge } from '@/components/pos/ResourcePage';
+import { useConfirm, useToast } from '@/components/ui/feedback';
 
 // Only items that are bought (not produced from a recipe) can be supplied. The
 // server enforces this too; filtering here keeps the picker honest.
@@ -33,6 +34,9 @@ export default function SuppliersPage() {
   const [creating, setCreating] = useState(false);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
+  const [activeTab, setActiveTab] = useState<'active' | 'inactive'>('active');
+  const confirm = useConfirm();
+  const toast = useToast();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,9 +59,44 @@ export default function SuppliersPage() {
     void load();
   }, [load]);
 
-  const totalPages = Math.max(1, Math.ceil(suppliers.length / perPage));
+  // Deleted suppliers are hidden entirely; the two tabs split the rest by the
+  // is_active flag (deactivation only flips that, never deleted_at).
+  const visible = suppliers.filter((s) => !s.deleted_at);
+  const activeCount = visible.filter((s) => s.is_active).length;
+  const inactiveCount = visible.length - activeCount;
+  const tabRows = visible.filter((s) => (activeTab === 'active' ? s.is_active : !s.is_active));
+
+  const totalPages = Math.max(1, Math.ceil(tabRows.length / perPage));
   const currentPage = Math.min(page, totalPages);
-  const pageRows = suppliers.slice((currentPage - 1) * perPage, currentPage * perPage);
+  const pageRows = tabRows.slice((currentPage - 1) * perPage, currentPage * perPage);
+
+  async function deactivate(s: Supplier) {
+    if (
+      !(await confirm({
+        title: 'Deactivate supplier',
+        message: `Move ${s.name} to the inactive list? Purchase-order history is kept unchanged. You can only deactivate a supplier with no active item mappings.`,
+        confirmLabel: 'Deactivate',
+      }))
+    )
+      return;
+    try {
+      await inventoryApi.deactivateSupplier(s.id);
+      toast.success(`${s.name} deactivated.`);
+      void load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not deactivate the supplier.');
+    }
+  }
+
+  async function reactivate(s: Supplier) {
+    try {
+      await inventoryApi.reactivateSupplier(s.id);
+      toast.success(`${s.name} reactivated.`);
+      void load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not reactivate the supplier.');
+    }
+  }
 
   return (
     <div>
@@ -77,18 +116,38 @@ export default function SuppliersPage() {
         </div>
       )}
 
+      <TabBar
+        tabs={[
+          { key: 'active', label: 'Active', count: activeCount },
+          { key: 'inactive', label: 'Inactive', count: inactiveCount },
+        ]}
+        active={activeTab}
+        onChange={(key) => { setActiveTab(key as 'active' | 'inactive'); setPage(1); }}
+      />
+
       {loading ? (
         <div className="flex justify-center py-16">
           <Spinner />
         </div>
-      ) : suppliers.length === 0 ? (
-        <p className="py-16 text-center text-sm text-gray-400 font-body">No suppliers yet.</p>
+      ) : tabRows.length === 0 ? (
+        <p className="py-16 text-center text-sm text-gray-400 font-body">
+          {activeTab === 'active' ? 'No active suppliers.' : 'No inactive suppliers.'}
+        </p>
       ) : (
         <>
           <DataTable<Supplier>
             rows={pageRows}
             rowKey={(s) => s.id}
-            actions={(s) => <RowAction onClick={() => setEditing(s)}>Edit</RowAction>}
+            actions={(s) => (
+              <>
+                <RowAction onClick={() => setEditing(s)}>Edit</RowAction>
+                {s.is_active ? (
+                  <RowAction onClick={() => deactivate(s)}>Deactivate</RowAction>
+                ) : (
+                  <RowAction onClick={() => reactivate(s)}>Reactivate</RowAction>
+                )}
+              </>
+            )}
             columns={[
               { header: 'Name', priority: 'primary', sortable: true, sortAccessor: (s) => s.name, render: (s) => <span className="font-medium">{s.name}</span> },
               {
@@ -112,7 +171,7 @@ export default function SuppliersPage() {
           <Pagination
             page={currentPage}
             pages={totalPages}
-            total={suppliers.length}
+            total={tabRows.length}
             perPage={perPage}
             onPageChange={setPage}
             onPerPageChange={(p) => { setPerPage(p); setPage(1); }}

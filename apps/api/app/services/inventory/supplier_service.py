@@ -43,6 +43,9 @@ __all__ = [
     "assert_item_purchasable",
     "create_supplier",
     "update_supplier",
+    "active_mapped_items",
+    "deactivate_supplier",
+    "reactivate_supplier",
     "replace_contacts",
     "set_supplier_items",
 ]
@@ -128,6 +131,64 @@ async def update_supplier(db: AsyncSession, supplier: Supplier, data) -> Supplie
         setattr(supplier, key, value)
     if data.contacts is not None:
         await replace_contacts(db, supplier, data.contacts)
+    await db.flush()
+    await db.refresh(supplier)
+    return supplier
+
+
+async def active_mapped_items(db: AsyncSession, supplier_id: uuid.UUID) -> list[str]:
+    """Names of the still-active items mapped to this supplier, alphabetical.
+
+    "Active" is a property of the mapped *item* — ``SupplierItem`` carries no
+    active flag of its own — so a mapping to an item that is itself inactive or
+    deleted does not count. This is the set that blocks deactivation.
+    """
+    return list(
+        (
+            await db.execute(
+                select(InventoryItem.name)
+                .join(SupplierItem, SupplierItem.item_id == InventoryItem.id)
+                .where(
+                    SupplierItem.supplier_id == supplier_id,
+                    InventoryItem.is_active.is_(True),
+                    InventoryItem.deleted_at.is_(None),
+                )
+                .order_by(InventoryItem.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def deactivate_supplier(db: AsyncSession, supplier: Supplier) -> Supplier:
+    """Move a supplier to the inactive list, once nothing active still maps to it.
+
+    Deactivation is a state flip (``is_active`` false), **not** a delete: the row
+    stays visible under the inactive tab, keeps every purchase order it is named
+    on (nothing touches ``purchase_orders.supplier_id``), and can be brought back
+    with :func:`reactivate_supplier`. It is refused while any *active* inventory
+    item is still mapped to the supplier, so a live item never points at a dead
+    vendor; a mapping to an already-inactive item does not block it.
+    """
+    blocking = await active_mapped_items(db, supplier.id)
+    if blocking:
+        shown = ", ".join(blocking[:5])
+        more = f" and {len(blocking) - 5} more" if len(blocking) > 5 else ""
+        raise BadRequestError(
+            f"{supplier.name} still supplies {len(blocking)} active item"
+            f"{'s' if len(blocking) != 1 else ''}: {shown}{more}. Remove those "
+            "mappings (or deactivate the items) before deactivating the supplier."
+        )
+    supplier.is_active = False
+    await db.flush()
+    await db.refresh(supplier)
+    return supplier
+
+
+async def reactivate_supplier(db: AsyncSession, supplier: Supplier) -> Supplier:
+    """Return a supplier to the active list — a plain ``is_active`` flip back."""
+    supplier.is_active = True
     await db.flush()
     await db.refresh(supplier)
     return supplier

@@ -242,6 +242,8 @@ export const inventoryApi = {
   createSupplier: (d: Record<string, unknown>) => api.post<Supplier>('/inventory/suppliers', d),
   updateSupplier: (id: string, d: Record<string, unknown>) => api.put<Supplier>(`/inventory/suppliers/${id}`, d),
   removeSupplier: (id: string) => api.delete<void>(`/inventory/suppliers/${id}`),
+  deactivateSupplier: (id: string) => api.post<Supplier>(`/inventory/suppliers/${id}/deactivate`, {}),
+  reactivateSupplier: (id: string) => api.post<Supplier>(`/inventory/suppliers/${id}/reactivate`, {}),
   supplierItems: (id: string) => api.get<SupplierItem[]>(`/inventory/suppliers/${id}/items`),
   setSupplierItems: (id: string, items: unknown[]) =>
     api.put<SupplierItem[]>(`/inventory/suppliers/${id}/items`, items),

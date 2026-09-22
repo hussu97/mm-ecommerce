@@ -216,6 +216,36 @@ async def delete_supplier(
     await db.flush()
 
 
+@suppliers_router.post("/{supplier_id}/deactivate", response_model=SupplierResponse)
+async def deactivate_supplier(
+    supplier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    """Flip a supplier to inactive (moves it to the inactive tab).
+
+    Refused while any active item is still mapped to it; leaves purchase-order
+    history untouched. Reversible via ``/reactivate``.
+    """
+    supplier = await db.get(Supplier, supplier_id)
+    if supplier is None or supplier.deleted_at is not None:
+        raise NotFoundError("Supplier not found")
+    return await supplier_service.deactivate_supplier(db, supplier)
+
+
+@suppliers_router.post("/{supplier_id}/reactivate", response_model=SupplierResponse)
+async def reactivate_supplier(
+    supplier_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.manage")),
+):
+    """Bring an inactive supplier back to the active tab."""
+    supplier = await db.get(Supplier, supplier_id)
+    if supplier is None or supplier.deleted_at is not None:
+        raise NotFoundError("Supplier not found")
+    return await supplier_service.reactivate_supplier(db, supplier)
+
+
 # ─── Warehouses ───────────────────────────────────────────────────────────────
 
 warehouses_router = APIRouter()

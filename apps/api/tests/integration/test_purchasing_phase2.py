@@ -252,6 +252,42 @@ async def test_contact_requires_email_or_phone():
         SupplierContactInput(name="Nameless")
 
 
+async def test_deactivate_blocked_by_active_mapping_then_reversible(engine, env):
+    """Deactivation is a reversible is_active flip, guarded by active mappings.
+
+    A supplier that still supplies an *active* item cannot be deactivated; once
+    the mapping is gone (or the item is inactive) it can, without deleting the
+    row (deleted_at stays null) so it lives on under the inactive tab and keeps
+    its PO history. Reactivation flips it straight back.
+    """
+    branch_id, user_id, raw_id, produced_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    async with Session() as db:
+        supplier = await supplier_service.create_supplier(
+            db, SupplierCreate(name=f"{MARKER} Deac")
+        )
+        await supplier_service.set_supplier_items(
+            db, supplier.id, [SupplierItemUpsert(item_id=raw_id)]
+        )
+
+        # An active item is mapped → refused.
+        with pytest.raises(BadRequestError, match="active item"):
+            await supplier_service.deactivate_supplier(db, supplier)
+
+        # A mapping to an inactive item does not block.
+        raw = await db.get(InventoryItem, raw_id)
+        raw.is_active = False
+        await db.flush()
+        await supplier_service.deactivate_supplier(db, supplier)
+        assert supplier.is_active is False
+        assert supplier.deleted_at is None  # deactivated, not deleted
+
+        # Reactivation flips it back.
+        await supplier_service.reactivate_supplier(db, supplier)
+        assert supplier.is_active is True
+        await db.rollback()
+
+
 async def test_admin_po_splits_vat_and_receives_into_fifo_stock(engine, env):
     branch_id, user_id, raw_id, produced_id = env
     Session = async_sessionmaker(engine, expire_on_commit=False)
