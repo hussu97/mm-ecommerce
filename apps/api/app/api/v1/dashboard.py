@@ -612,6 +612,17 @@ async def _by_courier(
         .limit(1)
         .scalar_subquery()
     )
+    # What the courier ACTUALLY charged us for the run — `cost_total` once they
+    # invoice, `quoted_cost` until then. This is the website courier's fee, and
+    # it is NOT `Order.delivery_fee`: that column is the delivery charge the
+    # customer paid us (revenue), and summing it here billed the shop its own
+    # takings. Null on a third-party zone that never invoices per order.
+    courier_cost = (
+        select(func.coalesce(OrderDelivery.cost_total, OrderDelivery.quoted_cost))
+        .where(OrderDelivery.order_id == Order.id)
+        .limit(1)
+        .scalar_subquery()
+    )
     rows = (
         await db.execute(
             select(
@@ -620,16 +631,16 @@ async def _by_courier(
                 Order.total,
                 Order.delivery_method,
                 provider.label("provider"),
-                # Every VAT-inclusive fee stamped on the order. Summed uniformly:
-                # each is null/zero on the channels it does not apply to, so one
-                # sum yields the right composition per carrier — commission +
-                # cancellation + marketing for an aggregator, the delivery charge
-                # for a website courier, and the payment fee on any card/prepaid
-                # order whatever the carrier.
+                # Every VAT-inclusive fee stamped on the order, plus the courier's
+                # own charge. Summed uniformly: each is null/zero on the channels
+                # it does not apply to, so one sum yields the right composition per
+                # carrier — commission + cancellation + marketing for an
+                # aggregator, the courier cost for a website courier, and the
+                # payment fee on any card/prepaid order whatever the carrier.
                 Order.aggregator_fee,
                 Order.cancellation_fee,
                 Order.marketing_fee,
-                Order.delivery_fee,
+                courier_cost.label("courier_cost"),
                 Order.payment_fee,
             ).where(
                 Order.created_at >= start,
@@ -648,9 +659,10 @@ async def _by_courier(
         )
     ).all()
 
-    # [orders, revenue, fees] per code.
+    # [orders, revenue, fees, pending] per code. `pending` counts orders whose
+    # cost of sale is not known yet, so a partial rate is not shown as if final.
     totals: dict[str, list] = {
-        code: [0, 0.0, 0.0] for code in order_query.ALL_COURIER_CODES
+        code: [0, 0.0, 0.0, 0] for code in order_query.ALL_COURIER_CODES
     }
     for (
         source,
@@ -661,7 +673,7 @@ async def _by_courier(
         aggregator_fee,
         cancellation_fee,
         marketing_fee,
-        delivery_fee,
+        courier_cost_v,
         payment_fee,
     ) in rows:
         code = order_query.courier_code_for(
@@ -674,15 +686,24 @@ async def _by_courier(
             continue
         totals[code][0] += 1
         totals[code][1] += float(total or 0)
-        # null ≠ 0 for the order economics, but for a windowed rate an unscraped
-        # statement simply contributes nothing yet (documented on the schema).
         totals[code][2] += (
             float(aggregator_fee or 0)
             + float(cancellation_fee or 0)
             + float(marketing_fee or 0)
-            + float(delivery_fee or 0)
+            + float(courier_cost_v or 0)
             + float(payment_fee or 0)
         )
+        # Its dominant cost of sale is not known yet, so the sum above understates
+        # it: an aggregator whose settlement statement has not been scraped
+        # (commission still null — noon settles weekly, Careem monthly), or a
+        # dispatched website order the courier has not invoiced or quoted. null ≠
+        # 0 here, so we mark the code partial rather than publish a low rate.
+        if code in courier_catalog.AGGREGATOR_CODES:
+            if aggregator_fee is None:
+                totals[code][3] += 1
+        elif code not in (order_query.COUNTER_CODE, order_query.WEBSITE_PICKUP_CODE):
+            if courier_cost_v is None:
+                totals[code][3] += 1
 
     out = [
         CourierBreakdownRow(
@@ -696,8 +717,9 @@ async def _by_courier(
             orders=orders,
             revenue=float(money(revenue)),
             fee_rate=(float(money(fees / revenue * 100)) if revenue > 0 else None),
+            fee_rate_pending=pending > 0,
         )
-        for code, (orders, revenue, fees) in totals.items()
+        for code, (orders, revenue, fees, pending) in totals.items()
         if orders > 0
     ]
     out.sort(key=lambda r: r.orders, reverse=True)

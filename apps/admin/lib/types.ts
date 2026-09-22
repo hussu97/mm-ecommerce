@@ -604,9 +604,13 @@ export interface DashboardCourierRow {
   revenue: number;
   /** Fees as a percentage of this carrier's revenue (VAT-inclusive): an
    * aggregator's commission + cancellation + marketing, a website courier's
-   * delivery charge, plus the payment fee on every card/prepaid order. Null when
+   * actual run cost, plus the payment fee on every card/prepaid order. Null when
    * the carrier had no revenue in the window. */
   fee_rate: number | null;
+  /** Some orders still lack their dominant cost of sale (an aggregator not
+   * settled yet, or a courier not invoiced/quoted), so fee_rate is a floor. The
+   * tile shows "fees pending" instead of a partial number. */
+  fee_rate_pending: boolean;
 }
 
 export interface DashboardSummary {

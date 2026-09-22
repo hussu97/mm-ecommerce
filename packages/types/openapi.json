@@ -7571,6 +7571,11 @@
             ],
             "title": "Fee Rate"
           },
+          "fee_rate_pending": {
+            "default": false,
+            "title": "Fee Rate Pending",
+            "type": "boolean"
+          },
           "label": {
             "title": "Label",
             "type": "string"

@@ -215,8 +215,9 @@ async def test_by_category_labels_ids_and_buckets_the_uncategorised():
 
 async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
     # (source, aggregator_channel, total, delivery_method, dispatch provider,
-    #  aggregator_fee, cancellation_fee, marketing_fee, delivery_fee, payment_fee)
-    # for delivered orders. Fees are VAT-inclusive as stamped.
+    #  aggregator_fee, cancellation_fee, marketing_fee, courier_cost, payment_fee)
+    # for delivered orders. Fees are VAT-inclusive as stamped; courier_cost is the
+    # courier's own charge (order_deliveries.cost_total / quoted_cost).
     rows = [
         # Talabat: commission + payment fee on each; rate = (14+6)/70 = ~28.57%.
         (
@@ -313,11 +314,16 @@ async def test_by_courier_groups_delivered_orders_across_carrier_shapes():
         "talabat.png"
     )
     assert by_code["talabat"].label == "Talabat"
-    # Fee rate = VAT-inclusive stamped fees / revenue. Aggregator = commission +
-    # payment fee; website courier = delivery charge + payment fee; counter = 0;
-    # a not-yet-scraped channel contributes null fees as zero.
+    # Fee rate = VAT-inclusive stamped fees + courier cost, over revenue.
+    # Aggregator = commission + payment fee; website courier = courier cost +
+    # payment fee; counter = payment fee only.
     assert by_code["talabat"].fee_rate == 28.57  # (11 + 9) / 70
+    assert by_code["talabat"].fee_rate_pending is False  # both commissions scraped
     assert by_code["lalamove"].fee_rate == 32.5  # (5 + 1.5) / 20
+    assert by_code["lalamove"].fee_rate_pending is False  # courier cost known
     assert by_code["counter"].fee_rate == 0.0
-    assert by_code["keeta"].fee_rate == 0.0  # statement not scraped yet
+    assert by_code["counter"].fee_rate_pending is False
     assert by_code["website_pickup"].fee_rate == 2.94  # 1.0 / 34
+    # Keeta's statement is not scraped (commission null): the rate is a floor, so
+    # the tile is marked pending rather than published as ~0%.
+    assert by_code["keeta"].fee_rate_pending is True

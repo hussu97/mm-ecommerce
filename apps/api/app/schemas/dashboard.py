@@ -73,14 +73,20 @@ class CourierBreakdownRow(BaseModel):
     revenue: float
     #: What this carrier's orders cost us, as a percentage of their revenue —
     #: the fee rate on the tile. All VAT-inclusive, summed from the fees already
-    #: stamped on each order (`order_fees.stamp`): an aggregator's marketplace
-    #: commission + cancellation + merchant-funded marketing, a website courier's
-    #: delivery charge, and the payment-processing fee on every card/prepaid order
+    #: stamped on each order (`order_fees.stamp`) plus the courier's own charge:
+    #: an aggregator's marketplace commission + cancellation + merchant-funded
+    #: marketing, a website courier's actual run cost (`order_deliveries.cost_total`
+    #: / `quoted_cost`), and the payment-processing fee on every card/prepaid order
     #: whatever the carrier. Null when the carrier's revenue in the window is zero
-    #: (no rate off nothing). A channel whose statement is not scraped yet
-    #: contributes null fees as zero, so today's aggregator rate reads low until
-    #: the settlement lands — the same "null ≠ 0" caveat the order economics carry.
+    #: (no rate off nothing).
     fee_rate: float | None = None
+    #: Whether some orders in this carrier's window still lack their dominant cost
+    #: of sale, so `fee_rate` is a floor, not the final figure. True for an
+    #: aggregator whose settlement statement is not scraped yet (commission null —
+    #: noon settles weekly, Careem monthly), or a dispatched website order the
+    #: courier has neither invoiced nor quoted. The tile shows "fees pending"
+    #: rather than a low partial rate that reads as final.
+    fee_rate_pending: bool = False
 
 
 class DashboardSummary(BaseModel):

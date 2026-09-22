@@ -11755,6 +11755,11 @@ export interface components {
             code: string;
             /** Fee Rate */
             fee_rate?: number | null;
+            /**
+             * Fee Rate Pending
+             * @default false
+             */
+            fee_rate_pending: boolean;
             /** Label */
             label: string;
             /** Logo Url */
