@@ -35,10 +35,12 @@ from app.models.inventory import (
 from app.models.inventory_v2 import (
     BranchInventorySettings,
     InventoryReportTemplate,
+    InventoryReportTemplateItem,
     ShiftInventoryReport,
     ShiftInventoryReportLine,
     ShiftInventoryReportStatusEnum,
 )
+from app.models.order import Order
 from app.models.till import Till, TillStatusEnum
 from app.models.user import User
 from app.services.inventory import inventory_service, report_service
@@ -154,6 +156,15 @@ async def env(engine):
             InventoryLevel.__table__.delete().where(InventoryLevel.item_id == item_id)
         )
         await db.execute(
+            InventoryReportTemplateItem.__table__.delete().where(
+                InventoryReportTemplateItem.template_id.in_(
+                    select(InventoryReportTemplate.id).where(
+                        InventoryReportTemplate.branch_id == branch_id
+                    )
+                )
+            )
+        )
+        await db.execute(
             InventoryReportTemplate.__table__.delete().where(
                 InventoryReportTemplate.branch_id == branch_id
             )
@@ -170,6 +181,7 @@ async def env(engine):
             Warehouse.__table__.delete().where(Warehouse.branch_id == branch_id)
         )
         await db.execute(User.__table__.delete().where(User.id == user_id))
+        await db.execute(Order.__table__.delete().where(Order.branch_id == branch_id))
         await db.execute(Branch.__table__.delete().where(Branch.id == branch_id))
         await db.execute(text("SET session_replication_role = 'origin'"))
         await db.commit()
@@ -870,3 +882,204 @@ async def test_a_receipt_after_the_snapshot_is_recomputed_into_the_report_at_pos
         # Closing stamped, cutoff advanced past the prior report's.
         assert Decimal(str(line.closing_quantity)) == Decimal("150")
         assert report.posting_cutoff_sequence > prior_cutoff
+
+
+async def _sell(db, *, branch_id, warehouse_id, item_id, user, qty, created_at):
+    """Post a CONSUMPTION_FROM_ORDERS draw tied to an order placed at ``created_at``
+    — a customer sale, the way the source-event worker records one."""
+    order = Order(
+        order_number=f"T{uuid.uuid4().hex[:12]}",
+        email="sale@example.com",
+        delivery_method="delivery",
+        subtotal=Decimal("0"),
+        total=Decimal("0"),
+        branch_id=branch_id,
+        source="aggregator",
+        created_at=created_at,
+    )
+    db.add(order)
+    await db.flush()
+    txn = InventoryTransaction(
+        reference=await inventory_service.next_reference(
+            db, InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value
+        ),
+        type=InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+        status=TransactionStatusEnum.DRAFT.value,
+        branch_id=branch_id,
+        warehouse_id=warehouse_id,
+        business_date=BUSINESS_DATE,
+        creator_id=user.id,
+        source_type="order",
+        source_id=str(order.id),
+        order_id=order.id,
+        idempotency_key=f"test-sell:{uuid.uuid4()}",
+        items=[],
+    )
+    db.add(txn)
+    await db.flush()
+    txn.items.append(
+        InventoryTransactionItem(
+            item_id=item_id,
+            quantity=Decimal(str(qty)),
+            unit="storage",
+            conversion_factor=Decimal("1"),
+            unit_cost=Decimal("1"),
+        )
+    )
+    await db.flush()
+    return await inventory_service.post_transaction(db, transaction=txn, user=user)
+
+
+async def _close_count(db, *, template_id, till, user, counted):
+    """Create a per-till report for ``till``, set its single line's physical count to
+    ``counted``, and post it — the whole till-close reconciliation in one call."""
+    template = await db.get(InventoryReportTemplate, template_id)
+    report = await report_service._create_report(
+        db, template=template, till=till, idempotency_key=f"close:{uuid.uuid4()}"
+    )
+    report.status = ShiftInventoryReportStatusEnum.APPROVED.value
+    report.lines[0].entered_quantity = Decimal(str(counted))
+    await db.flush()
+    await report_service.post_report(db, report=report, user=user)
+    return report
+
+
+async def test_a_sale_after_a_till_closes_is_the_next_shifts_not_the_closing_shifts(
+    engine, env
+):
+    """A sale rung after a till closes but whose consumption posts before the close
+    count is submitted belongs to the NEXT shift, by the order's own time — not the
+    closing shift, and it must not turn the closing count into a phantom variance.
+
+    Reproduces Sharjah, Lotus Cookie Melt Small, 2026-09-21: the night sale posted 17s
+    after the day till closed and 6 minutes before the day count was submitted, so the
+    day report booked it as its own sale and read a +1 variance while the night report
+    was left −1 and showed 1 sold when the shop had sold 2.
+    """
+    branch_id, warehouse_id, user_id, item_id, template_id = env
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    now = report_service.utcnow()
+    t0 = now - timedelta(hours=8)  # opening close
+    t1 = now - timedelta(hours=4)  # day-shift close
+    t2 = now  # night-shift close
+
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        # The template needs the item on it for `_create_report` to raise a count line.
+        db.add(
+            InventoryReportTemplateItem(
+                template_id=template_id,
+                item_id=item_id,
+                display_order=0,
+                required_input="physical_count",
+            )
+        )
+        await db.flush()
+        # Opening stock of 10, reconciled by an opening close at t0 (stamps the cutoff
+        # the day shift's window opens after).
+        await _receive(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            qty=10,
+        )
+        await _close_count(
+            db,
+            template_id=template_id,
+            till=_till(
+                branch_id, user_id, opened_at=t0 - timedelta(hours=4), closed_at=t0
+            ),
+            user=user,
+            counted=10,
+        )
+
+        # DAY SHIFT: closes at t1 with 10 on the shelf. A sale is rung 9s after close
+        # (its consumption posts during the submit delay) — the night shift's, not the
+        # day's. The day count, taken at close, is 10.
+        day_till = _till(branch_id, user_id, opened_at=t0, closed_at=t1)
+        db.add(day_till)
+        await db.flush()
+        # Create the count sheet, then let the sale land, then post — mirroring the
+        # real submit delay the sale slips through.
+        template = await db.get(InventoryReportTemplate, template_id)
+        day = await report_service._create_report(
+            db, template=template, till=day_till, idempotency_key=f"day:{uuid.uuid4()}"
+        )
+        day.status = ShiftInventoryReportStatusEnum.APPROVED.value
+        day.lines[0].entered_quantity = Decimal("10")
+        await db.flush()
+        await _sell(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            qty=1,
+            created_at=t1 + timedelta(seconds=9),
+        )
+        await report_service.post_report(db, report=day, user=user)
+        await db.commit()
+        day_id = day.id
+
+    async with Session() as db:
+        line = (
+            await db.execute(
+                select(ShiftInventoryReportLine).where(
+                    ShiftInventoryReportLine.report_id == day_id
+                )
+            )
+        ).scalar_one()
+        # The post-close sale is NOT the day shift's: 0 sold, opening chains to the
+        # opening close (10), and the count of 10 reconciles clean — no phantom +1.
+        assert Decimal(str(line.sales_consumption_quantity)) == Decimal("0")
+        assert Decimal(str(line.opening_quantity)) == Decimal("10")
+        assert Decimal(str(line.expected_quantity)) == Decimal("10")
+        assert Decimal(str(line.variance_quantity)) == Decimal("0")
+
+    async with Session() as db:
+        user = await db.get(User, user_id)
+        # NIGHT SHIFT: opens at t1, closes at t2. A second sale is rung within it. The
+        # night count, taken at t2, is 8 (10 − the two sales).
+        night_till = _till(branch_id, user_id, opened_at=t1, closed_at=t2)
+        db.add(night_till)
+        await db.flush()
+        template = await db.get(InventoryReportTemplate, template_id)
+        night = await report_service._create_report(
+            db,
+            template=template,
+            till=night_till,
+            idempotency_key=f"night:{uuid.uuid4()}",
+        )
+        night.status = ShiftInventoryReportStatusEnum.APPROVED.value
+        night.lines[0].entered_quantity = Decimal("8")
+        await db.flush()
+        await _sell(
+            db,
+            branch_id=branch_id,
+            warehouse_id=warehouse_id,
+            item_id=item_id,
+            user=user,
+            qty=1,
+            created_at=t1 + timedelta(hours=1),
+        )
+        await report_service.post_report(db, report=night, user=user)
+        await db.commit()
+        night_id = night.id
+
+    async with Session() as db:
+        line = (
+            await db.execute(
+                select(ShiftInventoryReportLine).where(
+                    ShiftInventoryReportLine.report_id == night_id
+                )
+            )
+        ).scalar_one()
+        # BOTH sales are the night shift's, by the orders' own time — 2 sold, matching
+        # what the shop counted. Opening chains to the day closing (10), the count of 8
+        # reconciles clean, and the −1 phantom is gone.
+        assert Decimal(str(line.sales_consumption_quantity)) == Decimal("2")
+        assert Decimal(str(line.opening_quantity)) == Decimal("10")
+        assert Decimal(str(line.expected_quantity)) == Decimal("8")
+        assert Decimal(str(line.variance_quantity)) == Decimal("0")

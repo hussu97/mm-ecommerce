@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, func, select
+from sqlalchemy import DateTime, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,6 +37,7 @@ from app.models.inventory_v2 import (
     ShiftInventoryReportLine,
     ShiftInventoryReportStatusEnum,
 )
+from app.models.order import Order
 from app.models.till import Till, TillStatusEnum
 from app.models.user import User
 from app.services import email_service
@@ -87,6 +88,19 @@ _COLUMNED_MOVEMENT_TYPES: frozenset[str] = frozenset(
         InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value,
         InventoryTransactionTypeEnum.WASTE_FROM_PRODUCTION.value,
         InventoryTransactionTypeEnum.INTERNAL_USE.value,
+    }
+)
+
+#: Movements born of a customer sale — the stock draw and its reversals. They alone
+#: carry an ``order_id`` (set in ``source_event_service``), and they belong to the
+#: shift the sale HAPPENED in, by the order's own time, not the shift whose count
+#: happened to post after the consumption reached the ledger. Every other movement
+#: is operational — its posting IS its event — and stays tiled by posting sequence.
+_ORDER_SOURCED_MOVEMENT_TYPES: frozenset[str] = frozenset(
+    {
+        InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+        InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
+        InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value,
     }
 )
 
@@ -617,18 +631,40 @@ async def _movement_totals(
     *,
     through_sequence: int | None,
     since_sequence: int | None = None,
-) -> dict[uuid.UUID, dict[str, Decimal]]:
+) -> tuple[dict[uuid.UUID, dict[str, Decimal]], dict[uuid.UUID, Decimal]]:
     """Aggregate the source columns for the report's movement window.
 
-    The window is ``(since_sequence, through_sequence]`` by posting sequence:
+    Returns ``(movements, level_adjustment)``.
+
+    OPERATIONAL movements (a transfer, a PO receipt, a production run — the posting
+    IS the event) are tiled by posting sequence ``(since_sequence, through_sequence]``:
     ``since_sequence`` is the previous same-scope report's ``posting_cutoff_sequence``
-    (see ``_previous_cutoff_sequence``), so every closed movement lands in exactly
-    one report and none is double-counted. When ``since_sequence`` is None — the
-    very first report of a scope, before any prior report has posted a cutoff — the
-    legacy business_date / window-timestamp lower bound is used instead, which is
-    the correct bound for a first report.
+    so every closed one lands in exactly one report and none is double-counted, and
+    one that posts during the submit→post delay is pulled into the closing report
+    rather than lost (#122). When ``since_sequence`` is None — the very first report
+    of a scope — the legacy business_date / posted_at window is used instead.
+
+    ORDER-SOURCED movements (a customer sale's stock draw and its reversals) instead
+    belong to the shift the SALE happened in, by the order's own ``created_at`` within
+    the till window ``(window_opened_at, window_closed_at]`` — NOT the shift whose
+    count happened to post after the consumption reached the ledger. A sale rung just
+    after a till closes posts its consumption seconds later, but the closing count is
+    submitted minutes on; keying that sale by posting sequence swept it into the
+    closing shift AND reconciled that shift's count (taken before the sale) against a
+    level the sale had already depleted — a phantom variance (Sharjah, Lotus Cookie
+    Melt Small, 2026-09-21: +1 on the day shift, −1 at night, and the night's "2 sold"
+    shown as 1). Sale-time attribution applies only in the steady state (``use_sale``);
+    a first close or a whole-day report falls back to pure sequence tiling.
+
+    ``level_adjustment`` per item = (order-sourced in the SEQUENCE window) − (order-
+    sourced in the SALE-TIME window). The on-hand level reflects every order draw that
+    has POSTED; this is the slice of that the sale-time window hands to a DIFFERENT
+    shift. Subtracting it from the level (the caller does) makes ``expected = level −
+    adjustment`` the on-hand as of the shift's close and keeps ``opening = expected −
+    net_movement`` equal to the prior report's closing — the tiling stays gapless and
+    the variance reconciles against what was actually on the shelf when it was counted.
     """
-    stmt = (
+    base = (
         select(InventoryTransaction, InventoryTransactionItem)
         .join(
             InventoryTransactionItem,
@@ -639,40 +675,120 @@ async def _movement_totals(
             InventoryTransaction.status == TransactionStatusEnum.CLOSED.value,
         )
     )
-    warehouse_id = report.template_snapshot.get("warehouse_id")
+    snapshot = report.template_snapshot or {}
+    warehouse_id = snapshot.get("warehouse_id")
     if warehouse_id:
-        stmt = stmt.where(InventoryTransaction.warehouse_id == uuid.UUID(warehouse_id))
-    if through_sequence is not None:
-        stmt = stmt.where(InventoryTransaction.posting_sequence <= through_sequence)
-    if since_sequence is not None:
-        # Sequence tiling: everything strictly after the previous report's cutoff.
-        # Supersedes the date/timestamp lower bound, which cannot express "since the
-        # last report was completed" and was the source of the lost-movement bug.
-        stmt = stmt.where(InventoryTransaction.posting_sequence > since_sequence)
-    elif (
-        report.template_snapshot.get("cadence")
-        == InventoryReportCadenceEnum.PER_BUSINESS_DAY.value
-    ):
-        stmt = stmt.where(InventoryTransaction.business_date == report.business_date)
-    else:
-        opened_at = report.template_snapshot.get("window_opened_at")
-        closed_at = report.template_snapshot.get("window_closed_at")
-        if opened_at:
+        base = base.where(InventoryTransaction.warehouse_id == uuid.UUID(warehouse_id))
+
+    opened_iso = snapshot.get("window_opened_at")
+    closed_iso = snapshot.get("window_closed_at")
+    # Sale-time attribution needs a real till window AND a prior report to anchor the
+    # sequence lower bound the operational movements (and the level adjustment) tile
+    # against. Without both — a first close, or a whole-day report — count everything
+    # by posting sequence exactly as before.
+    use_sale = bool(
+        snapshot.get("cadence") == InventoryReportCadenceEnum.PER_TILL.value
+        and since_sequence is not None
+        and opened_iso
+        and closed_iso
+    )
+
+    def _sequence_windowed(stmt):
+        if through_sequence is not None:
+            stmt = stmt.where(InventoryTransaction.posting_sequence <= through_sequence)
+        if since_sequence is not None:
+            # Sequence tiling: everything strictly after the previous report's cutoff.
+            stmt = stmt.where(InventoryTransaction.posting_sequence > since_sequence)
+        elif (
+            snapshot.get("cadence") == InventoryReportCadenceEnum.PER_BUSINESS_DAY.value
+        ):
             stmt = stmt.where(
-                InventoryTransaction.posted_at >= datetime.fromisoformat(opened_at)
+                InventoryTransaction.business_date == report.business_date
             )
-        if closed_at:
-            stmt = stmt.where(
-                InventoryTransaction.posted_at <= datetime.fromisoformat(closed_at)
-            )
+        else:
+            if opened_iso:
+                stmt = stmt.where(
+                    InventoryTransaction.posted_at >= datetime.fromisoformat(opened_iso)
+                )
+            if closed_iso:
+                stmt = stmt.where(
+                    InventoryTransaction.posted_at <= datetime.fromisoformat(closed_iso)
+                )
+        return stmt
 
     movements: dict[uuid.UUID, dict[str, Decimal]] = {}
-    for transaction, transaction_line in (await db.execute(stmt)).all():
-        bucket = movements.setdefault(transaction_line.item_id, {})
-        bucket[transaction.type] = bucket.get(transaction.type, Decimal("0")) + Decimal(
-            str(transaction_line.signed_quantity or 0)
+
+    def _add(item_id: uuid.UUID, txn_type: str, signed: Decimal) -> None:
+        bucket = movements.setdefault(item_id, {})
+        bucket[txn_type] = bucket.get(txn_type, Decimal("0")) + signed
+
+    if not use_sale:
+        for transaction, line in (await db.execute(_sequence_windowed(base))).all():
+            _add(
+                line.item_id, transaction.type, Decimal(str(line.signed_quantity or 0))
+            )
+        return movements, {}
+
+    # Operational movements — posting-sequence tiling, unchanged (#122 preserved).
+    op_stmt = _sequence_windowed(
+        base.where(InventoryTransaction.type.notin_(_ORDER_SOURCED_MOVEMENT_TYPES))
+    )
+    for transaction, line in (await db.execute(op_stmt)).all():
+        _add(line.item_id, transaction.type, Decimal(str(line.signed_quantity or 0)))
+
+    # Order-sourced movements — attributed by the order's own time. Fetch every one in
+    # EITHER the sale-time window OR the sequence window (carrying both keys) and split
+    # in Python: sale-time members are this shift's sold; the level adjustment is the
+    # sequence window minus the sale-time window. Left join so a legacy row without an
+    # order_id is not silently dropped — it simply cannot be sale-time attributed and
+    # falls back to the sequence axis.
+    opened = datetime.fromisoformat(opened_iso)
+    closed = datetime.fromisoformat(closed_iso)
+    seq_upper = (
+        [InventoryTransaction.posting_sequence <= through_sequence]
+        if through_sequence is not None
+        else []
+    )
+    order_stmt = (
+        base.where(InventoryTransaction.type.in_(_ORDER_SOURCED_MOVEMENT_TYPES))
+        .outerjoin(Order, Order.id == InventoryTransaction.order_id)
+        .add_columns(Order.created_at, InventoryTransaction.posting_sequence)
+        .where(
+            or_(
+                and_(Order.created_at > opened, Order.created_at <= closed),
+                and_(
+                    InventoryTransaction.posting_sequence > since_sequence, *seq_upper
+                ),
+            )
         )
-    return movements
+    )
+    level_adjustment: dict[uuid.UUID, Decimal] = {}
+    for transaction, line, created_at, posting_sequence in (
+        await db.execute(order_stmt)
+    ).all():
+        signed = Decimal(str(line.signed_quantity or 0))
+        in_sequence = (
+            posting_sequence is not None
+            and posting_sequence > since_sequence
+            and (through_sequence is None or posting_sequence <= through_sequence)
+        )
+        in_window = created_at is not None and opened < created_at <= closed
+        if created_at is None:
+            # No order time to place it on the clock — keep it on the sequence axis
+            # so it is neither lost nor double-counted.
+            if in_sequence:
+                _add(line.item_id, transaction.type, signed)
+            continue
+        if in_window:
+            _add(line.item_id, transaction.type, signed)
+        adjust = (signed if in_sequence else Decimal("0")) - (
+            signed if in_window else Decimal("0")
+        )
+        if adjust:
+            level_adjustment[line.item_id] = (
+                level_adjustment.get(line.item_id, Decimal("0")) + adjust
+            )
+    return movements, level_adjustment
 
 
 def _ledger_column_values(
@@ -1099,7 +1215,7 @@ async def _create_report(
     db.add(report)
     await db.flush()
     since_sequence = await _previous_cutoff_sequence(db, report)
-    movements = await _movement_totals(
+    movements, level_adjustment = await _movement_totals(
         db, report, through_sequence=base_sequence, since_sequence=since_sequence
     )
     proposed = await _proposed_production_consumption(db, report)
@@ -1115,7 +1231,12 @@ async def _create_report(
         if item is None or item.deleted_at is not None or not item.is_active:
             continue
         level = await inventory_service.level_for(db, item.id, warehouse.id)
-        expected = quantity(level.quantity)
+        # Level as of the shift's close: back out any order draw the sale-time window
+        # hands to another shift (see `_movement_totals`), so the count reconciles
+        # against what was on the shelf when it was taken.
+        expected = quantity(
+            level.quantity - level_adjustment.get(item.id, Decimal("0"))
+        )
         category = categories.get(item.category_id) if item.category_id else None
         report_line = ShiftInventoryReportLine(
             # Set the FK directly and add the line on its own, rather than
@@ -1165,7 +1286,7 @@ async def refresh_report(
     warehouse = await inventory_service.default_warehouse(db, report.branch_id)
     latest = await current_sequence(db, report.branch_id)
     since_sequence = await _previous_cutoff_sequence(db, report)
-    movements = await _movement_totals(
+    movements, level_adjustment = await _movement_totals(
         db, report, through_sequence=latest, since_sequence=since_sequence
     )
     proposed = await _proposed_production_consumption(db, report)
@@ -1200,7 +1321,10 @@ async def refresh_report(
     )
     for line in report.lines:
         level = await inventory_service.level_for(db, line.item_id, warehouse.id)
-        expected = quantity(level.quantity)
+        # Level as of the shift's close (see `_movement_totals` / `_create_report`).
+        expected = quantity(
+            level.quantity - level_adjustment.get(line.item_id, Decimal("0"))
+        )
         if line.item_id in moved:
             line.confirmed = False
         _apply_source_columns(
@@ -1243,7 +1367,7 @@ async def _recompute_columns_at_post(
     expected and variance); it never changes what the ledger posts, because only
     columns in ``entered_columns`` post and those are left untouched here.
     """
-    movements = await _movement_totals(
+    movements, level_adjustment = await _movement_totals(
         db, report, through_sequence=through_sequence, since_sequence=since_sequence
     )
     proposed = await _proposed_production_consumption(db, report)
@@ -1272,7 +1396,12 @@ async def _recompute_columns_at_post(
             if column not in entered:
                 _set(column, value)
         level = await inventory_service.level_for(db, line.item_id, warehouse.id)
-        _set("opening_quantity", Decimal(str(level.quantity)) - net_movement)
+        # Reconcile against the on-hand as of the shift's close: back out any order
+        # draw the sale-time window hands to another shift (see `_movement_totals`).
+        close_level = Decimal(str(level.quantity)) - level_adjustment.get(
+            line.item_id, Decimal("0")
+        )
+        _set("opening_quantity", close_level - net_movement)
         # Keep the ledger-owned prefills in step with the refreshed columns so the
         # post loop still posts exactly ``entered − prefilled`` for typed columns.
         prefilled = dict((line.source_summary or {}).get("prefilled", {}))
