@@ -29,7 +29,9 @@ from app.models.aggregator import (
     RUN_FAILED,
     RUN_MODE_SALES,
     RUN_RUNNING,
+    STATEMENT_GRAIN_ORDER,
     AggregatorOrder,
+    AggregatorStatementLine,
     AggregatorSyncRun,
 )
 from app.models.base import utcnow
@@ -409,3 +411,118 @@ async def test_modifier_snapshot_resolves_scoped_product_option(db):
         db, "careem", other, product_id=product.id
     )
     assert snap_miss[0]["modifier_option_id"] is None
+
+
+# ── settlement backfill rolls VAT-inclusive commission onto the order ──────────
+async def _stmt_line(
+    db, *, channel, statement_id, external_order_id, fee_category, amount
+):
+    line = AggregatorStatementLine(
+        channel=channel,
+        source_key=f"{MARKER}-{uuid.uuid4().hex[:12]}",
+        statement_id=statement_id,
+        external_order_id=external_order_id,
+        fee_category=fee_category,
+        amount=Decimal(amount),
+        line_date="2026-09-10",
+        grain=STATEMENT_GRAIN_ORDER,
+    )
+    db.add(line)
+    await db.flush()
+    return line
+
+
+async def test_settlement_backfill_fills_commission_gap_talabat_split(db):
+    """A Talabat-shaped statement (ex-VAT commission + separate commission_vat)
+    fills a fee-less order's commission with the VAT-INCLUSIVE magnitude."""
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db,
+        channel="talabat",
+        branch_id=branch_id,
+        commission_amount=Decimal("0"),
+        net_payable=None,
+        gross_sales=Decimal("40.00"),
+    )
+    oid = agg.external_order_id
+    await _stmt_line(
+        db,
+        channel="talabat",
+        statement_id=stmt,
+        external_order_id=oid,
+        fee_category="commission",
+        amount="-12.00",
+    )
+    await _stmt_line(
+        db,
+        channel="talabat",
+        statement_id=stmt,
+        external_order_id=oid,
+        fee_category="commission_vat",
+        amount="-0.60",
+    )
+    await _stmt_line(
+        db,
+        channel="talabat",
+        statement_id=stmt,
+        external_order_id=oid,
+        fee_category="net_payable",
+        amount="26.42",
+    )
+
+    updated = await ingest.backfill_order_economics_from_statement(db, "talabat", stmt)
+    assert updated >= 1
+    await db.refresh(agg)
+    assert agg.commission_amount == Decimal("12.60")  # 12.00 + 0.60, magnitude
+    assert agg.net_payable == Decimal("26.42")
+
+
+async def test_settlement_backfill_commission_noon_single_incl_line(db):
+    """noon books one commission line already VAT-inclusive (no commission_vat) —
+    rolled onto the order verbatim."""
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db,
+        channel="noon",
+        branch_id=branch_id,
+        commission_amount=None,
+        gross_sales=Decimal("40.00"),
+    )
+    await _stmt_line(
+        db,
+        channel="noon",
+        statement_id=stmt,
+        external_order_id=agg.external_order_id,
+        fee_category="commission",
+        amount="10.50",
+    )
+    await ingest.backfill_order_economics_from_statement(db, "noon", stmt)
+    await db.refresh(agg)
+    assert agg.commission_amount == Decimal("10.50")
+
+
+async def test_settlement_backfill_never_overwrites_sales_feed_commission(db):
+    """A commission already stamped by the sales feed is a gap-fill no-op — the
+    statement never clobbers it (they are equal by construction anyway)."""
+    branch_id = await _branch(db)
+    stmt = f"{MARKER}-stmt-{uuid.uuid4().hex[:8]}"
+    agg = await _agg_order(
+        db,
+        channel="talabat",
+        branch_id=branch_id,
+        commission_amount=Decimal("12.60"),
+        gross_sales=Decimal("40.00"),
+    )
+    await _stmt_line(
+        db,
+        channel="talabat",
+        statement_id=stmt,
+        external_order_id=agg.external_order_id,
+        fee_category="commission",
+        amount="-99.00",
+    )  # deliberately wrong
+    await ingest.backfill_order_economics_from_statement(db, "talabat", stmt)
+    await db.refresh(agg)
+    assert agg.commission_amount == Decimal("12.60")  # untouched

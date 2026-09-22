@@ -44,6 +44,20 @@ def is_commission(col=AggregatorStatementLine):
     return (_fc(col) == "commission") & ~is_vat(col)
 
 
+def is_commission_or_vat(col=AggregatorStatementLine):
+    """The commission AND its own VAT — the pair that sums to the VAT-INCLUSIVE
+    commission the order feed stores in `aggregator_order.commission_amount`
+    (migration ``251_noon_commission_incl``). Two shapes in the wild, both handled
+    by summing these two categories and taking the magnitude: noon books one
+    `commission` line already VAT-inclusive (no `commission_vat` line), while
+    Talabat/Careem/Deliveroo split it into an ex-VAT `commission` line plus a
+    `commission_vat` line. Deliberately keys on `commission`/`commission_vat`
+    ONLY — never the broad `is_vat` — so a `payment_handling_vat` line is not
+    mistaken for commission VAT. Verified equal to the sales-feed value on live
+    noon and Talabat orders (2026-09-22)."""
+    return _fc(col).in_(["commission", "commission_vat"])
+
+
 def is_gross(col=AggregatorStatementLine):
     """The order's gross sale line (the customer-facing subtotal)."""
     return or_(

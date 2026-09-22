@@ -46,6 +46,17 @@ def test_commission_excludes_its_own_vat():
     assert "not" in sql and "vat" in sql
 
 
+def test_commission_or_vat_keys_on_both_categories_only():
+    # The VAT-inclusive commission pair rolled onto aggregator_order.commission_amount
+    # — must be exactly `commission` + `commission_vat`, never the broad is_vat (which
+    # would sweep in payment_handling_vat and over-state the commission).
+    sql = _sql(sc.is_commission_or_vat())
+    assert "commission" in sql
+    assert "commission_vat" in sql
+    assert "payment_handling" not in sql
+    assert "%vat%" not in sql  # not the broad LIKE match
+
+
 def test_other_revenue_covers_credits_and_positive_adjustments():
     sql = _sql(sc.is_other_revenue())
     assert "merchant_compensation" in sql

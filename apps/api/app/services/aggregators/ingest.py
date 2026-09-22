@@ -87,6 +87,9 @@ from app.services.aggregators.normalized import (
     StandardStatement,
 )
 from app.services.aggregators.statement_categories import (
+    is_commission_or_vat as is_commission_or_vat_line,
+)
+from app.services.aggregators.statement_categories import (
     is_fee as is_fee_line,
 )
 from app.services.aggregators.statement_categories import (
@@ -855,13 +858,18 @@ async def backfill_order_economics_from_statement(
     feed knows first-hand — is only filled when the order lacks it. `net_payable`
     is summed SIGNED (a clawback line is negative); gross is a magnitude.
 
-    It deliberately does NOT touch the order's per-fee columns
-    (``commission_amount``/``vat_amount``). Those are the marketplace's own cut, the
-    Fees & VAT roll-up already reads them straight off the statement lines for a
-    statement-fed channel, and their sales-feed representation differs from the
-    line's by convention (noon books order commission VAT-INCLUSIVE while its line
-    is ex-VAT — see migration ``251_noon_commission_incl``), so writing the line's
-    figure back onto the order would make the feed self-inconsistent for no gain.
+    It also rolls the order's VAT-INCLUSIVE ``commission_amount`` from the
+    statement's ``commission`` (+ ``commission_vat``) lines — but ONLY to FILL A
+    GAP (a null or zero), never to overwrite a value the sales feed already stamped.
+    This is the reliable path a statement-fed channel needs: noon carries per-order
+    commission ONLY when its weekly RMS statement happens to land inside the ~1-day
+    OMS sales window, so most settled orders never get it from the sales feed and
+    their order-details page shows no fee (Sept 8–13 was exactly this). Rolling it
+    from the settled statement — which lands for every order once the week settles —
+    closes that hole for good, decoupled from the OMS window. The summed magnitude
+    (`is_commission_or_vat_line`) equals the sales-feed convention on live noon and
+    Talabat orders (see that predicate); the earlier decision to skip it rested on a
+    stale premise that the noon line was ex-VAT, which the data disproves.
 
     Matches the order the same way the rest of the settlement join does
     (`_order_matches_line_ids`, so Deliveroo's `drn_id` resolves), and writes only
@@ -875,6 +883,9 @@ async def backfill_order_economics_from_statement(
                 ln.external_order_id,
                 func.sum(func.abs(ln.amount)).filter(is_gross_line(ln)).label("gross"),
                 func.sum(ln.amount).filter(is_net_line(ln)).label("net"),
+                func.sum(ln.amount)
+                .filter(is_commission_or_vat_line(ln))
+                .label("commission"),
             )
             .where(
                 ln.channel == channel,
@@ -887,7 +898,7 @@ async def backfill_order_economics_from_statement(
     ).all()
 
     updated = 0
-    for external_order_id, gross, net in rows:
+    for external_order_id, gross, net, commission in rows:
         values: dict[str, Any] = {}
         changed = []
         # Settlement wins over the provisional order-feed net.
@@ -901,6 +912,23 @@ async def backfill_order_economics_from_statement(
             v = Decimal(str(gross))
             values["gross_sales"] = func.coalesce(AggregatorOrder.gross_sales, v)
             changed.append(AggregatorOrder.gross_sales.is_(None))
+        # Commission (VAT-inclusive magnitude): fill only a gap the sales feed left
+        # (null or zero), so a statement-fed channel's order-details fee is never
+        # blank once the week settles, without clobbering the sales feed's own value
+        # (which equals this anyway).
+        if commission is not None:
+            cv = abs(Decimal(str(commission)))
+            if cv != 0:
+                gap = or_(
+                    AggregatorOrder.commission_amount.is_(None),
+                    AggregatorOrder.commission_amount == 0,
+                )
+                values["commission_amount"] = case(
+                    (gap, cv), else_=AggregatorOrder.commission_amount
+                )
+                changed.append(
+                    and_(gap, AggregatorOrder.commission_amount.is_distinct_from(cv))
+                )
         if not values:
             continue
         result = await db.execute(
