@@ -376,13 +376,20 @@ _UNMAPPED_OUTLETS_WARNED: set[tuple[str, str]] = set()
 
 
 async def _address_for_upsert(
+    channel: str,
     incoming_address: dict[str, Any] | None,
     existing_address: dict[str, Any] | None,
     existing_geocode_status: str | None,
     *,
     retry_geocoding: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Choose the address to persist without repeating paid geocoding work."""
+    """Choose the address to persist without repeating paid geocoding work.
+
+    Keeta is the only marketplace whose text address is suitable for paid Google
+    lookup.  Other integrations may expose placeholder or merchant-facing
+    address fields; retain those fields (and any provider pin) but never submit
+    them to Google.
+    """
     if address_geocoding.coordinates(existing_address) is not None and (
         address_geocoding.coordinates(incoming_address) is None
     ):
@@ -401,6 +408,9 @@ async def _address_for_upsert(
             if address_geocoding.coordinates(incoming_address) is not None
             else "outside_uae",
         )
+
+    if channel != CHANNEL_KEETA:
+        return incoming_address, existing_geocode_status
 
     if not retry_geocoding and existing_geocode_status in {
         "failed",
@@ -439,6 +449,7 @@ async def upsert_order(
     existing_address = address_geocoding.normalise_coordinates(existing_address)
     incoming_address = address_geocoding.normalise_coordinates(order.customer_address)
     address, geocode_status = await _address_for_upsert(
+        channel,
         incoming_address,
         existing_address,
         existing_geocode_status,

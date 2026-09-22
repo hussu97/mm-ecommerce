@@ -14,6 +14,7 @@ async def test_normal_sync_does_not_retry_a_terminal_geocoding_outcome(monkeypat
 
     monkeypatch.setattr(ingest.address_geocoding, "geocode", geocode)
     address, status = await ingest._address_for_upsert(
+        "keeta",
         {"address": "Jumeirah 1", "city": "Dubai"},
         None,
         "failed",
@@ -33,6 +34,7 @@ async def test_explicit_backfill_can_retry_a_terminal_geocoding_outcome(monkeypa
 
     monkeypatch.setattr(ingest.address_geocoding, "geocode", geocode)
     address, status = await ingest._address_for_upsert(
+        "keeta",
         {"address": "Jumeirah 1", "city": "Dubai"},
         None,
         "failed",
@@ -41,3 +43,20 @@ async def test_explicit_backfill_can_retry_a_terminal_geocoding_outcome(monkeypa
 
     assert address["latitude"] == 25.2048
     assert status == "resolved"
+
+
+async def test_non_keeta_text_address_is_never_sent_to_google(monkeypatch):
+    async def geocode(_address):
+        raise AssertionError("non-Keeta addresses must not use Google geocoding")
+
+    monkeypatch.setattr(ingest.address_geocoding, "geocode", geocode)
+    address, status = await ingest._address_for_upsert(
+        "talabat",
+        {"address": "Some text", "city": "Dubai"},
+        None,
+        None,
+        retry_geocoding=True,
+    )
+
+    assert address == {"address": "Some text", "city": "Dubai"}
+    assert status is None
