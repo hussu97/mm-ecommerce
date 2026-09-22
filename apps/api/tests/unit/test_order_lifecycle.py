@@ -190,6 +190,36 @@ async def test_an_aggregator_packed_order_may_be_cancelled_via_extra_from(
 
 
 @pytest.mark.asyncio
+async def test_a_delivered_aggregator_order_may_be_cancelled_via_extra_from(
+    quiet_consequences,
+):
+    # A marketplace/merchant refund after handover ends the sale, but promote never
+    # rewinds a delivered order on a scrape — so the admin doorway carries
+    # `delivered` in `AGGREGATOR_CANCELLABLE_FROM` to let a person correct it. The
+    # move is label-only: no restock (the db sees no statements), no refund (MM
+    # holds no gateway payment), no courier cancel — `stock_drawn` is untouched.
+    db = _Db()
+    order = _order(
+        OrderStatusEnum.DELIVERED,
+        source=OrderSourceEnum.AGGREGATOR.value,
+        stock_drawn=True,
+        items=[OrderItem(id=uuid.uuid4(), product_id=uuid.uuid4(), quantity=1)],
+    )
+    moved = await order_lifecycle.transition(
+        db,
+        order,
+        OrderStatusEnum.CANCELLED,
+        extra_from=order_lifecycle.AGGREGATOR_CANCELLABLE_FROM,
+    )
+    assert moved is True
+    assert order.status == OrderStatusEnum.CANCELLED
+    assert order.stock_drawn is True  # goods handed over — nothing restocked
+    assert db.executed == []  # no _move_stock walk
+    assert quiet_consequences["refund"] == []
+    assert quiet_consequences["courier_cancel"] == []
+
+
+@pytest.mark.asyncio
 async def test_a_website_packed_order_is_not_cancellable_without_its_widening(
     quiet_consequences,
 ):

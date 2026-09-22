@@ -218,51 +218,59 @@ def _provider_cancelled_but_paid(agg: AggregatorOrder) -> bool:
     The sign of `net_payable` is the FIRST filter, but not the whole test: at
     scrape time it is only the order's provisional fee breakdown, and a refund the
     merchant funds is not clawed out of it until the weekly statement. So a
-    merchant- or customer-funded cancellation ("Merchant"/"User") still shows a
-    positive provisional net and would be wrongly kept on the money test alone —
-    `_cancelled_at_our_cost` excludes those. What survives is a Keeta
-    customer-service cancellation still paying us the net: that we keep. It should
-    read `delivered` (its revenue counts) with the cancellation recorded, not
-    vanish from the books as `cancelled`.
+    cancellation the shop pays for still shows a positive provisional net and would
+    be wrongly kept on the money test alone. `_cancellation_paid_by_provider` is
+    the second filter, and it is an ALLOWLIST: only a Keeta customer-service
+    cancellation still paying us the net survives — that we keep. It should read
+    `delivered` (its revenue counts) with the cancellation recorded, not vanish
+    from the books as `cancelled`.
     """
     if _target_status(agg.channel, agg.status) != OrderStatusEnum.CANCELLED:
         return False
     if money(agg.net_payable or Decimal("0")) <= 0:
         return False
-    # A cancellation the MERCHANT funds is a lost sale we caused, not a provider
-    # cancellation we were paid for. Keeta still shows a positive `net_payable` on
-    # one (the order's provisional fee breakdown, before the statement claws it
-    # back), so the money test alone would wrongly book it delivered.
-    # `orderCancelSceneDesc` names the party: only "Customer service" (Keeta's own
-    # desk) eats the cost AND still owes us the net — everything else ("Merchant",
-    # the shop rejecting; "User", a customer refund the shop honours) is funded out
-    # of our pocket. So a merchant- or customer-funded cancellation stays cancelled
-    # whatever the provisional net says.
-    return not _cancelled_at_our_cost(agg)
+    # Positive provisional net is not enough — a cancellation the shop funds shows
+    # one too, until the statement claws it back. Keep it delivered only when the
+    # MARKETPLACE funded the refund and still owes us the net; everything else is
+    # the shop's own loss and stays cancelled.
+    return _cancellation_paid_by_provider(agg)
 
 
-#: `orderCancelSceneDesc` values (Keeta's humanised cancelling party) whose refund
-#: the merchant funds — a lost sale for us, NOT revenue kept. "Merchant" is the
-#: shop saying no (item unavailable, rejected); "User" is the customer getting a
-#: refund the shop honours (e.g. AGG-20260920-083: wrong quantity, refunded by us).
-#: The one absent party, "Customer service", is Keeta's own desk resolving it at
-#: Keeta's expense while still paying us the net — that one we keep.
-_MERCHANT_FUNDED_CANCEL_SCENES = frozenset({"merchant", "user"})
+#: Keeta's `canceledScene` code for the one cancellation the marketplace funds at
+#: its own customer-service desk while STILL paying the shop its net — the only
+#: cancelled order whose revenue we keep. It is matched as an ALLOWLIST, not a
+#: denylist, on purpose: every other cancelling party is the shop's own loss —
+#: 5000 "Merchant" (the shop rejected it), 5011 "User" (a customer refund the shop
+#: honours), 5042 "Not accepted before timeout" (the shop never accepted, e.g.
+#: AGG-20260921-028) — and a scene code we have never seen must default to the
+#: shop's cost (booked `cancelled`), never to revenue we did not earn.
+_PROVIDER_FUNDED_CANCEL_SCENE_CODE = "5050"
+#: The same party by its humanised `orderCancelSceneDesc` — the locale-dependent
+#: fallback for a payload that somehow omits the numeric `canceledScene`.
+_PROVIDER_FUNDED_CANCEL_SCENES = frozenset({"customer service"})
 
 
-def _cancelled_at_our_cost(agg: AggregatorOrder) -> bool:
-    """Whether the cancellation's refund comes out of the merchant's pocket — ours.
+def _cancellation_paid_by_provider(agg: AggregatorOrder) -> bool:
+    """Whether the marketplace, not the shop, funds this cancellation's refund.
 
-    Keeta's `orderCancelSceneDesc` is the humanised party: "Merchant" (the shop
-    rejected it) and "User" (a customer refund the shop honours) are both merchant-
-    funded — a lost sale — as opposed to "Customer service" (Keeta's own desk),
-    which Keeta funds while still paying us the net. Only the merchant-funded cases
-    are ours.
+    An allowlist, not a denylist, on purpose: only Keeta's own customer-service
+    desk (`canceledScene` 5050 / "Customer service") eats the customer's refund
+    while still owing the shop its net. Every other cancelling party — the shop
+    ("Merchant"), the customer ("User"), a no-accept timeout ("Not accepted before
+    timeout") — is the shop's own loss. A scene we have never seen defaults to the
+    shop's cost (booked `cancelled`), never to revenue we did not earn.
+
+    Keyed on the numeric `canceledScene` first (locale-proof), falling back to the
+    humanised `orderCancelSceneDesc` only when the code is absent.
     """
-    scene = (agg.raw or {}).get("orderCancelSceneDesc")
+    raw = agg.raw or {}
+    code = raw.get("canceledScene")
+    if code is not None and str(code).strip() == _PROVIDER_FUNDED_CANCEL_SCENE_CODE:
+        return True
+    scene = raw.get("orderCancelSceneDesc")
     return (
         isinstance(scene, str)
-        and scene.strip().lower() in _MERCHANT_FUNDED_CANCEL_SCENES
+        and scene.strip().lower() in _PROVIDER_FUNDED_CANCEL_SCENES
     )
 
 
@@ -879,9 +887,10 @@ async def _drive_status(db: AsyncSession, order: Order, agg: AggregatorOrder) ->
             # service desk and still owes us the net (net_payable > 0), funding the
             # refund itself. That is a sale we KEEP, not a lost one — book it
             # `delivered` so its revenue counts, with the cancellation recorded
-            # above, instead of dropping it as `cancelled`. A merchant- or customer-
-            # funded cancellation is excluded by `_cancelled_at_our_cost` and falls
-            # to the `else` below. Falls through to the ladder climb below.
+            # above, instead of dropping it as `cancelled`. Any cancellation the
+            # shop itself funds (Merchant/User/no-accept timeout) fails the
+            # customer-service allowlist in `_cancellation_paid_by_provider` and
+            # falls to the `else` below. Falls through to the ladder climb below.
             logger.info(
                 "promote %s %s: marketplace-cancelled but net_payable=%s>0 (%s) "
                 "— booking delivered, revenue kept",

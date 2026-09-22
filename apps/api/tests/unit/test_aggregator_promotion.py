@@ -184,13 +184,29 @@ def test_keeta_status_codes_map():
     assert promote._target_status("keeta", "99") is None  # unknown → indeterminate
 
 
-def test_provider_cancelled_but_paid_is_decided_by_net_payable_sign():
-    # Cancelled at the marketplace but the ledger still pays the net → we keep it.
+def test_provider_cancelled_but_paid_needs_net_and_a_provider_funded_scene():
+    # Two filters, both required. Cancelled at Keeta's own customer-service desk
+    # AND still paid the net → we keep it. The scene is what tips a positive-net
+    # cancel into "keep"; net sign alone is necessary but no longer sufficient.
     assert promote._provider_cancelled_but_paid(
-        _agg(status="cancelled", net_payable=Decimal("37.42"))
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("37.42"),
+            raw={"canceledScene": 5050, "orderCancelSceneDesc": "Customer service"},
+        )
     )
     assert promote._provider_cancelled_but_paid(
-        _agg(status="50", net_payable=Decimal("26.40"))  # legacy raw code
+        _agg(
+            status="50",  # legacy raw code for cancelled
+            net_payable=Decimal("26.40"),
+            raw={"canceledScene": 5050, "orderCancelSceneDesc": "Customer service"},
+        )
+    )
+    # Positive net but no scene at all → we cannot show the marketplace funded it,
+    # so it defaults to the shop's cost and stays cancelled. Real Keeta cancels
+    # always carry a scene; this is the safe default for anything that does not.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(status="cancelled", net_payable=Decimal("37.42"))
     )
     # Cancelled and paid nothing → a real (merchant) cancellation, a lost sale.
     assert not promote._provider_cancelled_but_paid(
@@ -201,29 +217,62 @@ def test_provider_cancelled_but_paid_is_decided_by_net_payable_sign():
     )
     # Not a cancellation at all → never in scope.
     assert not promote._provider_cancelled_but_paid(
-        _agg(status="completed", net_payable=Decimal("37.42"))
+        _agg(
+            status="completed",
+            net_payable=Decimal("37.42"),
+            raw={"canceledScene": 5050, "orderCancelSceneDesc": "Customer service"},
+        )
     )
-    # A MERCHANT-funded cancellation is OUR cost — a lost sale, not revenue — even
-    # when the provisional net_payable is still positive. It stays cancelled. The
-    # shop rejecting ("Merchant") and a customer refund the shop honours ("User",
-    # e.g. AGG-20260920-083: wrong quantity, refunded by us) are both merchant-
-    # funded — the provisional net has not yet been clawed back by the statement.
+    # A cancellation the shop itself funds is OUR cost — a lost sale, not revenue —
+    # even when the provisional net_payable is still positive (the statement has not
+    # yet clawed it back). Detection is an ALLOWLIST of the one provider-funded
+    # party, so every other cancelling party stays cancelled: the shop rejecting
+    # ("Merchant"/5000), a customer refund the shop honours ("User"/5011, e.g.
+    # AGG-20260920-083: wrong quantity), and — the case that slipped through the old
+    # denylist — the shop never accepting in time ("Not accepted before timeout"/
+    # 5042, e.g. AGG-20260921-028, Keeta-cancelled and refunded, merchant fault).
     assert not promote._provider_cancelled_but_paid(
         _agg(
             status="cancelled",
             net_payable=Decimal("26.20"),
-            raw={"orderCancelSceneDesc": "Merchant"},
+            raw={"orderCancelSceneDesc": "Merchant", "canceledScene": 5000},
         )
     )
     assert not promote._provider_cancelled_but_paid(
         _agg(
             status="cancelled",
             net_payable=Decimal("48.10"),
-            raw={"orderCancelSceneDesc": "User"},
+            raw={"orderCancelSceneDesc": "User", "canceledScene": 5011},
         )
     )
-    # Only Keeta's own desk ("Customer service") eats the cost while still paying us
-    # the net — that cancellation we keep as delivered.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("66.35"),
+            raw={
+                "orderCancelSceneDesc": "Not accepted before timeout",
+                "canceledScene": 5042,
+            },
+        )
+    )
+    # A scene we have never seen defaults to the shop's cost — never to revenue.
+    assert not promote._provider_cancelled_but_paid(
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("66.35"),
+            raw={"orderCancelSceneDesc": "Some new reason", "canceledScene": 5099},
+        )
+    )
+    # Only Keeta's own desk ("Customer service"/5050) eats the cost while still
+    # paying us the net — that cancellation we keep as delivered. Matched on the
+    # locale-proof numeric code first, and on the humanised desc as a fallback.
+    assert promote._provider_cancelled_but_paid(
+        _agg(
+            status="cancelled",
+            net_payable=Decimal("37.42"),
+            raw={"orderCancelSceneDesc": "Customer service", "canceledScene": 5050},
+        )
+    )
     assert promote._provider_cancelled_but_paid(
         _agg(
             status="cancelled",
