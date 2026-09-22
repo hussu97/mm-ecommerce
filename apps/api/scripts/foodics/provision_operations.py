@@ -2,12 +2,12 @@
 Set up the operational data a branch needs before it can trade.
 
 The catalogue importer covers everything Foodics exports. This covers what it
-does not: a warehouse to hold stock, opening stock levels, the floor plan, and
-a food cost against each product. Foodics keeps all of it per-branch behind
-screens its export API never exposes, so it has to be established here.
+does not: a warehouse to hold stock, opening stock levels, and the floor plan.
+Foodics keeps all of it per-branch behind screens its export API never exposes,
+so it has to be established here.
 
     python scripts/foodics/provision_operations.py [--dry-run]
-    python scripts/foodics/provision_operations.py --tables 8 --food-cost 0.32
+    python scripts/foodics/provision_operations.py --tables 8
 
 Idempotent: re-running updates in place and never overwrites a figure an
 operator has since corrected in the console.
@@ -34,7 +34,6 @@ from app.models import (  # noqa: E402
     InventoryItem,
     InventoryLevel,
     PosTable,
-    Product,
     Section,
     Warehouse,
 )
@@ -192,7 +191,10 @@ class Provisioner:
                         item_id=item.id,
                         warehouse_id=warehouse.id,
                         quantity=Decimal("0"),
-                        average_cost=item.cost or Decimal("0"),
+                        # Cost is FIFO now — an opening level carries no cost until
+                        # its first receipt or production posts one (the `cost`
+                        # column this used to read was dropped in migration 267).
+                        average_cost=Decimal("0"),
                     )
                 )
                 self.record("stock level")
@@ -240,39 +242,12 @@ class Provisioner:
                 self.record("table")
             await self.db.flush()
 
-    # ── Costing ──────────────────────────────────────────────────────────────
-
-    async def product_costs(self) -> None:
-        """
-        Give every product a cost so margin reports mean something.
-
-        This is an estimate from a food-cost ratio, not a recipe costing — the
-        export carries no cost at all, and a catalogue of zero-cost products
-        reports every sale at 100% margin, which is worse than approximately
-        right. Only ever written where cost is unset, so a real figure entered
-        in the console or derived from a recipe is never overwritten.
-        """
-        ratio = Decimal(str(self.args.food_cost))
-        for product in await self.all(Product):
-            if product.cost is not None and product.cost > 0:
-                continue
-            if product.is_non_revenue:
-                continue
-            base = product.base_price or Decimal("0")
-            if base <= 0:
-                continue
-            product.cost = (base * ratio).quantize(Decimal("0.01"))
-            self.record("product costed")
-        await self.db.flush()
-
     async def run(self) -> None:
         categories = await self.inventory_categories()
         await self.classify_items(categories)
         warehouses = await self.warehouses()
         await self.stock_levels(warehouses)
         await self.floor_plan()
-        if self.args.food_cost > 0:
-            await self.product_costs()
 
 
 async def main() -> int:
@@ -280,12 +255,6 @@ async def main() -> int:
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
     parser.add_argument(
         "--tables", type=int, default=8, help="tables per branch (default 8)"
-    )
-    parser.add_argument(
-        "--food-cost",
-        type=float,
-        default=0.32,
-        help="cost as a fraction of selling price, 0 to skip (default 0.32)",
     )
     parser.add_argument("--dry-run", action="store_true", help="roll back at the end")
     args = parser.parse_args()
@@ -308,11 +277,6 @@ async def main() -> int:
         print(f"  {entity:<{width}}  {count:>5}")
     if args.dry_run:
         print("\ndry run — rolled back")
-    elif args.food_cost > 0:
-        print(
-            f"\nProduct costs are estimated at {args.food_cost:.0%} of price. "
-            "Replace them with recipe costing before trusting margin reports."
-        )
     await engine.dispose()
     return 0
 

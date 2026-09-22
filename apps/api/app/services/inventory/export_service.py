@@ -20,7 +20,7 @@ from app.models.inventory_v2 import Recipe, RecipeVersion, RecipeVersionStatusEn
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.order import Order, OrderStatusEnum
 from app.models.product import Product
-from app.services.inventory import cost_layer_service
+from app.services.inventory import cost_layer_service, recipe_service
 
 __all__ = [
     "export_categories",
@@ -119,6 +119,11 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
     )
     rows = result.scalars().unique().all()
 
+    # Product cost is the live recipe cost now (the stale `Product.cost` column was
+    # dropped). Load the active recipe graph once and price each product from it;
+    # a product with no recipe exports an empty cost cell.
+    catalog = await recipe_service.load_active_catalog(db)
+
     buf = io.StringIO()
     w = csv.writer(buf)
     header = [
@@ -153,6 +158,9 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
         )
         image = r.image_urls[0] if r.image_urls else ""
         t = r.translations or {}
+        product_cost = await recipe_service.product_recipe_unit_cost(
+            db, product_id=r.id, catalog=catalog
+        )
         row_data: list[str] = [
             str(r.id),
             r.name,
@@ -172,7 +180,7 @@ async def export_products(db: AsyncSession, languages: list[str]) -> str:
                 str(r.stock_quantity),
                 str(r.calories) if r.calories else "",
                 str(r.preparation_time) if r.preparation_time else "",
-                str(r.cost) if r.cost is not None else "",
+                str(product_cost) if product_cost is not None else "",
                 r.barcode or "",
                 str(r.display_order),
                 ";".join(r.labels or []),

@@ -877,11 +877,27 @@ async def receive_transfer(
     sent_transaction = await inventory_service.load_transaction(
         db, transfer.sent_transaction_id
     )
-    sent_costs = {
-        sent_line.notes: _c(sent_line.unit_cost)
-        for sent_line in sent_transaction.items
-        if sent_line.notes and sent_line.notes.startswith("transfer_item:")
-    }
+    # Value the received layer at the cost the source FIFO layers *actually*
+    # released — ``total_cost``, set by post_transaction on the send leg — divided
+    # back to a per-unit figure, NOT the pre-post moving-average snapshot stamped
+    # on ``unit_cost``. The two diverge whenever the source's oldest layers cost
+    # differently from its blended average, which let a transfer silently change
+    # network inventory value even at identical send/receive quantities: sent
+    # value (FIFO) and received value (average) disagreed on the same goods
+    # (costing audit G1). The receive line reuses the same unit and
+    # conversion_factor, so a per-line-unit cost carries forward exactly. A
+    # genuinely zero-cost source (total_cost 0) still carries 0 — there is no
+    # price to invent at receive time; that is fixed at the source (recipe recost).
+    sent_costs: dict[str, Decimal] = {}
+    for sent_line in sent_transaction.items:
+        if not (sent_line.notes and sent_line.notes.startswith("transfer_item:")):
+            continue
+        sent_qty = Decimal(str(sent_line.quantity))
+        sent_costs[sent_line.notes] = (
+            _c(Decimal(str(sent_line.total_cost or 0)) / sent_qty)
+            if sent_qty > 0
+            else _c(sent_line.unit_cost)
+        )
 
     transaction = InventoryTransaction(
         reference=await inventory_service.next_reference(

@@ -266,11 +266,9 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                 if row.get("preparation_time", "").strip()
                 else None
             )
-            cost = (
-                _parse_decimal(row.get("cost", "0"))
-                if str(row.get("cost") or "").strip()
-                else None
-            )
+            # Product cost is the live recipe cost now — there is no `cost` column
+            # to import; a `cost` column in the CSV is ignored rather than rejected,
+            # so an older export still loads (same as inventory items).
             display_order = _parse_int(row.get("display_order", "0"))
             barcode = (row.get("barcode") or "").strip() or None
 
@@ -326,8 +324,6 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     existing.calories = calories
                 if prep_time is not None:
                     existing.preparation_time = prep_time
-                if "cost" in row and str(row["cost"] or "").strip():
-                    existing.cost = cost
                 if "barcode" in row:
                     existing.barcode = barcode
                 if "display_order" in row and str(row["display_order"] or "").strip():
@@ -376,7 +372,6 @@ async def import_products(db: AsyncSession, rows: list[dict]) -> ImportResult:
                     stock_quantity=stock_quantity or 0,
                     calories=calories,
                     preparation_time=prep_time,
-                    cost=cost,
                     barcode=barcode,
                     display_order=display_order,
                     labels=_parse_labels(row.get("labels", "")),

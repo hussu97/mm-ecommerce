@@ -733,6 +733,21 @@ class CostAdjustmentResponse(BaseModel):
     notes: str | None
 
 
+class ResetCostFromRecipeRequest(BaseModel):
+    notes: str | None = None
+
+
+class ResetCostFromRecipeResponse(BaseModel):
+    item_id: str
+    #: How many branch stock levels were revalued to their per-branch recipe cost.
+    levels_adjusted: int
+    #: Levels left untouched because the recipe priced to zero there (ingredients
+    #: not costed at that branch) or the revaluation could not be applied.
+    levels_skipped: int
+    #: One entry per revalued level, each carrying that branch's new average cost.
+    adjustments: list[CostAdjustmentResponse]
+
+
 class QuantityAdjustmentRequest(BaseModel):
     branch_id: UUID
     item_id: UUID

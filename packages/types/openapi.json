@@ -28296,6 +28296,54 @@
         "title": "ReportTemplateUpsert",
         "type": "object"
       },
+      "ResetCostFromRecipeRequest": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "title": "ResetCostFromRecipeRequest",
+        "type": "object"
+      },
+      "ResetCostFromRecipeResponse": {
+        "properties": {
+          "adjustments": {
+            "items": {
+              "$ref": "#/components/schemas/CostAdjustmentResponse"
+            },
+            "title": "Adjustments",
+            "type": "array"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "levels_adjusted": {
+            "title": "Levels Adjusted",
+            "type": "integer"
+          },
+          "levels_skipped": {
+            "title": "Levels Skipped",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "item_id",
+          "levels_adjusted",
+          "levels_skipped",
+          "adjustments"
+        ],
+        "title": "ResetCostFromRecipeResponse",
+        "type": "object"
+      },
       "ReturnItemRequest": {
         "properties": {
           "quantity": {
@@ -49620,6 +49668,72 @@
           }
         ],
         "summary": "Get Item Cost Layers",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/items/{item_id}/reset-cost-from-recipe": {
+      "post": {
+        "description": "Revalue every on-hand unit of a made item to its current recipe cost.\n\nFor a produced/semi-finished good whose recipe cost is the truth: recompute\nthe recipe's current cost from its ingredients' FIFO cost and restate the\nitem's on-hand value to it across every branch, leaving a cost-adjustment\ntrail. Fixes stock that entered at zero or a stale cost.",
+        "operationId": "reset_cost_from_recipe_api_v1_inventory_items__item_id__reset_cost_from_recipe_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResetCostFromRecipeRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetCostFromRecipeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reset Cost From Recipe",
         "tags": [
           "Inventory"
         ]

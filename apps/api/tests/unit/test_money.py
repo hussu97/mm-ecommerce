@@ -72,7 +72,11 @@ def test_to_decimal_does_not_round():
 
 def test_stock_and_cost_keep_their_own_precision():
     assert m.quantity("1.00005") == Decimal("1.0001")
-    assert m.unit_cost("0.0000005") == Decimal("0.000001")
+    # Per-unit cost carries ten places, so a sub-six-place figure survives (a
+    # batch price divided out over many units) rather than rounding to zero...
+    assert m.unit_cost("0.0000005") == Decimal("0.0000005")
+    # ...and rounding only bites at the tenth place.
+    assert m.unit_cost("0.00000000005") == Decimal("0.0000000001")
 
 
 @pytest.mark.parametrize("junk", [None, "", "n/a", "abc", object()])

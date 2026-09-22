@@ -254,6 +254,18 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         spawn_tracked(settled_order_service.run_forever(), name="settled_order_sweeper")
     )
 
+    # The zero-cost recost sweeper. Same lifespan reasons as its neighbours — no
+    # cron here, an advisory lock so a second copy is harmless. Restates made
+    # stock that entered the ledger at zero cost to its current recipe cost once
+    # the recipe has one, the trigger point the forward path never had (audit G3).
+    from app.services.inventory import cost_maintenance_service
+
+    background.append(
+        spawn_tracked(
+            cost_maintenance_service.run_forever(), name="cost_recost_sweeper"
+        )
+    )
+
     # The VAT ledger refresh. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy across blue/green is
     # harmless, storefront only. Own flag so the derived VAT cache can be

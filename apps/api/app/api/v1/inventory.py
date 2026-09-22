@@ -76,6 +76,8 @@ from app.schemas.inventory import (
     RecipeLineResponse,
     RecipeResponse,
     RecipeUpsert,
+    ResetCostFromRecipeRequest,
+    ResetCostFromRecipeResponse,
     SupplierCreate,
     SupplierItemResponse,
     SupplierItemUpsert,
@@ -2454,6 +2456,27 @@ async def adjust_cost(
         new_average_cost=data.new_average_cost,
         user=user,
         notes=data.notes,
+    )
+
+
+@items_router.post(
+    "/{item_id}/reset-cost-from-recipe", response_model=ResetCostFromRecipeResponse
+)
+async def reset_cost_from_recipe(
+    item_id: uuid.UUID,
+    data: ResetCostFromRecipeRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require("inventory.adjustments.manage")),
+):
+    """Revalue every on-hand unit of a made item to its current recipe cost.
+
+    For a produced/semi-finished good whose recipe cost is the truth: recompute
+    the recipe's current cost from its ingredients' FIFO cost and restate the
+    item's on-hand value to it across every branch, leaving a cost-adjustment
+    trail. Fixes stock that entered at zero or a stale cost.
+    """
+    return await recipe_service.reset_item_cost_from_recipe(
+        db, item_id=item_id, user=user, notes=(data.notes if data else None)
     )
 
 

@@ -73,7 +73,6 @@ class Product(Base, UUIDMixin, TimestampMixin):
     base_price: Mapped[Any] = mapped_column(
         Numeric(10, 2), nullable=False, server_default="0"
     )
-    cost: Mapped[Any | None] = mapped_column(Numeric(10, 2), nullable=True)
     barcode: Mapped[str | None] = mapped_column(String(100), nullable=True)
     calories: Mapped[int | None] = mapped_column(Integer, nullable=True)
     preparation_time: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -192,10 +191,6 @@ class Product(Base, UUIDMixin, TimestampMixin):
     )
     # "fixed" uses base_price; "open" makes the cashier key the price at sale time.
     pricing_method: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="fixed"
-    )
-    # "fixed" uses `cost`; "ingredients" derives it from the recipe.
-    costing_method: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default="fixed"
     )
     # Staff meals, comps and packaging: never taxed, never counted as revenue.

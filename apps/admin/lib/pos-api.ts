@@ -25,6 +25,7 @@ export type RecipeVersion = Schemas['RecipeVersionResponse'];
 export type RecipeDraft = Schemas['RecipeDraftRequest'];
 export type RecipeExpansion = Schemas['RecipeExpansionResponse'];
 export type RecipeOwnerRow = Schemas['RecipeOwnerRow'];
+export type ResetCostFromRecipeResponse = Schemas['ResetCostFromRecipeResponse'];
 export type PaginatedRecipeOwners = Schemas['PaginatedRecipeOwners'];
 export type ReportTemplate = Schemas['ReportTemplateResponse'];
 export type ReportTemplateWrite = Schemas['ReportTemplateUpsert'];
@@ -246,6 +247,8 @@ export const inventoryApi = {
     api.put<SupplierItem[]>(`/inventory/suppliers/${id}/items`, items),
   itemCostLayers: (itemId: string, branchId?: string) =>
     api.get<ItemCostLayers>(`/inventory/items/${itemId}/cost-layers${buildQs({ branch_id: branchId })}`),
+  resetCostFromRecipe: (itemId: string) =>
+    api.post<ResetCostFromRecipeResponse>(`/inventory/items/${itemId}/reset-cost-from-recipe`, {}),
 
   transactions: (params?: { branch_id?: string; type?: string; status?: string; business_date?: string; search?: string; limit?: number; offset?: number }) =>
     api.get<InventoryTransaction[]>(`/inventory/transactions${buildQs(params)}`),

@@ -169,7 +169,8 @@ def test_reversing_an_issue_blends_its_historical_value_back_in():
     row = level("100", "4.00")
     apply_reversal_movement(row, D("50"), D("2.00"))
     assert row.quantity == D("150.0000")
-    assert row.average_cost == D("3.333333")
+    # (100×4 + 50×2) / 150 = 3.333…, carried at the per-unit cost's ten places.
+    assert row.average_cost == D("3.3333333333")
 
 
 def test_a_realistic_flour_lifecycle():

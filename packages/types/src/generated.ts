@@ -3964,6 +3964,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/inventory/items/{item_id}/reset-cost-from-recipe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset Cost From Recipe
+         * @description Revalue every on-hand unit of a made item to its current recipe cost.
+         *
+         *     For a produced/semi-finished good whose recipe cost is the truth: recompute
+         *     the recipe's current cost from its ingredients' FIFO cost and restate the
+         *     item's on-hand value to it across every branch, leaving a cost-adjustment
+         *     trail. Fixes stock that entered at zero or a stale cost.
+         */
+        post: operations["reset_cost_from_recipe_api_v1_inventory_items__item_id__reset_cost_from_recipe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/inventory/levels": {
         parameters: {
             query?: never;
@@ -18702,6 +18727,22 @@ export interface components {
              */
             report_type: "production" | "finished_goods" | "raw_materials" | "packaging" | "spot_check";
         };
+        /** ResetCostFromRecipeRequest */
+        ResetCostFromRecipeRequest: {
+            /** Notes */
+            notes?: string | null;
+        };
+        /** ResetCostFromRecipeResponse */
+        ResetCostFromRecipeResponse: {
+            /** Adjustments */
+            adjustments: components["schemas"]["CostAdjustmentResponse"][];
+            /** Item Id */
+            item_id: string;
+            /** Levels Adjusted */
+            levels_adjusted: number;
+            /** Levels Skipped */
+            levels_skipped: number;
+        };
         /** ReturnItemRequest */
         ReturnItemRequest: {
             /** Quantity */
@@ -29032,6 +29073,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemCostLayersResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_cost_from_recipe_api_v1_inventory_items__item_id__reset_cost_from_recipe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ResetCostFromRecipeRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetCostFromRecipeResponse"];
                 };
             };
             /** @description Validation Error */
