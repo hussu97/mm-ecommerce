@@ -52742,6 +52742,55 @@
         ]
       }
     },
+    "/api/v1/inventory/suppliers/{supplier_id}/deactivate": {
+      "post": {
+        "description": "Flip a supplier to inactive (moves it to the inactive tab).\n\nRefused while any active item is still mapped to it; leaves purchase-order\nhistory untouched. Reversible via ``/reactivate``.",
+        "operationId": "deactivate_supplier_api_v1_inventory_suppliers__supplier_id__deactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Deactivate Supplier",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
     "/api/v1/inventory/suppliers/{supplier_id}/items": {
       "get": {
         "operationId": "list_supplier_items_api_v1_inventory_suppliers__supplier_id__items_get",
@@ -52853,6 +52902,55 @@
           }
         ],
         "summary": "Set Supplier Items",
+        "tags": [
+          "Inventory"
+        ]
+      }
+    },
+    "/api/v1/inventory/suppliers/{supplier_id}/reactivate": {
+      "post": {
+        "description": "Bring an inactive supplier back to the active tab.",
+        "operationId": "reactivate_supplier_api_v1_inventory_suppliers__supplier_id__reactivate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "supplier_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Supplier Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reactivate Supplier",
         "tags": [
           "Inventory"
         ]
