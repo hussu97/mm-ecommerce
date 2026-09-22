@@ -76,6 +76,7 @@ from app.models.pos_order import OrderSourceEnum, OrderTax
 from app.models.product import Product
 from app.services.aggregators import (
     _isolation,
+    address_geocoding,
     aggregator_fulfilment,
     policy,
     reconcile,
@@ -1051,6 +1052,25 @@ def _unmasked(value: Any) -> bool:
     return "*" not in str(value)
 
 
+def _with_provider_pin(
+    existing: dict[str, Any] | None, incoming: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Add a valid marketplace pin without replacing an existing address.
+
+    Marketplace text can be redacted after delivery, while its precise pin is
+    still available. Keep the canonical address text verbatim and update only
+    the coordinate pair.
+    """
+    coordinates = address_geocoding.coordinates(incoming)
+    if coordinates is None:
+        return existing
+    latitude, longitude = coordinates
+    merged = dict(existing or {})
+    merged["latitude"] = float(latitude)
+    merged["longitude"] = float(longitude)
+    return merged
+
+
 def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
     """Fill-only backfill of the scraped customer + rider onto an MM order.
 
@@ -1077,6 +1097,12 @@ def _fill_scraped_contact(order: Order, agg: AggregatorOrder) -> None:
         order.customer_phone = agg.customer_phone
     if not order.shipping_address_snapshot and _unmasked(agg.customer_address):
         order.shipping_address_snapshot = agg.customer_address
+    else:
+        pinned = _with_provider_pin(
+            order.shipping_address_snapshot, agg.customer_address
+        )
+        if pinned is not None and pinned != order.shipping_address_snapshot:
+            order.shipping_address_snapshot = pinned
     # DA info: fill-only against a GrubOps-sourced order, which carries its own rider
     # from GrubTech and must not be overwritten.
     if not order.aggregator_driver_name and _unmasked(agg.driver_name):

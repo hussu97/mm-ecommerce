@@ -61,10 +61,7 @@ export function DeliveryAreasMap({
 }) {
   const [hovered, setHovered] = useState<DeliveryAreas['zones'][number] | null>(null);
   const projection = useMemo(() => {
-    const points = [
-      ...data.zones.flatMap(zone => geometryPoints(zone.geometry)),
-      ...data.cells.map(cell => [cell.longitude, cell.latitude] as [number, number]),
-    ];
+    const points = data.zones.flatMap(zone => geometryPoints(zone.geometry));
     if (!points.length) return null;
     const [minLng, maxLng] = [Math.min(...points.map(point => point[0])), Math.max(...points.map(point => point[0]))];
     const [minLat, maxLat] = [Math.min(...points.map(point => point[1])), Math.max(...points.map(point => point[1]))];
@@ -80,49 +77,26 @@ export function DeliveryAreasMap({
       offsetX + (longitude - minLng) * Math.cos(midLatRadians) * scale,
       HEIGHT - offsetY - (latitude - minLat) * scale,
     ];
-  }, [data.cells, data.zones]);
+  }, [data.zones]);
 
-  const maxValue = Math.max(...data.cells.map(cell => cell[metric]), 1);
+  const maxValue = Math.max(...data.zones.map(zone => zone[metric]), 1);
   if (!projection) {
     return <div className="flex h-80 items-center justify-center text-sm font-body text-gray-400">No geocoded delivery addresses match these filters.</div>;
   }
 
   return (
     <div className="relative overflow-hidden border border-gray-200 bg-[#fbfaf9]">
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="block h-auto w-full" aria-label="Delivery demand heat map">
-        <defs>
-          <filter id="delivery-area-blur"><feGaussianBlur stdDeviation="5" /></filter>
-        </defs>
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="block h-auto w-full" aria-label="Delivery-zone demand heat map">
         {data.zones.map(zone => (
           <path
             key={zone.id}
             d={zonePath(zone.geometry, projection)}
-            fill="#8a5a64"
-            fillOpacity="0.055"
-            stroke="#9ca3af"
-            strokeWidth="0.9"
+            fill={heatColor(Math.sqrt(zone[metric] / maxValue))}
+            fillOpacity={0.12 + Math.sqrt(zone[metric] / maxValue) * 0.7}
+            stroke={hovered?.id === zone.id ? '#374151' : '#9ca3af'}
+            strokeWidth={hovered?.id === zone.id ? '1.5' : '0.9'}
             strokeLinejoin="round"
-          />
-        ))}
-        {data.cells.map(cell => {
-          const [cx, cy] = projection(cell.longitude, cell.latitude);
-          const ratio = Math.sqrt(cell[metric] / maxValue);
-          const radius = 13 + ratio * 30;
-          const color = heatColor(ratio);
-          return (
-            <g key={`${cell.latitude}:${cell.longitude}`}>
-              <circle cx={cx} cy={cy} r={radius * 1.35} fill={color} fillOpacity="0.19" filter="url(#delivery-area-blur)" />
-              <circle cx={cx} cy={cy} r={radius} fill={color} fillOpacity="0.48" className="cursor-pointer transition-all duration-200 hover:fill-opacity-70" />
-              <circle cx={cx} cy={cy} r={Math.max(3, radius * 0.2)} fill={color} fillOpacity="0.95" className="pointer-events-none" />
-            </g>
-          );
-        })}
-        {data.zones.map(zone => (
-          <path
-            key={`hover-${zone.id}`}
-            d={zonePath(zone.geometry, projection)}
-            fill="transparent"
-            className="cursor-crosshair"
+            className="cursor-crosshair transition-all duration-200"
             onMouseEnter={() => setHovered(zone)}
             onMouseLeave={() => setHovered(null)}
           />

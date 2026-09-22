@@ -24,6 +24,7 @@ from app.models.customer_cache import (
     CustomerCache,
     CustomerCacheState,
     CustomerDeliveryAreaCache,
+    CustomerDeliveryAreaPolygonCacheState,
     CustomerOrderCache,
 )
 from app.models.order import Order, OrderStatusEnum
@@ -245,6 +246,11 @@ async def refresh_if_dirty(db: AsyncSession) -> None:
     await db.execute(delete(CustomerDeliveryAreaCache))
     await db.execute(delete(CustomerOrderCache))
     await db.execute(delete(CustomerCache))
+    polygon_state = await db.get(CustomerDeliveryAreaPolygonCacheState, True)
+    if polygon_state is not None:
+        # Point rows are being replaced below. Their live-zone membership is a
+        # separate derived cache and must be remapped, without re-geocoding.
+        polygon_state.dirty = True
 
     for component in _components(sources):
         component_key = "|".join(sorted(source.key for source in component))

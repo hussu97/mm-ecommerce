@@ -66,6 +66,8 @@ from .customer_cache import (  # noqa: F401
     CustomerCache,
     CustomerCacheState,
     CustomerDeliveryAreaCache,
+    CustomerDeliveryAreaPolygonCache,
+    CustomerDeliveryAreaPolygonCacheState,
     CustomerOrderCache,
 )
 from .daily_sales_send import DailySalesSend  # noqa: F401

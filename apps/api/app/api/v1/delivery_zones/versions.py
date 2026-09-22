@@ -30,7 +30,7 @@ from app.models.delivery_polygon import (
 )
 from app.models.polygon_branch_fulfilment import PolygonBranchFulfilment
 from app.models.user import User
-from app.services import audit_service
+from app.services import audit_service, customer_delivery_area_service
 from app.services.catalog import catalogue_cache
 from app.services.delivery import delivery_service, delivery_zone_service
 
@@ -587,6 +587,7 @@ async def update_polygon(
         .where(DeliveryPolygonVersion.id == polygon.version_id)
         .values(revision=DeliveryPolygonVersion.revision + 1)
     )
+    await customer_delivery_area_service.mark_live_polygon_cache_dirty(db)
     return PolygonResponse.of(polygon)
 
 
@@ -621,6 +622,7 @@ async def activate_version(
     version.is_active = True
     version.activated_at = datetime.now(timezone.utc)
     await db.flush()
+    await customer_delivery_area_service.mark_live_polygon_cache_dirty(db)
     # No zone-cache bust here: publishing a different map moves the active
     # version id, which is part of the cache key, so every worker's next read
     # misses its old entry and picks the new map up on its own. The previous

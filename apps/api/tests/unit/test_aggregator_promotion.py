@@ -1348,6 +1348,23 @@ def test_fill_scraped_contact_fills_real_values():
     assert order.shipping_address_snapshot == {"address": "Villa 4"}
 
 
+def test_fill_scraped_contact_adds_provider_pin_without_replacing_address_text():
+    agg = _agg(
+        customer_address={"address": "***", "latitude": 25.2048, "longitude": 55.2708}
+    )
+    order = _mm_order()
+    order.shipping_address_snapshot = {"address": "Villa 4", "city": "Dubai"}
+
+    promote._fill_scraped_contact(order, agg)
+
+    assert order.shipping_address_snapshot == {
+        "address": "Villa 4",
+        "city": "Dubai",
+        "latitude": 25.2048,
+        "longitude": 55.2708,
+    }
+
+
 async def test_find_mm_order_matches_either_id_under_the_channel_label():
     from app.services.aggregators import reconcile
 

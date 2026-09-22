@@ -8,12 +8,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import search as search_text
 from app.core.phone import normalise_phone
-from app.models.customer_cache import CustomerCache, CustomerDeliveryAreaCache
+from app.models.customer_cache import (
+    CustomerCache,
+    CustomerDeliveryAreaCache,
+    CustomerDeliveryAreaPolygonCache,
+    CustomerDeliveryAreaPolygonCacheState,
+)
 from app.models.delivery_polygon import DeliveryPolygon
 from app.services.delivery import delivery_zone_service
 
@@ -128,9 +133,22 @@ async def load(
     end: datetime | None,
 ) -> dict:
     """Return active geometry and matching cache rows grouped into heat cells."""
-    statement = select(CustomerDeliveryAreaCache, CustomerCache).join(
-        CustomerCache,
-        CustomerCache.id == CustomerDeliveryAreaCache.customer_id,
+    await refresh_live_polygon_cache_if_dirty(db)
+    statement = (
+        select(
+            CustomerDeliveryAreaCache,
+            CustomerCache,
+            CustomerDeliveryAreaPolygonCache.polygon_id,
+        )
+        .join(
+            CustomerCache,
+            CustomerCache.id == CustomerDeliveryAreaCache.customer_id,
+        )
+        .outerjoin(
+            CustomerDeliveryAreaPolygonCache,
+            CustomerDeliveryAreaPolygonCache.order_id
+            == CustomerDeliveryAreaCache.order_id,
+        )
     )
     if start is not None and end is not None:
         statement = statement.where(
@@ -173,7 +191,7 @@ async def load(
     total_revenue = Decimal("0")
     customer_ids: set[object] = set()
     sources: Counter[str] = Counter()
-    for point, customer in rows:
+    for point, customer, polygon_id in rows:
         lat_bucket = int((Decimal(point.latitude) - _LAT_ORIGIN) / _CELL_SIZE)
         lng_bucket = int((Decimal(point.longitude) - _LNG_ORIGIN) / _CELL_SIZE)
         key = (lat_bucket, lng_bucket)
@@ -190,11 +208,10 @@ async def load(
         customer_ids.add(customer.id)
         total_revenue += Decimal(point.order_value)
         sources[point.source_channel] += 1
-        for zone in zones:
-            if _geometry_contains(
-                zone["geometry"], float(point.longitude), float(point.latitude)
-            ):
-                _add(zone_metrics[zone["id"]], point, customer)
+        if polygon_id is not None:
+            metrics = zone_metrics.get(str(polygon_id))
+            if metrics is not None:
+                _add(metrics, point, customer)
 
     ordered_cells = sorted(
         (
@@ -220,3 +237,59 @@ async def load(
         "aov": float(total_revenue / order_count) if order_count else 0.0,
         "source_counts": dict(sorted(sources.items())),
     }
+
+
+async def mark_live_polygon_cache_dirty(db: AsyncSession) -> None:
+    """Request a remap after a delivery-polygon edit or map activation."""
+    # The migration seeds this singleton. The direct assignment participates in
+    # the zone edit's surrounding transaction and does not create another write
+    # against delivery-map metadata.
+    state = await db.get(CustomerDeliveryAreaPolygonCacheState, True)
+    if state is not None:
+        state.dirty = True
+
+
+async def refresh_live_polygon_cache_if_dirty(db: AsyncSession) -> None:
+    """Assign cached address pins to the current live polygons exactly once.
+
+    The source point cache owns latitude/longitude. This compact association is
+    recreated when live geometry changes, so no address is re-geocoded and a
+    date/search query only aggregates preassigned point-to-polygon rows.
+    Delivery-zone precedence mirrors checkout: the first matching polygon by
+    display order owns a point when shapes overlap.
+    """
+    state = await db.scalar(
+        select(CustomerDeliveryAreaPolygonCacheState)
+        .where(CustomerDeliveryAreaPolygonCacheState.id.is_(True))
+        .with_for_update()
+    )
+    if state is None:
+        raise RuntimeError("customer delivery-area polygon cache state is missing")
+    if not state.dirty:
+        return
+
+    await db.execute(delete(CustomerDeliveryAreaPolygonCache))
+    active = await delivery_zone_service.get_active_version(db)
+    if active is not None:
+        polygons = (
+            await db.scalars(
+                select(DeliveryPolygon)
+                .where(DeliveryPolygon.version_id == active.id)
+                .order_by(DeliveryPolygon.display_order)
+            )
+        ).all()
+        points = (await db.scalars(select(CustomerDeliveryAreaCache))).all()
+        for point in points:
+            for polygon in polygons:
+                if _geometry_contains(
+                    polygon.geometry, float(point.longitude), float(point.latitude)
+                ):
+                    db.add(
+                        CustomerDeliveryAreaPolygonCache(
+                            order_id=point.order_id,
+                            polygon_id=polygon.id,
+                        )
+                    )
+                    break
+    state.dirty = False
+    await db.flush()

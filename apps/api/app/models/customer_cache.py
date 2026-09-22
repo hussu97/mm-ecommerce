@@ -100,3 +100,39 @@ class CustomerDeliveryAreaCache(Base, TimestampMixin):
     )
     order_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     source_channel: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class CustomerDeliveryAreaPolygonCacheState(Base):
+    """Dirty marker for point-to-live-zone assignments.
+
+    This is deliberately independent of ``CustomerCacheState``: a delivery-map
+    edit only needs to remap already-stored pins, never to rebuild identities or
+    reparse source address JSON.
+    """
+
+    __tablename__ = "customer_delivery_area_polygon_cache_state"
+
+    id: Mapped[bool] = mapped_column(
+        Boolean, primary_key=True, server_default=text("true")
+    )
+    dirty: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+
+
+class CustomerDeliveryAreaPolygonCache(Base):
+    """One delivery-address point assigned to its current live polygon."""
+
+    __tablename__ = "customer_delivery_area_polygon_cache"
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customer_delivery_area_cache.order_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    polygon_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("delivery_polygons.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
