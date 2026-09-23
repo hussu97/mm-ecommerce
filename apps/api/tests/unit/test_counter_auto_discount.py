@@ -26,6 +26,12 @@ from app.services.pos import auto_promotion_service
 
 pytestmark = pytest.mark.asyncio
 
+#: The branch every fixture order is rung at. Promotions run by branch mode —
+#: `auto_branch_ids` / `coupon_branch_ids` — so the default fixture promotion is
+#: auto here, the way migration 282 backfilled every standing auto promotion.
+BRANCH = uuid.uuid4()
+OTHER_BRANCH = uuid.uuid4()
+
 
 def _promo(**overrides) -> Promotion:
     """An always-on 15%-off-order promotion scoped to the counter."""
@@ -44,6 +50,8 @@ def _promo(**overrides) -> Promotion:
         order_types=[],
         sources=["cashier"],
         auto_apply=True,
+        auto_branch_ids=[BRANCH],
+        coupon_branch_ids=[],
         priority=100,
         max_uses_per_order=1,
         is_active=True,
@@ -84,16 +92,25 @@ def _item(
     )
 
 
-def _order(*, source="cashier", items=None, discounts=None, order_type="pickup"):
+def _order(
+    *,
+    source="cashier",
+    items=None,
+    discounts=None,
+    order_type="pickup",
+    branch_id=None,
+    coupon_id=None,
+):
     return SimpleNamespace(
         id=uuid.uuid4(),
         is_pos=True,
         pos_status="active",
         source=source,
-        branch_id=uuid.uuid4(),
+        branch_id=branch_id or BRANCH,
         order_type=order_type,
         items=items if items is not None else [_item("100")],
         order_discounts=discounts if discounts is not None else [],
+        applied_coupon_promotion_id=coupon_id,
     )
 
 
@@ -393,7 +410,7 @@ class TestThroughRecalculate:
             is_pos=True,
             pos_status="active",
             source="cashier",
-            branch_id=uuid.uuid4(),
+            branch_id=BRANCH,
             order_type="pickup",
             items=[item],
             order_discounts=[],
@@ -434,3 +451,463 @@ class TestThroughRecalculate:
         assert order.subtotal == Decimal("100.00")
         assert order.discount_amount == Decimal("15.00"), "15% of 100 did not come off"
         assert order.total == Decimal("85.00")
+
+
+# ─── Branch modes: auto vs coupon (migration 282) ─────────────────────────────
+
+
+def _coupon(**overrides) -> Promotion:
+    """A coupon-mode promotion at `BRANCH` — never applied unless selected."""
+    fields = dict(
+        name="Cookies 20% coupon",
+        reward_value=Decimal("20"),
+        auto_apply=False,
+        auto_branch_ids=[],
+        coupon_branch_ids=[BRANCH],
+    )
+    fields.update(overrides)
+    return _promo(**fields)
+
+
+class TestBranchModes:
+    async def test_auto_at_a_only(self):
+        promo = _promo(auto_branch_ids=[BRANCH])
+        here = _order(branch_id=BRANCH)
+        there = _order(branch_id=OTHER_BRANCH)
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), here)
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), there)
+        assert len(_auto_discounts(here)) == 1
+        assert _auto_discounts(there) == [], "auto at A leaked onto branch B"
+
+    async def test_an_auto_promotion_with_no_auto_branches_applies_nowhere(self):
+        # Empty means nowhere — unlike `branch_ids`, where empty means everywhere.
+        order = _order()
+        promo = _promo(auto_branch_ids=[])
+        await auto_promotion_service.sync_auto_discounts(_db([promo]), order)
+        assert _auto_discounts(order) == []
+
+    async def test_coupon_at_b_only_needs_selecting(self):
+        coupon = _coupon(coupon_branch_ids=[OTHER_BRANCH])
+        unselected = _order(branch_id=OTHER_BRANCH)
+        await auto_promotion_service.sync_auto_discounts(_db([coupon]), unselected)
+        assert _auto_discounts(unselected) == [], "a coupon applied itself"
+
+        selected = _order(branch_id=OTHER_BRANCH, coupon_id=coupon.id)
+        await auto_promotion_service.sync_auto_discounts(_db([coupon]), selected)
+        [row] = _auto_discounts(selected)
+        assert row.reference_id == coupon.id
+        assert row.value == Decimal("0.20")
+
+    async def test_a_coupon_for_b_does_nothing_at_a(self):
+        coupon = _coupon(coupon_branch_ids=[OTHER_BRANCH])
+        order = _order(branch_id=BRANCH, coupon_id=coupon.id)
+        await auto_promotion_service.sync_auto_discounts(_db([coupon]), order)
+        assert _auto_discounts(order) == []
+
+    async def test_coupon_replaces_auto(self):
+        auto = _promo()
+        coupon = _coupon()
+        order = _order(coupon_id=coupon.id)
+        await auto_promotion_service.sync_auto_discounts(_db([auto, coupon]), order)
+        rows = _auto_discounts(order)
+        assert [r.reference_id for r in rows] == [coupon.id], "one promotion per order"
+
+    async def test_coupon_removal_restores_auto(self):
+        auto = _promo()
+        coupon = _coupon()
+        order = _order(coupon_id=coupon.id)
+        db = _db([auto, coupon])
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        first = _auto_discounts(order)[0]
+
+        order.applied_coupon_promotion_id = None
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        rows = _auto_discounts(order)
+        assert [r.reference_id for r in rows] == [auto.id]
+        assert rows[0] is first, "the managed row is re-pointed, not re-created"
+        assert rows[0].value == Decimal("0.15")
+
+    async def test_coupon_below_min_spend_is_kept_but_not_applied(self):
+        auto = _promo()
+        coupon = _coupon(trigger_value=Decimal("150"))
+        order = _order(items=[_item("100")], coupon_id=coupon.id)
+        db = _db([auto, coupon])
+
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        assert [r.reference_id for r in _auto_discounts(order)] == [auto.id], (
+            "an ineligible coupon must fall back to the auto promotion"
+        )
+        assert order.applied_coupon_promotion_id == coupon.id, "selection kept"
+
+        # The check grows past the floor: the kept coupon applies by itself.
+        order.items.append(_item("60"))
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        assert [r.reference_id for r in _auto_discounts(order)] == [coupon.id]
+
+    async def test_ineligible_coupon_with_no_auto_applies_nothing(self):
+        coupon = _coupon(trigger_value=Decimal("500"))
+        order = _order(coupon_id=coupon.id)
+        await auto_promotion_service.sync_auto_discounts(_db([coupon]), order)
+        assert _auto_discounts(order) == []
+
+    async def test_manual_order_discount_stands_the_coupon_down_too(self):
+        manual = SimpleNamespace(
+            order_item_id=None, source=DiscountSourceEnum.OPEN.value, reference_id=None
+        )
+        coupon = _coupon()
+        order = _order(discounts=[manual], coupon_id=coupon.id)
+        await auto_promotion_service.sync_auto_discounts(_db([coupon]), order)
+        assert _auto_discounts(order) == []
+        assert order.order_discounts == [manual]
+
+    async def test_category_scoped_coupon_discounts_only_its_lines(self):
+        cookies = uuid.uuid4()
+        cookie, cake = _item("40"), _item("100")
+        coupon = _coupon(category_ids=[cookies])
+        order = _order(items=[cookie, cake], coupon_id=coupon.id)
+        db = _db([coupon], products=[(cookie.product_id, cookies)])
+        await auto_promotion_service.sync_auto_discounts(db, order)
+        assert {d.order_item_id for d in _auto_discounts(order)} == {cookie.id}
+
+    async def test_at_prices_the_schedule_at_that_instant(self):
+        from datetime import datetime
+
+        evening = _promo(from_time=1320, to_time=120)  # 22:00 → 02:00
+        dxb = ZoneInfo("Asia/Dubai")
+        order = _order()
+        await auto_promotion_service.sync_auto_discounts(
+            _db([evening]), order, at=datetime(2026, 9, 23, 12, 0, tzinfo=dxb)
+        )
+        assert _auto_discounts(order) == []
+        await auto_promotion_service.sync_auto_discounts(
+            _db([evening]), order, at=datetime(2026, 9, 23, 23, 30, tzinfo=dxb)
+        )
+        assert len(_auto_discounts(order)) == 1
+
+    async def test_promos_override_skips_the_fetch(self):
+        db = _db([])
+        order = _order()
+        await auto_promotion_service.sync_auto_discounts(db, order, promos=[_promo()])
+        assert len(_auto_discounts(order)) == 1
+        db.execute.assert_not_awaited()
+
+
+class TestAvailableAt:
+    async def test_lists_both_modes_best_first_with_live_flag(self):
+        auto = _promo(name="auto", priority=50)
+        coupon = _coupon(name="coupon", priority=10)
+        closed = _coupon(
+            name="closed",
+            priority=20,
+            coupon_branch_ids=[BRANCH],
+            from_date=utcnow().date().replace(year=2099),
+        )
+        online_only = _coupon(name="online", sources=["online"])
+        product_level = _coupon(name="products", reward="percentage_off_products")
+        elsewhere = _coupon(name="elsewhere", coupon_branch_ids=[OTHER_BRANCH])
+        db = _db([auto, coupon, closed, online_only, product_level, elsewhere])
+
+        rows = await auto_promotion_service.available_at(db, BRANCH)
+
+        assert [(p.name, mode, live) for p, mode, live in rows] == [
+            ("coupon", "coupon", True),
+            ("closed", "coupon", False),
+            ("auto", "auto", True),
+        ]
+
+
+class TestCouponEndpoints:
+    """`pos_order_service.set_coupon` / `clear_coupon` — the PUT/DELETE bodies."""
+
+    def _order(self, **overrides):
+        fields = dict(
+            id=uuid.uuid4(),
+            pos_status="active",
+            source="cashier",
+            branch_id=BRANCH,
+            applied_coupon_promotion_id=None,
+        )
+        fields.update(overrides)
+        return SimpleNamespace(**fields)
+
+    def _db(self, promo):
+        db = SimpleNamespace()
+        db.get = AsyncMock(return_value=promo)
+        db.flush = AsyncMock()
+        return db
+
+    async def test_selects_a_coupon_and_reprices(self, monkeypatch):
+        from app.services.pos import pos_order_service
+
+        recalc = AsyncMock(side_effect=lambda db, order: order)
+        monkeypatch.setattr(pos_order_service, "recalculate", recalc)
+        coupon = _coupon()
+        order = self._order()
+        await pos_order_service.set_coupon(
+            self._db(coupon), order=order, promotion_id=coupon.id
+        )
+        assert order.applied_coupon_promotion_id == coupon.id
+        recalc.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        "promo_factory",
+        [
+            lambda: _promo(),  # auto-mode here, not a coupon
+            lambda: _coupon(coupon_branch_ids=[OTHER_BRANCH]),  # coupon elsewhere
+            lambda: _coupon(is_active=False),
+            lambda: _coupon(deleted_at=utcnow()),
+            lambda: None,  # no such promotion
+        ],
+    )
+    async def test_refuses_anything_not_a_coupon_here(self, monkeypatch, promo_factory):
+        from app.core.exceptions import UnprocessableError
+        from app.services.pos import pos_order_service
+
+        monkeypatch.setattr(pos_order_service, "recalculate", AsyncMock())
+        order = self._order()
+        with pytest.raises(UnprocessableError):
+            await pos_order_service.set_coupon(
+                self._db(promo_factory()), order=order, promotion_id=uuid.uuid4()
+            )
+        assert order.applied_coupon_promotion_id is None
+
+    @pytest.mark.parametrize(
+        "overrides", [{"pos_status": "closed"}, {"source": "online"}]
+    )
+    async def test_refuses_a_check_the_till_cannot_reprice(
+        self, monkeypatch, overrides
+    ):
+        from app.core.exceptions import ConflictError
+        from app.services.pos import pos_order_service
+
+        monkeypatch.setattr(pos_order_service, "recalculate", AsyncMock())
+        coupon = _coupon()
+        with pytest.raises(ConflictError):
+            await pos_order_service.set_coupon(
+                self._db(coupon), order=self._order(**overrides), promotion_id=coupon.id
+            )
+
+    async def test_clear_is_idempotent_and_reprices(self, monkeypatch):
+        from app.services.pos import pos_order_service
+
+        recalc = AsyncMock(side_effect=lambda db, order: order)
+        monkeypatch.setattr(pos_order_service, "recalculate", recalc)
+        order = self._order(applied_coupon_promotion_id=uuid.uuid4())
+        db = self._db(None)
+        await pos_order_service.clear_coupon(db, order=order)
+        await pos_order_service.clear_coupon(db, order=order)
+        assert order.applied_coupon_promotion_id is None
+        assert recalc.await_count == 2
+
+
+class TestBranchModeValidation:
+    """The API side: overlap refused, shape enforced, `auto_apply` kept in step."""
+
+    async def test_overlap_refused_on_create(self):
+        from pydantic import ValidationError
+
+        from app.schemas.marketing import PromotionCreate
+
+        with pytest.raises(ValidationError, match="both automatically and as a coupon"):
+            PromotionCreate(
+                name="x",
+                reward="percentage_off_order",
+                sources=["cashier"],
+                auto_branch_ids=[BRANCH],
+                coupon_branch_ids=[BRANCH],
+            )
+
+    async def test_overlap_refused_on_update_payload(self):
+        from pydantic import ValidationError
+
+        from app.schemas.marketing import PromotionUpdate
+
+        with pytest.raises(ValidationError):
+            PromotionUpdate(auto_branch_ids=[BRANCH], coupon_branch_ids=[BRANCH])
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"reward": "percentage_off_products"},
+            {"trigger": "quantity"},
+            {"sources": []},
+        ],
+    )
+    async def test_branch_modes_need_an_order_level_scoped_spend_shape(self, overrides):
+        from pydantic import ValidationError
+
+        from app.schemas.marketing import PromotionCreate
+
+        fields = dict(
+            name="x",
+            reward="percentage_off_order",
+            trigger="spend",
+            sources=["cashier"],
+            coupon_branch_ids=[BRANCH],
+        )
+        fields.update(overrides)
+        with pytest.raises(ValidationError):
+            PromotionCreate(**fields)
+
+    async def test_merged_update_overlap_is_refused(self):
+        from app.api.v1.marketing import _prepare_promotion_write
+        from app.core.exceptions import UnprocessableError
+
+        stored = _promo(auto_branch_ids=[BRANCH])
+        with pytest.raises(UnprocessableError, match="both"):
+            _prepare_promotion_write({"coupon_branch_ids": [BRANCH]}, stored)
+
+    async def test_moving_a_branch_from_auto_to_coupon_is_allowed(self):
+        from app.api.v1.marketing import _prepare_promotion_write
+
+        stored = _promo(auto_branch_ids=[BRANCH, OTHER_BRANCH])
+        extra = _prepare_promotion_write(
+            {"auto_branch_ids": [OTHER_BRANCH], "coupon_branch_ids": [BRANCH]}, stored
+        )
+        assert extra == {"auto_apply": True}
+
+    async def test_auto_apply_follows_auto_branch_ids(self):
+        from app.api.v1.marketing import _prepare_promotion_write
+
+        stored = _promo(auto_branch_ids=[BRANCH])
+        assert _prepare_promotion_write({"auto_branch_ids": []}, stored) == {
+            "auto_apply": False
+        }
+        # Legacy "turn it off": clears every auto branch.
+        assert _prepare_promotion_write({"auto_apply": False}, stored) == {
+            "auto_branch_ids": [],
+            "auto_apply": False,
+        }
+        # Untouched lists keep what is stored.
+        assert _prepare_promotion_write({"reward_value": 20}, stored) == {
+            "auto_apply": True
+        }
+
+    async def test_auto_apply_true_without_branches_is_refused(self):
+        from app.api.v1.marketing import _prepare_promotion_write
+        from app.core.exceptions import UnprocessableError
+
+        with pytest.raises(UnprocessableError, match="auto_branch_ids"):
+            _prepare_promotion_write(
+                {
+                    "name": "x",
+                    "reward": "percentage_off_order",
+                    "sources": ["cashier"],
+                    "auto_apply": True,
+                },
+                None,
+            )
+
+    async def test_create_with_coupon_branches_is_not_auto(self):
+        from app.api.v1.marketing import _prepare_promotion_write
+
+        assert _prepare_promotion_write(
+            {
+                "name": "x",
+                "reward": "percentage_off_order",
+                "sources": ["cashier"],
+                "coupon_branch_ids": [BRANCH],
+            },
+            None,
+        ) == {"auto_apply": False}
+
+
+class TestBackfill:
+    """Migration 282's backfill, read as SQL: it keeps today's behaviour and
+    cannot fight a later console edit."""
+
+    def _sql(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "282_counter_promo_branch_modes.py"
+        )
+        return " ".join(path.read_text().split())
+
+    async def test_revision_chain(self):
+        import importlib.util
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "alembic"
+            / "versions"
+            / "282_counter_promo_branch_modes.py"
+        )
+        spec = importlib.util.spec_from_file_location("_mig282", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module.revision == "282_counter_promo_branch_modes"
+        assert module.down_revision == "281_fifo_costing_v3"
+        assert len(module.revision) <= 32
+
+    async def test_auto_rows_keep_their_scope_or_every_pos_branch(self):
+        sql = self._sql()
+        assert "WHEN cardinality(branch_ids) > 0 THEN branch_ids" in sql
+        assert "WHERE b.uses_pos = true AND b.deleted_at IS NULL" in sql
+        assert "WHERE auto_apply = true AND auto_branch_ids = '{}'" in sql, (
+            "the backfill must touch only auto rows not yet given a branch list"
+        )
+
+    async def test_grant_is_by_role_name_and_idempotent(self):
+        sql = self._sql()
+        assert '_ROLES = ("Cashier Staff", "Manager")' in sql
+        assert "WHERE name IN (" in sql
+        assert "NOT (permissions @> ARRAY['{_PERMISSION}']::varchar[])" in sql
+
+
+class TestPermissionAndRoutes:
+    async def test_the_slug_is_in_the_catalogue(self):
+        from app.models.role import ALL_PERMISSIONS
+
+        assert "pos.promotions.apply" in ALL_PERMISSIONS
+
+    @pytest.mark.parametrize("app_module", ["app.main", "app.pos_main"])
+    async def test_coupon_and_available_routes_are_on_both_apps(self, app_module):
+        import importlib
+
+        app = importlib.import_module(app_module).app
+        paths = app.openapi()["paths"]
+        coupon = paths["/api/v1/pos/orders/{order_id}/coupon"]
+        assert {"put", "delete"} <= set(coupon)
+        assert "get" in paths["/api/v1/pos/promotions/available"]
+
+    async def test_coupon_routes_are_gated_on_the_new_slug(self):
+        from app.api.v1 import pos_orders
+
+        for endpoint in (pos_orders.apply_coupon, pos_orders.remove_coupon):
+            import inspect
+
+            gates = [
+                getattr(p.default.dependency, "permission", None)
+                for p in inspect.signature(endpoint).parameters.values()
+                if hasattr(p.default, "dependency")
+            ]
+            assert "pos.promotions.apply" in gates
+
+    async def test_order_response_carries_the_selected_coupon(self):
+        from app.schemas.pos_order import OrderDiscountResponse, PosOrderResponse
+
+        assert "applied_coupon_promotion_id" in PosOrderResponse.model_fields
+        assert "reference_id" in OrderDiscountResponse.model_fields
+
+
+class TestCouponBuildGate:
+    @pytest.mark.parametrize(
+        "build,minimum,ok",
+        [
+            ("1060", 1057, True),
+            ("1057", 1057, True),
+            ("1056", 1057, False),
+            (None, 0, False),
+            ("dev", 0, False),
+            (" 12 ", 12, True),
+        ],
+    )
+    async def test_build_at_least(self, build, minimum, ok):
+        from app.core.pos_builds import build_at_least
+
+        assert build_at_least(build, minimum) is ok

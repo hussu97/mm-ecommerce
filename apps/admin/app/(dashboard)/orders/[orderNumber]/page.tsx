@@ -25,6 +25,7 @@ import { Badge, Button } from '@/components/ui';
 import { CourierLogo } from '@/components/orders/CourierLogo';
 import { useConfirm, useToast } from '@/components/ui/feedback';
 import { cn, formatCurrency, formatDateTime, interactiveRowClass } from '@/lib/utils';
+import { shownOrderNumber } from '@/lib/order-display';
 
 import {
   normalizeAddressSnapshot,
@@ -561,8 +562,22 @@ export default function OrderDetailPage() {
           <span className="material-icons text-[20px]">arrow_back</span>
         </Link>
         <div className="flex-1">
-          <h1 className="font-display text-xl text-gray-800">{order.order_number}</h1>
-          <p className="text-xs text-gray-400 font-body">{formatDateTime(order.created_at)}</p>
+          {/* A local-first counter sale is known by the ticket the customer
+              holds (`T1-0042`); the server's number sits beneath it. */}
+          <h1 className="font-display text-xl text-gray-800">
+            {shownOrderNumber({ order_number: order.order_number, display_number: details?.display_number })}
+            {details?.pricing_status && details.pricing_status !== 'verified' && (
+              <span className="ml-2 align-middle">
+                <Badge variant={details.pricing_status === 'mismatch' ? 'danger' : 'warning'}>
+                  pricing {details.pricing_status}
+                </Badge>
+              </span>
+            )}
+          </h1>
+          <p className="text-xs text-gray-400 font-body">
+            {details?.display_number && <>{order.order_number} · </>}
+            {formatDateTime(order.created_at)}
+          </p>
         </div>
         <Badge variant={STATUS_VARIANT[order.status]}>{order.status}</Badge>
       </div>

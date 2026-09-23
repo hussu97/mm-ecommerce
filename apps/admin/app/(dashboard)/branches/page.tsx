@@ -1,35 +1,109 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { branchesApi } from '@/lib/pos-api';
-import type { Branch } from '@/lib/pos-types';
+import type { Schemas } from '@mm/types';
+import { branchesApi, devicesApi } from '@/lib/pos-api';
+import type { Branch, Device } from '@/lib/pos-types';
 import { ResourcePage, StatusBadge } from '@/components/pos/ResourcePage';
 import { BranchWeeklyHours } from '@/components/pos/BranchWeeklyHours';
 import { BranchHolidays } from '@/components/pos/BranchHolidays';
 import { BranchChannelTaxConfigs } from '@/components/pos/BranchChannelTaxConfigs';
 
+/** The local-first counter rollout flag (`branches.counter_local_first`). */
+type CounterRollout = 'off' | 'shadow' | 'on';
+type BranchRow = Branch & { counter_local_first?: CounterRollout };
+
+/** A terminal as the rollout warning reads it; `supports_local_first` is decided
+ *  server-side against `COUNTER_LOCAL_FIRST_MIN_BUILD`. */
+type Terminal = Device &
+  Partial<Pick<Schemas['DeviceResponse'], 'supports_local_first' | 'counter_mode'>>;
+
+const ROLLOUT_LABEL: Record<CounterRollout, string> = {
+  off: 'Off',
+  shadow: 'Shadow',
+  on: 'On',
+};
+
+/** Till terminals in service at `branchId` whose build cannot run local-first. */
+function oldTerminalsAt(terminals: Terminal[], branchId: string): Terminal[] {
+  return terminals.filter(
+    d =>
+      d.branch_id === branchId &&
+      !d.deleted_at &&
+      d.status !== 'disabled' &&
+      (d.type === 'cashier' || d.type === 'sub_cashier') &&
+      d.supports_local_first === false,
+  );
+}
+
+/**
+ * Where local-first checkout is switched on, and which terminals there are too
+ * old to use it. Those terminals keep working — online-only — so this is a
+ * warning, not a block: the branch simply is not fully local-first until they
+ * update.
+ */
+function CounterRolloutPanel({ branches, terminals }: { branches: BranchRow[]; terminals: Terminal[] }) {
+  const live = branches.filter(b => !b.deleted_at && (b.counter_local_first ?? 'off') !== 'off');
+  if (live.length === 0) return null;
+  return (
+    <div className="border border-gray-200 p-4">
+      <h2 className="font-display text-base text-primary mb-1">Local-first counter</h2>
+      <p className="text-xs text-gray-500 font-body mb-3">
+        Branches whose tills price and print counter sales on the iPad and sync afterwards. Set a
+        branch back to Off to put every till there online-only again within a minute.
+      </p>
+      <ul className="space-y-2">
+        {live.map(b => {
+          const old = oldTerminalsAt(terminals, b.id);
+          return (
+            <li key={b.id} className="text-sm font-body">
+              <span className="font-medium">{b.name}</span>{' '}
+              <span className="text-gray-500">— {ROLLOUT_LABEL[b.counter_local_first ?? 'off']}</span>
+              {old.length > 0 && (
+                <p className="mt-0.5 text-xs text-amber-700">
+                  {old.length} terminal{old.length === 1 ? '' : 's'} below the minimum app build stay
+                  online-only until updated: {old.map(d => `${d.name} (${d.build_number ?? 'build unknown'})`).join(', ')}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export default function BranchesPage() {
-  const load = useCallback(() => branchesApi.list(), []);
+  const load = useCallback(() => branchesApi.list() as Promise<BranchRow[]>, []);
+  const [terminals, setTerminals] = useState<Terminal[]>([]);
+  useEffect(() => {
+    void devicesApi.list().then(setTerminals).catch(() => setTerminals([]));
+  }, []);
   // The branch list drives the "returns go to" picker; loaded once.
-  const [allBranches, setAllBranches] = useState<Branch[]>([]);
+  const [allBranches, setAllBranches] = useState<BranchRow[]>([]);
   useEffect(() => {
     void branchesApi.list().then(setAllBranches).catch(() => setAllBranches([]));
   }, []);
   // An empty return-branch select means "no return branch", which the API wants
   // as null, not "".
-  const normalise = (d: Partial<Branch>): Partial<Branch> => ({
+  const normalise = (d: Partial<BranchRow>): Partial<BranchRow> => ({
     ...d,
     return_branch_id: d.return_branch_id ? d.return_branch_id : null,
   });
 
   return (
     <>
-    <ResourcePage<Branch>
+    <ResourcePage<BranchRow>
       title="Branches"
       description="Shops, production kitchens and warehouses. Every order, till and stock level belongs to one."
       load={load}
-      create={(d) => branchesApi.create(normalise(d as Partial<Branch>))}
-      update={(id, d) => branchesApi.update(id, normalise(d as Partial<Branch>))}
+      create={(d) => branchesApi.create(normalise(d as Partial<BranchRow>)) as Promise<BranchRow>}
+      update={(id, d) =>
+        branchesApi.update(id, normalise(d as Partial<BranchRow>)).then((b) => {
+          void branchesApi.list().then(setAllBranches).catch(() => undefined);
+          return b as BranchRow;
+        })
+      }
       remove={(id) => branchesApi.remove(id)}
       searchKeys={['name', 'reference']}
       emptyMessage="No branches yet. Create one to start using the POS."
@@ -41,6 +115,7 @@ export default function BranchesPage() {
         cash_enabled: true,
         uses_pos: true,
         show_recipes: false,
+        counter_local_first: 'off',
         accepts_reservations: false,
         is_active: true,
         display_order: 0,
@@ -62,6 +137,25 @@ export default function BranchesPage() {
             ) : (
               <span className="text-xs text-gray-400">—</span>
             ),
+        },
+        {
+          header: 'Local-first',
+          sortable: true,
+          sortAccessor: (b) => b.counter_local_first ?? 'off',
+          render: (b) => {
+            const mode = b.counter_local_first ?? 'off';
+            const old = mode === 'off' ? [] : oldTerminalsAt(terminals, b.id);
+            return (
+              <span className="text-xs">
+                {ROLLOUT_LABEL[mode]}
+                {old.length > 0 && (
+                  <span className="ml-1 text-amber-700" title="Terminals below the minimum build stay online-only">
+                    · {old.length} old
+                  </span>
+                )}
+              </span>
+            );
+          },
         },
         { header: 'Status', sortable: true, sortAccessor: (b) => (b.is_active && !b.deleted_at ? 'Active' : 'Inactive'), render: (b) => <StatusBadge active={b.is_active && !b.deleted_at} /> },
       ]}
@@ -148,6 +242,18 @@ export default function BranchesPage() {
             'Adds a read-only Recipes tab to every terminal at this branch — the shop-floor reference for how made items are built from their ingredients. View-only; recipes are edited in the Recipes console.',
         },
         {
+          name: 'counter_local_first',
+          label: 'Local-first counter',
+          type: 'select',
+          options: [
+            { value: 'off', label: 'Off — every till rings up through the server' },
+            { value: 'shadow', label: 'Shadow — server stays live, tills also price locally and report differences' },
+            { value: 'on', label: 'On — tills price, print and sync counter sales themselves' },
+          ],
+          helper:
+            'The rollout switch for local-first checkout. Only terminals on a new enough app build use it; older ones stay online-only whatever this says. Back to Off is the kill switch: every till is online-only again within a minute.',
+        },
+        {
           name: 'return_branch_id',
           label: 'Returns go to',
           type: 'select',
@@ -165,6 +271,10 @@ export default function BranchesPage() {
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />
+
+    <div className="mt-8">
+      <CounterRolloutPanel branches={allBranches} terminals={terminals} />
+    </div>
 
     {/* The weekly schedule — the single source of truth for when the branch
         trades. Its own section rather than fields on the branch form, and it

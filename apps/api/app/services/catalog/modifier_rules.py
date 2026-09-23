@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.core.exceptions import BadRequestError
-from app.models.modifier import Modifier, ModifierOption, ProductModifier
+from app.models.modifier import Modifier, ProductModifier
 from app.models.product import Product
 
 
@@ -124,9 +124,39 @@ async def resolve(
         .unique()
     )
 
+    resolved, _ = resolve_links(links, selections, product_name=product.name)
+    return resolved
+
+
+def resolve_links(
+    links: list,
+    selections: list[Selection],
+    *,
+    product_name: str,
+    strict: bool = True,
+) -> tuple[list[ResolvedOption], list[str]]:
+    """`resolve`'s rules over links already in hand — the pure half.
+
+    `links` are `ProductModifier`-shaped (the ORM rows `resolve` loads, or a
+    config bundle's copies of them for the local-first ingest), each carrying
+    its `modifier` and that modifier's `options`, in display order.
+
+    `strict` (the default, and every interactive caller) raises the same
+    `BadRequestError` `resolve` always has. `strict=False` is for booking a
+    sale the register already sold: nothing is refused, each broken rule is
+    returned as a message instead, and an option the catalogue does not know is
+    dropped (it cannot be priced) with a message saying so.
+    """
+    violations: list[str] = []
+
+    def _fail(message: str) -> None:
+        if strict:
+            raise BadRequestError(message)
+        violations.append(message)
+
     #: option id → (link, option), so a pick resolves to its group without
     #: trusting the modifier_id the client sent.
-    catalogue: dict[uuid.UUID, tuple[ProductModifier, ModifierOption]] = {}
+    catalogue: dict[uuid.UUID, tuple] = {}
     for link in links:
         if not link.modifier.is_active:
             continue
@@ -146,14 +176,16 @@ async def resolve(
     merged: dict[uuid.UUID, int] = {}
     for selection in selections:
         if selection.quantity < 1:
-            raise BadRequestError("An option quantity must be at least 1")
+            _fail("An option quantity must be at least 1")
+            continue
         if selection.option_id not in catalogue:
-            raise BadRequestError(f"That option is not available on {product.name}")
+            _fail(f"That option is not available on {product_name}")
+            continue
         merged[selection.option_id] = (
             merged.get(selection.option_id, 0) + selection.quantity
         )
 
-    by_link: dict[uuid.UUID, list[tuple[ModifierOption, int]]] = {}
+    by_link: dict = {}
     for option_id, quantity in merged.items():
         link, option = catalogue[option_id]
         by_link.setdefault(link.id, []).append((option, quantity))
@@ -172,9 +204,9 @@ async def resolve(
         chosen = sum(quantity for _, quantity in picks)
 
         if chosen < link.minimum_options or chosen > link.maximum_options:
-            raise BadRequestError(describe_requirement(link, name))
+            _fail(describe_requirement(link, name))
         if effective_unique(link) and any(quantity > 1 for _, quantity in picks):
-            raise BadRequestError(f"You can only choose each option once in {name}")
+            _fail(f"You can only choose each option once in {name}")
 
         # Free options are counted across the group in the order the options
         # are laid out, so which picks are free never depends on the order the
@@ -200,4 +232,4 @@ async def resolve(
                 )
             )
 
-    return resolved
+    return resolved, violations

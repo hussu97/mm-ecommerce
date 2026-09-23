@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Collection
@@ -22,14 +23,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core import trading_hours
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    UnprocessableError,
+)
 from app.core.phone import describe_phone
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.business_settings import BusinessSettings
 from app.models.charge import Charge
 from app.models.kitchen_flow import KitchenFlow
-from app.models.marketing import Discount
+from app.models.marketing import Discount, Promotion
 from app.models.order import DeliveryMethodEnum, Order, OrderItem, OrderStatusEnum
 from app.models.order_status_event import StatusSourceEnum, acting_as
 from app.models.payment_method import PaymentMethod, PaymentMethodTypeEnum
@@ -59,6 +65,7 @@ from app.services.orders import order_lifecycle, tax_identity_service
 from app.services.pos import (
     auto_promotion_service,
     business_day_service,
+    counter_pricing,
     pos_pricing,
     till_service,
 )
@@ -73,6 +80,7 @@ __all__ = [
     "add_item",
     "apply_discount",
     "apply_charge",
+    "clear_coupon",
     "close_order",
     "get_order",
     "is_paid_for",
@@ -82,6 +90,7 @@ __all__ = [
     "record_payment",
     "recalculate",
     "send_to_kitchen",
+    "set_coupon",
     "void_item",
     "void_order",
 ]
@@ -358,6 +367,21 @@ async def _settings(db: AsyncSession) -> BusinessSettings:
     return existing
 
 
+def display_reference(branch: Branch) -> str:
+    """The branch's part of a local-first order number: at most ten characters.
+
+    `orders.order_number` is 40 wide and a local-first number is
+    `POS-{ref}-{YYYY-MM-DD}-{T1-0042}`, so the reference is held to ten. A
+    reference that already fits is used as is (branch references are unique);
+    a longer one keeps its first six characters and four of the branch id, so
+    two long references sharing a prefix can never mint the same order number.
+    """
+    reference = branch.reference or ""
+    if len(reference) <= 10:
+        return reference
+    return f"{reference[:6]}{branch.id.hex[:4]}"
+
+
 async def open_order(
     db: AsyncSession,
     *,
@@ -374,21 +398,56 @@ async def open_order(
     notes: str | None = None,
     source: str = OrderSourceEnum.CASHIER.value,
     due_at=None,
+    business_date: str | None = None,
+    order_id: uuid.UUID | None = None,
+    client_request_id: uuid.UUID | None = None,
+    display_number: str | None = None,
+    opened_at: datetime | None = None,
 ) -> Order:
+    """Open a check.
+
+    The keyword-only extras are for a local-first counter sale being booked
+    after the fact (`counter_ingest_service`), and each is inert when omitted:
+
+    * `business_date` — file it under that trading day (opened on demand)
+      rather than today's.
+    * `order_id` / `client_request_id` — the register's own id for the sale, so
+      a retried sync lands on the same row.
+    * `display_number` — the ticket number the register printed (`T1-0042`);
+      the order number becomes `POS-{ref≤10}-{date}-{display_number}`
+      (`display_reference`).
+      The shared per-branch `check_number` is still drawn under its lock, so
+      reports, the sweeper, VAT and inventory treat the sale like any other.
+    * `opened_at` — when the check was opened on the device; also its
+      `created_at`, which every order list filters on.
+    """
     if order_type not in {t.value for t in OrderTypeEnum}:
         raise BadRequestError(f"Unknown order type '{order_type}'")
 
     settings = await _settings(db)
-    day = await business_day_service.get_or_open(db, branch, opened_by=user)
+    if business_date is None:
+        day = await business_day_service.get_or_open(db, branch, opened_by=user)
+    else:
+        day = await business_day_service.get_or_open_for_date(
+            db, branch, business_date, opened_by=user
+        )
     check_number = await _next_check_number(
         db, branch.id, day.business_date, settings.order_number_reset_daily
     )
 
+    def _number(check: int) -> str:
+        if display_number:
+            return (
+                f"POS-{display_reference(branch)}-{day.business_date}-{display_number}"
+            )
+        return f"POS-{branch.reference}-{day.business_date}-{check:04d}"
+
     # Normalised the same way a website number is, so the one column reads one
     # way whoever wrote it.
     _phone = describe_phone(customer_phone)
+    opened = opened_at or utcnow()
     order = Order(
-        order_number=f"POS-{branch.reference}-{day.business_date}-{check_number:04d}",
+        order_number=_number(check_number),
         user_id=customer_id,
         email="",  # POS walk-ins have no email; kept non-null for the web schema
         delivery_method="pickup" if order_type != "delivery" else "delivery",
@@ -416,8 +475,16 @@ async def open_order(
         notes=notes,
         # Ahead orders: when the customer wants it, not when it was rung up.
         due_at=due_at,
-        opened_at=utcnow(),
+        opened_at=opened,
+        display_number=display_number,
+        client_request_id=client_request_id,
     )
+    if order_id is not None:
+        order.id = order_id
+    if opened_at is not None:
+        # Every order list filters on `created_at`; a sale synced an hour late
+        # still happened when the device opened it.
+        order.created_at = opened_at
     # Two terminals at the same counter read the same `max(check_number)` and
     # both take it. The unique index catches the loser, who re-reads and retries
     # inside a savepoint so the rest of the transaction survives — the same
@@ -437,9 +504,7 @@ async def open_order(
                 db, branch.id, day.business_date, settings.order_number_reset_daily
             )
             order.check_number = check_number
-            order.order_number = (
-                f"POS-{branch.reference}-{day.business_date}-{check_number:04d}"
-            )
+            order.order_number = _number(check_number)
 
     await db.refresh(order)
     return await get_order(db, order.id)
@@ -683,14 +748,145 @@ async def _resolve_tax(
     )
     # A deactivated tax must not be charged. Without this filter, switching a
     # tax off leaves it silently summing into every order that uses its group —
-    # which is how a duplicate 5% VAT row would have billed customers 10%.
-    links = [link for link in (group.taxes if group else []) if link.tax.is_active]
-    if group is None or not links:
+    # which is how a duplicate 5% VAT row would have billed customers 10%. The
+    # filter (and the "first live tax names the line, rates are summed" rule)
+    # is `counter_pricing.tax_tuple`, shared with the register's config bundle
+    # so the local engine taxes a line exactly as this does.
+    if group is None:
         return Decimal("0"), "No tax", None, True
-    # Groups in practice carry a single rate; combine if more are configured.
-    first = links[0].tax
-    rate = sum((Decimal(str(link.tax.rate)) for link in links), Decimal("0"))
-    return rate, first.name, str(first.id), first.type == "inclusive"
+    resolved = counter_pricing.tax_tuple(
+        counter_pricing.TaxRow(
+            id=str(link.tax.id),
+            name=link.tax.name,
+            rate=Decimal(str(link.tax.rate)),
+            type=link.tax.type,
+            is_active=bool(link.tax.is_active),
+        )
+        for link in group.taxes
+    )
+    return resolved.rate, resolved.name, resolved.tax_id, resolved.inclusive
+
+
+@dataclass(frozen=True)
+class PriceSnapshot:
+    """A product's price as a local-first config bundle published it.
+
+    `_build_item` prices a line from this instead of the product row when a
+    synced counter sale is booked: the register charged the bundle's price, and
+    a price edited since the sale must not reprice a receipt already printed.
+    """
+
+    #: Catalogue price per unit (per kilo for a product sold by weight).
+    base_price: Decimal
+    name: str | None = None
+    sku: str | None = None
+
+
+def _options_snapshot(resolved: list) -> tuple[list[dict], Decimal]:
+    """The stored option snapshot and the per-unit options charge of a line."""
+    # Checked against `schemas/option_snapshot.OptionSnapshot` before it is
+    # stored — the counter dialect of the one column with two of them. A
+    # tripwire rather than a filter (every row is built from
+    # `modifier_rules.resolve`), placed where the row is made, because a row
+    # that no reader can decode takes a whole response down rather than one
+    # line of it.
+    options = option_snapshot.validated(
+        [
+            {
+                "modifier_option_id": str(choice.option_id),
+                "modifier_id": str(choice.modifier_id),
+                "modifier_name": choice.modifier_name,
+                "name": choice.option_name,
+                "sku": choice.option_sku,
+                # Per unit, so a receipt can print "2 × Ferrero  +8.00" without
+                # having to divide, and `quantity` is what the kitchen reads.
+                "price": float(money(choice.unit_price)),
+                "quantity": choice.quantity,
+            }
+            for choice in resolved
+        ]
+    )
+    options_price = money(
+        sum((choice.charged_total for choice in resolved), Decimal("0"))
+    )
+    return options, options_price
+
+
+async def _build_item(
+    db: AsyncSession,
+    *,
+    order: Order,
+    user: User,
+    product: Product,
+    quantity: int,
+    resolved: list,
+    unit_price_override: Decimal | None = None,
+    weight: Decimal | None = None,
+    kitchen_notes: str | None = None,
+    course_id: uuid.UUID | None = None,
+    price_snapshot: PriceSnapshot | None = None,
+    kitchen_flow_id: uuid.UUID | None = None,
+    route_to_kitchen: bool = True,
+    added_at: datetime | None = None,
+    item_id: uuid.UUID | None = None,
+) -> OrderItem:
+    """Construct (and `db.add`) one order line. No validation, no re-price.
+
+    The shared construction behind `add_item` (which validates first and
+    re-prices after) and the local-first ingest (which flags rather than
+    refuses, and re-prices once with the bundle). `resolved` is the output of
+    `modifier_rules.resolve` / `resolve_links`. The base price is the open price
+    when one is given, else `price_snapshot.base_price`, else the product's
+    catalogue price — times `weight` when the product is weighed. The kitchen
+    station is `kitchen_flow_id` when given, else routed from the catalogue.
+    """
+    options, options_price = _options_snapshot(resolved)
+
+    is_open_price = unit_price_override is not None
+    if is_open_price:
+        base_price = money(unit_price_override)
+    elif price_snapshot is not None:
+        base_price = money(price_snapshot.base_price)
+    else:
+        base_price = money(product.base_price)
+
+    if weight is not None:
+        # The catalogue price is per kilo; what the customer pays is that
+        # times what is on the scale. Quantity stays 1: the line is one
+        # bag of brownies, not 0.4 of one.
+        base_price = counter_pricing.line_base_price(base_price, weight)
+    unit_price = money(base_price + options_price)
+
+    if kitchen_flow_id is None and route_to_kitchen:
+        kitchen_flow_id = await _route_to_kitchen_flow(db, order, product)
+
+    item = OrderItem(
+        order_id=order.id,
+        product_id=product.id,
+        weight=weight,
+        product_name=(price_snapshot.name if price_snapshot else None) or product.name,
+        product_sku=(price_snapshot.sku if price_snapshot else None)
+        or product.sku
+        or "",
+        product_translations=product.translations or {},
+        quantity=quantity,
+        base_price=base_price,
+        options_price=options_price,
+        unit_price=unit_price,
+        total_price=money(unit_price * quantity),
+        selected_options_snapshot=options,
+        status=OrderItemStatusEnum.ACTIVE.value,
+        is_open_price=is_open_price,
+        kitchen_notes=kitchen_notes,
+        course_id=course_id,
+        kitchen_flow_id=kitchen_flow_id,
+        creator_id=user.id,
+        added_at=added_at or utcnow(),
+    )
+    if item_id is not None:
+        item.id = item_id
+    db.add(item)
+    return item
 
 
 async def add_item(
@@ -736,36 +932,7 @@ async def add_item(
             if o.get("modifier_option_id")
         ],
     )
-    # Checked against `schemas/option_snapshot.OptionSnapshot` before it is
-    # stored — the counter dialect of the one column with two of them. A
-    # tripwire rather than a filter (every row is built from
-    # `modifier_rules.resolve`), placed where the row is made, because a row
-    # that no reader can decode takes a whole response down rather than one
-    # line of it.
-    options = option_snapshot.validated(
-        [
-            {
-                "modifier_option_id": str(choice.option_id),
-                "modifier_id": str(choice.modifier_id),
-                "modifier_name": choice.modifier_name,
-                "name": choice.option_name,
-                "sku": choice.option_sku,
-                # Per unit, so a receipt can print "2 × Ferrero  +8.00" without
-                # having to divide, and `quantity` is what the kitchen reads.
-                "price": float(money(choice.unit_price)),
-                "quantity": choice.quantity,
-            }
-            for choice in resolved
-        ]
-    )
-    options_price = money(
-        sum((choice.charged_total for choice in resolved), Decimal("0"))
-    )
-
     is_open_price = unit_price_override is not None
-    base_price = (
-        money(unit_price_override) if is_open_price else money(product.base_price)
-    )
 
     # Open price is a property of the product, not a per-line choice. Keeping
     # the two in step closes a hole at each end: a catalogue item priced by the
@@ -783,36 +950,21 @@ async def add_item(
             raise BadRequestError(
                 f"{product.name} is sold by weight — enter the weight"
             )
-        # The catalogue price is per kilo; what the customer pays is that
-        # times what is on the scale. Quantity stays 1: the line is one
-        # bag of brownies, not 0.4 of one.
-        base_price = money(base_price * weight)
     elif weight is not None:
         raise BadRequestError(f"{product.name} is not sold by weight")
-    unit_price = money(base_price + options_price)
 
-    item = OrderItem(
-        order_id=order.id,
-        product_id=product.id,
-        weight=weight,
-        product_name=product.name,
-        product_sku=product.sku or "",
-        product_translations=product.translations or {},
+    item = await _build_item(
+        db,
+        order=order,
+        user=user,
+        product=product,
         quantity=quantity,
-        base_price=base_price,
-        options_price=options_price,
-        unit_price=unit_price,
-        total_price=money(unit_price * quantity),
-        selected_options_snapshot=options,
-        status=OrderItemStatusEnum.ACTIVE.value,
-        is_open_price=is_open_price,
+        resolved=resolved,
+        unit_price_override=unit_price_override,
+        weight=weight,
         kitchen_notes=kitchen_notes,
         course_id=course_id,
-        kitchen_flow_id=await _route_to_kitchen_flow(db, order, product),
-        creator_id=user.id,
-        added_at=utcnow(),
     )
-    db.add(item)
     await db.flush()
     await recalculate(db, order)
     await db.refresh(item)
@@ -1006,6 +1158,44 @@ async def remove_discount(
     return await recalculate(db, order)
 
 
+async def set_coupon(
+    db: AsyncSession, *, order: Order, promotion_id: uuid.UUID
+) -> Order:
+    """Select a coupon-mode promotion on an open counter check, and re-price.
+
+    Refused (422) unless the promotion runs as a coupon at this order's branch.
+    Eligibility *now* (min spend, schedule) is not a precondition: an ineligible
+    coupon stays selected and simply isn't applied until the check qualifies —
+    see `promotion_rules.choose`. One coupon per order; selecting another
+    replaces it.
+    """
+    _assert_open(order)
+    _assert_counter_check(order)
+    promo = await db.get(Promotion, promotion_id)
+    if (
+        promo is None
+        or promo.deleted_at is not None
+        or not promo.is_active
+        or promo.applies_at(order.branch_id) != "coupon"
+    ):
+        raise UnprocessableError(
+            "That promotion is not available as a coupon at this branch"
+        )
+    order.applied_coupon_promotion_id = promo.id
+    await db.flush()
+    return await recalculate(db, order)
+
+
+async def clear_coupon(db: AsyncSession, *, order: Order) -> Order:
+    """Deselect the check's coupon (idempotent), and re-price — the auto
+    promotion, if any, comes back."""
+    _assert_open(order)
+    _assert_counter_check(order)
+    order.applied_coupon_promotion_id = None
+    await db.flush()
+    return await recalculate(db, order)
+
+
 async def apply_charge(
     db: AsyncSession,
     *,
@@ -1048,32 +1238,57 @@ async def apply_charge(
 # ─── Repricing ────────────────────────────────────────────────────────────────
 
 
-async def recalculate(db: AsyncSession, order: Order) -> Order:
+async def recalculate(
+    db: AsyncSession,
+    order: Order,
+    *,
+    at: datetime | None = None,
+    ctx: counter_pricing.PricingContext | None = None,
+) -> Order:
     """
     Re-price the order from its lines and persist every derived total.
+
+    `at` is the instant the promotion schedules are read at (default: now).
+
+    `ctx` is a local-first counter config bundle (`counter_bundle_service`).
+    Without it — every caller but the counter ingest — this reads its inputs from
+    the database exactly as it always has. With it, every *pricing input* comes
+    from the bundle instead: the cash-rounding step, the counter entity's VAT
+    registration, each product's tax group / category / non-revenue flag, the
+    tax groups themselves, the promotions and the shop's time zone. That is what
+    lets a sale the register priced offline be re-priced here against exactly
+    what the register saw (`counter_pricing.price_check` is the same arithmetic
+    as a pure function, and the golden vectors pin the two together).
 
     This is the single writer of money on an order — no other function sets
     subtotal, tax or total, so the invariant
     `total_excl_tax + tax + rounding == total` holds by construction.
     """
     order = await get_order(db, order.id)
-    settings = await _settings(db)
 
-    # The legal entity this counter check trades under. A branch whose counter is
-    # not VAT-registered (Barsha → Najm AlShamal) zeroes the tax below; the
-    # resolved entity is stamped so the receipt and reports read its brand/TRN.
-    entity = await tax_identity_service.resolve(
-        db,
-        branch_id=getattr(order, "branch_id", None),
-        source=getattr(order, "source", None),
-    )
-    entity_registered = tax_identity_service.is_vat_registered(entity)
+    entity = None
+    if ctx is None:
+        settings = await _settings(db)
+        rounding_step = Decimal(str(settings.cash_rounding_step or 0))
+        # The legal entity this counter check trades under. A branch whose
+        # counter is not VAT-registered (Barsha → Najm AlShamal) zeroes the tax
+        # below; the resolved entity is stamped so the receipt and reports read
+        # its brand/TRN.
+        entity = await tax_identity_service.resolve(
+            db,
+            branch_id=getattr(order, "branch_id", None),
+            source=getattr(order, "source", None),
+        )
+        entity_registered = tax_identity_service.is_vat_registered(entity)
+    else:
+        rounding_step = Decimal(str(ctx.rounding_step or 0))
+        entity_registered = ctx.vat_registered
 
     # Standing promotions (e.g. "every counter order is 15% off") add or remove
     # their order-level discount here, before the basket is priced, so the saving
     # tracks the lines as they change. Idempotent, and a no-op unless a promotion
     # actually qualifies — see `auto_promotion_service`.
-    await auto_promotion_service.sync_auto_discounts(db, order)
+    await auto_promotion_service.sync_auto_discounts(db, order, at=at, ctx=ctx)
 
     live_items = [
         i
@@ -1093,17 +1308,33 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     tax_cache: dict[uuid.UUID | None, tuple[Decimal, str, str | None, bool]] = {}
     lines: list[LineInput] = []
     for item in live_items:
-        product = await db.get(Product, item.product_id) if item.product_id else None
-        tax_group_id = getattr(product, "tax_group_id", None) if product else None
-        if tax_group_id not in tax_cache:
-            tax_cache[tax_group_id] = await _resolve_tax(db, tax_group_id)
-        rate, tax_name, tax_id, inclusive = tax_cache[tax_group_id]
+        if ctx is None:
+            product = (
+                await db.get(Product, item.product_id) if item.product_id else None
+            )
+            tax_group_id = getattr(product, "tax_group_id", None) if product else None
+            if tax_group_id not in tax_cache:
+                tax_cache[tax_group_id] = await _resolve_tax(db, tax_group_id)
+            rate, tax_name, tax_id, inclusive = tax_cache[tax_group_id]
+            is_non_revenue = bool(product and product.is_non_revenue)
+        else:
+            bundled = ctx.tax_for(item.product_id)
+            rate, tax_name, tax_id, inclusive = (
+                bundled.rate,
+                bundled.name,
+                bundled.tax_id,
+                bundled.inclusive,
+            )
+            is_non_revenue = ctx.facts_for(item.product_id).is_non_revenue
         # A branch trading this channel under a non-VAT-registered license
         # charges no VAT: the rate goes to zero, and because the price is
         # inclusive the customer's total is unchanged (`split_inclusive_tax(x,0)
         # -> (x,0)`). `calculate_order` then emits no tax row for the line.
-        if not entity_registered:
-            rate = Decimal("0")
+        # (`counter_pricing.effective_tax` — the one rule, shared.)
+        rate = counter_pricing.effective_tax(
+            counter_pricing.TaxTuple(rate, tax_name, tax_id, inclusive),
+            entity_registered,
+        ).rate
 
         lines.append(
             LineInput(
@@ -1115,7 +1346,7 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
                 tax_id=tax_id,
                 tax_name=tax_name,
                 returned_quantity=item.returned_quantity or 0,
-                is_non_revenue=bool(product and product.is_non_revenue),
+                is_non_revenue=is_non_revenue,
                 discounts=[
                     DiscountInput(
                         name=d.name,
@@ -1172,7 +1403,7 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
             if order_level
             else None
         ),
-        cash_rounding_step=Decimal(str(settings.cash_rounding_step or 0)),
+        cash_rounding_step=rounding_step,
     )
 
     # Write the computed amounts back onto the persisted rows.
@@ -1227,23 +1458,16 @@ async def recalculate(db: AsyncSession, order: Order) -> Order:
     # bucket's exact configured rate when there is a single rate (no rounding
     # drift), the blended effective rate for a mixed basket, and zero when there
     # is no tax at all.
-    if not totals.taxes:
-        order.vat_rate = Decimal("0")
-    elif len(totals.taxes) == 1:
-        order.vat_rate = totals.taxes[0].rate
-    else:
-        base = totals.total_excl_tax
-        order.vat_rate = (
-            (totals.tax_total / base).quantize(Decimal("0.0001"))
-            if base > 0
-            else Decimal("0")
-        )
+    order.vat_rate = counter_pricing.order_vat_rate(totals)
     order.rounding_amount = totals.rounding
     order.total = totals.total
 
     # Freeze the legal entity this check was issued under, so the receipt and the
-    # reports read its brand/TRN/logo.
-    tax_identity_service.stamp(order, entity)
+    # reports read its brand/TRN/logo. With a bundle, the entity it names.
+    if ctx is None:
+        tax_identity_service.stamp(order, entity)
+    elif ctx.legal_entity_id is not None:
+        order.legal_entity_id = ctx.legal_entity_id
 
     await db.flush()
     return await get_order(db, order.id)
@@ -1304,30 +1528,16 @@ async def send_to_kitchen(
                 tickets: list[KitchenTicket] = []
                 for flow_id, items in by_flow.items():
                     sequence += 1
-                    ticket = KitchenTicket(
-                        order_id=order.id,
-                        kitchen_flow_id=flow_id,
-                        branch_id=order.branch_id,
-                        sequence=sequence,
-                        status=KitchenTicketStatusEnum.NEW.value,
-                        sent_at=now,
-                    )
-                    db.add(ticket)
-                    await db.flush()
-                    for item in items:
-                        db.add(
-                            KitchenTicketItem(
-                                ticket_id=ticket.id,
-                                order_item_id=item.id,
-                                product_name=item.product_name,
-                                quantity=item.quantity,
-                                modifiers_summary=_summarise_options(item),
-                                notes=_ticket_notes(item),
-                                status=KitchenTicketStatusEnum.NEW.value,
-                            )
+                    tickets.append(
+                        await _record_kitchen_ticket(
+                            db,
+                            order=order,
+                            flow_id=flow_id,
+                            items=items,
+                            sequence=sequence,
+                            sent_at=now,
                         )
-                        item.sent_to_kitchen_at = now
-                    tickets.append(ticket)
+                    )
                 await db.flush()
                 ticket_ids = [t.id for t in tickets]
             break
@@ -1352,6 +1562,52 @@ async def send_to_kitchen(
         .all()
     )
     return list(refreshed)
+
+
+async def _record_kitchen_ticket(
+    db: AsyncSession,
+    *,
+    order: Order,
+    flow_id: uuid.UUID | None,
+    items: list[OrderItem],
+    sequence: int,
+    sent_at: datetime,
+    printed_at: datetime | None = None,
+    origin: str = "server",
+) -> KitchenTicket:
+    """Write one kitchen ticket for `items` at one station, and mark them sent.
+
+    `send_to_kitchen` fires through here (`origin="server"`); the local-first
+    ingest records the dockets a register already printed (`origin="device"`,
+    with the device's `sent_at` and `printed_at`). The caller owns the
+    sequence and the savepoint.
+    """
+    ticket = KitchenTicket(
+        order_id=order.id,
+        kitchen_flow_id=flow_id,
+        branch_id=order.branch_id,
+        sequence=sequence,
+        status=KitchenTicketStatusEnum.NEW.value,
+        sent_at=sent_at,
+        printed_at=printed_at,
+        origin=origin,
+    )
+    db.add(ticket)
+    await db.flush()
+    for item in items:
+        db.add(
+            KitchenTicketItem(
+                ticket_id=ticket.id,
+                order_item_id=item.id,
+                product_name=item.product_name,
+                quantity=item.quantity,
+                modifiers_summary=_summarise_options(item),
+                notes=_ticket_notes(item),
+                status=KitchenTicketStatusEnum.NEW.value,
+            )
+        )
+        item.sent_to_kitchen_at = sent_at
+    return ticket
 
 
 def _summarise_options(item: OrderItem) -> str | None:
@@ -1443,7 +1699,20 @@ async def record_payment(
     is_refund: bool = False,
     reference: str | None = None,
     idempotency_key: str | None = None,
+    recorded_at: datetime | None = None,
+    allow_closed_till: bool = False,
+    allow_inactive_method: bool = False,
 ) -> OrderPayment:
+    """Record one tender (or refund) against a check.
+
+    The last three keywords are for a local-first counter sale booked after the
+    fact, and each is inert when omitted: `recorded_at` stamps the tender (and
+    its drawer row) with when the device took it; `allow_closed_till` lets a
+    cash tender land on a till that closed before the sale synced (the caller
+    restates the till's totals — `till_service.restamp_closed_till`);
+    `allow_inactive_method` accepts a method switched off or removed since the
+    sale, because the money already moved on it.
+    """
     # A retry of a payment the server already took is not a second payment.
     # `RegisterModel.pay` is three calls over a 15-second timeout, so a
     # successful write can time out on the way back and the cashier — looking at
@@ -1483,7 +1752,10 @@ async def record_payment(
         _assert_open(order)
 
     method = await db.get(PaymentMethod, payment_method_id)
-    if method is None or method.deleted_at is not None or not method.is_active:
+    if method is None or (
+        not allow_inactive_method
+        and (method.deleted_at is not None or not method.is_active)
+    ):
         raise BadRequestError("Payment method not available")
 
     amount = money(amount)
@@ -1535,7 +1807,7 @@ async def record_payment(
         is_refund=is_refund,
         reference=reference,
         idempotency_key=idempotency_key,
-        recorded_at=utcnow(),
+        recorded_at=recorded_at or utcnow(),
     )
     db.add(payment)
 
@@ -1601,6 +1873,8 @@ async def record_payment(
             amount=amount,
             order_id=order.id,
             notes=f"Order {order.order_number}",
+            recorded_at=recorded_at,
+            allow_closed_till=allow_closed_till,
         )
 
     if tips:
@@ -1611,8 +1885,19 @@ async def record_payment(
     return payment
 
 
-async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
-    """Close a fully-settled check and release its table."""
+async def close_order(
+    db: AsyncSession,
+    *,
+    order: Order,
+    user: User,
+    closed_at: datetime | None = None,
+) -> Order:
+    """Close a fully-settled check and release its table.
+
+    `closed_at` is when the check was actually closed — a local-first counter
+    sale syncs after the fact and keeps the device's close time on the order
+    and its status events. Default: now.
+    """
     order = await get_order(db, order.id)
     _assert_open(order)
 
@@ -1643,7 +1928,7 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
     # stranded at `created` (paid, no receipt) from the day the constraint and
     # branch inventory shipped together. The two must move as one.
     order.closer_id = user.id
-    order.closed_at = utcnow()
+    order.closed_at = closed_at or utcnow()
     # A counter sale lives at `created` until the till settles it; closing is
     # its confirmation. `on_invalid="skip"` covers the other thing a register
     # closes: an online order being handed over, which is already `confirmed`
@@ -1655,6 +1940,7 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
         actor_id=user.id,
         actor_label=user.email,
         note="check closed",
+        at=closed_at,
     ):
         await order_lifecycle.transition(
             db, order, OrderStatusEnum.CONFIRMED, on_invalid="skip"
@@ -1672,6 +1958,7 @@ async def close_order(db: AsyncSession, *, order: Order, user: User) -> Order:
             actor_id=user.id,
             actor_label=user.email,
             note="counter collected",
+            at=closed_at,
         ):
             await order_lifecycle.transition(
                 db, order, OrderStatusEnum.DELIVERED, on_invalid="skip"

@@ -23,6 +23,7 @@ from app.core.deps import get_db
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.core.money import money
 from app.core.permissions import ensure, require
+from app.core.pos_builds import COUNTER_LOCAL_FIRST_MIN_BUILD, build_at_least
 from app.models import (
     Branch,
     Device,
@@ -1778,8 +1779,19 @@ class TerminalLive(BaseModel):
     last_seen_at: datetime | None
     is_online: bool
     app_version: str | None
+    #: The build the terminal reports (`X-App-Build`).
+    build_number: str | None = None
     os_version: str | None
     model_identifier: str | None
+    #: Local-first counter: the mode it reported (`online|shadow|local`), its
+    #: ticket prefix, whether its build may run local-first at all, and the
+    #: sales it still holds unsynced / parked.
+    counter_mode: str | None = None
+    ticket_prefix: str | None = None
+    supports_local_first: bool = False
+    pending_sales: int | None = None
+    parked_sales: int | None = None
+    oldest_pending_sale_at: datetime | None = None
     open_till_id: uuid.UUID | None
     open_till_user: str | None
     open_till_opened_at: datetime | None
@@ -1922,8 +1934,17 @@ async def terminals_dashboard(
                 last_seen_at=device.last_seen_at,
                 is_online=online,
                 app_version=device.app_version,
+                build_number=device.build_number,
                 os_version=device.os_version,
                 model_identifier=device.model_identifier,
+                counter_mode=device.counter_mode,
+                ticket_prefix=device.ticket_prefix,
+                supports_local_first=build_at_least(
+                    device.build_number, COUNTER_LOCAL_FIRST_MIN_BUILD
+                ),
+                pending_sales=device.pending_sales,
+                parked_sales=device.parked_sales,
+                oldest_pending_sale_at=device.oldest_pending_sale_at,
                 open_till_id=till.id if till else None,
                 open_till_user=till_user,
                 open_till_opened_at=till.opened_at if till else None,

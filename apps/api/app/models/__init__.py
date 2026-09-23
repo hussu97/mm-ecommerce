@@ -220,6 +220,7 @@ from .payment_transaction import (  # noqa: F401
 )
 from .phone_verification import PhoneVerification  # noqa: F401
 from .polygon_branch_fulfilment import PolygonBranchFulfilment  # noqa: F401
+from .pos_counter import CounterSaleQuarantine, PosConfigBundle  # noqa: F401
 from .pos_order import (  # noqa: F401
     DeliveryStatusEnum,
     DiscountSourceEnum,

@@ -2626,6 +2626,21 @@
         "title": "ApplyChargeRequest",
         "type": "object"
       },
+      "ApplyCouponRequest": {
+        "description": "`PUT /pos/orders/{id}/coupon` \u2014 the coupon-mode promotion to select.",
+        "properties": {
+          "promotion_id": {
+            "format": "uuid",
+            "title": "Promotion Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "promotion_id"
+        ],
+        "title": "ApplyCouponRequest",
+        "type": "object"
+      },
       "ApplyDiscountRequest": {
         "properties": {
           "is_percentage": {
@@ -2832,6 +2847,66 @@
           "days"
         ],
         "title": "AvailabilityResponse",
+        "type": "object"
+      },
+      "AvailablePromotionResponse": {
+        "description": "A counter promotion as the register lists it for one branch.\n\n`mode` is how it runs there: `coupon` ones are the chips the cashier taps,\nthe `auto` one is applied by itself (the register may label it).\n`is_live_now` is the schedule (dates, weekday, time window) in the shop's\ntime zone at the moment of the request; min spend is left to the check,\nvia `trigger_value`.",
+        "properties": {
+          "category_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Category Ids",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_live_now": {
+            "title": "Is Live Now",
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "coupon",
+              "auto"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reward": {
+            "title": "Reward",
+            "type": "string"
+          },
+          "reward_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Reward Value",
+            "type": "string"
+          },
+          "trigger_value": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Trigger Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "reward",
+          "reward_value",
+          "trigger_value",
+          "category_ids",
+          "mode",
+          "is_live_now"
+        ],
+        "title": "AvailablePromotionResponse",
         "type": "object"
       },
       "BlackoutCreate": {
@@ -4483,6 +4558,11 @@
             ],
             "title": "City Localized"
           },
+          "counter_local_first": {
+            "default": "off",
+            "title": "Counter Local First",
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -4835,6 +4915,22 @@
               }
             ],
             "title": "City Localized"
+          },
+          "counter_local_first": {
+            "anyOf": [
+              {
+                "enum": [
+                  "off",
+                  "shadow",
+                  "on"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counter Local First"
           },
           "display_order": {
             "anyOf": [
@@ -5297,6 +5393,687 @@
           "enabled"
         ],
         "title": "BulkVisibilityRequest",
+        "type": "object"
+      },
+      "BundleBranch": {
+        "properties": {
+          "business_day_start": {
+            "title": "Business Day Start",
+            "type": "string"
+          },
+          "cash_enabled": {
+            "title": "Cash Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "receipt_footer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Footer"
+          },
+          "receipt_header": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Header"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "reference",
+          "business_day_start",
+          "cash_enabled"
+        ],
+        "title": "BundleBranch",
+        "type": "object"
+      },
+      "BundleEntity": {
+        "description": "The legal entity the counter trades under at this branch\n(`tax_identity_service.resolve(branch, 'cashier')`). `vat_registered`\nfalse \u21d2 every line's tax rate is priced as zero.",
+        "properties": {
+          "brand_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Name"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "invoice_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invoice Title"
+          },
+          "legal_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Name"
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "tax_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Number"
+          },
+          "vat_registered": {
+            "default": true,
+            "title": "Vat Registered",
+            "type": "boolean"
+          }
+        },
+        "title": "BundleEntity",
+        "type": "object"
+      },
+      "BundleKitchenFlow": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_default"
+        ],
+        "title": "BundleKitchenFlow",
+        "type": "object"
+      },
+      "BundleModifier": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/BundleModifierOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "translations": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "default": {},
+            "title": "Translations",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "name",
+          "is_active",
+          "options"
+        ],
+        "title": "BundleModifier",
+        "type": "object"
+      },
+      "BundleModifierOption": {
+        "properties": {
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "price": {
+            "title": "Price",
+            "type": "string"
+          },
+          "sku": {
+            "title": "Sku",
+            "type": "string"
+          },
+          "translations": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "default": {},
+            "title": "Translations",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "sku",
+          "price",
+          "is_active",
+          "display_order"
+        ],
+        "title": "BundleModifierOption",
+        "type": "object"
+      },
+      "BundleProduct": {
+        "properties": {
+          "base_price": {
+            "title": "Base Price",
+            "type": "string"
+          },
+          "category_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Id"
+          },
+          "display_order": {
+            "default": 0,
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "image_urls": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Image Urls",
+            "type": "array"
+          },
+          "is_non_revenue": {
+            "title": "Is Non Revenue",
+            "type": "boolean"
+          },
+          "is_sold_by_weight": {
+            "title": "Is Sold By Weight",
+            "type": "boolean"
+          },
+          "kitchen_flow_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Flow Id"
+          },
+          "modifiers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BundleProductModifier"
+            },
+            "title": "Modifiers",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_localized": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Localized"
+          },
+          "pricing_method": {
+            "title": "Pricing Method",
+            "type": "string"
+          },
+          "sku": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku"
+          },
+          "tax_group_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Group Id"
+          },
+          "translations": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "default": {},
+            "title": "Translations",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "base_price",
+          "pricing_method",
+          "is_sold_by_weight",
+          "is_non_revenue"
+        ],
+        "title": "BundleProduct",
+        "type": "object"
+      },
+      "BundleProductModifier": {
+        "description": "A product\u2194modifier link and its choice rules (`modifier_rules`): the\ntotal quantity chosen in the group must be within [minimum, maximum]; the\nfirst `free_options` units (options in `display_order`, then name) are free;\n`unique_options` (or `maximum_options <= 1`) forbids repeating an option.",
+        "properties": {
+          "display_order": {
+            "title": "Display Order",
+            "type": "integer"
+          },
+          "free_options": {
+            "title": "Free Options",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "maximum_options": {
+            "title": "Maximum Options",
+            "type": "integer"
+          },
+          "minimum_options": {
+            "title": "Minimum Options",
+            "type": "integer"
+          },
+          "modifier_id": {
+            "format": "uuid",
+            "title": "Modifier Id",
+            "type": "string"
+          },
+          "unique_options": {
+            "title": "Unique Options",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "modifier_id",
+          "minimum_options",
+          "maximum_options",
+          "free_options",
+          "unique_options",
+          "display_order"
+        ],
+        "title": "BundleProductModifier",
+        "type": "object"
+      },
+      "BundlePromotion": {
+        "description": "A counter promotion that runs at this branch. `promotion_rules` in full:\n\n* applies only if `is_active`, the reward is `percentage_off_order` or\n  `fixed_off_order`, `trigger` is `spend`, `sources` is non-empty and\n  contains `cashier`, `branch_ids` is empty or contains the branch,\n  `order_types` is empty or contains `pickup`;\n* inside its window at the sale's local clock (bundle `timezone`):\n  `from_date <= date <= to_date` (null = open), `weekdays[date.weekday()]`\n  (index 0 = Monday), and minutes-of-day `m = hour*60 + minute` within\n  `[from_time, to_time]` \u2014 or, when `from_time > to_time`, `m >= from_time\n  or m <= to_time` (crosses midnight; the weekday is the calendar day of the\n  sale, not the day the window opened);\n* spend (\u03a3 (base_price + options_price) \u00d7 billable qty over non-void lines)\n  `>= trigger_value`.\n\nOne promotion per order: a selected coupon (`mode == coupon`) that is\neligible wins; otherwise the eligible `auto` promotion with the lowest\n`rank`. An ineligible selected coupon falls back to auto.\n\n`reward_value` is a percent for `percentage_off_order` (`\"15.0000\"` =\n15%; the fraction used is `reward_value/100` rounded half-up to 4 dp) and\nAED for `fixed_off_order`. With `category_ids`, the discount is applied to\neach billable line whose product's category is listed (a fixed reward takes\nthe full fixed amount off *each* such line); without, it is one order-level\ndiscount spread pro rata across taxable lines.",
+        "properties": {
+          "branch_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Branch Ids",
+            "type": "array"
+          },
+          "category_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Category Ids",
+            "type": "array"
+          },
+          "from_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Date"
+          },
+          "from_time": {
+            "default": 0,
+            "title": "From Time",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "default": true,
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "auto",
+              "coupon"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order_types": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Order Types",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "reward": {
+            "title": "Reward",
+            "type": "string"
+          },
+          "reward_value": {
+            "title": "Reward Value",
+            "type": "string"
+          },
+          "sources": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "to_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Date"
+          },
+          "to_time": {
+            "default": 1439,
+            "title": "To Time",
+            "type": "integer"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          },
+          "trigger_value": {
+            "title": "Trigger Value",
+            "type": "string"
+          },
+          "weekdays": {
+            "items": {
+              "type": "boolean"
+            },
+            "title": "Weekdays",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "reward",
+          "reward_value",
+          "trigger",
+          "trigger_value",
+          "mode",
+          "rank"
+        ],
+        "title": "BundlePromotion",
+        "type": "object"
+      },
+      "BundleResolvedTax": {
+        "description": "A group reduced to what a line is taxed at (`counter_pricing.tax_tuple`):\nactive taxes only, rates summed, the first active tax names it. `NO_TAX`\n(rate 0, name \"No tax\", tax_id null, inclusive) when none is active. The\nunregistered-entity zeroing is NOT applied here \u2014 it is applied per line\nagainst `entity.vat_registered`.",
+        "properties": {
+          "inclusive": {
+            "default": true,
+            "title": "Inclusive",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rate": {
+            "title": "Rate",
+            "type": "string"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id"
+          }
+        },
+        "required": [
+          "rate",
+          "name"
+        ],
+        "title": "BundleResolvedTax",
+        "type": "object"
+      },
+      "BundleTax": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rate": {
+            "title": "Rate",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "inclusive",
+              "exclusive"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "rate",
+          "type",
+          "is_active"
+        ],
+        "title": "BundleTax",
+        "type": "object"
+      },
+      "BundleTaxGroup": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "resolved": {
+            "$ref": "#/components/schemas/BundleResolvedTax"
+          },
+          "taxes": {
+            "items": {
+              "$ref": "#/components/schemas/BundleTax"
+            },
+            "title": "Taxes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "taxes",
+          "resolved"
+        ],
+        "title": "BundleTaxGroup",
         "type": "object"
       },
       "BusinessDayResponse": {
@@ -7611,6 +8388,1970 @@
           "counted_quantity"
         ],
         "title": "CountLine",
+        "type": "object"
+      },
+      "CounterAvailability": {
+        "description": "The branch's 86 list right now (expiry applied). Selling an 86'd item is\nNOT refused \u2014 neither the server nor the register blocks it.",
+        "properties": {
+          "unavailable_option_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unavailable Option Ids",
+            "type": "array"
+          },
+          "unavailable_product_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unavailable Product Ids",
+            "type": "array"
+          }
+        },
+        "title": "CounterAvailability",
+        "type": "object"
+      },
+      "CounterBundleBody": {
+        "description": "The hashed pricing inputs. Lists are in a stable order.",
+        "properties": {
+          "branch": {
+            "$ref": "#/components/schemas/BundleBranch"
+          },
+          "currency_code": {
+            "title": "Currency Code",
+            "type": "string"
+          },
+          "currency_symbol": {
+            "title": "Currency Symbol",
+            "type": "string"
+          },
+          "engine_version": {
+            "title": "Engine Version",
+            "type": "integer"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/BundleEntity"
+          },
+          "kitchen_flows": {
+            "items": {
+              "$ref": "#/components/schemas/BundleKitchenFlow"
+            },
+            "title": "Kitchen Flows",
+            "type": "array"
+          },
+          "menu_tree": {
+            "items": {
+              "$ref": "#/components/schemas/MenuGroupNode"
+            },
+            "title": "Menu Tree",
+            "type": "array"
+          },
+          "modifiers": {
+            "items": {
+              "$ref": "#/components/schemas/BundleModifier"
+            },
+            "title": "Modifiers",
+            "type": "array"
+          },
+          "payment_methods": {
+            "items": {
+              "$ref": "#/components/schemas/PaymentMethodResponse"
+            },
+            "title": "Payment Methods",
+            "type": "array"
+          },
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/BundleProduct"
+            },
+            "title": "Products",
+            "type": "array"
+          },
+          "promotions": {
+            "items": {
+              "$ref": "#/components/schemas/BundlePromotion"
+            },
+            "title": "Promotions",
+            "type": "array"
+          },
+          "rounding_step": {
+            "title": "Rounding Step",
+            "type": "string"
+          },
+          "tax_groups": {
+            "items": {
+              "$ref": "#/components/schemas/BundleTaxGroup"
+            },
+            "title": "Tax Groups",
+            "type": "array"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "void_reasons": {
+            "items": {
+              "$ref": "#/components/schemas/ReasonResponse"
+            },
+            "title": "Void Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "engine_version",
+          "currency_code",
+          "currency_symbol",
+          "timezone",
+          "rounding_step",
+          "branch",
+          "entity",
+          "tax_groups",
+          "products",
+          "modifiers",
+          "menu_tree",
+          "payment_methods",
+          "promotions",
+          "void_reasons",
+          "kitchen_flows"
+        ],
+        "title": "CounterBundleBody",
+        "type": "object"
+      },
+      "CounterBundleEnvelope": {
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/CounterAvailability"
+          },
+          "branch_counter_local_first": {
+            "enum": [
+              "off",
+              "shadow",
+              "on"
+            ],
+            "title": "Branch Counter Local First",
+            "type": "string"
+          },
+          "build_supported": {
+            "title": "Build Supported",
+            "type": "boolean"
+          },
+          "business_date": {
+            "title": "Business Date",
+            "type": "string"
+          },
+          "counter_local_first": {
+            "enum": [
+              "off",
+              "shadow",
+              "on"
+            ],
+            "title": "Counter Local First",
+            "type": "string"
+          },
+          "last_ingested_ticket_seq": {
+            "title": "Last Ingested Ticket Seq",
+            "type": "integer"
+          },
+          "min_build": {
+            "title": "Min Build",
+            "type": "integer"
+          },
+          "pricing_engine_version": {
+            "title": "Pricing Engine Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "supported_engine_versions": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Supported Engine Versions",
+            "type": "array"
+          },
+          "ticket_prefix": {
+            "title": "Ticket Prefix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "counter_local_first",
+          "branch_counter_local_first",
+          "pricing_engine_version",
+          "supported_engine_versions",
+          "min_build",
+          "build_supported",
+          "server_time",
+          "business_date",
+          "ticket_prefix",
+          "last_ingested_ticket_seq",
+          "availability"
+        ],
+        "title": "CounterBundleEnvelope",
+        "type": "object"
+      },
+      "CounterBundleResponse": {
+        "description": "`GET /pos/counter/bundle`.\n\n`hash` = sha256(canonical JSON of `bundle`) \u2014 cite it as `bundle_hash` on\nevery sale. The HTTP `ETag` is NOT the bundle hash alone: it is\n`\"{hash}.{envelope_tag}\"`, so a change to the 86 list, the mode or the\nticket prefix also refreshes a terminal holding an unchanged bundle.",
+        "properties": {
+          "bundle": {
+            "$ref": "#/components/schemas/CounterBundleBody"
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/CounterBundleEnvelope"
+          },
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash",
+          "bundle",
+          "envelope"
+        ],
+        "title": "CounterBundleResponse",
+        "type": "object"
+      },
+      "CounterDeviceSyncRow": {
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "build_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
+          },
+          "counter_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counter Mode"
+          },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "oldest_pending_sale_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending Sale At"
+          },
+          "parked_sales": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked Sales"
+          },
+          "pending_sales": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Sales"
+          },
+          "sync_reported_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Reported At"
+          },
+          "ticket_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Prefix"
+          }
+        },
+        "required": [
+          "device_id",
+          "name",
+          "branch_id",
+          "ticket_prefix",
+          "build_number",
+          "counter_mode",
+          "pending_sales",
+          "parked_sales",
+          "oldest_pending_sale_at",
+          "sync_reported_at",
+          "last_seen_at"
+        ],
+        "title": "CounterDeviceSyncRow",
+        "type": "object"
+      },
+      "CounterPromoteLine": {
+        "properties": {
+          "added_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kitchen_notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Notes"
+          },
+          "options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "sent_to_kitchen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent To Kitchen At"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          }
+        },
+        "required": [
+          "id",
+          "product_id",
+          "quantity"
+        ],
+        "title": "CounterPromoteLine",
+        "type": "object"
+      },
+      "CounterPromoteRequest": {
+        "description": "`POST /pos/counter/promote` \u2014 \"Move to server\" for an UNTENDERED local\ncheck (park, split, table, manual discount need the server). Idempotent on\n`id`: promoting a check already on the server returns it.",
+        "properties": {
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "coupon_promotion_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Promotion Id"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kitchen_tickets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleKitchenTicket"
+            },
+            "title": "Kitchen Tickets",
+            "type": "array"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterPromoteLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "till_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Till Id"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id"
+        ],
+        "title": "CounterPromoteRequest",
+        "type": "object"
+      },
+      "CounterQuarantineRow": {
+        "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "id",
+          "device_id",
+          "branch_id",
+          "error",
+          "received_at",
+          "resolved_at",
+          "resolution_note",
+          "payload"
+        ],
+        "title": "CounterQuarantineRow",
+        "type": "object"
+      },
+      "CounterSaleKitchenTicket": {
+        "description": "A docket the register printed.",
+        "properties": {
+          "kitchen_flow_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Flow Id"
+          },
+          "line_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Line Ids",
+            "type": "array"
+          },
+          "printed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printed At"
+          },
+          "sent_at": {
+            "format": "date-time",
+            "title": "Sent At",
+            "type": "string"
+          },
+          "sequence": {
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sequence",
+          "line_ids",
+          "sent_at"
+        ],
+        "title": "CounterSaleKitchenTicket",
+        "type": "object"
+      },
+      "CounterSaleLine": {
+        "properties": {
+          "added_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kitchen_flow_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Flow Id"
+          },
+          "kitchen_notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kitchen Notes"
+          },
+          "options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "sent_to_kitchen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent To Kitchen At"
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CounterSaleLineTotals"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Price"
+          },
+          "void_reason_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason Id"
+          },
+          "voided": {
+            "default": false,
+            "title": "Voided",
+            "type": "boolean"
+          },
+          "voided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided At"
+          },
+          "voided_by_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voided By Id"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          }
+        },
+        "required": [
+          "id",
+          "product_id",
+          "quantity"
+        ],
+        "title": "CounterSaleLine",
+        "type": "object"
+      },
+      "CounterSaleLineTotals": {
+        "description": "What the register priced (and printed) for one line \u2014 the\n`counter_pricing.LinePricing` fields.",
+        "properties": {
+          "base_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Base Price"
+          },
+          "discount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Discount"
+          },
+          "gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Gross"
+          },
+          "options_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Options Price"
+          },
+          "tax_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Tax Amount"
+          },
+          "tax_exclusive_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Tax Exclusive Total"
+          },
+          "tax_exclusive_unit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Tax Exclusive Unit"
+          },
+          "total_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Total Price"
+          },
+          "unit_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Unit Price"
+          }
+        },
+        "required": [
+          "base_price",
+          "options_price",
+          "unit_price",
+          "gross",
+          "discount",
+          "total_price",
+          "tax_amount",
+          "tax_exclusive_total",
+          "tax_exclusive_unit"
+        ],
+        "title": "CounterSaleLineTotals",
+        "type": "object"
+      },
+      "CounterSaleOption": {
+        "properties": {
+          "modifier_option_id": {
+            "format": "uuid",
+            "title": "Modifier Option Id",
+            "type": "string"
+          },
+          "quantity": {
+            "default": 1,
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "modifier_option_id"
+        ],
+        "title": "CounterSaleOption",
+        "type": "object"
+      },
+      "CounterSaleRequest": {
+        "description": "`POST /pos/counter/sales` \u2014 one finished local counter sale.\n\nIdempotent on `id`: a retry of the same sale is answered `200 replayed`.\nThe replay fingerprint is sha256 over the canonical JSON of this body\nEXCLUDING `receipt_printed_at`, `kitchen_tickets[].printed_at`,\n`clock_offset_ms`, `staff_attestation`, `app_version` and `app_build` \u2014 so\nrecording a print result after the first attempt does not turn a retry into\na conflict. Anything else changed under the same id is a `409`.",
+        "properties": {
+          "app_build": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Build"
+          },
+          "app_version": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Version"
+          },
+          "branch_id": {
+            "format": "uuid",
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "bundle_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Bundle Hash",
+            "type": "string"
+          },
+          "business_date": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "title": "Business Date",
+            "type": "string"
+          },
+          "cashier_id": {
+            "format": "uuid",
+            "title": "Cashier Id",
+            "type": "string"
+          },
+          "clock_offset_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock Offset Ms"
+          },
+          "closed_at": {
+            "format": "date-time",
+            "title": "Closed At",
+            "type": "string"
+          },
+          "coupon_promotion_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Promotion Id"
+          },
+          "customer_name": {
+            "anyOf": [
+              {
+                "maxLength": 150,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Name"
+          },
+          "customer_phone": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer Phone"
+          },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "display_number": {
+            "maxLength": 20,
+            "minLength": 3,
+            "title": "Display Number",
+            "type": "string"
+          },
+          "engine_version": {
+            "minimum": 1.0,
+            "title": "Engine Version",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kitchen_tickets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleKitchenTicket"
+            },
+            "title": "Kitchen Tickets",
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleLine"
+            },
+            "minItems": 1,
+            "title": "Lines",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "priced_at": {
+            "format": "date-time",
+            "title": "Priced At",
+            "type": "string"
+          },
+          "receipt_printed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Printed At"
+          },
+          "staff_attestation": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Staff Attestation"
+          },
+          "state": {
+            "default": "closed",
+            "enum": [
+              "closed",
+              "void"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tenders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleTender"
+            },
+            "title": "Tenders",
+            "type": "array"
+          },
+          "ticket_prefix": {
+            "maxLength": 6,
+            "minLength": 1,
+            "title": "Ticket Prefix",
+            "type": "string"
+          },
+          "ticket_seq": {
+            "maximum": 999999.0,
+            "minimum": 1.0,
+            "title": "Ticket Seq",
+            "type": "integer"
+          },
+          "till_id": {
+            "format": "uuid",
+            "title": "Till Id",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/CounterSaleTotals"
+          },
+          "void_reason_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Void Reason Id"
+          }
+        },
+        "required": [
+          "id",
+          "branch_id",
+          "device_id",
+          "till_id",
+          "cashier_id",
+          "ticket_prefix",
+          "ticket_seq",
+          "display_number",
+          "business_date",
+          "opened_at",
+          "priced_at",
+          "closed_at",
+          "bundle_hash",
+          "engine_version",
+          "lines",
+          "totals"
+        ],
+        "title": "CounterSaleRequest",
+        "type": "object"
+      },
+      "CounterSaleResponse": {
+        "description": "`201` ingested \u00b7 `200` replayed \u00b7 `202` quarantined.",
+        "properties": {
+          "check_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Number"
+          },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "flags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "ingested_late": {
+            "default": false,
+            "title": "Ingested Late",
+            "type": "boolean"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number"
+          },
+          "pricing_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "verified",
+                  "mismatch",
+                  "unverified"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Status"
+          },
+          "status": {
+            "enum": [
+              "ingested",
+              "replayed",
+              "quarantined"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "order_id"
+        ],
+        "title": "CounterSaleResponse",
+        "type": "object"
+      },
+      "CounterSaleTaxLine": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Amount"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Rate"
+          },
+          "tax_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tax Id"
+          },
+          "taxable_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Taxable Amount"
+          }
+        },
+        "required": [
+          "name",
+          "rate",
+          "taxable_amount",
+          "amount"
+        ],
+        "title": "CounterSaleTaxLine",
+        "type": "object"
+      },
+      "CounterSaleTender": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Amount"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "payment_method_id": {
+            "format": "uuid",
+            "title": "Payment Method Id",
+            "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "taken_at": {
+            "format": "date-time",
+            "title": "Taken At",
+            "type": "string"
+          },
+          "tendered": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tendered"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "idempotency_key",
+          "payment_method_id",
+          "amount",
+          "taken_at"
+        ],
+        "title": "CounterSaleTender",
+        "type": "object"
+      },
+      "CounterSaleTotals": {
+        "description": "The printed receipt's figures \u2014 `counter_pricing.CheckPricing`.",
+        "properties": {
+          "discount_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Discount Total"
+          },
+          "promotion_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Promotion Amount"
+          },
+          "promotion_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Id"
+          },
+          "rounding": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Rounding"
+          },
+          "subtotal": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Subtotal"
+          },
+          "tax_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Tax Total"
+          },
+          "taxes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterSaleTaxLine"
+            },
+            "title": "Taxes",
+            "type": "array"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Total"
+          },
+          "total_excl_tax": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              }
+            ],
+            "title": "Total Excl Tax"
+          }
+        },
+        "required": [
+          "subtotal",
+          "discount_total",
+          "tax_total",
+          "total_excl_tax",
+          "rounding",
+          "total"
+        ],
+        "title": "CounterSaleTotals",
+        "type": "object"
+      },
+      "CounterShadowDifference": {
+        "properties": {
+          "client": {
+            "title": "Client",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "server": {
+            "title": "Server",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "server",
+          "client"
+        ],
+        "title": "CounterShadowDifference",
+        "type": "object"
+      },
+      "CounterShadowLine": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/CounterSaleLineTotals"
+          }
+        },
+        "required": [
+          "id",
+          "totals"
+        ],
+        "title": "CounterShadowLine",
+        "type": "object"
+      },
+      "CounterShadowReport": {
+        "description": "`POST /pos/counter/shadow` \u2014 in `shadow` mode the server check is the\nreal one; after each re-price (or at settle) the register also prices the\nsame lines with its local engine against its bundle and reports its figures\nhere. The server compares them with the check's own and records any\ndifference. Fire-and-forget: the answer never changes the sale.",
+        "properties": {
+          "bundle_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Bundle Hash",
+            "type": "string"
+          },
+          "engine_version": {
+            "minimum": 1.0,
+            "title": "Engine Version",
+            "type": "integer"
+          },
+          "lines": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterShadowLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/CounterSaleTotals"
+          }
+        },
+        "required": [
+          "order_id",
+          "bundle_hash",
+          "engine_version",
+          "totals"
+        ],
+        "title": "CounterShadowReport",
+        "type": "object"
+      },
+      "CounterShadowResult": {
+        "properties": {
+          "differences": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CounterShadowDifference"
+            },
+            "title": "Differences",
+            "type": "array"
+          },
+          "matches": {
+            "title": "Matches",
+            "type": "boolean"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id",
+          "matches"
+        ],
+        "title": "CounterShadowResult",
+        "type": "object"
+      },
+      "CounterSyncOrderRow": {
+        "properties": {
+          "branch_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Id"
+          },
+          "business_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Date"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "ingest_flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ingest Flags",
+            "type": "array"
+          },
+          "ingested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingested At"
+          },
+          "ingested_late": {
+            "title": "Ingested Late",
+            "type": "boolean"
+          },
+          "order_number": {
+            "title": "Order Number",
+            "type": "string"
+          },
+          "pricing_audit": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Audit"
+          },
+          "pricing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Status"
+          },
+          "total": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Total",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "order_number",
+          "display_number",
+          "branch_id",
+          "device_id",
+          "business_date",
+          "total",
+          "pricing_status",
+          "ingested_late",
+          "ingest_flags",
+          "closed_at",
+          "ingested_at"
+        ],
+        "title": "CounterSyncOrderRow",
+        "type": "object"
+      },
+      "CounterSyncOverview": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/CounterDeviceSyncRow"
+            },
+            "title": "Devices",
+            "type": "array"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/CounterSyncOrderRow"
+            },
+            "title": "Orders",
+            "type": "array"
+          },
+          "quarantine": {
+            "items": {
+              "$ref": "#/components/schemas/CounterQuarantineRow"
+            },
+            "title": "Quarantine",
+            "type": "array"
+          }
+        },
+        "required": [
+          "orders",
+          "quarantine",
+          "devices"
+        ],
+        "title": "CounterSyncOverview",
         "type": "object"
       },
       "CourierBadge": {
@@ -10249,6 +12990,67 @@
         "title": "DeviceCreate",
         "type": "object"
       },
+      "DeviceHeartbeatRequest": {
+        "description": "Optional body of `POST /devices/heartbeat`. Every field optional; an\nolder build sends no body at all and nothing changes.",
+        "properties": {
+          "counter_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "online",
+                  "shadow",
+                  "local"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counter Mode"
+          },
+          "oldest_pending_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending At"
+          },
+          "parked_sales": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked Sales"
+          },
+          "pending_sales": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Sales"
+          }
+        },
+        "title": "DeviceHeartbeatRequest",
+        "type": "object"
+      },
       "DevicePairRequest": {
         "properties": {
           "app_version": {
@@ -10387,6 +13189,17 @@
             "title": "Category Ids",
             "type": "array"
           },
+          "counter_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counter Mode"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -10436,6 +13249,18 @@
             "title": "Name",
             "type": "string"
           },
+          "oldest_pending_sale_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending Sale At"
+          },
           "os_version": {
             "anyOf": [
               {
@@ -10470,6 +13295,28 @@
             ],
             "title": "Pairing Code Expires At"
           },
+          "parked_sales": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked Sales"
+          },
+          "pending_sales": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Sales"
+          },
           "platform": {
             "anyOf": [
               {
@@ -10488,6 +13335,41 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "supports_coupons": {
+            "description": "Whether this terminal's build can select a coupon promotion\n(`COUPON_MIN_BUILD`). The console warns when a coupon-mode branch still\nruns a terminal that cannot.",
+            "readOnly": true,
+            "title": "Supports Coupons",
+            "type": "boolean"
+          },
+          "supports_local_first": {
+            "description": "Whether this terminal's build may run the counter local-first\n(`COUNTER_LOCAL_FIRST_MIN_BUILD`). Below it the terminal stays online-only\nwhatever its branch's flag says.",
+            "readOnly": true,
+            "title": "Supports Local First",
+            "type": "boolean"
+          },
+          "sync_reported_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Reported At"
+          },
+          "ticket_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Prefix"
           },
           "type": {
             "title": "Type",
@@ -10517,7 +13399,9 @@
           "category_ids",
           "deleted_at",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "supports_local_first",
+          "supports_coupons"
         ],
         "title": "DeviceResponse",
         "type": "object"
@@ -15124,6 +18008,17 @@
             ],
             "title": "Completed At"
           },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -15175,6 +18070,11 @@
               }
             ],
             "title": "Order Type"
+          },
+          "origin": {
+            "default": "server",
+            "title": "Origin",
+            "type": "string"
           },
           "printed_at": {
             "anyOf": [
@@ -17545,6 +20445,41 @@
               }
             ]
           },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
+          "ingest_flags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Ingest Flags",
+            "type": "array"
+          },
+          "ingested_late": {
+            "default": false,
+            "title": "Ingested Late",
+            "type": "boolean"
+          },
+          "pricing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Status"
+          },
           "tenders": {
             "default": [],
             "items": {
@@ -18206,6 +21141,18 @@
             ],
             "title": "Order Item Id"
           },
+          "reference_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Id"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -18856,6 +21803,17 @@
           "delivery_method": {
             "$ref": "#/components/schemas/DeliveryMethodEnum"
           },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
           "email": {
             "title": "Email",
             "type": "string"
@@ -18928,6 +21886,17 @@
               }
             ],
             "title": "Pos Status"
+          },
+          "pricing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Status"
           },
           "source": {
             "anyOf": [
@@ -21901,6 +24870,18 @@
             "title": "Amount Paid",
             "type": "string"
           },
+          "applied_coupon_promotion_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Coupon Promotion Id"
+          },
           "balance_due": {
             "default": "0",
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -22113,6 +25094,17 @@
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Discount Amount",
             "type": "string"
+          },
+          "display_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
           },
           "driver_assignment_count": {
             "default": 0,
@@ -22332,6 +25324,17 @@
               }
             ],
             "title": "Pos Status"
+          },
+          "pricing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Status"
           },
           "rounding_amount": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
@@ -25469,6 +28472,14 @@
             "title": "Auto Apply",
             "type": "boolean"
           },
+          "auto_branch_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Auto Branch Ids",
+            "type": "array"
+          },
           "branch_ids": {
             "items": {
               "format": "uuid",
@@ -25483,6 +28494,14 @@
               "type": "string"
             },
             "title": "Category Ids",
+            "type": "array"
+          },
+          "coupon_branch_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Coupon Branch Ids",
             "type": "array"
           },
           "from_date": {
@@ -25716,6 +28735,14 @@
             "title": "Auto Apply",
             "type": "boolean"
           },
+          "auto_branch_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Auto Branch Ids",
+            "type": "array"
+          },
           "branch_ids": {
             "items": {
               "format": "uuid",
@@ -25730,6 +28757,14 @@
               "type": "string"
             },
             "title": "Category Ids",
+            "type": "array"
+          },
+          "coupon_branch_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Coupon Branch Ids",
             "type": "array"
           },
           "created_at": {
@@ -25937,6 +28972,21 @@
             ],
             "title": "Auto Apply"
           },
+          "auto_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Branch Ids"
+          },
           "branch_ids": {
             "anyOf": [
               {
@@ -25966,6 +29016,21 @@
               }
             ],
             "title": "Category Ids"
+          },
+          "coupon_branch_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coupon Branch Ids"
           },
           "from_date": {
             "anyOf": [
@@ -27239,6 +30304,21 @@
           "quantity_delta"
         ],
         "title": "QuantityAdjustmentRequest",
+        "type": "object"
+      },
+      "QuarantineResolveRequest": {
+        "properties": {
+          "note": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "title": "QuarantineResolveRequest",
         "type": "object"
       },
       "ReasonCreate": {
@@ -32878,6 +35958,28 @@
             "title": "Branch Name",
             "type": "string"
           },
+          "build_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
+          },
+          "counter_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counter Mode"
+          },
           "device_id": {
             "format": "uuid",
             "title": "Device Id",
@@ -32913,6 +36015,18 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "oldest_pending_sale_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending Sale At"
           },
           "open_till_id": {
             "anyOf": [
@@ -32964,6 +36078,28 @@
             ],
             "title": "Os Version"
           },
+          "parked_sales": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked Sales"
+          },
+          "pending_sales": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Sales"
+          },
           "reference": {
             "title": "Reference",
             "type": "string"
@@ -32976,6 +36112,22 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "supports_local_first": {
+            "default": false,
+            "title": "Supports Local First",
+            "type": "boolean"
+          },
+          "ticket_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Prefix"
           },
           "type": {
             "title": "Type",
@@ -33068,6 +36220,18 @@
             ],
             "title": "Closing Amount"
           },
+          "device_pending_sales": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Pending Sales"
+          },
           "notes": {
             "anyOf": [
               {
@@ -33129,6 +36293,18 @@
               }
             ],
             "title": "Device Id"
+          },
+          "device_pending_sales": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Pending Sales"
           },
           "notes": {
             "anyOf": [
@@ -33455,6 +36631,18 @@
             "additionalProperties": true,
             "title": "Totals",
             "type": "object"
+          },
+          "totals_restated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totals Restated At"
           },
           "updated_at": {
             "format": "date-time",
@@ -47448,7 +50636,7 @@
     },
     "/api/v1/devices/heartbeat": {
       "post": {
-        "description": "Terminals ping this so the console can show which are online.\n\nIt doubles as the terminal's cold-start call: it returns the branch too, so\na paired-but-signed-out terminal can render its own name without a user\ntoken it does not yet have.",
+        "description": "Terminals ping this so the console can show which are online.\n\nIt doubles as the terminal's cold-start call: it returns the branch too, so\na paired-but-signed-out terminal can render its own name without a user\ntoken it does not yet have.\n\nA local-first register also reports what it is holding: its unsynced and\nparked sales, when the oldest was closed, and the counter mode it runs. The\nbody is optional and so is every field in it \u2014 an older build sends none\nand nothing about it changes; a field left out leaves its column alone.",
         "operationId": "device_heartbeat_api_v1_devices_heartbeat_post",
         "parameters": [
           {
@@ -47516,6 +50704,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/DeviceHeartbeatRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -59174,6 +62379,568 @@
         ]
       }
     },
+    "/api/v1/pos/counter-sync": {
+      "get": {
+        "description": "Synced counter sales that need a look \u2014 a pricing mismatch, an\nunverified re-price, a late till/day or any other ingest flag \u2014 the\nquarantined sales, and every terminal's unsynced counts.",
+        "operationId": "counter_sync_overview_api_v1_pos_counter_sync_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_resolved",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Resolved",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterSyncOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Counter Sync Overview",
+        "tags": [
+          "POS Counter"
+        ]
+      }
+    },
+    "/api/v1/pos/counter-sync/quarantine/{sale_id}/resolve": {
+      "post": {
+        "description": "Mark a quarantined sale as dealt with (the note says how).",
+        "operationId": "resolve_quarantined_sale_api_v1_pos_counter_sync_quarantine__sale_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sale_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sale Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuarantineResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterQuarantineRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Resolve Quarantined Sale",
+        "tags": [
+          "POS Counter"
+        ]
+      }
+    },
+    "/api/v1/pos/counter/bundle": {
+      "get": {
+        "description": "The config bundle this terminal prices counter sales from. See the\nmodule docstring for the ETag/304 behaviour.",
+        "operationId": "get_bundle_api_v1_pos_counter_bundle_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-None-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Device-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterBundleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "Not modified \u2014 the ETag still holds"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Bundle",
+        "tags": [
+          "POS Counter"
+        ]
+      }
+    },
+    "/api/v1/pos/counter/promote": {
+      "post": {
+        "description": "Move an untendered local check to the server as an open check.",
+        "operationId": "promote_check_api_v1_pos_counter_promote_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CounterPromoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "426": {
+            "description": "App build too old (code upgrade_required)"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Promote Check",
+        "tags": [
+          "POS Counter"
+        ]
+      }
+    },
+    "/api/v1/pos/counter/sales": {
+      "post": {
+        "description": "Book one local-first counter sale. See `counter_ingest_service`.",
+        "operationId": "post_sale_api_v1_pos_counter_sales_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Device-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CounterSaleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterSaleResponse"
+                }
+              }
+            },
+            "description": "Replayed"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterSaleResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterSaleResponse"
+                }
+              }
+            },
+            "description": "Quarantined"
+          },
+          "409": {
+            "description": "Same id, different sale (code counter_sale_conflict)"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "426": {
+            "description": "App build too old (code upgrade_required)"
+          }
+        },
+        "summary": "Post Sale",
+        "tags": [
+          "POS Counter"
+        ]
+      }
+    },
+    "/api/v1/pos/counter/shadow": {
+      "post": {
+        "description": "Shadow mode: the register's local figures for a server check. Compared,\nand any difference recorded and alerted; the sale is never changed.",
+        "operationId": "shadow_report_api_v1_pos_counter_shadow_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Device-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Device-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Version"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Build",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Build"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Platform",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-App-Platform"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CounterShadowReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CounterShadowResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shadow Report",
+        "tags": [
+          "POS Counter"
+        ]
+      }
+    },
     "/api/v1/pos/dashboard/branches": {
       "get": {
         "description": "The \"what is happening right now\" view: open checks, occupied tables, open\ntills and terminals that have gone quiet.",
@@ -60482,6 +64249,112 @@
         ]
       }
     },
+    "/api/v1/pos/orders/{order_id}/coupon": {
+      "delete": {
+        "description": "Deselect the check's coupon and re-price. Idempotent.",
+        "operationId": "remove_coupon_api_v1_pos_orders__order_id__coupon_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Remove Coupon",
+        "tags": [
+          "POS Orders"
+        ]
+      },
+      "put": {
+        "description": "Select a coupon-mode promotion on the check (replacing any other) and\nre-price. 422 unless it runs as a coupon at the order's branch; 409 unless\nthe order is an open counter check.",
+        "operationId": "apply_coupon_api_v1_pos_orders__order_id__coupon_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Order Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyCouponRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PosOrderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Apply Coupon",
+        "tags": [
+          "POS Orders"
+        ]
+      }
+    },
     "/api/v1/pos/orders/{order_id}/discounts": {
       "post": {
         "operationId": "apply_discount_api_v1_pos_orders__order_id__discounts_post",
@@ -61483,6 +65356,59 @@
         "summary": "Void Order",
         "tags": [
           "POS Orders"
+        ]
+      }
+    },
+    "/api/v1/pos/promotions/available": {
+      "get": {
+        "description": "Every counter promotion that runs at `branch_id`, auto and coupon, best\nfirst \u2014 with whether its schedule is live right now.",
+        "operationId": "available_promotions_api_v1_pos_promotions_available_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "branch_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Branch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AvailablePromotionResponse"
+                  },
+                  "title": "Response Available Promotions Api V1 Pos Promotions Available Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Available Promotions",
+        "tags": [
+          "POS Promotions"
         ]
       }
     },

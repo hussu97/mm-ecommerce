@@ -41,6 +41,7 @@ from app.schemas.pos import (
     PrinterResponse,
     PrinterUpdate,
 )
+from app.schemas.pos_counter import DeviceHeartbeatRequest
 from app.services import audit_service, crud_service, push_service
 from app.services.inventory.access_service import assert_branch_access
 
@@ -540,6 +541,7 @@ async def pair_device(
 
 @router.post("/heartbeat", response_model=DeviceSessionResponse)
 async def device_heartbeat(
+    body: DeviceHeartbeatRequest | None = None,
     device: Device = Depends(get_current_device),
     db: AsyncSession = Depends(get_db),
 ):
@@ -549,7 +551,24 @@ async def device_heartbeat(
     It doubles as the terminal's cold-start call: it returns the branch too, so
     a paired-but-signed-out terminal can render its own name without a user
     token it does not yet have.
+
+    A local-first register also reports what it is holding: its unsynced and
+    parked sales, when the oldest was closed, and the counter mode it runs. The
+    body is optional and so is every field in it — an older build sends none
+    and nothing about it changes; a field left out leaves its column alone.
     """
+    if body is not None:
+        reported = body.model_dump(exclude_unset=True)
+        if "pending_sales" in reported:
+            device.pending_sales = body.pending_sales
+        if "parked_sales" in reported:
+            device.parked_sales = body.parked_sales
+        if "oldest_pending_at" in reported:
+            device.oldest_pending_sale_at = body.oldest_pending_at
+        if "counter_mode" in reported:
+            device.counter_mode = body.counter_mode
+        if reported.keys() & {"pending_sales", "parked_sales", "oldest_pending_at"}:
+            device.sync_reported_at = utcnow()
     device.last_seen_at = utcnow()
     await db.flush()
     await db.refresh(device)

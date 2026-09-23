@@ -462,6 +462,12 @@ class OrderListResponse(BaseModel):
 
     id: UUID
     order_number: str
+    #: The ticket number a local-first register printed (`T1-0042`); null for
+    #: every order the server numbered. Show `display_number ?? order_number`.
+    display_number: str | None = None
+    #: How a synced local-first counter sale compared with the server's
+    #: re-price (`verified` | `mismatch` | `unverified`); null otherwise.
+    pricing_status: str | None = None
     email: str
     status: OrderStatusEnum
     total: float
@@ -674,3 +680,10 @@ class OrderAdminDetails(BaseModel):
     #: cashier split it across cash and card.
     tenders: list[OrderTenderView] = []
     timeline: list[OrderTimelineEntry]
+    #: Local-first counter sale bookkeeping (null/empty for every other order):
+    #: the ticket number the register printed, how the server's re-price
+    #: compared (`verified` | `mismatch` | `unverified`), and the ingest flags.
+    display_number: str | None = None
+    pricing_status: str | None = None
+    ingest_flags: list[str] = []
+    ingested_late: bool = False

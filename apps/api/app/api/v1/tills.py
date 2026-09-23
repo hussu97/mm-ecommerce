@@ -100,6 +100,7 @@ async def open_till(
         device_id=data.device_id,
         user=user,
         counted=data.opening_amount,
+        device_pending_sales=data.device_pending_sales or 0,
     )
     if handed_over is not None:
         await audit_service.log_action(
@@ -157,6 +158,7 @@ async def close_till(
         closed_by=user,
         closing_amount=data.closing_amount,
         notes=data.notes,
+        device_pending_sales=data.device_pending_sales or 0,
     )
     await audit_service.log_action(
         db,

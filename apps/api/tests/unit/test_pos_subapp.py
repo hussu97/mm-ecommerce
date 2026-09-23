@@ -59,8 +59,27 @@ def test_the_register_carries_what_a_till_needs():
         "/api/v1/payment-methods",
         "/api/v1/printers",
         "/api/v1/menu-groups",
+        "/api/v1/pos/counter/bundle",
+        "/api/v1/pos/counter/sales",
+        "/api/v1/pos/counter/promote",
+        "/api/v1/pos/counter/shadow",
     ):
         assert any(p.startswith(present) for p in pos), f"{present} missing"
+
+
+def test_local_first_counter_routes_are_on_both_apps():
+    """The register talks to the POS host; the console and a terminal pointed
+    at the main host during the cutover talk to the main API. Both must carry
+    the counter routes, or a sale syncs on one host and 404s on the other."""
+    for app in (pos_app, web_app):
+        paths = app.openapi()["paths"]
+        assert set(paths["/api/v1/pos/counter/bundle"]) == {"get"}
+        assert set(paths["/api/v1/pos/counter/sales"]) == {"post"}
+        assert set(paths["/api/v1/pos/counter/promote"]) == {"post"}
+        assert set(paths["/api/v1/pos/counter/shadow"]) == {"post"}
+    # The console's review page is not the till's business.
+    assert "/api/v1/pos/counter-sync" in _paths(web_app)
+    assert not any(p.startswith("/api/v1/pos/counter-sync") for p in _paths(pos_app))
 
 
 def test_the_manager_inventory_surface_is_read_only_and_on_the_pos_host():

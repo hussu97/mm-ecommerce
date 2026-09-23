@@ -77,8 +77,15 @@ def build_crud_router(
     entity_type: str,
     label_field: str = "name",
     filter_builder: Any = None,
+    prepare_write: Any = None,
 ) -> APIRouter:
-    """Five standard endpoints (list, create, read, update, delete) for `model`."""
+    """Five standard endpoints (list, create, read, update, delete) for `model`.
+
+    `prepare_write(payload, entity)` — optional — sees each create (`entity`
+    None) and update (`entity` the row as stored) before it is written, and
+    returns extra fields to store with it. It is where a rule that needs the
+    merged row, or a derived column, lives; it may raise an `AppError`.
+    """
 
     router = APIRouter()
 
@@ -121,7 +128,12 @@ def build_crud_router(
         db: AsyncSession = Depends(get_db),
         admin: User = Depends(require("admin.settings.manage")),
     ):
-        entity = await crud_service.create(db, model, data)
+        extra = (
+            prepare_write(data.model_dump(exclude_unset=True), None)
+            if prepare_write is not None
+            else None
+        )
+        entity = await crud_service.create(db, model, data, extra=extra)
         await audit_service.log_action(
             db,
             action="CREATE",
@@ -151,7 +163,12 @@ def build_crud_router(
         admin: User = Depends(require("admin.settings.manage")),
     ):
         entity = await crud_service.get_or_404(db, model, item_id)
-        entity = await crud_service.update(db, entity, data)
+        extra = (
+            prepare_write(data.model_dump(exclude_unset=True), entity)
+            if prepare_write is not None
+            else None
+        )
+        entity = await crud_service.update(db, entity, data, extra=extra)
         await audit_service.log_action(
             db,
             action="UPDATE",

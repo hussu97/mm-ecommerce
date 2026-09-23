@@ -811,7 +811,27 @@ export const promoApi = {
 
 export const promotionsApi = {
   list: () => api.get<Promotion[]>('/promotions'),
+  create: (data: object) => api.post<Promotion>('/promotions', data),
   update: (id: string, data: object) => api.put<Promotion>(`/promotions/${id}`, data),
+};
+
+// ─── Counter sync (local-first counter checkout) ──────────────────────────────
+
+export const counterSyncApi = {
+  /** Synced counter sales needing a look, quarantined sales, and every
+   *  terminal's unsynced counts. */
+  overview: (params: { branch_id?: string; include_resolved?: boolean } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.branch_id) qs.set('branch_id', params.branch_id);
+    if (params.include_resolved) qs.set('include_resolved', 'true');
+    const q = qs.toString();
+    return api.get<Schemas['CounterSyncOverview']>(`/pos/counter-sync${q ? `?${q}` : ''}`);
+  },
+  resolve: (saleId: string, note: string) =>
+    api.post<Schemas['CounterQuarantineRow']>(
+      `/pos/counter-sync/quarantine/${saleId}/resolve`,
+      { note },
+    ),
 };
 
 // ─── URL Redirects ────────────────────────────────────────────────────────────

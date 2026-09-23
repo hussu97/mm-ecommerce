@@ -81,6 +81,23 @@ migrate it opportunistically.
     every quantisation goes through `app/core/money.py` — one precision and one
     rounding mode. Two modes over the same figures is not a style difference:
     `ROUND_HALF_UP` makes 0.125 into 0.13 and bankers' rounding makes it 0.12.
+    **One exception, and it is fenced: local-first counter checkout.** The
+    register prices a counter sale on the iPad so a slow API cannot stall the
+    till. It is allowed only because the server still owns every input and
+    re-derives every sale: the iPad prices from a server-published, hashed
+    config bundle (`app/services/pos/counter_bundle_service.py`, served by
+    `app/api/v1/pos_counter.py`); there is exactly one engine,
+    `app/services/pos/counter_pricing.py` (`price_check`, composed from
+    `pos_pricing` + `promotion_rules`), and its Swift port
+    (`mm-pos/MMPos/Features/Register/Counter/`) is asserted against the same
+    golden vectors (`apps/api/tests/fixtures/counter_pricing_vectors.json`,
+    written by `apps/api/scripts/export_counter_pricing_vectors.py`); and every
+    synced sale is re-priced by `counter_ingest_service` with
+    `recalculate(ctx=<the bundle it cites>)`, a difference persisted as
+    `pricing_status='mismatch'` + `pricing_audit`, flagged and emailed — never
+    silent. Changing the arithmetic means changing `counter_pricing`,
+    re-exporting the vectors and bumping `ENGINE_VERSION` in lockstep with the
+    app. No other client-side money formula is sanctioned by this.
 11. **Module layout**: a service lives in the subpackage for its domain —
     `catalog`, `couriers`, `delivery`, `grubops`, `inventory`, `orders`,
     `payments`, `pos`, or `providers` for a client that speaks somebody else's

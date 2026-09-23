@@ -6,7 +6,13 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
+
+from app.core.pos_builds import (
+    COUNTER_LOCAL_FIRST_MIN_BUILD,
+    COUPON_MIN_BUILD,
+    build_at_least,
+)
 
 from ._base import ORMModel
 from .branches import BranchResponse
@@ -62,9 +68,35 @@ class DeviceResponse(ORMModel):
     #: Take them without waiting for somebody to press Accept — for a
     #: kitchen-only site where nobody is watching the iPad.
     auto_accept_online_orders: bool = False
+    #: Local-first counter (migration 284). The till's ticket prefix (`T1`),
+    #: the counter mode it last reported (`online|shadow|local`), and its
+    #: unsynced / parked sale counts as of `sync_reported_at`. Null on a
+    #: terminal that has never reported them.
+    ticket_prefix: str | None = None
+    counter_mode: str | None = None
+    pending_sales: int | None = None
+    parked_sales: int | None = None
+    oldest_pending_sale_at: datetime | None = None
+    sync_reported_at: datetime | None = None
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def supports_local_first(self) -> bool:
+        """Whether this terminal's build may run the counter local-first
+        (`COUNTER_LOCAL_FIRST_MIN_BUILD`). Below it the terminal stays online-only
+        whatever its branch's flag says."""
+        return build_at_least(self.build_number, COUNTER_LOCAL_FIRST_MIN_BUILD)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def supports_coupons(self) -> bool:
+        """Whether this terminal's build can select a coupon promotion
+        (`COUPON_MIN_BUILD`). The console warns when a coupon-mode branch still
+        runs a terminal that cannot."""
+        return build_at_least(self.build_number, COUPON_MIN_BUILD)
 
 
 class DevicePairRequest(BaseModel):

@@ -64,6 +64,14 @@ _RAW_MIGRATION_INDEX = (
 # column now has a real index) as the thing to celebrate, not an entry to
 # re-justify.
 ALLOW_LIST: dict[tuple[str, str], str] = {
+    # Migration 282: the till coupon selected on a counter check. Read off the
+    # order it sits on, never searched by; NULL on almost every order, and the
+    # referenced promotions are soft-deleted, so ON DELETE SET NULL never has
+    # to scan for it in practice. Index it the day a report groups by coupon.
+    ("orders", "applied_coupon_promotion_id"): (
+        "Selected-coupon pointer, read by its own order and never filtered on; "
+        "promotions are soft-deleted so the SET NULL cascade does not fire."
+    ),
     # FIFO costing v3 projection pointers: which ledger line priced a cost, shown
     # beside the row that carries it. Read by that row, never searched by it,
     # and the lines they point at are immutable, so the FK never cascades.

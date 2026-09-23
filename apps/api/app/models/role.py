@@ -122,6 +122,7 @@ PERMISSION_GROUPS: dict[str, list[tuple[str, str]]] = {
         # somebody forgets to lock.
         ("pos.discounts.predefined", "Apply predefined discounts"),
         ("pos.discounts.open", "Apply open discounts"),
+        ("pos.promotions.apply", "Apply and remove a coupon promotion on a check"),
         ("pos.charges.open", "Add an open charge"),
         ("pos.orders.void", "Void an order or a single product"),
         ("pos.orders.return", "Return orders"),

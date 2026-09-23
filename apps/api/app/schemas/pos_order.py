@@ -114,6 +114,12 @@ class ApplyDiscountRequest(BaseModel):
     reference_id: UUID | None = None
 
 
+class ApplyCouponRequest(BaseModel):
+    """`PUT /pos/orders/{id}/coupon` — the coupon-mode promotion to select."""
+
+    promotion_id: UUID
+
+
 class ApplyChargeRequest(BaseModel):
     charge_id: UUID | None = None
     name: str | None = Field(None, max_length=100)
@@ -195,6 +201,10 @@ class OrderDiscountResponse(ORMModel):
     order_item_id: UUID | None
     source: str
     name: str
+    #: What the discount came from: the `Promotion` for a `promotion` row (auto
+    #: or coupon — so the till can tell which one produced a line discount), the
+    #: configured `Discount` for a predefined one, null for an open discount.
+    reference_id: UUID | None = None
     is_percentage: bool
     value: Decimal
     amount: Decimal
@@ -213,9 +223,20 @@ class PosOrderResponse(ORMModel):
     id: UUID
     order_number: str
     check_number: int | None
+    #: The ticket number a local-first register printed (`T1-0042`), or null
+    #: for every order the server numbered. Show `display_number ?? order_number`.
+    display_number: str | None = None
+    #: How a synced local-first counter sale compared with the server's
+    #: re-price: `verified` | `mismatch` | `unverified`; null otherwise.
+    pricing_status: str | None = None
     #: Set on the child of a split, and on a check that was joined into
     #: another, so a terminal can show where a check came from or went.
     original_order_id: UUID | None = None
+    #: The coupon the cashier selected (`PUT /coupon`), or null. Selected is not
+    #: the same as applied: an ineligible coupon stays selected while the check
+    #: gets the auto promotion (if any) — the applied one is the `promotion`
+    #: row in `order_discounts`.
+    applied_coupon_promotion_id: UUID | None = None
     branch_id: UUID | None
     table_id: UUID | None
     device_id: UUID | None
@@ -395,9 +416,13 @@ class KitchenTicketResponse(ORMModel):
     completed_at: datetime | None
     printed_at: datetime | None
     reprint_count: int
+    #: `server` (fired through the API) or `device` (printed by a local-first
+    #: register and recorded when the sale synced).
+    origin: str = "server"
     items: list[KitchenTicketItemResponse] = []
     # Denormalised for the KDS header, which shows "Table 4 · Order 12".
     order_number: str | None = None
     check_number: int | None = None
+    display_number: str | None = None
     order_type: str | None = None
     table_name: str | None = None

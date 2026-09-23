@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import type { Schemas } from '@mm/types';
 import { devicesApi } from '@/lib/pos-api';
 import type { Device } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
@@ -102,9 +103,29 @@ export default function DevicesTab() {
               </div>
             );
 
+            // Local-first counter: the mode the terminal reports, its ticket
+            // prefix, and what it still holds unsynced — so a manager sees a
+            // till with a backlog before anybody closes it.
+            const t = d as Device & Partial<Schemas['DeviceResponse']>;
+            const counter =
+              t.counter_mode || t.ticket_prefix || t.pending_sales || t.parked_sales ? (
+                <div className="text-[11px] text-gray-500">
+                  counter {t.counter_mode ?? 'online'}
+                  {t.ticket_prefix && <> · {t.ticket_prefix}</>}
+                  {t.supports_local_first === false && <span className="text-amber-700"> · build too old for local-first</span>}
+                  {(t.pending_sales ?? 0) > 0 && (
+                    <span className="text-amber-700"> · {t.pending_sales} unsynced</span>
+                  )}
+                  {(t.parked_sales ?? 0) > 0 && (
+                    <span className="text-red-700"> · {t.parked_sales} parked</span>
+                  )}
+                </div>
+              ) : null;
+
             return (
               <div className="leading-tight">
                 {version}
+                {counter}
                 {/* Unconditional, not tied to the version above. Dropping the
                     "Last seen" column means this line is now the only place the
                     console says when a terminal last spoke, and a till that has
