@@ -104,22 +104,30 @@ def upgrade() -> None:
         "pricing_status IS NULL OR pricing_status IN "
         "('verified', 'mismatch', 'unverified')",
     )
-    op.create_index(
-        "uq_orders_branch_business_date_display_number",
-        "orders",
-        ["branch_id", "business_date", "display_number"],
-        unique=True,
-        postgresql_where=sa.text("display_number IS NOT NULL"),
-    )
-    # The Counter sync console reads "every counter sale that needs a look";
-    # partial so it indexes only the handful that do. Mirrors the console's
-    # WHERE clause (`pos_counter.counter_sync_overview`) exactly.
-    op.create_index(
-        "ix_orders_counter_sync_attention",
-        "orders",
-        ["ingested_at"],
-        postgresql_where=sa.text(_ATTENTION),
-    )
+    # `orders` is hot: a plain CREATE INDEX would block every sale for the
+    # build, so both go in CONCURRENTLY outside the migration's transaction
+    # (migration 210's pattern). The columns above commit first.
+    with op.get_context().autocommit_block():
+        op.create_index(
+            "uq_orders_branch_business_date_display_number",
+            "orders",
+            ["branch_id", "business_date", "display_number"],
+            unique=True,
+            postgresql_where=sa.text("display_number IS NOT NULL"),
+            postgresql_concurrently=True,
+            if_not_exists=True,
+        )
+        # The Counter sync console reads "every counter sale that needs a
+        # look"; partial so it indexes only the handful that do. Mirrors the
+        # console's WHERE clause (`pos_counter.counter_sync_overview`) exactly.
+        op.create_index(
+            "ix_orders_counter_sync_attention",
+            "orders",
+            ["ingested_at"],
+            postgresql_where=sa.text(_ATTENTION),
+            postgresql_concurrently=True,
+            if_not_exists=True,
+        )
 
     # ─── devices ─────────────────────────────────────────────────────────────
     op.add_column("devices", sa.Column("ticket_prefix", sa.String(6), nullable=True))
@@ -258,6 +266,37 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Refuse before touching anything: narrowing `order_number` back to 30
+    # would truncate a local-first invoice number, and the concurrent index
+    # drops below commit on their own — failing after them would strand a
+    # half-downgraded schema still stamped 284.
+    long_number = (
+        op.get_bind()
+        .execute(
+            sa.text("SELECT 1 FROM orders WHERE length(order_number) > 30 LIMIT 1")
+        )
+        .first()
+    )
+    if long_number is not None:
+        raise RuntimeError(
+            "284 downgrade refused: orders carry local-first order numbers "
+            "longer than 30 characters"
+        )
+
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_orders_counter_sync_attention",
+            table_name="orders",
+            postgresql_concurrently=True,
+            if_exists=True,
+        )
+        op.drop_index(
+            "uq_orders_branch_business_date_display_number",
+            table_name="orders",
+            postgresql_concurrently=True,
+            if_exists=True,
+        )
+
     op.drop_table("counter_sale_quarantine")
     op.drop_table("pos_config_bundles")
 
@@ -283,8 +322,6 @@ def downgrade() -> None:
     ):
         op.drop_column("devices", column)
 
-    op.drop_index("ix_orders_counter_sync_attention", table_name="orders")
-    op.drop_index("uq_orders_branch_business_date_display_number", table_name="orders")
     op.drop_constraint("ck_orders_pricing_status_allowed", "orders", type_="check")
     for column in (
         "ingest_flags",
