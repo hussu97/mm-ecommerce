@@ -304,7 +304,7 @@ async def test_the_whole_lifecycle(db, world):
     reports = await auto.tick(db, full=False)
     assert _changes(reports) == {
         ("Kunafa", False, "stock_depleted"),
-        ("Lotus", False, "stock_depleted"),
+        ("Brownies / Kunafa — Lotus", False, "stock_depleted"),
     }
     row = await _product_row(db, w, w["kunafa"])
     assert (row.is_in_stock, row.unavailable_source, row.out_of_stock_until) == (
@@ -343,7 +343,7 @@ async def test_the_whole_lifecycle(db, world):
     await _stock(db, w, w["cake"], "3")
     await db.commit()
     assert _changes(await auto.tick(db, full=False)) == {
-        ("Lotus", True, "stock_recovered"),
+        ("Brownies / Kunafa — Lotus", True, "stock_recovered"),
     }
     row = await _product_row(db, w, w["kunafa"])
     assert row.is_in_stock is True and row.staff_override_until_restock is False
@@ -355,7 +355,7 @@ async def test_the_whole_lifecycle(db, world):
     await db.commit()
     assert _changes(await auto.tick(db, full=False)) == {
         ("Kunafa", False, "stock_depleted"),
-        ("Lotus", False, "stock_depleted"),
+        ("Brownies / Kunafa — Lotus", False, "stock_depleted"),
     }
     await recipe_service.draft_and_activate(
         db,
@@ -374,7 +374,7 @@ async def test_the_whole_lifecycle(db, world):
     w["settings"].auto_availability_enabled = False
     await db.commit()
     assert _changes(await auto.tick(db, full=False)) == {
-        ("Lotus", True, "feature_disabled"),
+        ("Brownies / Kunafa — Lotus", True, "feature_disabled"),
     }
     option_row = await _option_row(db, w, w["lotus"])
     assert option_row.is_in_stock is True
@@ -400,6 +400,29 @@ async def test_stock_short_of_one_sale_takes_only_that_owner_off(db, world):
     assert _changes(await auto.tick(db, full=True)) == {
         ("Kunafa", True, availability.REASON_STOCK_RECOVERED)
     }
+
+
+async def test_a_website_only_product_is_sold_at_an_online_branch(db, world):
+    """On no POS menu, but the branch takes online orders and bakes it: its
+    stock still decides whether it is on sale there (the eggless-brownie box)."""
+    w = world
+    web_only = Product(
+        name="Web-only box", slug=f"{MARKER}-{_tag()}", sales_channels=["web"]
+    )
+    db.add(web_only)
+    await db.flush()
+    await recipe_service.draft_and_activate(
+        db,
+        kind="product",
+        owner_id=web_only.id,
+        lines=[RecipeLineInput(item_id=w["cake"].id, quantity=Decimal("9"))],
+        user_id=w["user"].id,
+    )
+    await _stock(db, w, w["cake"], "5")
+    await db.commit()
+    changes = _changes(await auto.tick(db, full=True))
+    assert ("Web-only box", False, availability.REASON_STOCK_DEPLETED) in changes
+    assert ("Kunafa", False, availability.REASON_STOCK_DEPLETED) not in changes
 
 
 async def test_a_staff_stockout_is_never_put_back_by_the_system(db, world):

@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import and_, delete, func, or_, select, true, update
+from sqlalchemy import and_, delete, false, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -502,46 +502,156 @@ async def _latest_movements(
 async def _sold_at(
     db: AsyncSession, branch_id: uuid.UUID
 ) -> tuple[dict[uuid.UUID, tuple[str, bool]], dict[uuid.UUID, str]]:
-    """What the branch sells: products (name, consumes_stock) and their options.
+    """What the branch sells, on any channel: products (name, consumes_stock)
+    and their options.
 
-    The branch's live menu tree, as `recipe_service.branch_menu_recipe_gaps`
-    reads it. An option shared by several products appears once — its row is
-    per branch, not per product.
+    The union of three surfaces, because a product can live on any of them
+    without the others — a website-only box is on no POS menu, yet the branch
+    bakes and sends it, and the aggregators sell it through GrubOps:
+
+    * the branch's live POS menu tree (`recipe_service.branch_menu_recipe_gaps`
+      reads it the same way);
+    * the website catalogue, when the branch takes online orders;
+    * every approved GrubOps mapping, when the branch has a live GrubOps
+      location (the mappings are brand-wide, one per item, not per branch).
+
+    An option shared by several products appears once — its row is per branch,
+    not per product.
     """
+    from app.models.category import Category
+    from app.models.external_item_map import ExternalItemMap
+    from app.models.grubops import GrubOpsLocationMap
+    from app.models.product import WEB_CHANNEL, sells_on
     from app.services.catalog import menu_group_service
+
+    # A column read, not the ORM object: the tick's own Branch may carry an
+    # expired attribute, and an async lazy load would raise.
+    online = await db.scalar(
+        select(Branch.receives_online_orders).where(Branch.id == branch_id)
+    )
+    product_ids: set[uuid.UUID] = set(
+        (
+            await db.execute(
+                menu_group_service.visible_product_ids_subquery(branch_id=branch_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if online:
+        product_ids.update(
+            (
+                await db.execute(
+                    select(Product.id).where(
+                        sells_on(WEB_CHANNEL),
+                        or_(
+                            Product.category_id.is_(None),
+                            Product.category.has(Category.is_active.is_(True)),
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    mapped_options: set[uuid.UUID] = set()
+    on_grubops = await db.scalar(
+        select(func.count())
+        .select_from(GrubOpsLocationMap)
+        .where(
+            GrubOpsLocationMap.branch_id == branch_id,
+            GrubOpsLocationMap.is_active.is_(True),
+        )
+    )
+    if on_grubops:
+        for pid, oid in (
+            await db.execute(
+                select(
+                    ExternalItemMap.product_id, ExternalItemMap.modifier_option_id
+                ).where(
+                    ExternalItemMap.system == "grubops",
+                    ExternalItemMap.approved.is_(True),
+                )
+            )
+        ).all():
+            if pid is not None:
+                product_ids.add(pid)
+            if oid is not None:
+                mapped_options.add(oid)
 
     products = {
         pid: (name, bool(consumes))
         for pid, name, consumes in (
             await db.execute(
                 select(Product.id, Product.name, Product.consumes_stock).where(
-                    Product.id.in_(
-                        menu_group_service.visible_product_ids_subquery(
-                            branch_id=branch_id
-                        )
-                    ),
+                    Product.id.in_(product_ids) if product_ids else false(),
                     Product.is_active.is_(True),
                 )
             )
         ).all()
     }
-    options: dict[uuid.UUID, str] = {}
-    if products:
-        for oid, name in (
+    # An option is named with the product(s) it sits on — "9 Pieces" alone
+    # says nothing in an email or the audit log.
+    labels: dict[uuid.UUID, tuple[str, set[str]]] = {}
+    if products or mapped_options:
+        for oid, name, modifier_name, product_id in (
             await db.execute(
-                select(ModifierOption.id, ModifierOption.name)
+                select(
+                    ModifierOption.id,
+                    ModifierOption.name,
+                    Modifier.name,
+                    ProductModifier.product_id,
+                )
                 .join(Modifier, Modifier.id == ModifierOption.modifier_id)
-                .join(ProductModifier, ProductModifier.modifier_id == Modifier.id)
+                .outerjoin(ProductModifier, ProductModifier.modifier_id == Modifier.id)
                 .where(
-                    ProductModifier.product_id.in_(list(products)),
+                    or_(
+                        ProductModifier.product_id.in_(list(products))
+                        if products
+                        else false(),
+                        ModifierOption.id.in_(list(mapped_options))
+                        if mapped_options
+                        else false(),
+                    ),
                     ModifierOption.is_active.is_(True),
                     Modifier.is_active.is_(True),
                 )
-                .distinct()
             )
         ).all():
-            options[oid] = name
+            _, owners = labels.setdefault(oid, (name, set()))
+            owner = products.get(product_id)
+            owners.add(owner[0] if owner else modifier_name)
+    options: dict[uuid.UUID, str] = {
+        oid: f"{' / '.join(sorted(owners))} — {name}" if owners else name
+        for oid, (name, owners) in labels.items()
+    }
     return products, options
+
+
+async def _option_labels(
+    db: AsyncSession, option_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """ "Product / Product — Option" for each option, as `_sold_at` names them."""
+    ids = list(set(option_ids))
+    if not ids:
+        return {}
+    labels: dict[uuid.UUID, tuple[str, set[str]]] = {}
+    for oid, name, product_name in (
+        await db.execute(
+            select(ModifierOption.id, ModifierOption.name, Product.name)
+            .join(Modifier, Modifier.id == ModifierOption.modifier_id)
+            .outerjoin(ProductModifier, ProductModifier.modifier_id == Modifier.id)
+            .outerjoin(Product, Product.id == ProductModifier.product_id)
+            .where(ModifierOption.id.in_(ids))
+        )
+    ).all():
+        _, owners = labels.setdefault(oid, (name, set()))
+        if product_name:
+            owners.add(product_name)
+    return {
+        oid: f"{' / '.join(sorted(owners))} — {name}" if owners else name
+        for oid, (name, owners) in labels.items()
+    }
 
 
 def _auto_state(
@@ -881,7 +991,14 @@ async def release_disabled_branches(db: AsyncSession) -> list[BranchReport]:
                 .with_for_update(of=model)
             )
         ).all()
+        labels = (
+            await _option_labels(db, [row.modifier_option_id for row, _ in rows])
+            if kind == _OPTION
+            else {}
+        )
         for row, name in rows:
+            if kind == _OPTION:
+                name = labels.get(row.modifier_option_id, name)
             found = await branch_of(row.branch_id)
             if found is None:
                 continue
