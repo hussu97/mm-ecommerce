@@ -1028,7 +1028,20 @@ def test_fast_path_matches_replay_on_random_ledgers(seed):
         fast_hits += 1
         fast = engine.project()
         key = (line.item_id, line.warehouse_id)
+        # Quantities and the shape of the projection always match a replay.
         assert fast.levels[key].quantity == full.levels[key].quantity
+        by_id = {layer.id: layer for layer in full.layers}
+        for layer in fast.layers:
+            assert layer.id in by_id
+            assert layer.remaining_quantity == by_id[layer.id].remaining_quantity
+        full_cons = {row.id: row for row in full.consumptions}
+        for row in fast.consumptions:
+            assert row.quantity == full_cons[row.id].quantity
+            assert row.is_shortfall == full_cons[row.id].is_shortfall
+        # Known costs match exactly; only an estimate may lag until a replay.
+        if fast.line_costs[line.line_id].is_provisional:
+            assert full.line_costs[line.line_id].is_provisional
+            continue
         assert fast.levels[key].average_cost == full.levels[key].average_cost
         assert fast.line_costs[line.line_id].total_cost == (
             full.line_costs[line.line_id].total_cost
@@ -1036,12 +1049,9 @@ def test_fast_path_matches_replay_on_random_ledgers(seed):
         assert fast.line_costs[line.line_id].running_value == (
             full.line_costs[line.line_id].running_value
         )
-        by_id = {layer.id: layer for layer in full.layers}
         for layer in fast.layers:
-            assert layer.id in by_id
-            assert layer.remaining_quantity == by_id[layer.id].remaining_quantity
-            assert layer.unit_cost == by_id[layer.id].unit_cost
-        full_cons = {row.id: row for row in full.consumptions}
+            if not layer.cost_is_provisional:
+                assert layer.unit_cost == by_id[layer.id].unit_cost
         for row in fast.consumptions:
             assert row.total_cost == full_cons[row.id].total_cost
     assert_invariant(replay(ledger))
@@ -1062,7 +1072,7 @@ def test_plain_sale_from_known_cost_stock_takes_the_fast_path():
     assert fast.levels[(item, WH)].quantity == D("6")
 
 
-def test_fast_path_refuses_what_needs_history():
+def test_fast_path_books_an_oversell_at_an_estimate():
     item = uuid.uuid4()
     ledger = Ledger()
     ledger.add("purchasing", "1", "2", item=item, po=True)
@@ -1071,8 +1081,23 @@ def test_fast_path_refuses_what_needs_history():
     engine = CostingEngine(
         cutover_sequence=None, fast=True, seeds=seeds_from(before, [(item, WH)])
     )
+    engine.apply(oversell)
+    cost = engine.project().line_costs[oversell.line_id]
+    assert cost.total_cost == D("8")  # 1 @ 2 from stock + 3 estimated at 2
+    assert cost.is_provisional
+
+
+def test_fast_path_refuses_a_receipt_that_prices_waiting_stock():
+    item = uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("consumption_from_orders", "-4", item=item)
+    receipt = ledger.add("purchasing", "10", "3", item=item, po=True)
+    before = replay(ledger, ledger.lines[:-1])
+    engine = CostingEngine(
+        cutover_sequence=None, fast=True, seeds=seeds_from(before, [(item, WH)])
+    )
     with pytest.raises(NeedsReplay):
-        engine.apply(oversell)
+        engine.apply(receipt)
 
 
 @pytest.mark.parametrize("seed", range(30))

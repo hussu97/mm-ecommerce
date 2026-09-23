@@ -255,7 +255,9 @@ async def _external_sends(
             t.source_id,
             i.item_id,
             func.sum(c.quantity),
-            func.sum(c.total_cost),
+            # Exact, not the 4-dp total_cost: a warehouse replay must price a
+            # transfer in to the same ten places the estate replay does.
+            func.sum(c.quantity * c.unit_cost),
             func.bool_or(c.cost_is_provisional),
         )
         .join(i, i.transaction_id == t.id)
@@ -815,7 +817,12 @@ async def _group_inputs(
         InventoryCostLayerConsumption,
     )
     rows = await db.execute(
-        select(t.correction_group_id, c.quantity, c.total_cost, c.cost_is_provisional)
+        select(
+            t.correction_group_id,
+            c.quantity,
+            c.quantity * c.unit_cost,
+            c.cost_is_provisional,
+        )
         .join(i, i.transaction_id == t.id)
         .join(c, c.consuming_line_id == i.id)
         .where(

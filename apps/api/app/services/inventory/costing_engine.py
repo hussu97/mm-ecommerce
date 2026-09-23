@@ -11,10 +11,13 @@ two ways in:
   estate sweep all run this, so they can never disagree with each other.
 * The same :meth:`CostingEngine.apply` over one new posting, starting from the
   current projection instead of from nothing — the **fast path**
-  (``fast=True``). It handles only the plain cases (an issue fully covered by
-  known-cost stock, a priced receipt with nothing waiting for a price) and raises
-  :class:`NeedsReplay` for everything else, so it can never produce a different
-  answer from a replay; it just gets there without re-reading history.
+  (``fast=True``). It handles the everyday cases — any issue (a sale, a
+  production draw), a priced receipt with nothing waiting for a price — and
+  raises :class:`NeedsReplay` for anything that can change a cost already
+  booked (a receipt that prices waiting stock, a void, a count overage, a cost
+  adjustment). Known costs always match a replay exactly; the one thing the fast
+  path may leave stale is an *estimate* (stock still waiting on a price), which
+  the next replay of that warehouse — or the nightly one — refreshes.
 
 The rules, per (item, warehouse):
 
@@ -735,8 +738,6 @@ class CostingEngine:
         for layer in state.live():
             if outstanding <= 0:
                 break
-            if self.fast and layer.seeded_provisional:
-                raise NeedsReplay("issue from stock still waiting on a price")
             take = min(layer.remaining, outstanding)
             layer.remaining -= take
             layer.touched = True
@@ -748,9 +749,14 @@ class CostingEngine:
             outstanding -= take
         state.advance_head()
         if outstanding > 0:
-            if self.fast:
-                raise NeedsReplay("issue beyond the stock on hand")
-            pending = self._estimate(state, line)
+            # A shortfall waits on the next priced receipt. On the fast path it
+            # is estimated at the level's current cost; the receipt that prices
+            # it forces a replay, which re-costs it properly.
+            pending = (
+                Pending(state.last_cost, ZERO)
+                if self.fast
+                else self._estimate(state, line)
+            )
             state.open_pendings.append(pending)
             state.debt += outstanding
             draws.append(Draw(outstanding, pending, None, is_shortfall=True))
