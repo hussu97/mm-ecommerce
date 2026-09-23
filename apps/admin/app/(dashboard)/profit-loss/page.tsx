@@ -13,8 +13,8 @@
 
 import { useEffect, useState } from 'react';
 import { profitLossApi, type PnlReport } from '@/lib/api';
-import { branchesApi } from '@/lib/pos-api';
-import type { Branch } from '@/lib/pos-types';
+import { branchesApi, legalEntitiesApi } from '@/lib/pos-api';
+import type { Branch, LegalEntity } from '@/lib/pos-types';
 import { LoadError, MultiSelect, Spinner } from '@/components/ui';
 import { useUrlFilters, type FilterFieldSpec } from '@/lib/list-filters';
 import { DATE_PRESETS } from '@/lib/order-filters';
@@ -25,9 +25,16 @@ const FIELDS: FilterFieldSpec[] = [
   { key: 'to', kind: 'single' },
   { key: 'channels', param: 'channel', kind: 'multi' },
   { key: 'branches', param: 'branch', kind: 'multi' },
+  { key: 'entities', param: 'legal_entity', kind: 'multi' },
 ];
 
-type Filters = { from: string; to: string; channels: string[]; branches: string[] };
+type Filters = {
+  from: string;
+  to: string;
+  channels: string[];
+  branches: string[];
+  entities: string[];
+};
 
 const CHANNEL_LABEL: Record<string, string> = {
   total: 'Total',
@@ -108,6 +115,7 @@ function Tile({ label, value, pct }: { label: string; value: number; pct?: numbe
 export default function ProfitLossPage() {
   const { filters, patch, hasAny, clearAll } = useUrlFilters<Filters>(FIELDS);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [entities, setEntities] = useState<LegalEntity[]>([]);
   const [report, setReport] = useState<PnlReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -122,9 +130,13 @@ export default function ProfitLossPage() {
       .list()
       .then(rows => setBranches(rows.filter(b => !b.deleted_at)))
       .catch(() => setBranches([]));
+    void legalEntitiesApi
+      .list()
+      .then(setEntities)
+      .catch(() => setEntities([]));
   }, []);
 
-  const key = JSON.stringify([from, to, filters.channels, filters.branches]);
+  const key = JSON.stringify([from, to, filters.channels, filters.branches, filters.entities]);
   useEffect(() => {
     let live = true;
     setLoading(true);
@@ -135,6 +147,7 @@ export default function ProfitLossPage() {
         date_to: to,
         channels: filters.channels.length ? filters.channels : undefined,
         branch_ids: filters.branches.length ? filters.branches : undefined,
+        legal_entity_ids: filters.entities.length ? filters.entities : undefined,
       })
       .then(r => live && setReport(r))
       .catch(e => live && setError((e as Error).message))
@@ -217,6 +230,13 @@ export default function ProfitLossPage() {
           value={filters.branches}
           onChange={branches => patch({ branches })}
           placeholder="All branches"
+          className="md:w-48"
+        />
+        <MultiSelect
+          options={entities.map(e => ({ value: e.id, label: e.brand_name }))}
+          value={filters.entities}
+          onChange={entities => patch({ entities })}
+          placeholder="All entities"
           className="md:w-48"
         />
         {hasAny && (
@@ -337,8 +357,8 @@ export default function ProfitLossPage() {
               <h2 className="mb-2 font-display text-base text-gray-800">Platform &amp; period charges</h2>
               {!report.period_charges_included ? (
                 <p className="text-xs font-body text-gray-400">
-                  Left out while a branch is selected — marketplaces bill these per account, not
-                  per branch.
+                  Left out for this selection — marketplaces bill these per account, not per
+                  branch, and to the entity their orders are booked under.
                 </p>
               ) : report.period_charges.length === 0 ? (
                 <p className="text-xs font-body text-gray-400">

@@ -21,7 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money
 from app.models.order import Order
+from app.models.pos_order import OrderSourceEnum
 from app.services.aggregators.period_charges import PeriodCharge, period_charges
+from app.services.orders import tax_identity_service
 from app.services.orders.order_pnl import (
     CHANNELS,
     PnlTotals,
@@ -65,9 +67,19 @@ async def build(
 
     by_channel = await totals_by_channel(db, *where)
 
-    # Period charges are billed per marketplace account, not per kitchen or
-    # entity, so a branch or entity slice leaves them out rather than guessing.
-    include_period = not branch_ids and not legal_entity_ids
+    # Period charges are billed per marketplace account, not per kitchen, so a
+    # branch slice leaves them out rather than guessing. They do belong to one
+    # entity: the one marketplace orders are booked under (Fatema / Melting
+    # Moments — the same fallback `tax_identity_service` gives any aggregator
+    # order), so an entity slice keeps them only when it includes that entity.
+    include_period = not branch_ids
+    if include_period and legal_entity_ids:
+        marketplace_entity = await tax_identity_service.resolve(
+            db, branch_id=None, source=OrderSourceEnum.AGGREGATOR.value
+        )
+        include_period = (
+            marketplace_entity is not None and marketplace_entity.id in legal_entity_ids
+        )
     charges: list[PeriodCharge] = []
     if include_period:
         charges = await period_charges(

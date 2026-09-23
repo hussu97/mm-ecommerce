@@ -145,8 +145,9 @@ class PnlReportResponse(BaseModel):
     channels: list[PnlChannelColumn]
     total: PnlChannelColumn
     period_charges: list[PnlPeriodChargeRow]
-    #: False when a branch or legal-entity filter is set: period charges are
-    #: billed per marketplace account, not per branch, so they are left out
-    #: rather than guessed at.
+    #: False when a branch filter is set (period charges are billed per
+    #: marketplace account, not per branch, so they are left out rather than
+    #: guessed at), or when an entity filter excludes the entity marketplace
+    #: orders are booked under.
     period_charges_included: bool
     vat: PnlVatSummary

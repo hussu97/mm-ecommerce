@@ -457,3 +457,30 @@ async def test_period_charges_book_the_fee_and_the_noon_true_up(engine, world):
     assert true_up.is_true_up
     assert true_up.amount == D("2.10")  # 2.94 invoiced − 0.84 on order D
     assert true_up.input_vat == D("0.10")
+
+
+async def test_an_entity_slice_keeps_period_charges_only_for_the_marketplace_entity(
+    engine, world
+):
+    from app.models.legal_entity import LegalEntity as LE
+    from app.services.orders import tax_identity_service
+
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+    registered, unregistered = world["entities"]
+    async with Session() as db:
+        counter_only = await pnl_report.build(
+            db, date_from=DAY, date_to=DAY, legal_entity_ids=[unregistered]
+        )
+        marketplace = await tax_identity_service.resolve(
+            db, branch_id=None, source="aggregator"
+        )
+        assert isinstance(marketplace, LE)
+        with_marketplace = await pnl_report.build(
+            db, date_from=DAY, date_to=DAY, legal_entity_ids=[marketplace.id]
+        )
+    # The non-registered counter entity: its one sale, no marketplace charges.
+    assert not counter_only.period_charges_included
+    assert [code for code, _ in counter_only.channels] == ["counter"]
+    assert counter_only.total.pc3 == D("43.50")
+    # The entity the marketplace accounts are booked under keeps them.
+    assert with_marketplace.period_charges_included
