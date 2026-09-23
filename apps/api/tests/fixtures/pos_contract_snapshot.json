@@ -1,0 +1,3528 @@
+{
+ "endpoints": {
+  "DELETE /api/v1/pos/orders/{order_id}/discounts/{discount_id}": {
+   "params": [
+    [
+     "discount_id",
+     "path",
+     true
+    ],
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "GET /api/v1/pos/kitchen/open-checks": {
+   "params": [
+    [
+     "branch_id",
+     "query",
+     true
+    ]
+   ],
+   "response_200": {
+    "items": {
+     "ref": "PosOrderResponse"
+    },
+    "type": "array"
+   }
+  },
+  "GET /api/v1/pos/orders": {
+   "params": [
+    [
+     "branch_id",
+     "query",
+     false
+    ],
+    [
+     "business_date",
+     "query",
+     false
+    ],
+    [
+     "limit",
+     "query",
+     false
+    ],
+    [
+     "offset",
+     "query",
+     false
+    ],
+    [
+     "open_only",
+     "query",
+     false
+    ],
+    [
+     "order_type",
+     "query",
+     false
+    ],
+    [
+     "pos_status",
+     "query",
+     false
+    ],
+    [
+     "q",
+     "query",
+     false
+    ]
+   ],
+   "response_200": {
+    "items": {
+     "ref": "PosOrderResponse"
+    },
+    "type": "array"
+   }
+  },
+  "GET /api/v1/pos/orders/dispatch/board": {
+   "params": [
+    [
+     "branch_id",
+     "query",
+     false
+    ],
+    [
+     "unassigned_only",
+     "query",
+     false
+    ]
+   ],
+   "response_200": {
+    "items": {
+     "ref": "PosOrderResponse"
+    },
+    "type": "array"
+   }
+  },
+  "GET /api/v1/pos/orders/{order_id}": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "GET /api/v1/tills": {
+   "params": [
+    [
+     "branch_id",
+     "query",
+     false
+    ],
+    [
+     "business_date",
+     "query",
+     false
+    ],
+    [
+     "limit",
+     "query",
+     false
+    ],
+    [
+     "status",
+     "query",
+     false
+    ]
+   ],
+   "response_200": {
+    "items": {
+     "ref": "TillResponse"
+    },
+    "type": "array"
+   }
+  },
+  "GET /api/v1/tills/current": {
+   "params": [
+    [
+     "branch_id",
+     "query",
+     false
+    ]
+   ],
+   "response_200": {
+    "anyOf": [
+     {
+      "ref": "TillResponse"
+     },
+     {
+      "type": "null"
+     }
+    ]
+   }
+  },
+  "GET /api/v1/tills/{till_id}": {
+   "params": [
+    [
+     "till_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "TillResponse"
+   }
+  },
+  "GET /api/v1/tills/{till_id}/drawer-operations": {
+   "params": [
+    [
+     "till_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "items": {
+     "ref": "DrawerOperationResponse"
+    },
+    "type": "array"
+   }
+  },
+  "GET /api/v1/tills/{till_id}/report": {
+   "params": [
+    [
+     "till_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "TillReport"
+   }
+  },
+  "POST /api/v1/devices/heartbeat": {
+   "params": [
+    [
+     "X-App-Build",
+     "header",
+     false
+    ],
+    [
+     "X-App-Platform",
+     "header",
+     false
+    ],
+    [
+     "X-App-Version",
+     "header",
+     false
+    ],
+    [
+     "X-Device-Token",
+     "header",
+     false
+    ]
+   ],
+   "response_200": {
+    "ref": "DeviceSessionResponse"
+   }
+  },
+  "POST /api/v1/devices/pair": {
+   "params": [],
+   "request": {
+    "ref": "DevicePairRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "DevicePairResponse"
+   }
+  },
+  "POST /api/v1/pos/orders": {
+   "params": [],
+   "request": {
+    "ref": "OpenOrderRequest"
+   },
+   "request_required": true,
+   "response_201": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/accept": {
+   "params": [
+    [
+     "auto",
+     "query",
+     false
+    ],
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/cancel": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/charges": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "ApplyChargeRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/close": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/collected": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/discounts": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "ApplyDiscountRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/driver": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "AssignDriverRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/handed-over": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/items": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "AddItemRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/items/{item_id}/return": {
+   "params": [
+    [
+     "item_id",
+     "path",
+     true
+    ],
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "ReturnItemRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/items/{item_id}/void": {
+   "params": [
+    [
+     "item_id",
+     "path",
+     true
+    ],
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "VoidItemRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/join": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "JoinOrderRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/packed": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/park": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/payments": {
+   "params": [
+    [
+     "Idempotency-Key",
+     "header",
+     false
+    ],
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "PaymentRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/resume": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/schedule": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "ScheduleOrderRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/send-to-kitchen": {
+   "params": [
+    [
+     "course_id",
+     "query",
+     false
+    ],
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "response_200": {
+    "items": {
+     "ref": "KitchenTicketResponse"
+    },
+    "type": "array"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/split": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "SplitOrderRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "SplitOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/table": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "ChangeTableRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/pos/orders/{order_id}/void": {
+   "params": [
+    [
+     "order_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "VoidOrderRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PosOrderResponse"
+   }
+  },
+  "POST /api/v1/staff/pin-login": {
+   "params": [],
+   "request": {
+    "ref": "PinLoginRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "PinLoginResponse"
+   }
+  },
+  "POST /api/v1/tills/open": {
+   "params": [],
+   "request": {
+    "ref": "TillOpenRequest"
+   },
+   "request_required": true,
+   "response_201": {
+    "ref": "TillResponse"
+   }
+  },
+  "POST /api/v1/tills/{till_id}/close": {
+   "params": [
+    [
+     "till_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "TillCloseRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "TillResponse"
+   }
+  },
+  "POST /api/v1/tills/{till_id}/drawer-operations": {
+   "params": [
+    [
+     "till_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "DrawerOperationCreate"
+   },
+   "request_required": true,
+   "response_201": {
+    "ref": "DrawerOperationResponse"
+   }
+  },
+  "POST /api/v1/tills/{till_id}/spot-check": {
+   "params": [
+    [
+     "till_id",
+     "path",
+     true
+    ]
+   ],
+   "request": {
+    "ref": "SpotCheckRequest"
+   },
+   "request_required": true,
+   "response_200": {
+    "ref": "SpotCheckResult"
+   }
+  }
+ },
+ "schemas": {
+  "AddItemRequest": {
+   "properties": {
+    "course_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "kitchen_notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "product_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "quantity": {
+     "type": "integer"
+    },
+    "selected_options": {
+     "items": {
+      "ref": "app__schemas__pos_order__SelectedOption"
+     },
+     "type": "array"
+    },
+    "unit_price": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "weight": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "product_id"
+   ]
+  },
+  "ApplyChargeRequest": {
+   "properties": {
+    "charge_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "type": {
+     "enum": [
+      "fixed",
+      "open",
+      "percentage"
+     ],
+     "type": "string"
+    },
+    "value": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": []
+  },
+  "ApplyDiscountRequest": {
+   "properties": {
+    "is_percentage": {
+     "type": "boolean"
+    },
+    "name": {
+     "type": "string"
+    },
+    "order_item_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "reference_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "source": {
+     "enum": [
+      "coupon",
+      "open",
+      "predefined",
+      "promotion"
+     ],
+     "type": "string"
+    },
+    "value": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "value"
+   ]
+  },
+  "AssignDriverRequest": {
+   "properties": {
+    "driver_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": []
+  },
+  "BranchResponse": {
+   "properties": {
+    "accepts_reservations": {
+     "type": "boolean"
+    },
+    "address": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "address_localized": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "business_day_start": {
+     "type": "string"
+    },
+    "cash_enabled": {
+     "type": "boolean"
+    },
+    "city": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "city_localized": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "deleted_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "display_order": {
+     "type": "integer"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "inventory_end_of_day_time": {
+     "type": "string"
+    },
+    "is_active": {
+     "type": "boolean"
+    },
+    "latitude": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "longitude": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "name_localized": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "noon_send_outlet_address_code": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "noon_send_outlet_code": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "offers_pickup": {
+     "type": "boolean"
+    },
+    "phone": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "receipt_footer": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "receipt_header": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "receives_online_orders": {
+     "type": "boolean"
+    },
+    "reference": {
+     "type": "string"
+    },
+    "reservation_duration": {
+     "type": "integer"
+    },
+    "reservation_times": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "object"
+      }
+     ]
+    },
+    "return_branch_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "show_recipes": {
+     "type": "boolean"
+    },
+    "tax_group_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "tax_number": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "tax_registration_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "translations": {
+     "additional": {
+      "additional": {
+       "type": "string"
+      },
+      "type": "object"
+     },
+     "type": "object"
+    },
+    "type": {
+     "type": "string"
+    },
+    "updated_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "uses_pos": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "accepts_reservations",
+    "address",
+    "address_localized",
+    "business_day_start",
+    "cash_enabled",
+    "city",
+    "city_localized",
+    "created_at",
+    "deleted_at",
+    "display_order",
+    "id",
+    "inventory_end_of_day_time",
+    "is_active",
+    "latitude",
+    "longitude",
+    "name",
+    "name_localized",
+    "noon_send_outlet_address_code",
+    "noon_send_outlet_code",
+    "offers_pickup",
+    "phone",
+    "receipt_footer",
+    "receipt_header",
+    "receives_online_orders",
+    "reference",
+    "reservation_duration",
+    "reservation_times",
+    "return_branch_id",
+    "show_recipes",
+    "tax_group_id",
+    "tax_number",
+    "tax_registration_name",
+    "translations",
+    "type",
+    "updated_at",
+    "uses_pos"
+   ]
+  },
+  "ChangeTableRequest": {
+   "properties": {
+    "table_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": []
+  },
+  "ChannelRevenue": {
+   "properties": {
+    "key": {
+     "type": "string"
+    },
+    "label": {
+     "type": "string"
+    },
+    "orders": {
+     "type": "integer"
+    },
+    "refunds": {
+     "type": "string"
+    },
+    "revenue": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "key",
+    "label",
+    "orders",
+    "refunds",
+    "revenue"
+   ]
+  },
+  "CourierBadge": {
+   "properties": {
+    "code": {
+     "type": "string"
+    },
+    "is_aggregator": {
+     "type": "boolean"
+    },
+    "logo_url": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "code",
+    "logo_url",
+    "name"
+   ]
+  },
+  "DevicePairRequest": {
+   "properties": {
+    "app_version": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "build_number": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "model_identifier": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "os_version": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "pairing_code": {
+     "type": "string"
+    },
+    "platform": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "pairing_code"
+   ]
+  },
+  "DevicePairResponse": {
+   "properties": {
+    "branch": {
+     "ref": "BranchResponse"
+    },
+    "device": {
+     "ref": "DeviceResponse"
+    },
+    "device_token": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "branch",
+    "device",
+    "device_token"
+   ]
+  },
+  "DeviceResponse": {
+   "properties": {
+    "app_version": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "auto_accept_online_orders": {
+     "type": "boolean"
+    },
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "build_number": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "category_ids": {
+     "items": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "deleted_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "last_seen_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "model_identifier": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "os_version": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "pairing_code": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "pairing_code_expires_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "platform": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "reference": {
+     "type": "string"
+    },
+    "status": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    },
+    "updated_at": {
+     "format": "date-time",
+     "type": "string"
+    }
+   },
+   "required": [
+    "app_version",
+    "branch_id",
+    "build_number",
+    "category_ids",
+    "created_at",
+    "deleted_at",
+    "id",
+    "last_seen_at",
+    "model_identifier",
+    "name",
+    "os_version",
+    "pairing_code",
+    "pairing_code_expires_at",
+    "platform",
+    "reference",
+    "status",
+    "type",
+    "updated_at"
+   ]
+  },
+  "DeviceSessionResponse": {
+   "properties": {
+    "branch": {
+     "ref": "BranchResponse"
+    },
+    "device": {
+     "ref": "DeviceResponse"
+    }
+   },
+   "required": [
+    "branch",
+    "device"
+   ]
+  },
+  "DrawerOperationCreate": {
+   "properties": {
+    "amount": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "reason_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "type": {
+     "enum": [
+      "cash_drop",
+      "open_drawer",
+      "pay_in",
+      "pay_out",
+      "return",
+      "sales"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "type"
+   ]
+  },
+  "DrawerOperationResponse": {
+   "properties": {
+    "amount": {
+     "type": "string"
+    },
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "order_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "reason_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "recorded_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "till_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    },
+    "user_id": {
+     "format": "uuid",
+     "type": "string"
+    }
+   },
+   "required": [
+    "amount",
+    "created_at",
+    "id",
+    "notes",
+    "order_id",
+    "reason_id",
+    "recorded_at",
+    "till_id",
+    "type",
+    "user_id"
+   ]
+  },
+  "JoinOrderRequest": {
+   "properties": {
+    "source_order_id": {
+     "format": "uuid",
+     "type": "string"
+    }
+   },
+   "required": [
+    "source_order_id"
+   ]
+  },
+  "KitchenTicketItemResponse": {
+   "properties": {
+    "completed_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "modifiers_summary": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "order_item_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "product_name": {
+     "type": "string"
+    },
+    "quantity": {
+     "type": "integer"
+    },
+    "status": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "completed_at",
+    "id",
+    "modifiers_summary",
+    "notes",
+    "order_item_id",
+    "product_name",
+    "quantity",
+    "status"
+   ]
+  },
+  "KitchenTicketResponse": {
+   "properties": {
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "check_number": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "completed_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "items": {
+     "items": {
+      "ref": "KitchenTicketItemResponse"
+     },
+     "type": "array"
+    },
+    "kitchen_flow_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "order_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "order_number": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "order_type": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "printed_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "reprint_count": {
+     "type": "integer"
+    },
+    "sent_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "sequence": {
+     "type": "integer"
+    },
+    "started_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "status": {
+     "type": "string"
+    },
+    "table_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "branch_id",
+    "completed_at",
+    "id",
+    "kitchen_flow_id",
+    "order_id",
+    "printed_at",
+    "reprint_count",
+    "sent_at",
+    "sequence",
+    "started_at",
+    "status"
+   ]
+  },
+  "OpenOrderRequest": {
+   "properties": {
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "customer_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "customer_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "customer_phone": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "device_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "due_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "guests": {
+     "type": "integer"
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "order_type": {
+     "enum": [
+      "delivery",
+      "pickup"
+     ],
+     "type": "string"
+    },
+    "source": {
+     "type": "string"
+    },
+    "table_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "till_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "branch_id"
+   ]
+  },
+  "OrderChargeResponse": {
+   "properties": {
+    "amount": {
+     "type": "string"
+    },
+    "charge_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "amount",
+    "charge_id",
+    "id",
+    "name",
+    "type",
+    "value"
+   ]
+  },
+  "OrderDiscountResponse": {
+   "properties": {
+    "amount": {
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "is_percentage": {
+     "type": "boolean"
+    },
+    "name": {
+     "type": "string"
+    },
+    "order_item_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "source": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "amount",
+    "id",
+    "is_percentage",
+    "name",
+    "order_item_id",
+    "source",
+    "value"
+   ]
+  },
+  "OrderLegalEntity": {
+   "properties": {
+    "brand_name": {
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "invoice_title": {
+     "type": "string"
+    },
+    "legal_name": {
+     "type": "string"
+    },
+    "logo_url": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "reference": {
+     "type": "string"
+    },
+    "tax_number": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "vat_registered": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "brand_name",
+    "id",
+    "invoice_title",
+    "legal_name",
+    "logo_url",
+    "reference",
+    "tax_number",
+    "vat_registered"
+   ]
+  },
+  "OrderPaymentResponse": {
+   "properties": {
+    "amount": {
+     "type": "string"
+    },
+    "change_given": {
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "is_refund": {
+     "type": "boolean"
+    },
+    "payment_method_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "recorded_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "reference": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "tendered": {
+     "type": "string"
+    },
+    "tips": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "amount",
+    "change_given",
+    "id",
+    "is_refund",
+    "payment_method_id",
+    "recorded_at",
+    "reference",
+    "tendered",
+    "tips"
+   ]
+  },
+  "OrderTaxResponse": {
+   "properties": {
+    "amount": {
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "rate": {
+     "type": "string"
+    },
+    "tax_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "taxable_amount": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "amount",
+    "id",
+    "name",
+    "rate",
+    "tax_id",
+    "taxable_amount"
+   ]
+  },
+  "PaymentRequest": {
+   "properties": {
+    "amount": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "is_refund": {
+     "type": "boolean"
+    },
+    "payment_method_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "reference": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "tendered": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "till_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "tips": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "amount",
+    "payment_method_id"
+   ]
+  },
+  "PinLoginRequest": {
+   "properties": {
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "device_token": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "pin": {
+     "type": "string"
+    },
+    "user_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "branch_id",
+    "pin"
+   ]
+  },
+  "PinLoginResponse": {
+   "properties": {
+    "access_token": {
+     "type": "string"
+    },
+    "permissions": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "staff": {
+     "ref": "StaffResponse"
+    },
+    "token_type": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "access_token",
+    "permissions",
+    "staff"
+   ]
+  },
+  "PosOrderResponse": {
+   "properties": {
+    "aggregator_channel": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "aggregator_delivery_fee": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "already_accepted": {
+     "type": "boolean"
+    },
+    "amount_paid": {
+     "type": "string"
+    },
+    "balance_due": {
+     "type": "string"
+    },
+    "branch_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "business_date": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "charges_amount": {
+     "type": "string"
+    },
+    "check_number": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "closed_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "closer_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "courier": {
+     "anyOf": [
+      {
+       "ref": "CourierBadge"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "courier_reference": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "creator_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "customer_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "customer_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "customer_phone": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "customer_phone_access_code": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "delivery_address": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "delivery_provider": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "delivery_status": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "delivery_zone_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "device_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "discount_amount": {
+     "type": "string"
+    },
+    "driver_assignment_count": {
+     "type": "integer"
+    },
+    "driver_distance_km": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      }
+     ]
+    },
+    "driver_eta_minutes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "number"
+      }
+     ]
+    },
+    "driver_location_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "driver_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "driver_phone": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "external_reference": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "guests": {
+     "type": "integer"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "items": {
+     "items": {
+      "ref": "app__schemas__pos_order__OrderItemResponse"
+     },
+     "type": "array"
+    },
+    "kitchen_notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "legal_entity": {
+     "anyOf": [
+      {
+       "ref": "OrderLegalEntity"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "may_auto_accept": {
+     "type": "boolean"
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "opened_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "order_charges": {
+     "items": {
+      "ref": "OrderChargeResponse"
+     },
+     "type": "array"
+    },
+    "order_discounts": {
+     "items": {
+      "ref": "OrderDiscountResponse"
+     },
+     "type": "array"
+    },
+    "order_number": {
+     "type": "string"
+    },
+    "order_taxes": {
+     "items": {
+      "ref": "OrderTaxResponse"
+     },
+     "type": "array"
+    },
+    "order_type": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "original_order_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "payment_method": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "payments": {
+     "items": {
+      "ref": "OrderPaymentResponse"
+     },
+     "type": "array"
+    },
+    "pos_status": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "rounding_amount": {
+     "type": "string"
+    },
+    "source": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "status": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "subtotal": {
+     "type": "string"
+    },
+    "table_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "till_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "tips_amount": {
+     "type": "string"
+    },
+    "total": {
+     "type": "string"
+    },
+    "total_excl_vat": {
+     "type": "string"
+    },
+    "updated_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "vat_amount": {
+     "type": "string"
+    },
+    "vat_rate": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "branch_id",
+    "business_date",
+    "charges_amount",
+    "check_number",
+    "closed_at",
+    "closer_id",
+    "created_at",
+    "creator_id",
+    "customer_name",
+    "customer_phone",
+    "delivery_status",
+    "device_id",
+    "discount_amount",
+    "guests",
+    "id",
+    "kitchen_notes",
+    "notes",
+    "opened_at",
+    "order_number",
+    "order_type",
+    "pos_status",
+    "rounding_amount",
+    "source",
+    "subtotal",
+    "table_id",
+    "till_id",
+    "tips_amount",
+    "total",
+    "total_excl_vat",
+    "updated_at",
+    "vat_amount"
+   ]
+  },
+  "ReturnItemRequest": {
+   "properties": {
+    "quantity": {
+     "type": "integer"
+    },
+    "reason_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "quantity"
+   ]
+  },
+  "ScheduleOrderRequest": {
+   "properties": {
+    "due_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": []
+  },
+  "SplitOrderRequest": {
+   "properties": {
+    "item_ids": {
+     "items": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "item_ids"
+   ]
+  },
+  "SplitOrderResponse": {
+   "properties": {
+    "original": {
+     "ref": "PosOrderResponse"
+    },
+    "split": {
+     "ref": "PosOrderResponse"
+    }
+   },
+   "required": [
+    "original",
+    "split"
+   ]
+  },
+  "SpotCheckRequest": {
+   "properties": {
+    "counted_amount": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "counted_amount"
+   ]
+  },
+  "SpotCheckResult": {
+   "properties": {
+    "counted_amount": {
+     "type": "string"
+    },
+    "expected_amount": {
+     "type": "string"
+    },
+    "variance": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "counted_amount",
+    "expected_amount",
+    "variance"
+   ]
+  },
+  "StaffResponse": {
+   "properties": {
+    "branch_ids": {
+     "items": {
+      "format": "uuid",
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "display_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "email": {
+     "type": "string"
+    },
+    "has_pin": {
+     "type": "boolean"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "is_active": {
+     "type": "boolean"
+    },
+    "is_admin": {
+     "type": "boolean"
+    },
+    "is_driver": {
+     "type": "boolean"
+    },
+    "is_staff": {
+     "type": "boolean"
+    },
+    "phone": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "role_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "role_name": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "staff_number": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "updated_at": {
+     "format": "date-time",
+     "type": "string"
+    }
+   },
+   "required": [
+    "created_at",
+    "display_name",
+    "email",
+    "id",
+    "is_active",
+    "is_admin",
+    "is_driver",
+    "is_staff",
+    "phone",
+    "role_id",
+    "staff_number",
+    "updated_at"
+   ]
+  },
+  "TillCloseRequest": {
+   "properties": {
+    "closing_amount": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "closing_amount"
+   ]
+  },
+  "TillOpenRequest": {
+   "properties": {
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "device_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "opening_amount": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "branch_id"
+   ]
+  },
+  "TillReport": {
+   "properties": {
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "business_date": {
+     "type": "string"
+    },
+    "cash_enabled": {
+     "type": "boolean"
+    },
+    "channels": {
+     "items": {
+      "ref": "ChannelRevenue"
+     },
+     "type": "array"
+    },
+    "charges": {
+     "type": "string"
+    },
+    "closed_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "closing_amount": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "discounts": {
+     "type": "string"
+    },
+    "drawer_totals": {
+     "additional": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "estimated_cash": {
+     "type": "string"
+    },
+    "gross_sales": {
+     "type": "string"
+    },
+    "net_payments": {
+     "type": "string"
+    },
+    "net_sales": {
+     "type": "string"
+    },
+    "opened_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "opening_amount": {
+     "type": "string"
+    },
+    "orders_count": {
+     "type": "integer"
+    },
+    "payments_by_method": {
+     "additional": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "returns": {
+     "type": "string"
+    },
+    "taxes": {
+     "type": "string"
+    },
+    "till_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "tips": {
+     "type": "string"
+    },
+    "total_orders": {
+     "type": "integer"
+    },
+    "total_refunds": {
+     "type": "string"
+    },
+    "total_revenue": {
+     "type": "string"
+    },
+    "user_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "variance": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "branch_id",
+    "business_date",
+    "cash_enabled",
+    "channels",
+    "charges",
+    "closed_at",
+    "closing_amount",
+    "discounts",
+    "drawer_totals",
+    "estimated_cash",
+    "gross_sales",
+    "net_payments",
+    "net_sales",
+    "opened_at",
+    "opening_amount",
+    "orders_count",
+    "payments_by_method",
+    "returns",
+    "taxes",
+    "till_id",
+    "tips",
+    "total_orders",
+    "total_refunds",
+    "total_revenue",
+    "user_id",
+    "variance"
+   ]
+  },
+  "TillResponse": {
+   "properties": {
+    "branch_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "business_date": {
+     "type": "string"
+    },
+    "closed_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "closed_by_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "closing_amount": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "created_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "device_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "estimated_cash": {
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "opened_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "opening_amount": {
+     "type": "string"
+    },
+    "status": {
+     "type": "string"
+    },
+    "totals": {
+     "type": "object"
+    },
+    "updated_at": {
+     "format": "date-time",
+     "type": "string"
+    },
+    "user_id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "variance": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "branch_id",
+    "business_date",
+    "closed_at",
+    "closed_by_id",
+    "closing_amount",
+    "created_at",
+    "device_id",
+    "estimated_cash",
+    "id",
+    "notes",
+    "opened_at",
+    "opening_amount",
+    "status",
+    "totals",
+    "updated_at",
+    "user_id",
+    "variance"
+   ]
+  },
+  "VoidItemRequest": {
+   "properties": {
+    "reason_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": []
+  },
+  "VoidOrderRequest": {
+   "properties": {
+    "reason_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": []
+  },
+  "app__schemas__pos_order__OrderItemResponse": {
+   "properties": {
+    "added_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "base_price": {
+     "type": "string"
+    },
+    "course_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "discount_amount": {
+     "type": "string"
+    },
+    "id": {
+     "format": "uuid",
+     "type": "string"
+    },
+    "is_open_price": {
+     "type": "boolean"
+    },
+    "kitchen_flow_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "kitchen_notes": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "options_price": {
+     "type": "string"
+    },
+    "personalisation_note": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "product_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "product_name": {
+     "type": "string"
+    },
+    "product_sku": {
+     "type": "string"
+    },
+    "quantity": {
+     "type": "integer"
+    },
+    "returned_quantity": {
+     "type": "integer"
+    },
+    "selected_options_snapshot": {
+     "items": {
+      "type": null
+     },
+     "type": "array"
+    },
+    "sent_to_kitchen_at": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "date-time",
+       "type": "string"
+      }
+     ]
+    },
+    "status": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "tax_amount": {
+     "type": "string"
+    },
+    "tax_exclusive_total_price": {
+     "type": "string"
+    },
+    "total_price": {
+     "type": "string"
+    },
+    "unit_price": {
+     "type": "string"
+    },
+    "weight": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "added_at",
+    "base_price",
+    "discount_amount",
+    "id",
+    "is_open_price",
+    "kitchen_flow_id",
+    "kitchen_notes",
+    "options_price",
+    "product_id",
+    "product_name",
+    "product_sku",
+    "quantity",
+    "returned_quantity",
+    "sent_to_kitchen_at",
+    "status",
+    "tax_amount",
+    "tax_exclusive_total_price",
+    "total_price",
+    "unit_price"
+   ]
+  },
+  "app__schemas__pos_order__SelectedOption": {
+   "properties": {
+    "modifier_option_id": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "format": "uuid",
+       "type": "string"
+      }
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "price": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    },
+    "quantity": {
+     "type": "integer"
+    },
+    "sku": {
+     "anyOf": [
+      {
+       "type": "null"
+      },
+      {
+       "type": "string"
+      }
+     ]
+    }
+   },
+   "required": [
+    "name"
+   ]
+  }
+ }
+}

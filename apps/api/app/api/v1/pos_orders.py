@@ -39,6 +39,7 @@ from app.schemas.courier import CourierBadge
 from app.schemas.pos_order import (
     AddItemRequest,
     ApplyChargeRequest,
+    ApplyCouponRequest,
     ApplyDiscountRequest,
     AssignDriverRequest,
     ChangeTableRequest,
@@ -438,6 +439,35 @@ async def remove_discount(
     return _serialise(order)
 
 
+@router.put("/{order_id}/coupon", response_model=PosOrderResponse)
+async def apply_coupon(
+    order_id: uuid.UUID,
+    data: ApplyCouponRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("pos.promotions.apply")),
+):
+    """Select a coupon-mode promotion on the check (replacing any other) and
+    re-price. 422 unless it runs as a coupon at the order's branch; 409 unless
+    the order is an open counter check."""
+    order = await _load(db, order_id)
+    order = await pos_order_service.set_coupon(
+        db, order=order, promotion_id=data.promotion_id
+    )
+    return _serialise(order)
+
+
+@router.delete("/{order_id}/coupon", response_model=PosOrderResponse)
+async def remove_coupon(
+    order_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require("pos.promotions.apply")),
+):
+    """Deselect the check's coupon and re-price. Idempotent."""
+    order = await _load(db, order_id)
+    order = await pos_order_service.clear_coupon(db, order=order)
+    return _serialise(order)
+
+
 @router.post("/{order_id}/charges", response_model=PosOrderResponse)
 async def apply_charge(
     order_id: uuid.UUID,
@@ -699,6 +729,7 @@ async def _serialise_ticket(
     if order is not None:
         payload.order_number = order.order_number
         payload.check_number = order.check_number
+        payload.display_number = order.display_number
         payload.order_type = order.order_type
         if order.table_id:
             table = await db.get(PosTable, order.table_id)

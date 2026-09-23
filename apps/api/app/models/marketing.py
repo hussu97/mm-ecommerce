@@ -14,10 +14,11 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Integer,
@@ -166,6 +167,13 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     """
 
     __tablename__ = "promotions"
+    __table_args__ = (
+        # A branch runs a promotion one way or the other, never both.
+        CheckConstraint(
+            "NOT (auto_branch_ids && coupon_branch_ids)",
+            name="ck_promotions_branch_modes_disjoint",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     name_localized: Mapped[str | None] = mapped_column(String(150), nullable=True)
@@ -230,8 +238,22 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
     #: reduce to one order-level `OrderDiscount` the engine can add unattended.
     #: The API refuses `auto_apply` on any other reward/trigger so the flag can
     #: never be set on a shape the engine will silently ignore.
+    #:
+    #: Kept for compatibility since the per-branch modes below: written by the
+    #: API as `bool(auto_branch_ids)`. The engine reads the arrays, not this.
     auto_apply: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
+    )
+    #: The branches where the register applies this promotion by itself.
+    #: Explicit — empty means *nowhere*, unlike `branch_ids`.
+    auto_branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
+    )
+    #: The branches where it is a one-tap coupon the cashier chooses at the till
+    #: (`Order.applied_coupon_promotion_id`). Explicit, and disjoint from
+    #: `auto_branch_ids` (CHECK `ck_promotions_branch_modes_disjoint`).
+    coupon_branch_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
     )
     #: Lower number wins when several promotions could apply.
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
@@ -270,6 +292,18 @@ class Promotion(Base, UUIDMixin, TimestampMixin, ScheduleMixin):
         if self.order_types and order_type not in self.order_types:
             return False
         return True
+
+    def applies_at(
+        self, branch_id: uuid.UUID | None
+    ) -> Literal["auto", "coupon"] | None:
+        """How this promotion runs at `branch_id`: `auto`, `coupon` or not at all."""
+        if branch_id is None:
+            return None
+        if branch_id in (self.auto_branch_ids or []):
+            return "auto"
+        if branch_id in (self.coupon_branch_ids or []):
+            return "coupon"
+        return None
 
     def __repr__(self) -> str:
         return f"<Promotion {self.name}>"

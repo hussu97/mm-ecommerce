@@ -26,6 +26,7 @@ from .inventory_v2 import pos_inventory_router, pos_recipes_router
 from .inventory_v2 import pos_manager_read_router as inventory_v2_manager_read_router
 from .marketing import (
     discounts_router,
+    pos_promotions_router,
     promotions_router,
     timed_events_router,
 )
@@ -45,6 +46,7 @@ from .pos_config import (
     tax_groups_router,
     taxes_router,
 )
+from .pos_counter import router as pos_counter_router
 from .pos_orders import kitchen_router
 from .pos_orders import router as pos_orders_router
 from .pos_reports import router as pos_reports_router
@@ -80,6 +82,10 @@ pos_api_router.include_router(
     pos_orders_router, prefix="/pos/orders", tags=["POS Orders"]
 )
 pos_api_router.include_router(kitchen_router, prefix="/pos/kitchen", tags=["Kitchen"])
+# Local-first counter checkout: the config bundle, sale sync and promote.
+pos_api_router.include_router(
+    pos_counter_router, prefix="/pos/counter", tags=["POS Counter"]
+)
 pos_api_router.include_router(tills_router, prefix="/tills", tags=["Tills"])
 pos_api_router.include_router(
     payment_methods_router, prefix="/payment-methods", tags=["Payment Methods"]
@@ -93,6 +99,9 @@ pos_api_router.include_router(tax_groups_router, prefix="/tax-groups", tags=["Ta
 pos_api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
 pos_api_router.include_router(
     promotions_router, prefix="/promotions", tags=["Marketing"]
+)
+pos_api_router.include_router(
+    pos_promotions_router, prefix="/pos/promotions", tags=["POS Promotions"]
 )
 pos_api_router.include_router(
     timed_events_router, prefix="/timed-events", tags=["Marketing"]

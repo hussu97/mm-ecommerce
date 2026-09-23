@@ -48,6 +48,13 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "branches"
+    __table_args__ = (
+        # Migration 284: the local-first counter rollout flag.
+        CheckConstraint(
+            "counter_local_first IN ('off', 'shadow', 'on')",
+            name="ck_branches_counter_local_first_allowed",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     name_localized: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -201,6 +208,20 @@ class Branch(Base, UUIDMixin, TimestampMixin):
     #: right zone rather than Dubai's.
     timezone: Mapped[str] = mapped_column(
         String(40), nullable=False, server_default="Asia/Dubai"
+    )
+    #: The local-first counter rollout at this branch (migration 284):
+    #:
+    #: * `off` — every terminal rings sales up server-authoritatively, as before.
+    #: * `shadow` — the server path stays live; a capable terminal also prices
+    #:   each check locally and reports any difference.
+    #: * `on` — a capable terminal prices, takes the tender for, numbers and
+    #:   prints a counter sale by itself and syncs it afterwards.
+    #:
+    #: Delivered to the terminals in `GET /pos/counter/bundle`, so turning it
+    #: back to `off` is the kill switch (next bundle refresh, ~60 s). A terminal
+    #: below `COUNTER_LOCAL_FIRST_MIN_BUILD` is told `off` whatever this says.
+    counter_local_first: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="off", default="off"
     )
 
     # Relationships

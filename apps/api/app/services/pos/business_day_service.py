@@ -16,6 +16,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import advisory_lock, heartbeat
@@ -42,6 +43,8 @@ __all__ = [
     "close_current",
     "current_business_date",
     "get_or_open",
+    "get_or_open_for_date",
+    "restamp_closed_day",
     "resolve_timezone",
     "run_forever",
     "shop_today",
@@ -182,6 +185,81 @@ async def get_or_open(
     db.add(day)
     await db.flush()
     await db.refresh(day)
+    return day
+
+
+async def get_or_open_for_date(
+    db: AsyncSession,
+    branch: Branch,
+    business_date: str,
+    *,
+    opened_by: User | None = None,
+) -> BranchBusinessDay:
+    """The branch's trading day for an explicit `business_date`, opened on
+    demand — closed or not.
+
+    `get_or_open` only ever files under *today*. A local-first counter sale
+    synced after midnight (or after the device spent a day offline) belongs to
+    the day it was sold on, which may be yesterday and may already be closed;
+    the caller handles a closed day with `restamp_closed_day`. Race-safe the
+    same way: a concurrent insert of the same day loses to the unique index
+    inside a savepoint and reads the winner back.
+    """
+    stmt = select(BranchBusinessDay).where(
+        BranchBusinessDay.branch_id == branch.id,
+        BranchBusinessDay.business_date == business_date,
+    )
+    existing = (await db.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    day = BranchBusinessDay(
+        branch_id=branch.id,
+        business_date=business_date,
+        opened_at=utcnow(),
+        opened_by_id=opened_by.id if opened_by else None,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(day)
+            await db.flush()
+    except IntegrityError:
+        winner = (await db.execute(stmt)).scalar_one_or_none()
+        if winner is None:
+            raise
+        return winner
+    await db.refresh(day)
+    return day
+
+
+async def restamp_closed_day(
+    db: AsyncSession, branch: Branch, business_date: str
+) -> BranchBusinessDay | None:
+    """Restate a closed trading day's frozen totals after a late sale landed.
+
+    `close_current` freezes the day's figures from its closed tills; a counter
+    sale synced after the day closed changes them. Recomputed the same way (the
+    till the sale landed on was restated first), leaving the close stamp and
+    the closer alone. Returns None when the day is not closed — nothing is
+    frozen yet, so nothing is stale.
+    """
+    day = (
+        await db.execute(
+            select(BranchBusinessDay).where(
+                BranchBusinessDay.branch_id == branch.id,
+                BranchBusinessDay.business_date == business_date,
+            )
+        )
+    ).scalar_one_or_none()
+    if day is None or day.closed_at is None:
+        return None
+    totals = await _day_totals(db, branch, business_date)
+    day.total_sales = totals["net_sales"]
+    day.total_orders = int(totals["orders_count"])
+    day.total_discounts = totals["discounts"]
+    day.total_returns = totals["returns"]
+    day.total_taxes = totals["taxes"]
+    await db.flush()
     return day
 
 

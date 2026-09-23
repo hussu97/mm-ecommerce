@@ -1,12 +1,20 @@
 """
-Auto-applied promotions — the discounts the register puts on by itself.
+Counter promotions — the discounts the register puts on a check.
 
-A `Promotion` with `auto_apply = True` is not a rule the cashier invokes; it is a
-standing discount the pricing engine adds to every qualifying check on its own.
-The one the shop runs is "every counter order is 15% off cookies, brownies and
-cookie melts", but the mechanism is general: any order-level promotion
-(`percentage_off_order` / `fixed_off_order`) fired on a `spend` trigger, scoped
-by channel/branch/type/schedule.
+A promotion runs at a branch in one of two modes (`Promotion.auto_branch_ids` /
+`coupon_branch_ids`): **auto**, a standing discount the pricing engine adds to
+every qualifying check on its own, or **coupon**, a one-tap chip the cashier
+selects (`Order.applied_coupon_promotion_id`). A selected, eligible coupon
+replaces the auto one — one promotion per order. The one the shop runs is
+"every counter order is 15% off cookies, brownies and cookie melts", but the
+mechanism is general: any order-level promotion (`percentage_off_order` /
+`fixed_off_order`) fired on a `spend` trigger, scoped by
+channel/branch/type/schedule.
+
+The rules themselves — mode, scope, schedule, min spend, which promotion wins,
+which lines it covers — are pure functions in `promotion_rules`. This module is
+the DB edge around them: it fetches the promotions and reconciles the order's
+`OrderDiscount` rows to the one `promotion_rules.choose` picks.
 
 A promotion with `category_ids` is confined to those categories: the discount is
 written as one per-item `OrderDiscount` per matching line (so 15% comes off each
@@ -36,13 +44,14 @@ Two invariants it respects, both inherited from how `recalculate` prices:
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.marketing import Promotion, PromotionRewardEnum, PromotionTriggerEnum
+from app.models.marketing import Promotion
 from app.models.order import Order, OrderItem, OrderItemStatusEnum
 from app.models.pos_order import (
     DiscountSourceEnum,
@@ -50,17 +59,14 @@ from app.models.pos_order import (
     PosOrderStatusEnum,
 )
 from app.models.product import Product
-from app.services.pos import business_day_service
+from app.services.pos import business_day_service, counter_pricing, promotion_rules
 
 logger = logging.getLogger(__name__)
 
 #: The rewards an auto-apply promotion may carry. Both reduce to one order-level
 #: `OrderDiscount` the engine can add unattended; a product-scoped or free-item
 #: reward cannot, and the API refuses `auto_apply` on those (see `marketing.py`).
-_AUTO_REWARDS = {
-    PromotionRewardEnum.PERCENTAGE_OFF_ORDER.value,
-    PromotionRewardEnum.FIXED_OFF_ORDER.value,
-}
+_AUTO_REWARDS = promotion_rules.ORDER_LEVEL_REWARDS
 
 _OPEN_STATUSES = {
     PosOrderStatusEnum.DRAFT.value,
@@ -128,17 +134,27 @@ def _spend_basis(order: Order) -> Decimal:
     return total
 
 
-async def _candidates(
-    db: AsyncSession, order: Order, spend: Decimal
+async def _fetch_promotions(
+    db: AsyncSession, order: Order, coupon_id: uuid.UUID | None
 ) -> list[Promotion]:
-    """Every auto-apply promotion that qualifies for this order, right now."""
-    rows = (
+    """The promotions that could apply at this order's branch.
+
+    A coarse DB-side filter — auto at this branch, or the selected coupon — so
+    the sweep does not load every promotion ever written. `promotion_rules`
+    re-checks mode, scope, schedule and spend on what comes back.
+    """
+    if order.branch_id is None:
+        return []
+    reach = [Promotion.auto_branch_ids.any(order.branch_id)]
+    if coupon_id is not None:
+        reach.append(Promotion.id == coupon_id)
+    return list(
         (
             await db.execute(
                 select(Promotion).where(
-                    Promotion.auto_apply.is_(True),
                     Promotion.is_active.is_(True),
                     Promotion.deleted_at.is_(None),
+                    or_(*reach),
                 )
             )
         )
@@ -146,63 +162,66 @@ async def _candidates(
         .all()
     )
 
-    tz = await business_day_service.resolve_timezone(db)
-    local = datetime.now(tz)
-    weekday = local.weekday()
-    minutes = local.hour * 60 + local.minute
-    today = local.date()
 
-    out: list[Promotion] = []
-    for promo in rows:
-        if promo.reward not in _AUTO_REWARDS:
-            continue
-        # An auto-apply promotion with no channel scope would apply to every
-        # channel — the counter, the website AND every marketplace. That is a
-        # scope-by-data hole the API now refuses to create, but a row written
-        # before the guard (or straight to the table) must not be honoured: an
-        # unscoped auto promotion is skipped here rather than discounting orders
-        # nobody meant it to touch.
-        if not promo.sources:
+async def _local_clock(db: AsyncSession, at: datetime | None) -> datetime:
+    """The shop's wall clock at `at` (default: now) — what schedules read."""
+    tz = await business_day_service.resolve_timezone(db)
+    return (at or datetime.now(tz)).astimezone(tz)
+
+
+def _rules(promos: list[Promotion]) -> list[promotion_rules.PromoRule]:
+    rules: list[promotion_rules.PromoRule] = []
+    for promo in promos:
+        # An order-level promotion with no channel scope would apply to every
+        # channel — the counter, the website AND every marketplace. The API
+        # refuses to create one, but a row written before the guard (or straight
+        # to the table) must not be honoured; `promotion_rules` skips it, and it
+        # is worth a line in the log.
+        if not promo.sources and promo.reward in _AUTO_REWARDS:
             logger.warning(
-                "Skipping unscoped auto-apply promotion %s (%s): auto_apply "
-                "with no sources would discount every channel",
+                "Skipping unscoped counter promotion %s (%s): no sources "
+                "would discount every channel",
                 promo.id,
                 promo.name,
             )
-            continue
-        # Order-level rewards are unconditional-by-spend only; a quantity trigger
-        # counts specific products and has no meaning for a whole-order discount.
-        if promo.trigger != PromotionTriggerEnum.SPEND.value:
-            continue
-        if spend < Decimal(str(promo.trigger_value)):
-            continue
-        if not promo.matches_order(
-            source=order.source,
-            branch_id=order.branch_id,
-            order_type=order.order_type,
-        ):
-            continue
-        if promo.from_date and today < promo.from_date:
-            continue
-        if promo.to_date and today > promo.to_date:
-            continue
-        if not (promo.runs_on(weekday) and promo.runs_at(minutes)):
-            continue
-        out.append(promo)
-
-    # Lowest priority wins; newest breaks a tie, matching `advertisable`'s rule
-    # that publishing a replacement retires the one before it.
-    out.sort(key=lambda p: (p.priority, -p.created_at.timestamp()))
-    return out
+        rules.append(promotion_rules.rule_from(promo))
+    return rules
 
 
-async def sync_auto_discounts(db: AsyncSession, order: Order) -> None:
+def order_facts(order: Order) -> promotion_rules.OrderFacts:
+    """The plain facts `promotion_rules` judges this order by."""
+    return promotion_rules.OrderFacts(
+        source=order.source,
+        branch_id=order.branch_id,
+        order_type=order.order_type,
+        spend=_spend_basis(order),
+    )
+
+
+async def sync_auto_discounts(
+    db: AsyncSession,
+    order: Order,
+    *,
+    at: datetime | None = None,
+    promos: list[Promotion] | None = None,
+    ctx: counter_pricing.PricingContext | None = None,
+) -> None:
     """
-    Reconcile `order` to the single auto-apply promotion it qualifies for.
+    Reconcile `order` to the single promotion it gets: the selected coupon if it
+    qualifies, otherwise the auto winner, otherwise none.
 
     Mutates `order.order_discounts` in place (the collection `recalculate` is
     about to price) and flushes. A no-op on a closed order, on a non-POS order,
     or when a manual order-level discount is already present.
+
+    `at` prices the check as of that instant (default: now) and `promos`
+    replaces the DB fetch — both for callers that already hold them (tests,
+    the local-first ingest re-price).
+
+    `ctx` (a config bundle's `PricingContext`) replaces every DB read at once:
+    the promotions, the shop's time zone and each product's category all come
+    from the bundle, so a synced counter sale is re-priced with exactly the
+    inputs the register priced it with.
     """
     if not order.is_pos or order.pos_status not in _OPEN_STATUSES:
         return
@@ -210,16 +229,27 @@ async def sync_auto_discounts(db: AsyncSession, order: Order) -> None:
     managed = [d for d in order.order_discounts if _is_auto_managed(d)]
 
     # The cashier has the wheel: a hand-applied order discount replaces the
-    # promotion outright, and we clear any auto one we had left behind.
+    # promotion outright (coupon or auto), and we clear any we had left behind.
     if _has_manual_order_discount(order):
         for stale in managed:
             order.order_discounts.remove(stale)
         await db.flush()
         return
 
-    spend = _spend_basis(order)
-    candidates = await _candidates(db, order, spend)
-    chosen = candidates[0] if candidates else None
+    # The coupon the cashier tapped, if any. `getattr` because a caller may hand
+    # us an order-shaped object from before the column existed.
+    coupon_id = getattr(order, "applied_coupon_promotion_id", None)
+    if ctx is not None:
+        rules = list(ctx.promotions)
+        local = (at or datetime.now(ctx.zone)).astimezone(ctx.zone)
+    else:
+        if promos is None:
+            promos = await _fetch_promotions(db, order, coupon_id)
+        rules = _rules(promos)
+        local = await _local_clock(db, at)
+    chosen = promotion_rules.choose(
+        rules, order_facts(order), local, coupon_id=coupon_id
+    )
 
     if chosen is None:
         for stale in managed:
@@ -227,27 +257,69 @@ async def sync_auto_discounts(db: AsyncSession, order: Order) -> None:
         await db.flush()
         return
 
-    is_percentage = chosen.reward == PromotionRewardEnum.PERCENTAGE_OFF_ORDER.value
-    # `reward_value` is a percent for a percentage reward (15 == 15%); the
-    # pricing engine wants a fraction. A fixed reward is already an AED amount.
     # The same `value` drives both shapes: a per-item percentage row takes it
     # off each matching line, an order-level one off the whole check.
-    value = (
-        Decimal(str(chosen.reward_value)) / Decimal("100")
-        if is_percentage
-        else Decimal(str(chosen.reward_value))
-    )
+    is_percentage, value = promotion_rules.discount_value(chosen)
 
     if chosen.category_ids:
-        await _apply_per_category(db, order, chosen, is_percentage, value, managed)
+        await _apply_per_category(
+            db, order, chosen, is_percentage, value, managed, ctx=ctx
+        )
     else:
         _apply_order_level(order, chosen, is_percentage, value, managed)
 
     await db.flush()
 
 
+async def available_at(
+    db: AsyncSession, branch_id: uuid.UUID, *, at: datetime | None = None
+) -> list[tuple[Promotion, promotion_rules.Mode, bool]]:
+    """The counter promotions that run at `branch_id`, best first.
+
+    `(promotion, mode, is_live_now)` for every active, counter-shaped
+    promotion (order-level reward, spend trigger, a `sources` scope naming
+    `cashier`) whose `branch_ids` scope covers the branch and which the branch
+    runs in some mode. `is_live_now` is the schedule at `at`; min spend is the
+    check's business, not the list's.
+    """
+    rows = list(
+        (
+            await db.execute(
+                select(Promotion).where(
+                    Promotion.is_active.is_(True),
+                    Promotion.deleted_at.is_(None),
+                    or_(
+                        Promotion.auto_branch_ids.any(branch_id),
+                        Promotion.coupon_branch_ids.any(branch_id),
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    local = await _local_clock(db, at)
+    out: list[tuple[Promotion, promotion_rules.Mode, bool, tuple]] = []
+    for promo in rows:
+        rule = promotion_rules.rule_from(promo)
+        mode = promotion_rules.mode_at(rule, branch_id)
+        if mode is None or not promotion_rules.is_counter_shape(rule):
+            continue
+        if "cashier" not in rule.sources:
+            continue
+        if rule.branch_ids and branch_id not in rule.branch_ids:
+            continue
+        live = promotion_rules.is_live(rule, local)
+        out.append((promo, mode, live, promotion_rules.rank(rule)))
+    out.sort(key=lambda row: row[3])
+    return [(promo, mode, live) for promo, mode, live, _ in out]
+
+
 def _sync_managed_row(
-    row: OrderDiscount, chosen: Promotion, is_percentage: bool, value: Decimal
+    row: OrderDiscount,
+    chosen: promotion_rules.PromoRule,
+    is_percentage: bool,
+    value: Decimal,
 ) -> None:
     """Point an existing managed row at the chosen promotion, in place.
 
@@ -261,7 +333,7 @@ def _sync_managed_row(
 
 
 def _new_managed_row(
-    chosen: Promotion,
+    chosen: promotion_rules.PromoRule,
     is_percentage: bool,
     value: Decimal,
     *,
@@ -281,7 +353,7 @@ def _new_managed_row(
 
 def _apply_order_level(
     order: Order,
-    chosen: Promotion,
+    chosen: promotion_rules.PromoRule,
     is_percentage: bool,
     value: Decimal,
     managed: list[OrderDiscount],
@@ -309,10 +381,12 @@ def _apply_order_level(
 async def _apply_per_category(
     db: AsyncSession,
     order: Order,
-    chosen: Promotion,
+    chosen: promotion_rules.PromoRule,
     is_percentage: bool,
     value: Decimal,
     managed: list[OrderDiscount],
+    *,
+    ctx: counter_pricing.PricingContext | None = None,
 ) -> None:
     """Discount only the lines whose product sits in the chosen categories.
 
@@ -322,12 +396,15 @@ async def _apply_per_category(
     set: rows for lines that no longer match (or an order-level row from a
     previous whole-order config) are cleared, missing ones are added.
     """
-    categories = set(chosen.category_ids)
     live = _billable_items(order)
     product_ids = {item.product_id for item in live if item.product_id is not None}
 
     category_by_product: dict = {}
-    if product_ids:
+    if ctx is not None:
+        category_by_product = {
+            pid: ctx.facts_for(pid).category_id for pid in product_ids
+        }
+    elif product_ids:
         rows = (
             await db.execute(
                 select(Product.id, Product.category_id).where(
@@ -337,12 +414,23 @@ async def _apply_per_category(
         ).all()
         category_by_product = {pid: cid for pid, cid in rows}
 
-    matching_item_ids = {
-        item.id
-        for item in live
-        if item.product_id is not None
-        and category_by_product.get(item.product_id) in categories
-    }
+    matching_item_ids = (
+        promotion_rules.per_line_targets(
+            chosen,
+            [
+                promotion_rules.LineFacts(
+                    id=item.id,
+                    category_id=(
+                        category_by_product.get(item.product_id)
+                        if item.product_id is not None
+                        else None
+                    ),
+                )
+                for item in live
+            ],
+        )
+        or set()
+    )
 
     # Reconcile the rows we already own against the lines that should have one.
     seen: set = set()

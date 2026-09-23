@@ -1,3 +1,5 @@
+import type { Schemas } from '@mm/types';
+
 export interface User {
   id: string;
   email: string;
@@ -509,39 +511,15 @@ export interface PromoCode {
 
 /**
  * A conditional offer the pricing engine applies itself, as opposed to a coupon
- * the customer types. The console surfaces the `auto_apply` ones — standing
- * discounts the register puts on every qualifying check, like "every counter
- * order is 15% off".
+ * the customer types. The console surfaces the counter ones — order-level
+ * rewards scoped to `cashier` — and, per branch, whether each runs there
+ * automatically (`auto_branch_ids`) or as a one-tap till coupon
+ * (`coupon_branch_ids`).
+ *
+ * The generated contract (`PromotionResponse`), not a hand-written shadow:
+ * money fields arrive as decimal strings.
  */
-export interface Promotion {
-  id: string;
-  name: string;
-  type: string;
-  trigger: 'spend' | 'quantity';
-  /** The `spend` threshold (min order value) or `quantity` count that arms it. */
-  trigger_value: number;
-  reward:
-    | 'percentage_off_products'
-    | 'fixed_off_products'
-    | 'percentage_off_order'
-    | 'fixed_off_order'
-    | 'fixed_price'
-    | 'free_product';
-  /** A percent for a percentage reward (15 == 15%), an AED amount for a fixed one. */
-  reward_value: number;
-  /** Categories an auto-apply order discount is confined to; empty = whole order. */
-  category_ids: string[];
-  branch_ids: string[];
-  order_types: string[];
-  /** Order channels this may fire on (`OrderSourceEnum`); empty = every channel. */
-  sources: string[];
-  /** Whether the pricing engine applies it with no cashier action. */
-  auto_apply: boolean;
-  priority: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type Promotion = Schemas['PromotionResponse'];
 
 export interface UploadResponse {
   url: string;

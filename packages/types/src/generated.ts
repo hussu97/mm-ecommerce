@@ -3095,6 +3095,11 @@ export interface paths {
          *     It doubles as the terminal's cold-start call: it returns the branch too, so
          *     a paired-but-signed-out terminal can render its own name without a user
          *     token it does not yet have.
+         *
+         *     A local-first register also reports what it is holding: its unsynced and
+         *     parked sales, when the oldest was closed, and the counter mode it runs. The
+         *     body is optional and so is every field in it — an older build sends none
+         *     and nothing about it changes; a field left out leaves its column alone.
          */
         post: operations["device_heartbeat_api_v1_devices_heartbeat_post"];
         delete?: never;
@@ -6376,6 +6381,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/counter-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Counter Sync Overview
+         * @description Synced counter sales that need a look — a pricing mismatch, an
+         *     unverified re-price, a late till/day or any other ingest flag — the
+         *     quarantined sales, and every terminal's unsynced counts.
+         */
+        get: operations["counter_sync_overview_api_v1_pos_counter_sync_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/counter-sync/quarantine/{sale_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Quarantined Sale
+         * @description Mark a quarantined sale as dealt with (the note says how).
+         */
+        post: operations["resolve_quarantined_sale_api_v1_pos_counter_sync_quarantine__sale_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/counter/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Bundle
+         * @description The config bundle this terminal prices counter sales from. See the
+         *     module docstring for the ETag/304 behaviour.
+         */
+        get: operations["get_bundle_api_v1_pos_counter_bundle_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/counter/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote Check
+         * @description Move an untendered local check to the server as an open check.
+         */
+        post: operations["promote_check_api_v1_pos_counter_promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/counter/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Sale
+         * @description Book one local-first counter sale. See `counter_ingest_service`.
+         */
+        post: operations["post_sale_api_v1_pos_counter_sales_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/counter/shadow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shadow Report
+         * @description Shadow mode: the register's local figures for a server check. Compared,
+         *     and any difference recorded and alerted; the sale is never changed.
+         */
+        post: operations["shadow_report_api_v1_pos_counter_shadow_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/dashboard/branches": {
         parameters: {
             query?: never;
@@ -6869,6 +6998,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pos/orders/{order_id}/coupon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Apply Coupon
+         * @description Select a coupon-mode promotion on the check (replacing any other) and
+         *     re-price. 422 unless it runs as a coupon at the order's branch; 409 unless
+         *     the order is an open counter check.
+         */
+        put: operations["apply_coupon_api_v1_pos_orders__order_id__coupon_put"];
+        post?: never;
+        /**
+         * Remove Coupon
+         * @description Deselect the check's coupon and re-price. Idempotent.
+         */
+        delete: operations["remove_coupon_api_v1_pos_orders__order_id__coupon_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pos/orders/{order_id}/discounts": {
         parameters: {
             query?: never;
@@ -7227,6 +7382,27 @@ export interface paths {
         put?: never;
         /** Void Order */
         post: operations["void_order_api_v1_pos_orders__order_id__void_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pos/promotions/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Available Promotions
+         * @description Every counter promotion that runs at `branch_id`, auto and coupon, best
+         *     first — with whether its schedule is live right now.
+         */
+        get: operations["available_promotions_api_v1_pos_promotions_available_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10106,6 +10282,17 @@ export interface components {
              */
             value: number | string;
         };
+        /**
+         * ApplyCouponRequest
+         * @description `PUT /pos/orders/{id}/coupon` — the coupon-mode promotion to select.
+         */
+        ApplyCouponRequest: {
+            /**
+             * Promotion Id
+             * Format: uuid
+             */
+            promotion_id: string;
+        };
         /** ApplyDiscountRequest */
         ApplyDiscountRequest: {
             /**
@@ -10188,6 +10375,40 @@ export interface components {
              * Format: date
              */
             latest_date: string;
+        };
+        /**
+         * AvailablePromotionResponse
+         * @description A counter promotion as the register lists it for one branch.
+         *
+         *     `mode` is how it runs there: `coupon` ones are the chips the cashier taps,
+         *     the `auto` one is applied by itself (the register may label it).
+         *     `is_live_now` is the schedule (dates, weekday, time window) in the shop's
+         *     time zone at the moment of the request; min spend is left to the check,
+         *     via `trigger_value`.
+         */
+        AvailablePromotionResponse: {
+            /** Category Ids */
+            category_ids: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Live Now */
+            is_live_now: boolean;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "coupon" | "auto";
+            /** Name */
+            name: string;
+            /** Reward */
+            reward: string;
+            /** Reward Value */
+            reward_value: string;
+            /** Trigger Value */
+            trigger_value: string;
         };
         /** BlackoutCreate */
         BlackoutCreate: {
@@ -10850,6 +11071,11 @@ export interface components {
             /** City Localized */
             city_localized: string | null;
             /**
+             * Counter Local First
+             * @default off
+             */
+            counter_local_first: string;
+            /**
              * Created At
              * Format: date-time
              */
@@ -10939,6 +11165,8 @@ export interface components {
             city?: string | null;
             /** City Localized */
             city_localized?: string | null;
+            /** Counter Local First */
+            counter_local_first?: ("off" | "shadow" | "on") | null;
             /** Display Order */
             display_order?: number | null;
             /** Inventory End Of Day Time */
@@ -11050,6 +11278,344 @@ export interface components {
             enabled: boolean;
             /** Ids */
             ids: string[];
+        };
+        /** BundleBranch */
+        BundleBranch: {
+            /** Business Day Start */
+            business_day_start: string;
+            /** Cash Enabled */
+            cash_enabled: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Receipt Footer */
+            receipt_footer?: string | null;
+            /** Receipt Header */
+            receipt_header?: string | null;
+            /** Reference */
+            reference: string;
+        };
+        /**
+         * BundleEntity
+         * @description The legal entity the counter trades under at this branch
+         *     (`tax_identity_service.resolve(branch, 'cashier')`). `vat_registered`
+         *     false ⇒ every line's tax rate is priced as zero.
+         */
+        BundleEntity: {
+            /** Brand Name */
+            brand_name?: string | null;
+            /** Id */
+            id?: string | null;
+            /** Invoice Title */
+            invoice_title?: string | null;
+            /** Legal Name */
+            legal_name?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Reference */
+            reference?: string | null;
+            /** Tax Number */
+            tax_number?: string | null;
+            /**
+             * Vat Registered
+             * @default true
+             */
+            vat_registered: boolean;
+        };
+        /** BundleKitchenFlow */
+        BundleKitchenFlow: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Name */
+            name: string;
+        };
+        /** BundleModifier */
+        BundleModifier: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+            /** Options */
+            options: components["schemas"]["BundleModifierOption"][];
+            /** Reference */
+            reference: string;
+            /**
+             * Translations
+             * @default {}
+             */
+            translations: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+        };
+        /** BundleModifierOption */
+        BundleModifierOption: {
+            /** Display Order */
+            display_order: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+            /** Price */
+            price: string;
+            /** Sku */
+            sku: string;
+            /**
+             * Translations
+             * @default {}
+             */
+            translations: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+        };
+        /** BundleProduct */
+        BundleProduct: {
+            /** Base Price */
+            base_price: string;
+            /** Category Id */
+            category_id?: string | null;
+            /**
+             * Display Order
+             * @default 0
+             */
+            display_order: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Image Urls
+             * @default []
+             */
+            image_urls: string[];
+            /** Is Non Revenue */
+            is_non_revenue: boolean;
+            /** Is Sold By Weight */
+            is_sold_by_weight: boolean;
+            /** Kitchen Flow Id */
+            kitchen_flow_id?: string | null;
+            /**
+             * Modifiers
+             * @default []
+             */
+            modifiers: components["schemas"]["BundleProductModifier"][];
+            /** Name */
+            name: string;
+            /** Name Localized */
+            name_localized?: string | null;
+            /** Pricing Method */
+            pricing_method: string;
+            /** Sku */
+            sku?: string | null;
+            /** Tax Group Id */
+            tax_group_id?: string | null;
+            /**
+             * Translations
+             * @default {}
+             */
+            translations: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
+        };
+        /**
+         * BundleProductModifier
+         * @description A product↔modifier link and its choice rules (`modifier_rules`): the
+         *     total quantity chosen in the group must be within [minimum, maximum]; the
+         *     first `free_options` units (options in `display_order`, then name) are free;
+         *     `unique_options` (or `maximum_options <= 1`) forbids repeating an option.
+         */
+        BundleProductModifier: {
+            /** Display Order */
+            display_order: number;
+            /** Free Options */
+            free_options: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Maximum Options */
+            maximum_options: number;
+            /** Minimum Options */
+            minimum_options: number;
+            /**
+             * Modifier Id
+             * Format: uuid
+             */
+            modifier_id: string;
+            /** Unique Options */
+            unique_options: boolean;
+        };
+        /**
+         * BundlePromotion
+         * @description A counter promotion that runs at this branch. `promotion_rules` in full:
+         *
+         *     * applies only if `is_active`, the reward is `percentage_off_order` or
+         *       `fixed_off_order`, `trigger` is `spend`, `sources` is non-empty and
+         *       contains `cashier`, `branch_ids` is empty or contains the branch,
+         *       `order_types` is empty or contains `pickup`;
+         *     * inside its window at the sale's local clock (bundle `timezone`):
+         *       `from_date <= date <= to_date` (null = open), `weekdays[date.weekday()]`
+         *       (index 0 = Monday), and minutes-of-day `m = hour*60 + minute` within
+         *       `[from_time, to_time]` — or, when `from_time > to_time`, `m >= from_time
+         *       or m <= to_time` (crosses midnight; the weekday is the calendar day of the
+         *       sale, not the day the window opened);
+         *     * spend (Σ (base_price + options_price) × billable qty over non-void lines)
+         *       `>= trigger_value`.
+         *
+         *     One promotion per order: a selected coupon (`mode == coupon`) that is
+         *     eligible wins; otherwise the eligible `auto` promotion with the lowest
+         *     `rank`. An ineligible selected coupon falls back to auto.
+         *
+         *     `reward_value` is a percent for `percentage_off_order` (`"15.0000"` =
+         *     15%; the fraction used is `reward_value/100` rounded half-up to 4 dp) and
+         *     AED for `fixed_off_order`. With `category_ids`, the discount is applied to
+         *     each billable line whose product's category is listed (a fixed reward takes
+         *     the full fixed amount off *each* such line); without, it is one order-level
+         *     discount spread pro rata across taxable lines.
+         */
+        BundlePromotion: {
+            /**
+             * Branch Ids
+             * @default []
+             */
+            branch_ids: string[];
+            /**
+             * Category Ids
+             * @default []
+             */
+            category_ids: string[];
+            /** From Date */
+            from_date?: string | null;
+            /**
+             * From Time
+             * @default 0
+             */
+            from_time: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Is Active
+             * @default true
+             */
+            is_active: boolean;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "auto" | "coupon";
+            /** Name */
+            name: string;
+            /**
+             * Order Types
+             * @default []
+             */
+            order_types: string[];
+            /** Rank */
+            rank: number;
+            /** Reward */
+            reward: string;
+            /** Reward Value */
+            reward_value: string;
+            /**
+             * Sources
+             * @default []
+             */
+            sources: string[];
+            /** To Date */
+            to_date?: string | null;
+            /**
+             * To Time
+             * @default 1439
+             */
+            to_time: number;
+            /** Trigger */
+            trigger: string;
+            /** Trigger Value */
+            trigger_value: string;
+            /** Weekdays */
+            weekdays?: boolean[];
+        };
+        /**
+         * BundleResolvedTax
+         * @description A group reduced to what a line is taxed at (`counter_pricing.tax_tuple`):
+         *     active taxes only, rates summed, the first active tax names it. `NO_TAX`
+         *     (rate 0, name "No tax", tax_id null, inclusive) when none is active. The
+         *     unregistered-entity zeroing is NOT applied here — it is applied per line
+         *     against `entity.vat_registered`.
+         */
+        BundleResolvedTax: {
+            /**
+             * Inclusive
+             * @default true
+             */
+            inclusive: boolean;
+            /** Name */
+            name: string;
+            /** Rate */
+            rate: string;
+            /** Tax Id */
+            tax_id?: string | null;
+        };
+        /** BundleTax */
+        BundleTax: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
+            /** Rate */
+            rate: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "inclusive" | "exclusive";
+        };
+        /** BundleTaxGroup */
+        BundleTaxGroup: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            resolved: components["schemas"]["BundleResolvedTax"];
+            /** Taxes */
+            taxes: components["schemas"]["BundleTax"][];
         };
         /** BusinessDayResponse */
         BusinessDayResponse: {
@@ -11814,6 +12380,654 @@ export interface components {
              * Format: uuid
              */
             item_id: string;
+        };
+        /**
+         * CounterAvailability
+         * @description The branch's 86 list right now (expiry applied). Selling an 86'd item is
+         *     NOT refused — neither the server nor the register blocks it.
+         */
+        CounterAvailability: {
+            /**
+             * Unavailable Option Ids
+             * @default []
+             */
+            unavailable_option_ids: string[];
+            /**
+             * Unavailable Product Ids
+             * @default []
+             */
+            unavailable_product_ids: string[];
+        };
+        /**
+         * CounterBundleBody
+         * @description The hashed pricing inputs. Lists are in a stable order.
+         */
+        CounterBundleBody: {
+            branch: components["schemas"]["BundleBranch"];
+            /** Currency Code */
+            currency_code: string;
+            /** Currency Symbol */
+            currency_symbol: string;
+            /** Engine Version */
+            engine_version: number;
+            entity: components["schemas"]["BundleEntity"];
+            /** Kitchen Flows */
+            kitchen_flows: components["schemas"]["BundleKitchenFlow"][];
+            /** Menu Tree */
+            menu_tree: components["schemas"]["MenuGroupNode"][];
+            /** Modifiers */
+            modifiers: components["schemas"]["BundleModifier"][];
+            /** Payment Methods */
+            payment_methods: components["schemas"]["PaymentMethodResponse"][];
+            /** Products */
+            products: components["schemas"]["BundleProduct"][];
+            /** Promotions */
+            promotions: components["schemas"]["BundlePromotion"][];
+            /** Rounding Step */
+            rounding_step: string;
+            /** Tax Groups */
+            tax_groups: components["schemas"]["BundleTaxGroup"][];
+            /** Timezone */
+            timezone: string;
+            /** Void Reasons */
+            void_reasons: components["schemas"]["ReasonResponse"][];
+        };
+        /** CounterBundleEnvelope */
+        CounterBundleEnvelope: {
+            availability: components["schemas"]["CounterAvailability"];
+            /**
+             * Branch Counter Local First
+             * @enum {string}
+             */
+            branch_counter_local_first: "off" | "shadow" | "on";
+            /** Build Supported */
+            build_supported: boolean;
+            /** Business Date */
+            business_date: string;
+            /**
+             * Counter Local First
+             * @enum {string}
+             */
+            counter_local_first: "off" | "shadow" | "on";
+            /** Last Ingested Ticket Seq */
+            last_ingested_ticket_seq: number;
+            /** Min Build */
+            min_build: number;
+            /** Pricing Engine Version */
+            pricing_engine_version: number;
+            /**
+             * Server Time
+             * Format: date-time
+             */
+            server_time: string;
+            /** Supported Engine Versions */
+            supported_engine_versions: number[];
+            /** Ticket Prefix */
+            ticket_prefix: string;
+        };
+        /**
+         * CounterBundleResponse
+         * @description `GET /pos/counter/bundle`.
+         *
+         *     `hash` = sha256(canonical JSON of `bundle`) — cite it as `bundle_hash` on
+         *     every sale. The HTTP `ETag` is NOT the bundle hash alone: it is
+         *     `"{hash}.{envelope_tag}"`, so a change to the 86 list, the mode or the
+         *     ticket prefix also refreshes a terminal holding an unchanged bundle.
+         */
+        CounterBundleResponse: {
+            bundle: components["schemas"]["CounterBundleBody"];
+            envelope: components["schemas"]["CounterBundleEnvelope"];
+            /** Hash */
+            hash: string;
+        };
+        /** CounterDeviceSyncRow */
+        CounterDeviceSyncRow: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Build Number */
+            build_number: string | null;
+            /** Counter Mode */
+            counter_mode: string | null;
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Name */
+            name: string;
+            /** Oldest Pending Sale At */
+            oldest_pending_sale_at: string | null;
+            /** Parked Sales */
+            parked_sales: number | null;
+            /** Pending Sales */
+            pending_sales: number | null;
+            /** Sync Reported At */
+            sync_reported_at: string | null;
+            /** Ticket Prefix */
+            ticket_prefix: string | null;
+        };
+        /** CounterPromoteLine */
+        CounterPromoteLine: {
+            /** Added At */
+            added_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kitchen Notes */
+            kitchen_notes?: string | null;
+            /**
+             * Options
+             * @default []
+             */
+            options: components["schemas"]["CounterSaleOption"][];
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+            /** Quantity */
+            quantity: number;
+            /** Sent To Kitchen At */
+            sent_to_kitchen_at?: string | null;
+            /** Unit Price */
+            unit_price?: number | string | null;
+            /** Weight */
+            weight?: number | string | null;
+        };
+        /**
+         * CounterPromoteRequest
+         * @description `POST /pos/counter/promote` — "Move to server" for an UNTENDERED local
+         *     check (park, split, table, manual discount need the server). Idempotent on
+         *     `id`: promoting a check already on the server returns it.
+         */
+        CounterPromoteRequest: {
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Coupon Promotion Id */
+            coupon_promotion_id?: string | null;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Customer Phone */
+            customer_phone?: string | null;
+            /** Device Id */
+            device_id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kitchen Tickets
+             * @default []
+             */
+            kitchen_tickets: components["schemas"]["CounterSaleKitchenTicket"][];
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["CounterPromoteLine"][];
+            /** Notes */
+            notes?: string | null;
+            /** Opened At */
+            opened_at?: string | null;
+            /** Till Id */
+            till_id?: string | null;
+        };
+        /** CounterQuarantineRow */
+        CounterQuarantineRow: {
+            /** Branch Id */
+            branch_id: string | null;
+            /** Device Id */
+            device_id: string | null;
+            /** Display Number */
+            display_number?: string | null;
+            /** Error */
+            error: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
+            /** Resolution Note */
+            resolution_note: string | null;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Total */
+            total?: string | null;
+        };
+        /**
+         * CounterSaleKitchenTicket
+         * @description A docket the register printed.
+         */
+        CounterSaleKitchenTicket: {
+            /** Kitchen Flow Id */
+            kitchen_flow_id?: string | null;
+            /** Line Ids */
+            line_ids: string[];
+            /** Printed At */
+            printed_at?: string | null;
+            /**
+             * Sent At
+             * Format: date-time
+             */
+            sent_at: string;
+            /** Sequence */
+            sequence: number;
+        };
+        /** CounterSaleLine */
+        CounterSaleLine: {
+            /** Added At */
+            added_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kitchen Flow Id */
+            kitchen_flow_id?: string | null;
+            /** Kitchen Notes */
+            kitchen_notes?: string | null;
+            /**
+             * Options
+             * @default []
+             */
+            options: components["schemas"]["CounterSaleOption"][];
+            /**
+             * Product Id
+             * Format: uuid
+             */
+            product_id: string;
+            /** Quantity */
+            quantity: number;
+            /** Sent To Kitchen At */
+            sent_to_kitchen_at?: string | null;
+            totals?: components["schemas"]["CounterSaleLineTotals"] | null;
+            /** Unit Price */
+            unit_price?: number | string | null;
+            /** Void Reason Id */
+            void_reason_id?: string | null;
+            /**
+             * Voided
+             * @default false
+             */
+            voided: boolean;
+            /** Voided At */
+            voided_at?: string | null;
+            /** Voided By Id */
+            voided_by_id?: string | null;
+            /** Weight */
+            weight?: number | string | null;
+        };
+        /**
+         * CounterSaleLineTotals
+         * @description What the register priced (and printed) for one line — the
+         *     `counter_pricing.LinePricing` fields.
+         */
+        CounterSaleLineTotals: {
+            /** Base Price */
+            base_price: number | string;
+            /** Discount */
+            discount: number | string;
+            /** Gross */
+            gross: number | string;
+            /** Options Price */
+            options_price: number | string;
+            /** Tax Amount */
+            tax_amount: number | string;
+            /** Tax Exclusive Total */
+            tax_exclusive_total: number | string;
+            /** Tax Exclusive Unit */
+            tax_exclusive_unit: number | string;
+            /** Total Price */
+            total_price: number | string;
+            /** Unit Price */
+            unit_price: number | string;
+        };
+        /** CounterSaleOption */
+        CounterSaleOption: {
+            /**
+             * Modifier Option Id
+             * Format: uuid
+             */
+            modifier_option_id: string;
+            /**
+             * Quantity
+             * @default 1
+             */
+            quantity: number;
+        };
+        /**
+         * CounterSaleRequest
+         * @description `POST /pos/counter/sales` — one finished local counter sale.
+         *
+         *     Idempotent on `id`: a retry of the same sale is answered `200 replayed`.
+         *     The replay fingerprint is sha256 over the canonical JSON of this body
+         *     EXCLUDING `receipt_printed_at`, `kitchen_tickets[].printed_at`,
+         *     `clock_offset_ms`, `staff_attestation`, `app_version` and `app_build` — so
+         *     recording a print result after the first attempt does not turn a retry into
+         *     a conflict. Anything else changed under the same id is a `409`.
+         */
+        CounterSaleRequest: {
+            /** App Build */
+            app_build?: string | null;
+            /** App Version */
+            app_version?: string | null;
+            /**
+             * Branch Id
+             * Format: uuid
+             */
+            branch_id: string;
+            /** Bundle Hash */
+            bundle_hash: string;
+            /** Business Date */
+            business_date: string;
+            /**
+             * Cashier Id
+             * Format: uuid
+             */
+            cashier_id: string;
+            /** Clock Offset Ms */
+            clock_offset_ms?: number | null;
+            /**
+             * Closed At
+             * Format: date-time
+             */
+            closed_at: string;
+            /** Coupon Promotion Id */
+            coupon_promotion_id?: string | null;
+            /** Customer Name */
+            customer_name?: string | null;
+            /** Customer Phone */
+            customer_phone?: string | null;
+            /**
+             * Device Id
+             * Format: uuid
+             */
+            device_id: string;
+            /** Display Number */
+            display_number: string;
+            /** Engine Version */
+            engine_version: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Kitchen Tickets
+             * @default []
+             */
+            kitchen_tickets: components["schemas"]["CounterSaleKitchenTicket"][];
+            /** Lines */
+            lines: components["schemas"]["CounterSaleLine"][];
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /**
+             * Priced At
+             * Format: date-time
+             */
+            priced_at: string;
+            /** Receipt Printed At */
+            receipt_printed_at?: string | null;
+            /** Staff Attestation */
+            staff_attestation?: string | null;
+            /**
+             * State
+             * @default closed
+             * @enum {string}
+             */
+            state: "closed" | "void";
+            /**
+             * Tenders
+             * @default []
+             */
+            tenders: components["schemas"]["CounterSaleTender"][];
+            /** Ticket Prefix */
+            ticket_prefix: string;
+            /** Ticket Seq */
+            ticket_seq: number;
+            /**
+             * Till Id
+             * Format: uuid
+             */
+            till_id: string;
+            totals: components["schemas"]["CounterSaleTotals"];
+            /** Void Reason Id */
+            void_reason_id?: string | null;
+        };
+        /**
+         * CounterSaleResponse
+         * @description `201` ingested · `200` replayed · `202` quarantined.
+         */
+        CounterSaleResponse: {
+            /** Check Number */
+            check_number?: number | null;
+            /** Display Number */
+            display_number?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Flags
+             * @default []
+             */
+            flags: string[];
+            /**
+             * Ingested Late
+             * @default false
+             */
+            ingested_late: boolean;
+            /**
+             * Order Id
+             * Format: uuid
+             */
+            order_id: string;
+            /** Order Number */
+            order_number?: string | null;
+            /** Pricing Status */
+            pricing_status?: ("verified" | "mismatch" | "unverified") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ingested" | "replayed" | "quarantined";
+        };
+        /** CounterSaleTaxLine */
+        CounterSaleTaxLine: {
+            /** Amount */
+            amount: number | string;
+            /** Name */
+            name: string;
+            /** Rate */
+            rate: number | string;
+            /** Tax Id */
+            tax_id?: string | null;
+            /** Taxable Amount */
+            taxable_amount: number | string;
+        };
+        /** CounterSaleTender */
+        CounterSaleTender: {
+            /** Amount */
+            amount: number | string;
+            /** Change */
+            change?: number | string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Payment Method Id
+             * Format: uuid
+             */
+            payment_method_id: string;
+            /** Reference */
+            reference?: string | null;
+            /**
+             * Taken At
+             * Format: date-time
+             */
+            taken_at: string;
+            /** Tendered */
+            tendered?: number | string | null;
+            /** User Id */
+            user_id?: string | null;
+        };
+        /**
+         * CounterSaleTotals
+         * @description The printed receipt's figures — `counter_pricing.CheckPricing`.
+         */
+        CounterSaleTotals: {
+            /** Discount Total */
+            discount_total: number | string;
+            /**
+             * Promotion Amount
+             * @default 0
+             */
+            promotion_amount: number | string;
+            /** Promotion Id */
+            promotion_id?: string | null;
+            /** Rounding */
+            rounding: number | string;
+            /** Subtotal */
+            subtotal: number | string;
+            /** Tax Total */
+            tax_total: number | string;
+            /**
+             * Taxes
+             * @default []
+             */
+            taxes: components["schemas"]["CounterSaleTaxLine"][];
+            /** Total */
+            total: number | string;
+            /** Total Excl Tax */
+            total_excl_tax: number | string;
+        };
+        /** CounterShadowDifference */
+        CounterShadowDifference: {
+            /** Client */
+            client: string;
+            /** Field */
+            field: string;
+            /** Server */
+            server: string;
+        };
+        /** CounterShadowLine */
+        CounterShadowLine: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            totals: components["schemas"]["CounterSaleLineTotals"];
+        };
+        /**
+         * CounterShadowReport
+         * @description `POST /pos/counter/shadow` — in `shadow` mode the server check is the
+         *     real one; after each re-price (or at settle) the register also prices the
+         *     same lines with its local engine against its bundle and reports its figures
+         *     here. The server compares them with the check's own and records any
+         *     difference. Fire-and-forget: the answer never changes the sale.
+         */
+        CounterShadowReport: {
+            /** Bundle Hash */
+            bundle_hash: string;
+            /** Engine Version */
+            engine_version: number;
+            /**
+             * Lines
+             * @default []
+             */
+            lines: components["schemas"]["CounterShadowLine"][];
+            /**
+             * Order Id
+             * Format: uuid
+             */
+            order_id: string;
+            totals: components["schemas"]["CounterSaleTotals"];
+        };
+        /** CounterShadowResult */
+        CounterShadowResult: {
+            /**
+             * Differences
+             * @default []
+             */
+            differences: components["schemas"]["CounterShadowDifference"][];
+            /** Matches */
+            matches: boolean;
+            /**
+             * Order Id
+             * Format: uuid
+             */
+            order_id: string;
+        };
+        /** CounterSyncOrderRow */
+        CounterSyncOrderRow: {
+            /** Branch Id */
+            branch_id: string | null;
+            /** Business Date */
+            business_date: string | null;
+            /** Closed At */
+            closed_at: string | null;
+            /** Device Id */
+            device_id: string | null;
+            /** Display Number */
+            display_number: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Ingest Flags */
+            ingest_flags: string[];
+            /** Ingested At */
+            ingested_at: string | null;
+            /** Ingested Late */
+            ingested_late: boolean;
+            /** Order Number */
+            order_number: string;
+            /** Pricing Audit */
+            pricing_audit?: {
+                [key: string]: unknown;
+            } | null;
+            /** Pricing Status */
+            pricing_status: string | null;
+            /** Total */
+            total: string;
+        };
+        /** CounterSyncOverview */
+        CounterSyncOverview: {
+            /** Devices */
+            devices: components["schemas"]["CounterDeviceSyncRow"][];
+            /** Orders */
+            orders: components["schemas"]["CounterSyncOrderRow"][];
+            /** Quarantine */
+            quarantine: components["schemas"]["CounterQuarantineRow"][];
         };
         /**
          * CourierBadge
@@ -12750,6 +13964,21 @@ export interface components {
              */
             type: "cashier" | "sub_cashier" | "display" | "notifier";
         };
+        /**
+         * DeviceHeartbeatRequest
+         * @description Optional body of `POST /devices/heartbeat`. Every field optional; an
+         *     older build sends no body at all and nothing changes.
+         */
+        DeviceHeartbeatRequest: {
+            /** Counter Mode */
+            counter_mode?: ("online" | "shadow" | "local") | null;
+            /** Oldest Pending At */
+            oldest_pending_at?: string | null;
+            /** Parked Sales */
+            parked_sales?: number | null;
+            /** Pending Sales */
+            pending_sales?: number | null;
+        };
         /** DevicePairRequest */
         DevicePairRequest: {
             /** App Version */
@@ -12790,6 +14019,8 @@ export interface components {
             build_number: string | null;
             /** Category Ids */
             category_ids: string[];
+            /** Counter Mode */
+            counter_mode?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -12808,18 +14039,42 @@ export interface components {
             model_identifier: string | null;
             /** Name */
             name: string;
+            /** Oldest Pending Sale At */
+            oldest_pending_sale_at?: string | null;
             /** Os Version */
             os_version: string | null;
             /** Pairing Code */
             pairing_code: string | null;
             /** Pairing Code Expires At */
             pairing_code_expires_at: string | null;
+            /** Parked Sales */
+            parked_sales?: number | null;
+            /** Pending Sales */
+            pending_sales?: number | null;
             /** Platform */
             platform: string | null;
             /** Reference */
             reference: string;
             /** Status */
             status: string;
+            /**
+             * Supports Coupons
+             * @description Whether this terminal's build can select a coupon promotion
+             *     (`COUPON_MIN_BUILD`). The console warns when a coupon-mode branch still
+             *     runs a terminal that cannot.
+             */
+            readonly supports_coupons: boolean;
+            /**
+             * Supports Local First
+             * @description Whether this terminal's build may run the counter local-first
+             *     (`COUNTER_LOCAL_FIRST_MIN_BUILD`). Below it the terminal stays online-only
+             *     whatever its branch's flag says.
+             */
+            readonly supports_local_first: boolean;
+            /** Sync Reported At */
+            sync_reported_at?: string | null;
+            /** Ticket Prefix */
+            ticket_prefix?: string | null;
             /** Type */
             type: string;
             /**
@@ -14388,6 +15643,8 @@ export interface components {
             check_number?: number | null;
             /** Completed At */
             completed_at: string | null;
+            /** Display Number */
+            display_number?: string | null;
             /**
              * Id
              * Format: uuid
@@ -14409,6 +15666,11 @@ export interface components {
             order_number?: string | null;
             /** Order Type */
             order_type?: string | null;
+            /**
+             * Origin
+             * @default server
+             */
+            origin: string;
             /** Printed At */
             printed_at: string | null;
             /** Reprint Count */
@@ -15240,6 +16502,20 @@ export interface components {
             /** Aggregator Payment Type */
             aggregator_payment_type?: string | null;
             branch?: components["schemas"]["OrderBranchSummary"] | null;
+            /** Display Number */
+            display_number?: string | null;
+            /**
+             * Ingest Flags
+             * @default []
+             */
+            ingest_flags: string[];
+            /**
+             * Ingested Late
+             * @default false
+             */
+            ingested_late: boolean;
+            /** Pricing Status */
+            pricing_status?: string | null;
             /**
              * Tenders
              * @default []
@@ -15410,6 +16686,8 @@ export interface components {
             name: string;
             /** Order Item Id */
             order_item_id: string | null;
+            /** Reference Id */
+            reference_id?: string | null;
             /** Source */
             source: string;
             /** Value */
@@ -15619,6 +16897,8 @@ export interface components {
             /** Delivery Fee */
             delivery_fee?: number | null;
             delivery_method: components["schemas"]["DeliveryMethodEnum"];
+            /** Display Number */
+            display_number?: string | null;
             /** Email */
             email: string;
             /**
@@ -15643,6 +16923,8 @@ export interface components {
             payment_provider: string | null;
             /** Pos Status */
             pos_status?: string | null;
+            /** Pricing Status */
+            pricing_status?: string | null;
             /** Source */
             source?: string | null;
             status: components["schemas"]["OrderStatusEnum"];
@@ -16688,6 +17970,8 @@ export interface components {
              * @default 0
              */
             amount_paid: string;
+            /** Applied Coupon Promotion Id */
+            applied_coupon_promotion_id?: string | null;
             /**
              * Balance Due
              * @default 0
@@ -16735,6 +18019,8 @@ export interface components {
             device_id: string | null;
             /** Discount Amount */
             discount_amount: string;
+            /** Display Number */
+            display_number?: string | null;
             /**
              * Driver Assignment Count
              * @default 0
@@ -16806,6 +18092,8 @@ export interface components {
             payments: components["schemas"]["OrderPaymentResponse"][];
             /** Pos Status */
             pos_status: string | null;
+            /** Pricing Status */
+            pricing_status?: string | null;
             /** Rounding Amount */
             rounding_amount: string;
             /** Source */
@@ -17845,10 +19133,14 @@ export interface components {
              * @default false
              */
             auto_apply: boolean;
+            /** Auto Branch Ids */
+            auto_branch_ids?: string[];
             /** Branch Ids */
             branch_ids?: string[];
             /** Category Ids */
             category_ids?: string[];
+            /** Coupon Branch Ids */
+            coupon_branch_ids?: string[];
             /** From Date */
             from_date?: string | null;
             /**
@@ -17963,10 +19255,14 @@ export interface components {
         PromotionResponse: {
             /** Auto Apply */
             auto_apply: boolean;
+            /** Auto Branch Ids */
+            auto_branch_ids?: string[];
             /** Branch Ids */
             branch_ids: string[];
             /** Category Ids */
             category_ids: string[];
+            /** Coupon Branch Ids */
+            coupon_branch_ids?: string[];
             /**
              * Created At
              * Format: date-time
@@ -18037,10 +19333,14 @@ export interface components {
         PromotionUpdate: {
             /** Auto Apply */
             auto_apply?: boolean | null;
+            /** Auto Branch Ids */
+            auto_branch_ids?: string[] | null;
             /** Branch Ids */
             branch_ids?: string[] | null;
             /** Category Ids */
             category_ids?: string[] | null;
+            /** Coupon Branch Ids */
+            coupon_branch_ids?: string[] | null;
             /** From Date */
             from_date?: string | null;
             /** From Time */
@@ -18420,6 +19720,11 @@ export interface components {
             quantity_delta: number | string;
             /** Reason Id */
             reason_id?: string | null;
+        };
+        /** QuarantineResolveRequest */
+        QuarantineResolveRequest: {
+            /** Note */
+            note: string;
         };
         /** ReasonCreate */
         ReasonCreate: {
@@ -20429,6 +21734,10 @@ export interface components {
             branch_id: string;
             /** Branch Name */
             branch_name: string;
+            /** Build Number */
+            build_number?: string | null;
+            /** Counter Mode */
+            counter_mode?: string | null;
             /**
              * Device Id
              * Format: uuid
@@ -20442,6 +21751,8 @@ export interface components {
             model_identifier: string | null;
             /** Name */
             name: string;
+            /** Oldest Pending Sale At */
+            oldest_pending_sale_at?: string | null;
             /** Open Till Id */
             open_till_id: string | null;
             /** Open Till Opened At */
@@ -20452,12 +21763,23 @@ export interface components {
             orders_today: number;
             /** Os Version */
             os_version: string | null;
+            /** Parked Sales */
+            parked_sales?: number | null;
+            /** Pending Sales */
+            pending_sales?: number | null;
             /** Reference */
             reference: string;
             /** Sales Today */
             sales_today: string;
             /** Status */
             status: string;
+            /**
+             * Supports Local First
+             * @default false
+             */
+            supports_local_first: boolean;
+            /** Ticket Prefix */
+            ticket_prefix?: string | null;
             /** Type */
             type: string;
         };
@@ -20482,6 +21804,8 @@ export interface components {
         TillCloseRequest: {
             /** Closing Amount */
             closing_amount: number | string;
+            /** Device Pending Sales */
+            device_pending_sales?: number | null;
             /** Notes */
             notes?: string | null;
         };
@@ -20521,6 +21845,8 @@ export interface components {
             branch_id: string;
             /** Device Id */
             device_id?: string | null;
+            /** Device Pending Sales */
+            device_pending_sales?: number | null;
             /** Notes */
             notes?: string | null;
             /**
@@ -20648,6 +21974,8 @@ export interface components {
             totals: {
                 [key: string]: unknown;
             };
+            /** Totals Restated At */
+            totals_restated_at?: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -27697,7 +29025,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeviceHeartbeatRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -34328,6 +35660,266 @@ export interface operations {
             };
         };
     };
+    counter_sync_overview_api_v1_pos_counter_sync_get: {
+        parameters: {
+            query?: {
+                branch_id?: string | null;
+                include_resolved?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterSyncOverview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_quarantined_sale_api_v1_pos_counter_sync_quarantine__sale_id__resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sale_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuarantineResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterQuarantineRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_bundle_api_v1_pos_counter_bundle_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-App-Build"?: string | null;
+                "If-None-Match"?: string | null;
+                "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Platform"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterBundleResponse"];
+                };
+            };
+            /** @description Not modified — the ETag still holds */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_check_api_v1_pos_counter_promote_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-App-Build"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CounterPromoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description App build too old (code upgrade_required) */
+            426: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    post_sale_api_v1_pos_counter_sales_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CounterSaleRequest"];
+            };
+        };
+        responses: {
+            /** @description Replayed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterSaleResponse"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterSaleResponse"];
+                };
+            };
+            /** @description Quarantined */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterSaleResponse"];
+                };
+            };
+            /** @description Same id, different sale (code counter_sale_conflict) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description App build too old (code upgrade_required) */
+            426: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    shadow_report_api_v1_pos_counter_shadow_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Device-Token"?: string | null;
+                "X-App-Version"?: string | null;
+                "X-App-Build"?: string | null;
+                "X-App-Platform"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CounterShadowReport"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CounterShadowResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     branches_dashboard_api_v1_pos_dashboard_branches_get: {
         parameters: {
             query?: never;
@@ -35067,6 +36659,72 @@ export interface operations {
             };
         };
     };
+    apply_coupon_api_v1_pos_orders__order_id__coupon_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyCouponRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_coupon_api_v1_pos_orders__order_id__coupon_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     apply_discount_api_v1_pos_orders__order_id__discounts_post: {
         parameters: {
             query?: never;
@@ -35632,6 +37290,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PosOrderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    available_promotions_api_v1_pos_promotions_available_get: {
+        parameters: {
+            query: {
+                branch_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailablePromotionResponse"][];
                 };
             };
             /** @description Validation Error */

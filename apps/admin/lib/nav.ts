@@ -43,6 +43,9 @@ export const NAV: Array<NavEntry | NavSection> = [
   // always shared a table); the register config lives under Operations.
   { section: 'Sales' },
   { href: '/orders',        label: 'Orders',          icon: 'receipt_long', requires: 'orders.read' },
+  // Local-first counter sales that synced with a pricing mismatch, unverified,
+  // late, flagged or quarantined — and each till's unsynced backlog.
+  { href: '/counter-sync',  label: 'Counter Sync',    icon: 'sync_problem', requires: 'orders.read' },
   { href: '/custom-orders', label: 'Custom Orders',   icon: 'cake',         requires: 'orders.custom.manage' },
   { href: '/enquiries',     label: 'Cake Enquiries',  icon: 'mail',         requires: 'orders.custom.manage' },
   { href: '/customers',     label: 'Customers',        icon: 'people',      requires: 'customers.read' },

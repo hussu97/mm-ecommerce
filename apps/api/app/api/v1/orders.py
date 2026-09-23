@@ -1584,4 +1584,8 @@ async def order_admin_details(
         admin_notes=order.admin_notes,
         tenders=tenders,
         timeline=entries,
+        display_number=order.display_number,
+        pricing_status=order.pricing_status,
+        ingest_flags=list(order.ingest_flags or []),
+        ingested_late=bool(order.ingested_late),
     )

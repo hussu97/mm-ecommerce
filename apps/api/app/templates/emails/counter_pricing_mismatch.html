@@ -1,0 +1,80 @@
+{#
+  A local-first counter sale synced with totals the server's re-price did not
+  reproduce. The printed receipt is a tax invoice, so its figures were booked;
+  this is the alert that the register's pricing engine and the server's drifted.
+
+  Sent to engineering. Always English: an internal alert linking to the
+  English-only admin console.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}Counter pricing {{ pricing_status }} — {{ display_number }}{% endblock %}
+{% block preheader %}{{ branch_name }} &middot; {{ business_date }} &middot; receipt {{ client_total }} vs server {{ server_total }}{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Counter pricing {{ pricing_status }}</p>
+    <h2 class="hero-title">{{ display_number }}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>
+      A counter sale priced on the register synced with figures the server's
+      re-price did not reproduce. The receipt the customer holds is the tax
+      invoice, so <strong>its figures were booked</strong>; the server's are
+      kept on the order for review.
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-label" style="width: 140px; padding: 5px 0;">Order</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ order_number }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Branch</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ branch_name }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Business date</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ business_date }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Receipt total</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ client_total }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Server total</td>
+            <td class="kv-value" style="padding: 5px 0;">{{ server_total }}</td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 5px 0;">Bundle</td>
+            <td class="kv-value" style="padding: 5px 0;"><code>{{ bundle_hash[:12] }}</code></td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 18px;">
+      <tr>
+        <td class="kv-label" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Field</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Receipt</td>
+        <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Server</td>
+      </tr>
+      {% for d in differences %}
+      <tr>
+        <td class="kv-value" style="padding: 6px 0;">{{ d.field }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ d.client }}</td>
+        <td class="kv-value" align="right" style="padding: 6px 0;">{{ d.server }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </td></tr>
+</table>
+
+{{ parts.button(admin_order_url, 'Open the order in the admin') }}
+{% endblock %}

@@ -21,6 +21,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -313,6 +314,12 @@ class KitchenTicket(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint(
             "order_id", "sequence", name="uq_kitchen_tickets_order_sequence"
         ),
+        # Migration 284: who printed the docket — the server's KDS path, or a
+        # local-first register that printed it itself before syncing.
+        CheckConstraint(
+            "origin IN ('server', 'device')",
+            name="ck_kitchen_tickets_origin_allowed",
+        ),
     )
 
     order_id: Mapped[uuid.UUID] = mapped_column(
@@ -351,6 +358,11 @@ class KitchenTicket(Base, UUIDMixin, TimestampMixin):
         Integer, nullable=False, server_default="0"
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `server` (fired through `send_to_kitchen`) or `device` (printed by a
+    #: local-first register and recorded when the sale synced). CHECK above.
+    origin: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default="server", default="server"
+    )
 
     items: Mapped[list[KitchenTicketItem]] = relationship(
         "KitchenTicketItem",

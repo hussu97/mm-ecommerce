@@ -63,6 +63,7 @@ from .inventory_v2 import (
 from .item_mappings import router as item_mappings_router
 from .marketing import (
     discounts_router,
+    pos_promotions_router,
     promotions_router,
     timed_events_router,
 )
@@ -89,6 +90,8 @@ from .pos_config import (
     tax_groups_router,
     taxes_router,
 )
+from .pos_counter import admin_router as pos_counter_admin_router
+from .pos_counter import router as pos_counter_router
 from .pos_orders import kitchen_router
 from .pos_orders import router as pos_orders_router
 from .pos_reports import router as pos_reports_router
@@ -190,6 +193,13 @@ api_router.include_router(
     business_settings_router, prefix="/business-settings", tags=["Business Settings"]
 )
 api_router.include_router(pos_orders_router, prefix="/pos/orders", tags=["POS Orders"])
+api_router.include_router(
+    pos_counter_router, prefix="/pos/counter", tags=["POS Counter"]
+)
+# The console's Counter sync page (mismatch / unverified / late / quarantine).
+api_router.include_router(
+    pos_counter_admin_router, prefix="/pos/counter-sync", tags=["POS Counter"]
+)
 api_router.include_router(kitchen_router, prefix="/pos/kitchen", tags=["Kitchen"])
 api_router.include_router(
     pos_reports_router, prefix="/pos/reports", tags=["POS Reports"]
@@ -242,6 +252,9 @@ api_router.include_router(
 # ─── Marketing ────────────────────────────────────────────────────────────────
 api_router.include_router(discounts_router, prefix="/discounts", tags=["Marketing"])
 api_router.include_router(promotions_router, prefix="/promotions", tags=["Marketing"])
+api_router.include_router(
+    pos_promotions_router, prefix="/pos/promotions", tags=["POS Promotions"]
+)
 api_router.include_router(
     timed_events_router, prefix="/timed-events", tags=["Marketing"]
 )

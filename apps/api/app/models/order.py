@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -18,7 +19,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import (
@@ -139,10 +140,32 @@ class Order(Base, UUIDMixin, TimestampMixin):
             unique=True,
             postgresql_where=text("client_request_id IS NOT NULL"),
         ),
+        # Migration 284: a local-first counter sale's printed ticket number
+        # (`T1-0042`) is unique per branch per trading day. Partial, because
+        # every order rung up server-side (old builds, the website, the
+        # marketplaces) carries NULL.
+        Index(
+            "uq_orders_branch_business_date_display_number",
+            "branch_id",
+            "business_date",
+            "display_number",
+            unique=True,
+            postgresql_where=text("display_number IS NOT NULL"),
+        ),
+        # Migration 284: how a synced counter sale's totals compared with the
+        # server's re-price. NULL for every order not ingested from a device.
+        CheckConstraint(
+            "pricing_status IS NULL OR pricing_status IN "
+            "('verified', 'mismatch', 'unverified')",
+            name="ck_orders_pricing_status_allowed",
+        ),
     )
 
+    #: 40 since migration 284 (was 30): a local-first counter sale is
+    #: `POS-{ref≤10}-{YYYY-MM-DD}-{display_number}`, e.g.
+    #: `POS-K001-2026-09-23-T1-0042`.
     order_number: Mapped[str] = mapped_column(
-        String(30), unique=True, nullable=False, index=True
+        String(40), unique=True, nullable=False, index=True
     )
     #: The storefront's idempotency key for the checkout attempt that created this
     #: order — a UUID minted client-side, stable across retries of the same
@@ -597,6 +620,59 @@ class Order(Base, UUIDMixin, TimestampMixin):
     # Set on the child when a check is split or joined, so both halves stay traceable.
     original_order_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The coupon-mode promotion the cashier tapped at the till. Kept while it
+    #: is selected even when the check stops qualifying (it then simply isn't
+    #: applied, and re-applies once the check qualifies again) — see
+    #: `promotion_rules.choose`. Null on every order without one.
+    applied_coupon_promotion_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("promotions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # ─── Local-first counter sales (migration 284) ────────────────────────────
+    # A counter sale can be rung up, priced, paid and printed on the iPad and
+    # synced afterwards (`counter_ingest_service`). These record what the
+    # device printed and how the server's re-price compared. All NULL/default
+    # on every order the server rang up itself.
+
+    #: The number printed on the device's receipt and docket (`T1-0042`) — the
+    #: till's ticket prefix plus its per-day sequence. Shown in place of
+    #: `order_number` wherever set (`display_number ?? order_number`).
+    display_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: `verified` (server re-price equals the receipt), `mismatch` (it did not;
+    #: the invoiced figures were adopted and `pricing_audit` says how they
+    #: differed) or `unverified` (the bundle the sale cites was unknown, so it
+    #: was priced from current data). CHECK above.
+    pricing_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: The server's own figures beside the device's, kept when they differed.
+    pricing_audit: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    #: sha256 of the config bundle the device priced the sale against.
+    config_bundle_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The instant the promotion schedules were read at (clamped to
+    #: `[opened_at, closed_at]`).
+    priced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: When the sale reached the server.
+    ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Fingerprint of the synced sale payload (see `CounterSaleRequest`): a
+    #: retry with the same fingerprint is a replay, a different one a conflict.
+    ingest_payload_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The sale synced after its till (or trading day) had already closed, so
+    #: the till's frozen totals were restated.
+    ingested_late: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    #: Non-fatal facts about the sync — `business_date_disagrees`,
+    #: `inactive_product`, `modifier_rule`, `attestation_invalid`, … — kept on
+    #: the order because the money had already moved and refusing was not an
+    #: option. The Counter sync console lists them.
+    ingest_flags: Mapped[list[str]] = mapped_column(
+        ARRAY(String), nullable=False, server_default="{}", default=list
     )
 
     # Relationships

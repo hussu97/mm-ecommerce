@@ -29,6 +29,7 @@ import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useOrderFilters, toOrdersParams } from '@/lib/order-filters';
 import { cn, formatCurrency, formatDate, formatTime } from '@/lib/utils';
+import { shownOrderNumber } from '@/lib/order-display';
 
 // Packed is no longer the end of the line, so it reads as in-progress and only
 // a delivered order gets the green.
@@ -246,10 +247,17 @@ export default function OrdersPage() {
               // What the shop says on the phone to a customer, so it is what
               // identifies the row in both shapes.
               priority: 'primary',
+              // A local-first counter sale shows the ticket the customer holds
+              // (`T1-0042`), with the server's number beneath it.
               render: o => (
-                <span className="font-body font-medium text-primary text-xs">
-                  {o.order_number}
-                </span>
+                <div className="leading-tight">
+                  <span className="font-body font-medium text-primary text-xs">
+                    {shownOrderNumber(o)}
+                  </span>
+                  {shownOrderNumber(o) !== o.order_number && (
+                    <div className="text-[11px] text-gray-400">{o.order_number}</div>
+                  )}
+                </div>
               ),
             },
             {

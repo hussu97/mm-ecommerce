@@ -17,11 +17,20 @@ class TillOpenRequest(BaseModel):
     device_id: UUID | None = None
     opening_amount: Decimal = Field(Decimal("0"), ge=0)
     notes: str | None = None
+    #: Local-first counter: unsynced sales the terminal still holds. Only
+    #: matters when this open hands the device over from another cashier's
+    #: till (that till is closed on this count): above 0 it is refused unless
+    #: the caller has `pos.till.manage`. Omitted = 0 (every older build).
+    device_pending_sales: int | None = Field(None, ge=0)
 
 
 class TillCloseRequest(BaseModel):
     closing_amount: Decimal = Field(ge=0)
     notes: str | None = None
+    #: Local-first counter: unsynced sales the terminal still holds. Above 0
+    #: the close is refused unless the caller has `pos.till.manage`. Omitted =
+    #: 0 (every older build).
+    device_pending_sales: int | None = Field(None, ge=0)
 
 
 class TillResponse(ORMModel):
@@ -39,6 +48,9 @@ class TillResponse(ORMModel):
     estimated_cash: Decimal
     variance: Decimal
     totals: dict
+    #: Set when `totals` were restated after the close because a local-first
+    #: counter sale synced late onto this till.
+    totals_restated_at: datetime | None = None
     notes: str | None
     created_at: datetime
     updated_at: datetime

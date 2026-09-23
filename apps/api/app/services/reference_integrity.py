@@ -56,6 +56,10 @@ REFERENCES: dict[str, dict[str, str]] = {
     "Discount": {"branch_ids": "Branch"},
     "Promotion": {
         "branch_ids": "Branch",
+        # Where it runs automatically / as a till coupon. A stale id is a mode
+        # set for a branch that is not there.
+        "auto_branch_ids": "Branch",
+        "coupon_branch_ids": "Branch",
         # The two that decide money: what triggers the promotion and what it
         # gives away. A stale id here is a promotion that quietly stops firing,
         # or one whose free product cannot be granted.

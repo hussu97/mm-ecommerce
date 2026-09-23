@@ -5,7 +5,16 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -47,6 +56,20 @@ class Device(Base, UUIDMixin, TimestampMixin):
         ),
         # Migration 138.
         status_vocabulary("devices", "status", DeviceStatusEnum),
+        # Migration 284: a till's ticket prefix (`T1`) is what makes its printed
+        # numbers unique at the branch, so two terminals may never share one.
+        Index(
+            "uq_devices_branch_ticket_prefix",
+            "branch_id",
+            "ticket_prefix",
+            unique=True,
+            postgresql_where=text("ticket_prefix IS NOT NULL"),
+        ),
+        # Migration 284: what the terminal says it is running the counter in.
+        CheckConstraint(
+            "counter_mode IS NULL OR counter_mode IN ('online', 'shadow', 'local')",
+            name="ck_devices_counter_mode_allowed",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -119,6 +142,29 @@ class Device(Base, UUIDMixin, TimestampMixin):
     )
     category_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default="{}"
+    )
+
+    # ─── Local-first counter (migration 284) ──────────────────────────────────
+    #: The prefix on this till's printed ticket numbers (`T1` → `T1-0042`).
+    #: Unique per branch, assigned lazily (`T1`, `T2`, …) the first time the
+    #: terminal fetches a counter config bundle.
+    ticket_prefix: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    #: The counter mode the terminal reported on its last heartbeat — `online`
+    #: (server-authoritative), `shadow` or `local`. Null until a build that
+    #: reports it.
+    counter_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    #: Sales rung up locally and not yet synced, as of the last heartbeat that
+    #: carried the counts. Null when the build does not report them.
+    pending_sales: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Unsynced sales the server refused (409/422) and the device set aside.
+    parked_sales: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: When the oldest of those unsynced sales was closed on the device.
+    oldest_pending_sale_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: When the three counts above were last reported.
+    sync_reported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     deleted_at: Mapped[datetime | None] = mapped_column(

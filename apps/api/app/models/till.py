@@ -115,6 +115,12 @@ class Till(Base, UUIDMixin, TimestampMixin):
 
     # Frozen X/Z-report figures written at close.
     totals: Mapped[Any] = mapped_column(JSONB, nullable=False, server_default="{}")
+    #: When `totals` were recomputed after the close because a local-first
+    #: counter sale rung up on this till synced late (migration 284). Null
+    #: while the close-time figures still stand.
+    totals_restated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user: Mapped[User] = relationship("User", foreign_keys=[user_id])

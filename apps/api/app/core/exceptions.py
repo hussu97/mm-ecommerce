@@ -10,6 +10,7 @@ __all__ = [
     "ServiceUnavailableError",
     "UnauthorizedError",
     "UnprocessableError",
+    "UpgradeRequiredError",
 ]
 
 
@@ -88,6 +89,21 @@ class UnprocessableError(AppError):
 
     def __init__(self, detail: str = "Unprocessable entity"):
         super().__init__(detail)
+
+
+class UpgradeRequiredError(AppError):
+    """426: the client's app build is too old for this endpoint.
+
+    Raised by the local-first counter endpoints for a register below
+    `COUNTER_LOCAL_FIRST_MIN_BUILD` — a guard against an unfinished TestFlight
+    build syncing sales the server cannot trust. Coded so the register can
+    branch on it without parsing the message.
+    """
+
+    status_code = 426
+
+    def __init__(self, detail: str = "Update the app to use this feature"):
+        super().__init__(detail, code="upgrade_required")
 
 
 class BadGatewayError(AppError):

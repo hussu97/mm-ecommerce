@@ -47,6 +47,7 @@ __all__ = [
     "handover_on_device",
     "open_till",
     "open_till_on_device",
+    "restamp_closed_till",
 ]
 
 ZERO = Decimal("0.00")
@@ -89,6 +90,7 @@ async def handover_on_device(
     device_id: uuid.UUID | None,
     user: User,
     counted: Decimal,
+    device_pending_sales: int = 0,
 ) -> Till | None:
     """
     Hand a terminal from the cashier who left it open to the one signing in.
@@ -121,6 +123,9 @@ async def handover_on_device(
     outgoing = await open_till_on_device(db, device_id)
     if outgoing is None or outgoing.user_id == user.id:
         return None
+    # A local-first register still holding unsynced sales would hand over a
+    # drawer counted without them — the same refusal a plain close makes.
+    ensure_can_close_over_pending(user, device_pending_sales)
 
     return await close_till(
         db,
@@ -222,14 +227,23 @@ async def add_drawer_operation(
     reason_id: uuid.UUID | None = None,
     order_id: uuid.UUID | None = None,
     notes: str | None = None,
+    recorded_at=None,
+    allow_closed_till: bool = False,
 ) -> DrawerOperation:
+    """Write one drawer movement and refresh the till's expected cash.
+
+    `recorded_at` (default now) and `allow_closed_till` are for a local-first
+    counter sale synced after its till closed: the cash really went into that
+    drawer, so it is booked there and the caller restates the closed till's
+    figures with `restamp_closed_till`. Everyone else keeps the refusal.
+    """
     # Lock the till row for the life of the transaction so a drawer write and a
     # concurrent close serialise on it (F-POS-23): a payment committing between a
     # close's `estimated_cash` snapshot and its commit otherwise left the shift's
     # variance computed against a drawer total that was already stale. Re-reads
     # `status` under the lock too, so a close that won the race is seen here.
     await db.refresh(till, with_for_update=True)
-    if till.status != TillStatusEnum.OPEN.value:
+    if till.status != TillStatusEnum.OPEN.value and not allow_closed_till:
         raise ConflictError("Cannot record drawer operations on a closed till")
     if op_type not in DRAWER_SIGN:
         raise ConflictError(f"Unknown drawer operation type '{op_type}'")
@@ -247,7 +261,7 @@ async def add_drawer_operation(
         reason_id=reason_id,
         order_id=order_id,
         notes=notes,
-        recorded_at=utcnow(),
+        recorded_at=recorded_at or utcnow(),
     )
     db.add(operation)
     await db.flush()
@@ -289,7 +303,17 @@ async def close_till(
     closed_by: User,
     closing_amount: Decimal,
     notes: str | None = None,
+    device_pending_sales: int = 0,
 ) -> Till:
+    """Close a till on the counted drawer and freeze its report.
+
+    `device_pending_sales` is what a local-first register says it still holds
+    unsynced (0 when the caller does not say — every older build). Closing over
+    unsynced sales would count the drawer without them, so it is refused unless
+    the closer has `pos.till.manage`, the same authority that closes over open
+    checks. A sale that syncs after the close anyway is booked and the till
+    restated (`restamp_closed_till`).
+    """
     # Lock the till row before reading the ledger or flipping the status, so a
     # payment's `add_drawer_operation` cannot commit between the `estimated_cash`
     # snapshot below and this close's commit and leave the variance stale
@@ -312,6 +336,9 @@ async def close_till(
             "Settle or void them first, or ask a manager to close over them."
         )
 
+    if device_pending_sales and device_pending_sales > 0:
+        ensure_can_close_over_pending(closed_by, device_pending_sales)
+
     expected = await estimated_cash(db, till)
     counted = money(closing_amount)
 
@@ -324,8 +351,50 @@ async def close_till(
     if notes:
         till.notes = notes
 
+    till.totals = await _frozen_totals(db, till)
+
+    await db.flush()
+    await db.refresh(till)
+    return till
+
+
+def ensure_can_close_over_pending(user: User, pending: int) -> None:
+    """Refuse to close a till (or hand one over) while its register still holds
+    unsynced local-first sales, unless the user may close over them."""
+    if pending > 0 and not (user.is_admin or user.can("pos.till.manage")):
+        raise ConflictError(
+            f"{pending} sale(s) on this terminal have not synced yet. Wait for "
+            "them to sync, or ask a manager to close the till."
+        )
+
+
+async def restamp_closed_till(db: AsyncSession, till: Till) -> Till:
+    """Restate a closed till after a late sale landed on it.
+
+    A local-first counter sale can sync after its till closed. The sale is still
+    booked on that till (the money went into that drawer), so the figures the
+    close froze are stale: expected cash, variance against the count, and the
+    X/Z totals. They are recomputed from the ledger exactly as the close
+    computed them, the count itself is left alone, and `totals_restated_at`
+    records that the printed Z-report no longer matches.
+    """
+    await db.refresh(till, with_for_update=True)
+    if till.status != TillStatusEnum.CLOSED.value:
+        return till
+    expected = await estimated_cash(db, till)
+    till.estimated_cash = expected
+    if till.closing_amount is not None:
+        till.variance = money(money(till.closing_amount) - expected)
+    till.totals = await _frozen_totals(db, till)
+    till.totals_restated_at = utcnow()
+    await db.flush()
+    return till
+
+
+async def _frozen_totals(db: AsyncSession, till: Till) -> dict:
+    """The X/Z figures a close freezes onto `till.totals`."""
     report = await build_report(db, till)
-    till.totals = {
+    return {
         "orders_count": report["orders_count"],
         "gross_sales": str(report["gross_sales"]),
         "discounts": str(report["discounts"]),
@@ -354,10 +423,6 @@ async def close_till(
         "total_refunds": str(report["total_refunds"]),
         "net_payments": str(report["net_payments"]),
     }
-
-    await db.flush()
-    await db.refresh(till)
-    return till
 
 
 async def build_report(db: AsyncSession, till: Till) -> dict:

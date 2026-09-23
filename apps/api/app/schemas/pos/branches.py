@@ -84,6 +84,9 @@ class BranchUpdate(BaseModel):
     offers_pickup: bool | None = None
     uses_pos: bool | None = None
     show_recipes: bool | None = None
+    #: Local-first counter rollout: `off` | `shadow` | `on`. See
+    #: `Branch.counter_local_first`.
+    counter_local_first: Literal["off", "shadow", "on"] | None = None
     return_branch_id: UUID | None = None
     accepts_reservations: bool | None = None
     reservation_duration: int | None = Field(None, ge=5, le=600)
@@ -120,6 +123,8 @@ class BranchResponse(ORMModel):
     offers_pickup: bool
     uses_pos: bool
     show_recipes: bool
+    #: Local-first counter rollout: `off` | `shadow` | `on`.
+    counter_local_first: str = "off"
     return_branch_id: UUID | None
     accepts_reservations: bool
     reservation_duration: int

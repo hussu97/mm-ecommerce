@@ -65,6 +65,7 @@ __all__ = [
     "maps_url",
     "report_failed_sends",
     "send_auto_availability_change",
+    "send_counter_pricing_mismatch",
     "send_custom_order_enquiry",
     "send_owner_order_notification",
     "send_password_reset",
@@ -94,6 +95,10 @@ TRANSFER_VARIANCE_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
 #: Who is told when the system takes a product/option off sale (or puts it back)
 #: because a produced good ran out — the experimental auto-availability pilot.
 AUTO_AVAILABILITY_RECIPIENTS = ("h_abbasi97@hotmail.com",)
+#: Who is told when a local-first counter sale synced with totals the server's
+#: re-price did not reproduce (the printed receipt was booked as the invoice,
+#: and the difference kept on the order). An engineering alert, not a shop one.
+COUNTER_PRICING_ALERT_RECIPIENTS = ("h_abbasi97@hotmail.com",)
 
 #: The clock every date in an email is printed on. A customer in Sharjah reading
 #: "ready at 16:30" is standing on this one, and a UTC stamp would be four hours
@@ -1086,6 +1091,60 @@ async def send_transfer_sending_variance(
             result,
             transfer_reference,
         )
+
+
+async def send_counter_pricing_mismatch(
+    *,
+    order_number: str,
+    display_number: str | None,
+    branch_name: str,
+    business_date: str,
+    pricing_status: str,
+    server_total: str,
+    client_total: str,
+    bundle_hash: str | None,
+    differences: list[dict[str, Any]],
+) -> None:
+    """Tell engineering a synced counter sale did not re-price to its receipt.
+
+    The register priced the sale locally and printed it; the server re-priced
+    it against the bundle it cited (or, for `unverified`, against current data
+    because the bundle was unknown) and got different figures. The receipt is
+    a tax invoice, so the books were set to it — this is the alarm that the
+    engine and its Swift port drifted, never a silent fix. Each ``differences``
+    entry carries ``field``, ``server`` and ``client`` (formatted strings).
+    Always English; links to the order in the admin console.
+    """
+    shown = display_number or order_number
+    subject = f"Counter pricing {pricing_status} — {shown} · {branch_name}"
+    for recipient in COUNTER_PRICING_ALERT_RECIPIENTS:
+        try:
+            html = _render(
+                "counter_pricing_mismatch.html",
+                recipient_email=recipient,
+                locale="en",
+                order_number=order_number,
+                display_number=shown,
+                branch_name=branch_name,
+                business_date=business_date,
+                pricing_status=pricing_status,
+                server_total=server_total,
+                client_total=client_total,
+                bundle_hash=bundle_hash or "—",
+                differences=differences[:50],
+                admin_order_url=_admin_order_url(order_number),
+            )
+            result = await _send_async(recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "counter_pricing_mismatch render/send failed for %s to %s: %s",
+                order_number,
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log("counter_pricing_mismatch", recipient, subject, result, order_number)
 
 
 async def send_purchase_order_receiving_variance(
