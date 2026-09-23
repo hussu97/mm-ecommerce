@@ -95,7 +95,7 @@ async def profit_and_loss(
         period_charges_included=report.period_charges_included,
         vat=PnlVatSummary(
             output_vat=float(total.output_vat),
-            input_vat_recoverable=float(total.input_vat),
-            net_vat_payable=float(total.output_vat - total.input_vat),
+            fees_vat_reclaimed=float(total.fees_vat),
+            net_vat=float(total.net_vat),
         ),
     )

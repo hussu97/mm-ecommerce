@@ -22358,12 +22358,12 @@
             "title": "Fees Pending",
             "type": "boolean"
           },
-          "gmv": {
-            "title": "Gmv",
+          "fees_vat": {
+            "title": "Fees Vat",
             "type": "number"
           },
-          "input_vat": {
-            "title": "Input Vat",
+          "gmv": {
+            "title": "Gmv",
             "type": "number"
           },
           "is_sale": {
@@ -22380,6 +22380,10 @@
           },
           "net_revenue": {
             "title": "Net Revenue",
+            "type": "number"
+          },
+          "net_vat": {
+            "title": "Net Vat",
             "type": "number"
           },
           "order_number": {
@@ -22451,6 +22455,7 @@
         "required": [
           "gmv",
           "refunds",
+          "output_vat",
           "net_revenue",
           "cogs",
           "pc1",
@@ -22462,11 +22467,11 @@
           "cancellation_charges",
           "period_charges",
           "misc_fees",
+          "fees_vat",
           "pc2",
           "discounts",
           "pc3",
-          "output_vat",
-          "input_vat",
+          "net_vat",
           "pc1_pct",
           "pc2_pct",
           "pc3_pct",
@@ -25146,12 +25151,12 @@
             "title": "Discounts",
             "type": "number"
           },
-          "gmv": {
-            "title": "Gmv",
+          "fees_vat": {
+            "title": "Fees Vat",
             "type": "number"
           },
-          "input_vat": {
-            "title": "Input Vat",
+          "gmv": {
+            "title": "Gmv",
             "type": "number"
           },
           "marketplace_fees": {
@@ -25164,6 +25169,10 @@
           },
           "net_revenue": {
             "title": "Net Revenue",
+            "type": "number"
+          },
+          "net_vat": {
+            "title": "Net Vat",
             "type": "number"
           },
           "orders": {
@@ -25243,6 +25252,7 @@
         "required": [
           "gmv",
           "refunds",
+          "output_vat",
           "net_revenue",
           "cogs",
           "pc1",
@@ -25254,11 +25264,11 @@
           "cancellation_charges",
           "period_charges",
           "misc_fees",
+          "fees_vat",
           "pc2",
           "discounts",
           "pc3",
-          "output_vat",
-          "input_vat",
+          "net_vat",
           "pc1_pct",
           "pc2_pct",
           "pc3_pct",
@@ -25381,14 +25391,14 @@
         "type": "object"
       },
       "PnlVatSummary": {
-        "description": "The VAT the P&L's figures are net of.",
+        "description": "The VAT lines of the statement, in one place.",
         "properties": {
-          "input_vat_recoverable": {
-            "title": "Input Vat Recoverable",
+          "fees_vat_reclaimed": {
+            "title": "Fees Vat Reclaimed",
             "type": "number"
           },
-          "net_vat_payable": {
-            "title": "Net Vat Payable",
+          "net_vat": {
+            "title": "Net Vat",
             "type": "number"
           },
           "output_vat": {
@@ -25398,8 +25408,8 @@
         },
         "required": [
           "output_vat",
-          "input_vat_recoverable",
-          "net_vat_payable"
+          "fees_vat_reclaimed",
+          "net_vat"
         ],
         "title": "PnlVatSummary",
         "type": "object"

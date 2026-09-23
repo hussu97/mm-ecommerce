@@ -3,8 +3,8 @@
 Every figure below is worked by hand in the comments, so a change to the
 arithmetic has to change a number a human can check. Pins:
 
-* the VAT split — output VAT from the order's own frozen figures, input VAT
-  reclaimed only under a registered entity;
+* the VAT lines — amounts as billed, output VAT from the order's own frozen
+  figures, fee VAT reclaimed only under a registered entity, COGS at net cost;
 * which orders count — a sale, a charged cancellation, and not an uncharged one;
 * COGS from the FIFO projection, and blank (not zero) when no stock was drawn;
 * the report equals the sum of its orders to the fils;
@@ -362,43 +362,46 @@ async def _pnl(engine, order_id):
         return await order_pnl.for_order(db, order_id)
 
 
-async def test_a_website_order_nets_every_line_of_vat(engine, world):
+async def test_a_website_order_shows_its_vat_as_lines(engine, world):
     p = await _pnl(engine, world["orders"]["A"])
     assert p.channel == "website_delivery" and p.is_sale
-    assert p.gmv == D("120.00")  # 110.00 + 10.50 / 1.05
-    assert p.refunds == D("20.00")  # 21.00 / 1.05
-    assert p.cogs == D("6.00")  # 3 g × 2.00, FIFO
-    assert p.pc1 == D("94.00")
-    assert p.payment_fees == D("4.00")  # 4.20 / 1.05
-    assert p.delivery_cost == D("10.00")  # 10.50 / 1.05
-    assert p.pc2 == D("80.00")
-    assert p.discounts == D("10.00")
-    assert p.pc3 == D("70.00")
-    assert p.share(p.pc3) == D("58.33")
+    assert p.gmv == D("126.00")  # 115.50 charged + 10.50 coupon, VAT included
+    assert p.refunds == D("21.00")
     assert p.output_vat == D("4.50")  # 5.50 − 21.00 × 5/105
-    assert p.input_vat == D("0.70")  # (4.20 + 10.50) × 5/105
+    assert p.net_revenue == D("100.50")
+    assert p.cogs == D("5.71")  # 3 g × 2.00 FIFO, less its 5/105 purchase VAT
+    assert p.pc1 == D("94.79")
+    assert p.payment_fees == D("4.20")
+    assert p.delivery_cost == D("10.50")
+    assert p.fees_vat == D("0.70")  # (4.20 + 10.50) × 5/105
+    assert p.pc2 == D("80.79")
+    assert p.discounts == D("10.50")
+    assert p.pc3 == D("70.29")
+    assert p.share(p.pc3) == D("55.79")
+    assert p.net_vat == D("3.80")  # 4.50 − 0.70; COGS VAT was reclaimed at purchase
 
 
 async def test_a_marketplace_order_with_no_stock_has_blank_cogs(engine, world):
     p = await _pnl(engine, world["orders"]["B"])
     assert p.channel == "talabat"
     assert p.cogs is None  # unknown, not free
-    assert p.gmv == D("40.00")
-    assert p.commission == D("12.00")
-    assert p.payment_fees == D("0.80")
-    assert p.marketplace_fees == D("4.00")
+    assert p.gmv == D("42.00")
+    assert p.output_vat == D("2.00")
+    assert p.commission == D("12.60")
+    assert p.payment_fees == D("0.84")
+    assert p.marketplace_fees == D("4.20")
     assert p.delivery_cost == D("0.00")  # the marketplace carries it
+    assert p.fees_vat == D("0.84")
     assert p.pc3 == D("23.20")
-    assert p.input_vat == D("0.84")
 
 
-async def test_an_unregistered_entity_bears_its_vat(engine, world):
+async def test_an_unregistered_entity_bears_its_fee_vat(engine, world):
     p = await _pnl(engine, world["orders"]["C"])
     assert p.channel == "counter"
     assert p.gmv == D("50.00")
     assert p.discounts == D("5.00")
-    assert p.payment_fees == D("1.50")  # nothing reclaimed
-    assert p.input_vat == D("0.00")
+    assert p.payment_fees == D("1.50")
+    assert p.fees_vat == D("0.00")  # nothing reclaimed
     assert p.output_vat == D("0.00")
     assert p.pc3 == D("43.50")
 
@@ -408,10 +411,12 @@ async def test_a_charged_cancellation_is_all_cancellation_charge(engine, world):
     assert d.channel == "noon_food" and not d.is_sale
     assert d.gmv == D("0.00")
     assert d.commission == D("0.00") and d.payment_fees == D("0.00")
-    assert d.cancellation_charges == D("11.60")  # 12.18 / 1.05
+    assert d.cancellation_charges == D("12.18")  # 10.50 + 0.84 + 0.84 billed
+    assert d.fees_vat == D("0.58")
     assert d.pc3 == D("-11.60")
     f = await _pnl(engine, world["orders"]["F"])
-    assert f.cancellation_charges == D("21.00")  # billed back by the statement
+    assert f.cancellation_charges == D("22.05")  # billed back by the statement
+    assert f.pc3 == D("-21.00")
 
 
 async def test_an_uncharged_cancellation_is_not_in_the_pnl(engine, world):
@@ -431,10 +436,10 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
     assert total.orders == 5
     assert total.charged_cancellations == 2
     assert total.orders_with_cogs == 1
-    assert total.gmv == D("210.00")  # 120 + 40 + 50
-    assert total.cogs == D("6.00")
-    # PC3 = 70.00 + 23.20 + 43.50 − 11.60 − 21.00
-    assert total.pc3 == D("104.10")
+    assert total.gmv == D("218.00")  # 126 + 42 + 50
+    assert total.cogs == D("5.71")
+    # PC3 = 70.29 + 23.20 + 43.50 − 11.60 − 21.00
+    assert total.pc3 == D("104.39")
     assert by_channel["talabat"].pc3 == D("2.20")  # 23.20 − 21.00
 
 
@@ -447,8 +452,8 @@ async def test_period_charges_book_the_fee_and_the_noon_true_up(engine, world):
             if c.first_date == DAY
         }
     monthly = charges[("deliveroo", "monthly_admin_fee")]
-    assert monthly.amount == D("190.48") and monthly.input_vat == D("9.52")
+    assert monthly.amount == D("200.00") and monthly.input_vat == D("9.52")
     true_up = charges[("noon_food", "payment_fee")]
     assert true_up.is_true_up
-    assert true_up.amount == D("2.00")  # (2.94 − 0.84) / 1.05
+    assert true_up.amount == D("2.10")  # 2.94 invoiced − 0.84 on order D
     assert true_up.input_vat == D("0.10")

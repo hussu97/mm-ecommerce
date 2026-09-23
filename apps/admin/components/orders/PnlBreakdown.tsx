@@ -14,7 +14,7 @@ import { ordersApi, type OrderPnl } from '@/lib/api';
 import { Spinner } from '@/components/ui';
 import { cn, formatCurrency } from '@/lib/utils';
 
-type Tone = 'plain' | 'cost' | 'subtotal';
+type Tone = 'plain' | 'cost' | 'credit' | 'subtotal';
 
 function Line({
   label,
@@ -32,7 +32,13 @@ function Line({
   indent?: boolean;
 }) {
   const shown =
-    value === null ? '—' : tone === 'cost' && value !== 0 ? `−${formatCurrency(value)}` : formatCurrency(value);
+    value === null
+      ? '—'
+      : value !== 0 && tone === 'cost'
+        ? `−${formatCurrency(value)}`
+        : value !== 0 && tone === 'credit'
+          ? `+${formatCurrency(value)}`
+          : formatCurrency(value);
   return (
     <div
       className={cn(
@@ -66,19 +72,22 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
           Cancelled, but the marketplace still charged for it — no revenue, only the charge.
         </p>
       )}
-      <Line label="GMV (before discounts)" value={pnl.gmv} />
+      <Line label="GMV (before discounts, incl. VAT)" value={pnl.gmv} />
       {pnl.refunds !== 0 && <Line label="Refunds" value={pnl.refunds} tone="cost" />}
+      <Line label="VAT on sales" value={pnl.output_vat} tone="cost" hint="Output VAT owed to the FTA, less the VAT inside any refund." />
       <Line label="Net revenue" value={pnl.net_revenue} tone="subtotal" />
       <Line
-        label="COGS"
+        label="COGS (net of VAT)"
         value={pnl.cogs}
         tone="cost"
         hint={
           pnl.cogs_missing
             ? 'No stock movement was recorded for this order (before inventory go-live, or it never posted), so its cost of goods is unknown — not zero.'
-            : pnl.cogs_provisional > 0
-              ? `${formatCurrency(pnl.cogs_provisional)} of this is priced provisionally, until a purchase order prices the stock.`
-              : undefined
+            : `Stock at cost, net of the VAT reclaimed when it was bought.${
+                pnl.cogs_provisional > 0
+                  ? ` ${formatCurrency(pnl.cogs_provisional)} of it is priced provisionally, until a purchase order prices the stock.`
+                  : ''
+              }`
         }
       />
       <Line label="PC1" value={pnl.pc1} tone="subtotal" pct={pnl.pc1_pct} />
@@ -93,6 +102,12 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
       {pnl.cancellation_charges !== 0 && (
         <Line label="Cancellation charges" value={pnl.cancellation_charges} tone="cost" indent />
       )}
+      <Line
+        label="VAT reclaimed on fees"
+        value={pnl.fees_vat}
+        tone="credit"
+        hint="The input VAT inside the fees above. Zero under an entity that is not VAT-registered, where it stays a cost."
+      />
       <Line label="PC2" value={pnl.pc2} tone="subtotal" pct={pnl.pc2_pct} />
       <Line label="Discounts" value={pnl.discounts} tone="cost" />
       <div
@@ -110,10 +125,7 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
         </span>
       </div>
       <div className="pt-2 text-[11px] font-body text-gray-400 space-y-0.5">
-        <p>
-          Net of VAT · output VAT {formatCurrency(pnl.output_vat)} · input VAT reclaimed{' '}
-          {formatCurrency(pnl.input_vat)}
-        </p>
+        <p>Revenue and fees as billed (incl. VAT); COGS at net cost. Subtotals are net of VAT.</p>
         {pnl.is_sale && pnl.cogs_missing && (
           <p className="text-amber-700">COGS not recorded for this order.</p>
         )}

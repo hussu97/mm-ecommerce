@@ -76,7 +76,7 @@ async def build(
     for charge in charges:
         column = by_channel.setdefault(charge.channel, PnlTotals())
         column.period_charges = money(column.period_charges + charge.amount)
-        column.input_vat = money(column.input_vat + charge.input_vat)
+        column.fees_vat = money(column.fees_vat + charge.input_vat)
 
     ordered = [
         (code, by_channel[code]) for code in (*CHANNELS, "other") if code in by_channel

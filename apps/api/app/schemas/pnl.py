@@ -1,7 +1,8 @@
 """
 Response shapes for profit & loss — one order's, and a window's by channel.
 
-Every money field is AED **net of VAT** and computed server-side by
+Revenue and cost lines are AED as billed (VAT included), with the VAT as lines
+of its own, so every subtotal is net of VAT. All computed server-side by
 `services/orders/order_pnl` (canon rule 10); the console renders these and
 derives nothing. `float` for transport, like the other report schemas.
 """
@@ -12,15 +13,26 @@ from pydantic import BaseModel
 
 
 class PnlStatement(BaseModel):
-    """The P&L lines and subtotals, in statement order."""
+    """
+    The P&L lines and subtotals, in statement order.
 
-    #: What the customer was billed before discounts, net of output VAT.
+    Revenue and fees are as billed, VAT included, and their VAT comes off as
+    lines of its own (`output_vat`, `fees_vat`); COGS is net cost. So every
+    subtotal from `net_revenue` down is net of VAT.
+    """
+
+    #: What the customer was billed before discounts, VAT included.
     gmv: float
-    #: Partial refunds on an order that still stood.
+    #: Partial refunds on an order that still stood, as refunded.
     refunds: float
+    #: VAT on sales owed to the FTA — charged, less the VAT inside refunds.
+    output_vat: float
+    #: GMV − refunds − VAT on sales.
     net_revenue: float
-    #: FIFO cost of the stock consumed. Null on a single order that drew none
-    #: (before its branch's inventory go-live, or a sale that never posted).
+    #: FIFO cost of the stock consumed, net of the VAT reclaimed when it was
+    #: bought (assumed at the standard rate on all of it). Null on a single
+    #: order that drew none (before its branch's inventory go-live, or a sale
+    #: that never posted).
     cogs: float | None
     #: Net revenue − COGS.
     pc1: float
@@ -37,16 +49,17 @@ class PnlStatement(BaseModel):
     #: Non-order marketplace charges (report only; zero on an order).
     period_charges: float
     misc_fees: float
-    #: PC1 − payment − aggregator & delivery − misc.
+    #: Input VAT reclaimed on the fee lines — zero under a non-registered entity.
+    fees_vat: float
+    #: PC1 − payment − aggregator & delivery − misc + VAT reclaimed on fees.
     pc2: float
+    #: As given, VAT included.
     discounts: float
     #: PC2 − discounts.
     pc3: float
-    #: Output VAT the orders collected for the FTA (after refunds).
-    output_vat: float
-    #: Input VAT on the cost lines that the booking entity reclaims.
-    input_vat: float
-    #: PC1–PC3 as a % of GMV; null when there is no GMV.
+    #: VAT on sales − VAT reclaimed on fees.
+    net_vat: float
+    #: PC1–PC3 as a % of GMV (VAT included); null when there is no GMV.
     pc1_pct: float | None
     pc2_pct: float | None
     pc3_pct: float | None
@@ -102,8 +115,9 @@ class PnlPeriodChargeRow(BaseModel):
     #: The marketplace's own fee word (`monthly_admin_fee`, `platform_fee`…).
     category: str
     description: str | None
-    #: Net of VAT; positive is a cost, negative a credit.
+    #: As billed, VAT included; positive is a cost, negative a credit.
     amount: float
+    #: The reclaimable VAT inside `amount`.
     input_vat: float
     first_date: str
     last_date: str
@@ -113,14 +127,15 @@ class PnlPeriodChargeRow(BaseModel):
 
 
 class PnlVatSummary(BaseModel):
-    """The VAT the P&L's figures are net of."""
+    """The VAT lines of the statement, in one place."""
 
+    #: VAT on sales owed to the FTA, after refunds.
     output_vat: float
-    input_vat_recoverable: float
-    #: Output − recoverable input: what these sales leave owing to the FTA.
-    #: Excludes input VAT on raw-goods purchases, which the VAT report books
-    #: when the stock is bought, not when it is sold.
-    net_vat_payable: float
+    #: VAT reclaimed on fees and period charges.
+    fees_vat_reclaimed: float
+    #: Output − reclaimed. Excludes VAT on the stock sold, which the VAT report
+    #: reclaims when the stock is bought.
+    net_vat: float
 
 
 class PnlReportResponse(BaseModel):

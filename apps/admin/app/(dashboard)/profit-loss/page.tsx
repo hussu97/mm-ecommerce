@@ -51,16 +51,17 @@ type Row = {
   label: string;
   value: (c: Column) => number | null;
   pct?: (c: Column) => number | null;
-  kind: 'line' | 'cost' | 'sub' | 'detail' | 'result';
+  kind: 'line' | 'cost' | 'credit' | 'sub' | 'detail' | 'result';
 };
 
 // The statement, top to bottom. Costs are shown as negatives; the sub-lines
 // under a cost group are the parts it is made of.
 const ROWS: Row[] = [
-  { label: 'GMV (before discounts)', value: c => c.gmv, kind: 'line' },
+  { label: 'GMV (before discounts, incl. VAT)', value: c => c.gmv, kind: 'line' },
   { label: 'Refunds', value: c => c.refunds, kind: 'cost' },
+  { label: 'VAT on sales', value: c => c.output_vat, kind: 'cost' },
   { label: 'Net revenue', value: c => c.net_revenue, kind: 'sub' },
-  { label: 'COGS', value: c => c.cogs, kind: 'cost' },
+  { label: 'COGS (net of VAT)', value: c => c.cogs, kind: 'cost' },
   { label: 'PC1', value: c => c.pc1, pct: c => c.pc1_pct, kind: 'sub' },
   { label: 'Payment fees', value: c => c.payment_fees, kind: 'cost' },
   { label: 'Aggregator & delivery fees', value: c => c.aggregator_and_delivery_fees, kind: 'cost' },
@@ -70,14 +71,16 @@ const ROWS: Row[] = [
   { label: 'Misc fees', value: c => c.misc_fees, kind: 'cost' },
   { label: 'Cancellation charges', value: c => c.cancellation_charges, kind: 'detail' },
   { label: 'Platform & period charges', value: c => c.period_charges, kind: 'detail' },
+  { label: 'VAT reclaimed on fees', value: c => c.fees_vat, kind: 'credit' },
   { label: 'PC2', value: c => c.pc2, pct: c => c.pc2_pct, kind: 'sub' },
   { label: 'Discounts', value: c => c.discounts, kind: 'cost' },
   { label: 'PC3', value: c => c.pc3, pct: c => c.pc3_pct, kind: 'result' },
 ];
 
-function money(value: number | null, cost: boolean) {
+function money(value: number | null, kind: Row['kind']) {
   if (value === null) return '—';
-  if (cost && value !== 0) return `−${formatCurrency(value)}`;
+  if (value !== 0 && (kind === 'cost' || kind === 'detail')) return `−${formatCurrency(value)}`;
+  if (value !== 0 && kind === 'credit') return `+${formatCurrency(value)}`;
   return formatCurrency(value);
 }
 
@@ -161,8 +164,8 @@ export default function ProfitLossPage() {
       <div className="mb-6">
         <h1 className="font-display text-2xl text-gray-800">Profit &amp; Loss</h1>
         <p className="mt-0.5 text-xs font-body text-gray-400">
-          {from === to ? from : `${from} → ${to}`} · every figure net of VAT · delivered orders
-          and charged cancellations
+          {from === to ? from : `${from} → ${to}`} · revenue and fees as billed, VAT shown as its
+          own lines · delivered orders and charged cancellations
         </p>
       </div>
 
@@ -259,7 +262,6 @@ export default function ProfitLossPage() {
                 {ROWS.filter(
                   r => r.kind !== 'detail' || columns.some(c => (r.value(c) ?? 0) !== 0),
                 ).map(r => {
-                  const cost = r.kind === 'cost' || r.kind === 'detail';
                   return (
                     <tr
                       key={r.label}
@@ -268,7 +270,7 @@ export default function ProfitLossPage() {
                         (r.kind === 'sub' || r.kind === 'result') && 'bg-gray-50 font-medium text-gray-800',
                         r.kind === 'result' && 'text-sm',
                         r.kind === 'detail' && 'text-[11px] text-gray-400',
-                        (r.kind === 'line' || r.kind === 'cost') && 'text-gray-600',
+                        (r.kind === 'line' || r.kind === 'cost' || r.kind === 'credit') && 'text-gray-600',
                       )}
                     >
                       <td
@@ -291,7 +293,7 @@ export default function ProfitLossPage() {
                               r.kind === 'result' && v !== null && v < 0 && 'text-red-600',
                             )}
                           >
-                            {money(v, cost)}
+                            {money(v, r.kind)}
                             {pct !== undefined && (
                               <span className="block text-[10px] text-gray-400">
                                 {pct === null ? '' : `${pct.toFixed(1)}%`}
@@ -311,21 +313,22 @@ export default function ProfitLossPage() {
             <section className="border border-gray-200 bg-white p-4">
               <h2 className="mb-2 font-display text-base text-gray-800">VAT</h2>
               <p className="mb-3 text-[11px] font-body text-gray-400">
-                The P&amp;L above is net of these. Input VAT on raw-goods purchases is booked by
-                the VAT report when stock is bought, not here when it is sold.
+                The two VAT lines in the statement. VAT on the stock sold isn&apos;t here: it was
+                reclaimed in the return for the period it was bought (see the VAT report), so COGS
+                is shown at net cost.
               </p>
               <dl className="space-y-1 text-xs font-body">
                 <div className="flex justify-between text-gray-600">
-                  <dt>Output VAT collected (after refunds)</dt>
+                  <dt>VAT on sales (after refunds)</dt>
                   <dd className="whitespace-nowrap tabular-nums">{formatCurrency(report.vat.output_vat)}</dd>
                 </div>
                 <div className="flex justify-between text-gray-600">
-                  <dt>Input VAT reclaimable on fees &amp; charges</dt>
-                  <dd className="whitespace-nowrap tabular-nums">−{formatCurrency(report.vat.input_vat_recoverable)}</dd>
+                  <dt>VAT reclaimed on fees &amp; charges</dt>
+                  <dd className="whitespace-nowrap tabular-nums">−{formatCurrency(report.vat.fees_vat_reclaimed)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-gray-200 pt-1 font-medium text-gray-800">
-                  <dt>Net VAT owed on these sales</dt>
-                  <dd className="whitespace-nowrap tabular-nums">{formatCurrency(report.vat.net_vat_payable)}</dd>
+                  <dt>Net VAT on these sales</dt>
+                  <dd className="whitespace-nowrap tabular-nums">{formatCurrency(report.vat.net_vat)}</dd>
                 </div>
               </dl>
             </section>
@@ -368,7 +371,7 @@ export default function ProfitLossPage() {
                 </ul>
               )}
               <p className="mt-3 text-[11px] font-body text-gray-400">
-                Dated by the statement they arrive on, net of VAT.
+                Dated by the statement they arrive on, as billed (VAT included).
               </p>
             </section>
           </div>

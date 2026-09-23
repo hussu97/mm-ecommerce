@@ -4,25 +4,34 @@ Profit and loss, per order and summed over a window — one definition for both.
 The shop asked for three contribution margins on every order and on any slice of
 the book (a date range, a channel, a branch):
 
-    GMV (pre-discount)            what the customer was billed before discounts
-  − Refunds                       partial refunds on an order that still stood
+    GMV (pre-discount, incl. VAT)   what the customer was billed before discounts
+  − Refunds                         partial refunds on an order that still stood
+  − VAT on sales                    the output VAT owed to the FTA
   = Net revenue
-  − COGS                          the FIFO ingredient + packaging cost it consumed
+  − COGS (net of VAT)               the FIFO ingredient + packaging cost consumed
   = PC1
-  − Payment fees                  card processor / marketplace payment handling
-  − Aggregator & delivery fees    commission, loyalty/Pro/Plus/subsidy fees, own courier
-  − Misc fees                     cancellation charges (+ period charges, report only)
+  − Payment fees                    card processor / marketplace payment handling
+  − Aggregator & delivery fees      commission, loyalty/Pro/Plus/subsidy, own courier
+  − Misc fees                       cancellation charges (+ period charges, report only)
+  + VAT reclaimed on fees
   = PC2
-  − Discounts                     coupon / counter / merchant-funded marketplace discounts
+  − Discounts                       coupon / counter / marketplace merchant discounts
   = PC3
 
-**Every figure is net of VAT.** Revenue lines drop the output VAT the shop
-collects for the FTA (read from the order's own frozen `total_excl_vat` and
-`vat_rate`, not re-derived); cost lines drop the input VAT the shop reclaims —
-unless the order was booked under a non-registered entity (the Barsha counter),
-where that VAT is a real cost and stays in. That is the same split, at the same
-rate, that `services/vat_ledger` books, so the VAT memo beside this P&L and the
-VAT report agree on the treatment even though they group differently.
+**Amounts as billed, VAT as its own lines.** Revenue and fees are shown
+VAT-inclusive, so each matches a receipt, an invoice or a marketplace statement,
+and their VAT comes off in lines of its own: output VAT from the order's frozen
+`vat_amount` (less the VAT inside any refund), and input VAT reclaimed on fees —
+both flows of the period the order falls in. Fee VAT is reclaimed only under a
+VAT-registered entity (the Barsha counter is not, so there it stays a cost) —
+the same split, at the same rate, that `services/vat_ledger` books.
+
+**COGS is net cost, with no VAT line.** The VAT on the stock was reclaimed in
+the return for the period it was bought (the VAT report's raw goods), not at
+the sale, and recoverable VAT is never part of an inventory's cost — so COGS is
+stated net of it and the P&L's VAT lines do not mention it. Every subtotal from
+net revenue down is therefore net of VAT. The discount is shown at face value,
+so the VAT inside it comes off at PC3 rather than earlier.
 
 **Derived, never stored.** Every number is read at request time from the columns
 that already own it — the order's fee columns, the courier's delivery row, the
@@ -119,15 +128,15 @@ CHANNELS: tuple[str, ...] = (
 LINE_KEYS: tuple[str, ...] = (
     "gmv",
     "refunds",
+    "output_vat",
     "cogs",
     "payment_fees",
     "commission",
     "marketplace_fees",
     "delivery_cost",
     "cancellation_charges",
+    "fees_vat",
     "discounts",
-    "output_vat",
-    "input_vat",
 )
 
 
@@ -330,37 +339,49 @@ def line_columns() -> dict[str, object]:
     def on_sale(expr):
         return case((sale, expr), else_=0)
 
-    # Gross (VAT-inclusive) costs, so input VAT is exactly gross − net.
-    gross_costs = case(
+    # Every cost as billed (VAT-inclusive), so the VAT reclaimed is exactly the
+    # gross less what it would be net.
+    gross_fees = case(
         (sale, payment + commission + marketing + courier + cancellation),
         else_=payment + commission + marketing + cancellation,
     )
+    # FIFO unit costs are the purchase price VAT-inclusive (a PO line's
+    # `unit_cost` is its gross), but that VAT was reclaimed in the VAT return of
+    # the period the stock was *bought* — it was never part of the goods' cost,
+    # and it is not a flow at the sale. So COGS is stated net of it, with no VAT
+    # line of its own. Assumed at the standard rate on all of it: every supplier
+    # is VAT-deductible today and every purchase is booked by the registered
+    # entity; tracing each consumed layer back to its receipt through
+    # production and transfers is a costing-engine change, not a report one.
+    cogs_net = 1 + VAT_RATE
     return {
-        # Pre-discount revenue net of VAT: what the order booked net of VAT, plus
-        # the discount's own net-of-VAT value put back.
-        "gmv": r(on_sale(Order.total_excl_vat + Order.discount_amount / out_div)).label(
-            "gmv"
-        ),
-        "refunds": r(on_sale(refunded / out_div)).label("refunds"),
-        "cogs": r(_cogs_subquery()).label("cogs"),
-        "payment_fees": r(on_sale(payment / in_div)).label("payment_fees"),
-        "commission": r(on_sale(commission / in_div)).label("commission"),
-        "marketplace_fees": r(on_sale(marketing / in_div)).label("marketplace_fees"),
-        "delivery_cost": r(on_sale(courier / in_div)).label("delivery_cost"),
-        "cancellation_charges": r(
-            case(
-                (sale, cancellation / in_div),
-                # A charged cancellation: everything billed is the charge.
-                else_=(payment + commission + marketing + cancellation) / in_div,
-            )
-        ).label("cancellation_charges"),
-        "discounts": r(on_sale(Order.discount_amount / out_div)).label("discounts"),
+        # What the customer was billed before discounts, VAT included: the
+        # charged total with the discount put back.
+        "gmv": r(on_sale(Order.total + Order.discount_amount)).label("gmv"),
+        "refunds": r(on_sale(refunded)).label("refunds"),
+        # The VAT actually charged, less the VAT handed back with a refund —
+        # the order's own frozen figures, the same the VAT ledger books.
         "output_vat": r(
             on_sale(Order.vat_amount - refunded * out_rate / out_div)
         ).label("output_vat"),
-        "input_vat": r(gross_costs - gross_costs / in_div).label("input_vat"),
+        "cogs": r(_cogs_subquery() / cogs_net).label("cogs"),
+        "payment_fees": r(on_sale(payment)).label("payment_fees"),
+        "commission": r(on_sale(commission)).label("commission"),
+        "marketplace_fees": r(on_sale(marketing)).label("marketplace_fees"),
+        "delivery_cost": r(on_sale(courier)).label("delivery_cost"),
+        "cancellation_charges": r(
+            case(
+                (sale, cancellation),
+                # A charged cancellation: everything billed is the charge.
+                else_=payment + commission + marketing + cancellation,
+            )
+        ).label("cancellation_charges"),
+        "fees_vat": r(gross_fees - gross_fees / in_div).label("fees_vat"),
+        "discounts": r(on_sale(Order.discount_amount)).label("discounts"),
         # ── bookkeeping ──
-        "cogs_provisional": r(_cogs_provisional_subquery()).label("cogs_provisional"),
+        "cogs_provisional": r(_cogs_provisional_subquery() / cogs_net).label(
+            "cogs_provisional"
+        ),
         "fees_pending": case(
             # A marketplace order whose commission has not landed yet (its
             # statement arrives days to a month later), or a dispatched website
@@ -391,26 +412,36 @@ def line_columns() -> dict[str, object]:
 
 @dataclass
 class _Lines:
-    """The P&L lines of one order or one group of orders, net of VAT."""
+    """
+    The P&L lines of one order or one group of orders.
+
+    Revenue and fees are as billed — VAT included — and their VAT comes off as
+    lines of its own: the output VAT owed on sales and the input VAT reclaimed
+    on fees. COGS is net cost: its VAT was reclaimed at purchase, not at sale.
+    So every subtotal from net revenue down is net of VAT.
+    """
 
     gmv: Decimal = _ZERO
     refunds: Decimal = _ZERO
-    #: Null only on a single order that drew no stock; a group sums what it has.
+    output_vat: Decimal = _ZERO
+    #: Net of the VAT reclaimed when the stock was bought. Null only on a single
+    #: order that drew no stock; a group sums what it has.
     cogs: Decimal | None = None
     payment_fees: Decimal = _ZERO
     commission: Decimal = _ZERO
     marketplace_fees: Decimal = _ZERO
     delivery_cost: Decimal = _ZERO
     cancellation_charges: Decimal = _ZERO
-    #: Non-order marketplace charges (monthly platform fees…). Report-level only.
+    #: Non-order marketplace charges (monthly platform fees…), as billed.
+    #: Report-level only.
     period_charges: Decimal = _ZERO
+    #: Input VAT reclaimed on the fee lines (and on the period charges).
+    fees_vat: Decimal = _ZERO
     discounts: Decimal = _ZERO
-    output_vat: Decimal = _ZERO
-    input_vat: Decimal = _ZERO
 
     @property
     def net_revenue(self) -> Decimal:
-        return money(self.gmv - self.refunds)
+        return money(self.gmv - self.refunds - self.output_vat)
 
     @property
     def pc1(self) -> Decimal:
@@ -431,11 +462,18 @@ class _Lines:
             - self.payment_fees
             - self.aggregator_and_delivery_fees
             - self.misc_fees
+            + self.fees_vat
         )
 
     @property
     def pc3(self) -> Decimal:
         return money(self.pc2 - self.discounts)
+
+    @property
+    def net_vat(self) -> Decimal:
+        """Output VAT less the fee VAT reclaimed against these sales. VAT on the
+        stock sold is not here: it was reclaimed when the stock was bought."""
+        return money(self.output_vat - self.fees_vat)
 
     def share(self, value: Decimal) -> Decimal | None:
         """`value` as a percentage of GMV; null when there is no GMV."""
@@ -503,9 +541,9 @@ def order_pnl_from_mapping(m: Mapping) -> OrderPnl | None:
         marketplace_fees=money(m["marketplace_fees"]),
         delivery_cost=money(m["delivery_cost"]),
         cancellation_charges=money(m["cancellation_charges"]),
+        fees_vat=money(m["fees_vat"]),
         discounts=money(m["discounts"]),
         output_vat=money(m["output_vat"]),
-        input_vat=money(m["input_vat"]),
         cogs_provisional=money(m["cogs_provisional"]),
         fees_pending=bool(m["fees_pending"]),
         is_sale=bool(m["is_sale"]),
@@ -603,9 +641,9 @@ async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
             marketplace_fees=money(m["marketplace_fees"]),
             delivery_cost=money(m["delivery_cost"]),
             cancellation_charges=money(m["cancellation_charges"]),
+            fees_vat=money(m["fees_vat"]),
             discounts=money(m["discounts"]),
             output_vat=money(m["output_vat"]),
-            input_vat=money(m["input_vat"]),
             cogs_provisional=money(m["cogs_provisional"]),
             orders=int(m["orders"]),
             charged_cancellations=int(m["charged_cancellations"]),
@@ -625,6 +663,7 @@ def statement_fields(lines: _Lines) -> dict[str, Decimal | None]:
     return {
         "gmv": lines.gmv,
         "refunds": lines.refunds,
+        "output_vat": lines.output_vat,
         "net_revenue": lines.net_revenue,
         "cogs": lines.cogs,
         "pc1": lines.pc1,
@@ -636,11 +675,11 @@ def statement_fields(lines: _Lines) -> dict[str, Decimal | None]:
         "cancellation_charges": lines.cancellation_charges,
         "period_charges": lines.period_charges,
         "misc_fees": lines.misc_fees,
+        "fees_vat": lines.fees_vat,
         "pc2": lines.pc2,
         "discounts": lines.discounts,
         "pc3": lines.pc3,
-        "output_vat": lines.output_vat,
-        "input_vat": lines.input_vat,
+        "net_vat": lines.net_vat,
         "pc1_pct": lines.share(lines.pc1),
         "pc2_pct": lines.share(lines.pc2),
         "pc3_pct": lines.share(lines.pc3),

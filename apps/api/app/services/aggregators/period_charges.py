@@ -20,7 +20,8 @@ statement would drop the rest. So for those two categories the charge here is
 the **true-up**: what the statement invoiced less what the statement's own
 orders already carry, so order-level plus period-level equals the invoice.
 
-Amounts come back net of VAT with the VAT beside them, like every P&L line:
+Amounts come back as billed (VAT included) with the VAT inside them beside it,
+like every P&L cost line:
 Careem/Deliveroo/Talabat itemise fee VAT on its own line, while Keeta and noon
 bill VAT-inclusive and the 5% is peeled out here (the same treatment as the Fees
 & VAT roll-up in `api/v1/aggregators`). The aggregator entity is VAT-registered,
@@ -77,8 +78,9 @@ class PeriodCharge:
     channel: str
     category: str
     description: str | None
-    #: Net of VAT; positive is a cost, negative a credit.
+    #: As billed, VAT included; positive is a cost, negative a credit.
     amount: Decimal
+    #: The VAT inside `amount` — reclaimable input VAT.
     input_vat: Decimal
     first_date: str
     last_date: str
@@ -194,7 +196,7 @@ async def period_charges(
                 channel=pnl_channel_for(channel),
                 category=category,
                 description=g["description"],
-                amount=money(net),
+                amount=money(net + vat),
                 input_vat=money(vat),
                 first_date=min(g["dates"]),
                 last_date=max(g["dates"]),

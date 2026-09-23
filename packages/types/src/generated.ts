@@ -17114,10 +17114,10 @@ export interface components {
             discounts: number;
             /** Fees Pending */
             fees_pending: boolean;
+            /** Fees Vat */
+            fees_vat: number;
             /** Gmv */
             gmv: number;
-            /** Input Vat */
-            input_vat: number;
             /** Is Sale */
             is_sale: boolean;
             /** Marketplace Fees */
@@ -17126,6 +17126,8 @@ export interface components {
             misc_fees: number;
             /** Net Revenue */
             net_revenue: number;
+            /** Net Vat */
+            net_vat: number;
             /** Order Number */
             order_number: string;
             /** Output Vat */
@@ -18103,16 +18105,18 @@ export interface components {
             delivery_cost: number;
             /** Discounts */
             discounts: number;
+            /** Fees Vat */
+            fees_vat: number;
             /** Gmv */
             gmv: number;
-            /** Input Vat */
-            input_vat: number;
             /** Marketplace Fees */
             marketplace_fees: number;
             /** Misc Fees */
             misc_fees: number;
             /** Net Revenue */
             net_revenue: number;
+            /** Net Vat */
+            net_vat: number;
             /** Orders */
             orders: number;
             /** Orders Fees Pending */
@@ -18181,13 +18185,13 @@ export interface components {
         };
         /**
          * PnlVatSummary
-         * @description The VAT the P&L's figures are net of.
+         * @description The VAT lines of the statement, in one place.
          */
         PnlVatSummary: {
-            /** Input Vat Recoverable */
-            input_vat_recoverable: number;
-            /** Net Vat Payable */
-            net_vat_payable: number;
+            /** Fees Vat Reclaimed */
+            fees_vat_reclaimed: number;
+            /** Net Vat */
+            net_vat: number;
             /** Output Vat */
             output_vat: number;
         };
