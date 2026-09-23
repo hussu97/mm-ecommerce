@@ -72,7 +72,7 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
           Cancelled, but the marketplace still charged for it — no revenue, only the charge.
         </p>
       )}
-      <Line label="GMV (before discounts, incl. VAT)" value={pnl.gmv} />
+      <Line label="GMV (items before discounts, incl. VAT)" value={pnl.gmv} />
       {pnl.refunds !== 0 && <Line label="Refunds" value={pnl.refunds} tone="cost" />}
       <Line label="VAT on sales" value={pnl.output_vat} tone="cost" hint="Output VAT owed to the FTA, less the VAT inside any refund." />
       <Line label="Net revenue" value={pnl.net_revenue} tone="subtotal" />
@@ -91,6 +91,14 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
         }
       />
       <Line label="PC1" value={pnl.pc1} tone="subtotal" pct={pnl.pc1_pct} />
+      {pnl.delivery_fees !== 0 && (
+        <Line
+          label="Delivery fees charged"
+          value={pnl.delivery_fees}
+          tone="credit"
+          hint="Delivery and small-basket fees the customer paid. No VAT is charged on them."
+        />
+      )}
       <Line label="Payment fees" value={pnl.payment_fees} tone="cost" />
       <Line label="Aggregator & delivery fees" value={pnl.aggregator_and_delivery_fees} tone="cost" />
       {pnl.commission !== 0 && <Line label="Commission" value={pnl.commission} tone="cost" indent />}
@@ -125,7 +133,7 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
         </span>
       </div>
       <div className="pt-2 text-[11px] font-body text-gray-400 space-y-0.5">
-        <p>Revenue and fees as billed (incl. VAT); COGS at net cost. Subtotals are net of VAT.</p>
+        <p>Revenue and fees as billed (incl. VAT); delivery fees carry no VAT; COGS at net cost. Subtotals are net of VAT.</p>
         {pnl.is_sale && pnl.cogs_missing && (
           <p className="text-amber-700">COGS not recorded for this order.</p>
         )}

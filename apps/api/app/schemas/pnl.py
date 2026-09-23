@@ -21,7 +21,8 @@ class PnlStatement(BaseModel):
     subtotal from `net_revenue` down is net of VAT.
     """
 
-    #: What the customer was billed before discounts, VAT included.
+    #: The goods the customer was billed for before discounts, VAT included.
+    #: Delivery fees are their own line (`delivery_fees`).
     gmv: float
     #: Partial refunds on an order that still stood, as refunded.
     refunds: float
@@ -36,6 +37,9 @@ class PnlStatement(BaseModel):
     cogs: float | None
     #: Net revenue − COGS.
     pc1: float
+    #: Delivery + small-basket fees the customer paid us (website). Outside the
+    #: VAT base, so no VAT line; the card fee on them is in `payment_fees`.
+    delivery_fees: float
     payment_fees: float
     #: Marketplace commission.
     commission: float
@@ -51,7 +55,8 @@ class PnlStatement(BaseModel):
     misc_fees: float
     #: Input VAT reclaimed on the fee lines — zero under a non-registered entity.
     fees_vat: float
-    #: PC1 − payment − aggregator & delivery − misc + VAT reclaimed on fees.
+    #: PC1 + delivery fees − payment − aggregator & delivery − misc + VAT
+    #: reclaimed on fees.
     pc2: float
     #: As given, VAT included.
     discounts: float

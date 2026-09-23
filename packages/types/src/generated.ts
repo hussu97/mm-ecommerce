@@ -17110,6 +17110,8 @@ export interface components {
             commission: number;
             /** Delivery Cost */
             delivery_cost: number;
+            /** Delivery Fees */
+            delivery_fees: number;
             /** Discounts */
             discounts: number;
             /** Fees Pending */
@@ -18103,6 +18105,8 @@ export interface components {
             commission: number;
             /** Delivery Cost */
             delivery_cost: number;
+            /** Delivery Fees */
+            delivery_fees: number;
             /** Discounts */
             discounts: number;
             /** Fees Vat */

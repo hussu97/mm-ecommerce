@@ -4,12 +4,13 @@ Profit and loss, per order and summed over a window — one definition for both.
 The shop asked for three contribution margins on every order and on any slice of
 the book (a date range, a channel, a branch):
 
-    GMV (pre-discount, incl. VAT)   what the customer was billed before discounts
+    GMV (pre-discount, incl. VAT)   the goods the customer was billed for
   − Refunds                         partial refunds on an order that still stood
   − VAT on sales                    the output VAT owed to the FTA
   = Net revenue
   − COGS (net of VAT)               the FIFO ingredient + packaging cost consumed
   = PC1
+  + Delivery fees                   delivery + small-basket fees charged (no VAT)
   − Payment fees                    card processor / marketplace payment handling
   − Aggregator & delivery fees      commission, loyalty/Pro/Plus/subsidy, own courier
   − Misc fees                       cancellation charges (+ period charges, report only)
@@ -130,6 +131,7 @@ LINE_KEYS: tuple[str, ...] = (
     "refunds",
     "output_vat",
     "cogs",
+    "delivery_fees",
     "payment_fees",
     "commission",
     "marketplace_fees",
@@ -354,10 +356,21 @@ def line_columns() -> dict[str, object]:
     # entity; tracing each consumed layer back to its receipt through
     # production and transfers is a costing-engine change, not a report one.
     cogs_net = 1 + VAT_RATE
+    # What the customer paid us for delivery: the delivery fee and the
+    # small-basket fee. Outside the VAT base (VAT is charged on the goods only —
+    # `order_pricing` computes it on the discounted subtotal), so no VAT line;
+    # the card fee on it is already in `payment_fee`, VAT and all. Zero on a
+    # marketplace order, whose delivery fee the customer pays the marketplace.
+    delivery_fees = func.coalesce(Order.delivery_fee, 0) + func.coalesce(
+        Order.low_order_fee, 0
+    )
     return {
-        # What the customer was billed before discounts, VAT included: the
-        # charged total with the discount put back.
-        "gmv": r(on_sale(Order.total + Order.discount_amount)).label("gmv"),
+        # The goods the customer was billed for before discounts, VAT included:
+        # the charged total with the discount put back and the delivery fees
+        # taken out (they are their own line below).
+        "gmv": r(on_sale(Order.total + Order.discount_amount - delivery_fees)).label(
+            "gmv"
+        ),
         "refunds": r(on_sale(refunded)).label("refunds"),
         # The VAT actually charged, less the VAT handed back with a refund —
         # the order's own frozen figures, the same the VAT ledger books.
@@ -365,6 +378,7 @@ def line_columns() -> dict[str, object]:
             on_sale(Order.vat_amount - refunded * out_rate / out_div)
         ).label("output_vat"),
         "cogs": r(_cogs_subquery() / cogs_net).label("cogs"),
+        "delivery_fees": r(on_sale(delivery_fees)).label("delivery_fees"),
         "payment_fees": r(on_sale(payment)).label("payment_fees"),
         "commission": r(on_sale(commission)).label("commission"),
         "marketplace_fees": r(on_sale(marketing)).label("marketplace_fees"),
@@ -427,6 +441,8 @@ class _Lines:
     #: Net of the VAT reclaimed when the stock was bought. Null only on a single
     #: order that drew no stock; a group sums what it has.
     cogs: Decimal | None = None
+    #: Delivery + small-basket fees the customer paid us. No VAT on them.
+    delivery_fees: Decimal = _ZERO
     payment_fees: Decimal = _ZERO
     commission: Decimal = _ZERO
     marketplace_fees: Decimal = _ZERO
@@ -459,6 +475,7 @@ class _Lines:
     def pc2(self) -> Decimal:
         return money(
             self.pc1
+            + self.delivery_fees
             - self.payment_fees
             - self.aggregator_and_delivery_fees
             - self.misc_fees
@@ -536,6 +553,7 @@ def order_pnl_from_mapping(m: Mapping) -> OrderPnl | None:
         gmv=money(m["gmv"]),
         refunds=money(m["refunds"]),
         cogs=_money_or_none(m["cogs"]),
+        delivery_fees=money(m["delivery_fees"]),
         payment_fees=money(m["payment_fees"]),
         commission=money(m["commission"]),
         marketplace_fees=money(m["marketplace_fees"]),
@@ -636,6 +654,7 @@ async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
             gmv=money(m["gmv"]),
             refunds=money(m["refunds"]),
             cogs=_money_or_none(m["cogs"]),
+            delivery_fees=money(m["delivery_fees"]),
             payment_fees=money(m["payment_fees"]),
             commission=money(m["commission"]),
             marketplace_fees=money(m["marketplace_fees"]),
@@ -667,6 +686,7 @@ def statement_fields(lines: _Lines) -> dict[str, Decimal | None]:
         "net_revenue": lines.net_revenue,
         "cogs": lines.cogs,
         "pc1": lines.pc1,
+        "delivery_fees": lines.delivery_fees,
         "payment_fees": lines.payment_fees,
         "commission": lines.commission,
         "marketplace_fees": lines.marketplace_fees,

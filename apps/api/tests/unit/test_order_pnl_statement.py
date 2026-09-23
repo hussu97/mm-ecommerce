@@ -12,7 +12,8 @@ D = Decimal
 
 def _order(**over) -> OrderPnl:
     base = dict(
-        gmv=D("126.00"),
+        gmv=D("105.00"),
+        delivery_fees=D("21.00"),
         refunds=D("21.00"),
         output_vat=D("4.50"),
         cogs=D("5.71"),
@@ -30,18 +31,18 @@ def _order(**over) -> OrderPnl:
 
 def test_the_subtotals_cascade():
     p = _order()
-    assert p.net_revenue == D("100.50")
-    assert p.pc1 == D("94.79")
+    assert p.net_revenue == D("79.50")
+    assert p.pc1 == D("73.79")
     assert p.aggregator_and_delivery_fees == D("10.50")
     assert p.pc2 == D("80.79")
     assert p.pc3 == D("70.29")
-    assert p.share(p.pc3) == D("55.79")
+    assert p.share(p.pc3) == D("66.94")
     assert p.net_vat == D("3.80")
 
 
 def test_unknown_cogs_does_not_count_as_a_cost_and_stays_unknown():
     p = _order(cogs=None)
-    assert p.pc1 == D("100.50")
+    assert p.pc1 == D("79.50")
     assert statement_fields(p)["cogs"] is None
 
 

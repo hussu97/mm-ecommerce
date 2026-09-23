@@ -22350,6 +22350,10 @@
             "title": "Delivery Cost",
             "type": "number"
           },
+          "delivery_fees": {
+            "title": "Delivery Fees",
+            "type": "number"
+          },
           "discounts": {
             "title": "Discounts",
             "type": "number"
@@ -22459,6 +22463,7 @@
           "net_revenue",
           "cogs",
           "pc1",
+          "delivery_fees",
           "payment_fees",
           "commission",
           "marketplace_fees",
@@ -25147,6 +25152,10 @@
             "title": "Delivery Cost",
             "type": "number"
           },
+          "delivery_fees": {
+            "title": "Delivery Fees",
+            "type": "number"
+          },
           "discounts": {
             "title": "Discounts",
             "type": "number"
@@ -25256,6 +25265,7 @@
           "net_revenue",
           "cogs",
           "pc1",
+          "delivery_fees",
           "payment_fees",
           "commission",
           "marketplace_fees",

@@ -64,12 +64,13 @@ type Row = {
 // The statement, top to bottom. Costs are shown as negatives; the sub-lines
 // under a cost group are the parts it is made of.
 const ROWS: Row[] = [
-  { label: 'GMV (before discounts, incl. VAT)', value: c => c.gmv, kind: 'line' },
+  { label: 'GMV (items before discounts, incl. VAT)', value: c => c.gmv, kind: 'line' },
   { label: 'Refunds', value: c => c.refunds, kind: 'cost' },
   { label: 'VAT on sales', value: c => c.output_vat, kind: 'cost' },
   { label: 'Net revenue', value: c => c.net_revenue, kind: 'sub' },
   { label: 'COGS (net of VAT)', value: c => c.cogs, kind: 'cost' },
   { label: 'PC1', value: c => c.pc1, pct: c => c.pc1_pct, kind: 'sub' },
+  { label: 'Delivery fees charged (no VAT)', value: c => c.delivery_fees, kind: 'credit' },
   { label: 'Payment fees', value: c => c.payment_fees, kind: 'cost' },
   { label: 'Aggregator & delivery fees', value: c => c.aggregator_and_delivery_fees, kind: 'cost' },
   { label: 'Commission', value: c => c.commission, kind: 'detail' },

@@ -129,7 +129,8 @@ async def world(engine):
 
         orders = {
             # A — website delivery. Menu 105, 10.50 coupon, 21 delivery → 115.50
-            # charged, VAT 5.50, 110.00 ex VAT. 21.00 refunded, card fee 4.20,
+            # charged, VAT 5.50 (a round fixture figure — the P&L reads the
+            # order's frozen VAT as given). 21.00 refunded, card fee 4.20,
             # courier 10.50, 3 g of butter at 2.00 = 6.00 COGS.
             "A": order(
                 "A",
@@ -365,19 +366,20 @@ async def _pnl(engine, order_id):
 async def test_a_website_order_shows_its_vat_as_lines(engine, world):
     p = await _pnl(engine, world["orders"]["A"])
     assert p.channel == "website_delivery" and p.is_sale
-    assert p.gmv == D("126.00")  # 115.50 charged + 10.50 coupon, VAT included
+    assert p.gmv == D("105.00")  # 115.50 charged + 10.50 coupon − 21.00 delivery
     assert p.refunds == D("21.00")
     assert p.output_vat == D("4.50")  # 5.50 − 21.00 × 5/105
-    assert p.net_revenue == D("100.50")
+    assert p.net_revenue == D("79.50")
     assert p.cogs == D("5.71")  # 3 g × 2.00 FIFO, less its 5/105 purchase VAT
-    assert p.pc1 == D("94.79")
+    assert p.pc1 == D("73.79")
+    assert p.delivery_fees == D("21.00")  # no VAT on it
     assert p.payment_fees == D("4.20")
     assert p.delivery_cost == D("10.50")
     assert p.fees_vat == D("0.70")  # (4.20 + 10.50) × 5/105
     assert p.pc2 == D("80.79")
     assert p.discounts == D("10.50")
     assert p.pc3 == D("70.29")
-    assert p.share(p.pc3) == D("55.79")
+    assert p.share(p.pc3) == D("66.94")
     assert p.net_vat == D("3.80")  # 4.50 − 0.70; COGS VAT was reclaimed at purchase
 
 
@@ -436,7 +438,8 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
     assert total.orders == 5
     assert total.charged_cancellations == 2
     assert total.orders_with_cogs == 1
-    assert total.gmv == D("218.00")  # 126 + 42 + 50
+    assert total.gmv == D("197.00")  # 105 + 42 + 50
+    assert total.delivery_fees == D("21.00")
     assert total.cogs == D("5.71")
     # PC3 = 70.29 + 23.20 + 43.50 − 11.60 − 21.00
     assert total.pc3 == D("104.39")
