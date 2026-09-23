@@ -84,10 +84,12 @@ from app.core.exceptions import NotFoundError
 from app.core.money import money
 from app.models.aggregator import AggregatorOrder
 from app.models.inventory import (
+    InventoryItem,
     InventoryLineCost,
     InventoryTransaction,
     InventoryTransactionTypeEnum,
 )
+from app.models.inventory_v2 import InventoryItemKindEnum
 from app.models.legal_entity import LegalEntity
 from app.models.order import DeliveryMethodEnum, Order
 from app.models.order_delivery import OrderDelivery
@@ -108,6 +110,7 @@ __all__ = [
     "pnl_margin",
     "statement_fields",
     "totals_by_channel",
+    "with_cogs",
     "without_jit",
 ]
 
@@ -124,6 +127,20 @@ CHANNELS: tuple[str, ...] = (
     *AGGREGATOR_CHANNEL_PREFIX.keys(),
 )
 
+#: How COGS is broken down: the inventory item kinds each line sums. Produced
+#: goods include semi-finished ones (both made in-house in production); raw
+#: materials are ingredients a sale drew directly (a recipe made to order).
+COGS_KINDS: dict[str, tuple[str, ...]] = {
+    "cogs_produced": (
+        InventoryItemKindEnum.PRODUCED_GOOD.value,
+        InventoryItemKindEnum.SEMI_FINISHED.value,
+    ),
+    "cogs_raw": (InventoryItemKindEnum.RAW_MATERIAL.value,),
+    "cogs_packaging": (InventoryItemKindEnum.PACKAGING.value,),
+    "cogs_resale": (InventoryItemKindEnum.RESALE_GOOD.value,),
+}
+
+
 #: The money lines each order carries, in statement order. The subtotals (net
 #: revenue, PC1–PC3) are derived from these in `_Lines`, never selected.
 LINE_KEYS: tuple[str, ...] = (
@@ -131,6 +148,7 @@ LINE_KEYS: tuple[str, ...] = (
     "refunds",
     "output_vat",
     "cogs",
+    *COGS_KINDS,
     "delivery_fees",
     "payment_fees",
     "commission",
@@ -208,68 +226,87 @@ def in_pnl_clause():
     return or_(_COMPLETED_SALE, _billed_after_cancel())
 
 
-def _cogs_subquery():
+def _cogs_lateral():
     """
-    The order's cost of goods at today's FIFO projection, or NULL if it drew none.
+    The order's cost of goods, per item kind, in one pass over its movements.
 
     `inventory_line_costs.total_cost` is the engine's *current* cost of each
     ledger line — re-priced when stock it drew later learns its price — rather
     than the booked figure frozen at posting (`inventory_transaction_items`),
     which for most lines is the zero the stock carried before its purchase order
     arrived. Returns come back off the cost. Stored as a magnitude on both.
+
+    A LATERAL rather than a scalar subquery per figure: COGS, its four kinds and
+    its provisional part all come from the same rows, and Postgres re-runs a
+    correlated subquery once per *reference*. It is an ungrouped aggregate, so
+    it yields exactly one row per order — `lines = 0` when the order drew no
+    stock, which is how COGS stays NULL (unknown) rather than zero.
     """
+    line = InventoryLineCost
+    txn = InventoryTransaction
     signed = case(
         (
-            InventoryTransaction.type
-            == InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
-            -InventoryLineCost.total_cost,
+            txn.type == InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
+            -line.total_cost,
         ),
-        else_=InventoryLineCost.total_cost,
+        else_=line.total_cost,
     )
-    return (
-        select(func.sum(signed))
-        .select_from(InventoryLineCost)
-        .join(
-            InventoryTransaction,
-            InventoryTransaction.id == InventoryLineCost.transaction_id,
+
+    def of_kinds(kinds):
+        return func.coalesce(
+            func.sum(case((InventoryItem.kind.in_(kinds), signed), else_=0)), 0
         )
+
+    return (
+        select(
+            *(of_kinds(kinds).label(key) for key, kinds in COGS_KINDS.items()),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                txn.type
+                                == InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
+                                line.is_provisional.is_(True),
+                            ),
+                            line.total_cost,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("provisional"),
+            func.count(line.line_id).label("lines"),
+        )
+        .select_from(line)
+        .join(txn, txn.id == line.transaction_id)
+        .join(InventoryItem, InventoryItem.id == line.item_id)
         .where(
-            InventoryTransaction.order_id == Order.id,
-            InventoryTransaction.status == "closed",
-            InventoryTransaction.type.in_(
+            txn.order_id == Order.id,
+            txn.status == "closed",
+            txn.type.in_(
                 [
                     InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
                     InventoryTransactionTypeEnum.RETURN_FROM_ORDERS.value,
                     InventoryTransactionTypeEnum.WASTE_FROM_ORDERS.value,
                 ]
             ),
-            InventoryLineCost.superseded.is_(False),
+            line.superseded.is_(False),
         )
         .correlate(Order)
-        .scalar_subquery()
+        .lateral("pnl_cogs")
     )
 
 
-def _cogs_provisional_subquery():
-    """The part of `_cogs_subquery` still priced provisionally (awaiting a PO)."""
-    return (
-        select(func.sum(InventoryLineCost.total_cost))
-        .select_from(InventoryLineCost)
-        .join(
-            InventoryTransaction,
-            InventoryTransaction.id == InventoryLineCost.transaction_id,
-        )
-        .where(
-            InventoryTransaction.order_id == Order.id,
-            InventoryTransaction.status == "closed",
-            InventoryTransaction.type
-            == InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS.value,
-            InventoryLineCost.superseded.is_(False),
-            InventoryLineCost.is_provisional.is_(True),
-        )
-        .correlate(Order)
-        .scalar_subquery()
-    )
+#: One shared alias: `line_columns()` reads its columns, and `with_cogs()` joins
+#: it into the statement that selects them.
+_COGS = _cogs_lateral()
+
+
+def with_cogs(stmt):
+    """Join the per-order COGS LATERAL into a statement selecting from `Order`
+    — required by any statement that selects `line_columns()`."""
+    return stmt.outerjoin(_COGS, true())
 
 
 def _courier_cost_subquery():
@@ -356,6 +393,7 @@ def line_columns() -> dict[str, object]:
     # entity; tracing each consumed layer back to its receipt through
     # production and transfers is a costing-engine change, not a report one.
     cogs_net = 1 + VAT_RATE
+    kind_parts = {key: func.round(_COGS.c[key] / cogs_net, 2) for key in COGS_KINDS}
     # What the customer paid us for delivery: the delivery fee and the
     # small-basket fee. Outside the VAT base (VAT is charged on the goods only —
     # `order_pricing` computes it on the discounted subtotal), so no VAT line;
@@ -377,7 +415,12 @@ def line_columns() -> dict[str, object]:
         "output_vat": r(
             on_sale(Order.vat_amount - refunded * out_rate / out_div)
         ).label("output_vat"),
-        "cogs": r(_cogs_subquery() / cogs_net).label("cogs"),
+        # COGS is the sum of its kinds, each rounded per order, so the kind
+        # lines always add up to it exactly; NULL when no stock was drawn.
+        "cogs": case((_COGS.c.lines > 0, sum(kind_parts.values())), else_=None).label(
+            "cogs"
+        ),
+        **{key: part.label(key) for key, part in kind_parts.items()},
         "delivery_fees": r(on_sale(delivery_fees)).label("delivery_fees"),
         "payment_fees": r(on_sale(payment)).label("payment_fees"),
         "commission": r(on_sale(commission)).label("commission"),
@@ -393,7 +436,7 @@ def line_columns() -> dict[str, object]:
         "fees_vat": r(gross_fees - gross_fees / in_div).label("fees_vat"),
         "discounts": r(on_sale(Order.discount_amount)).label("discounts"),
         # ── bookkeeping ──
-        "cogs_provisional": r(_cogs_provisional_subquery() / cogs_net).label(
+        "cogs_provisional": r(func.coalesce(_COGS.c.provisional, 0) / cogs_net).label(
             "cogs_provisional"
         ),
         "fees_pending": case(
@@ -441,6 +484,11 @@ class _Lines:
     #: Net of the VAT reclaimed when the stock was bought. Null only on a single
     #: order that drew no stock; a group sums what it has.
     cogs: Decimal | None = None
+    #: COGS by inventory item kind (net of VAT) — they sum to `cogs`.
+    cogs_produced: Decimal = _ZERO
+    cogs_raw: Decimal = _ZERO
+    cogs_packaging: Decimal = _ZERO
+    cogs_resale: Decimal = _ZERO
     #: Delivery + small-basket fees the customer paid us. No VAT on them.
     delivery_fees: Decimal = _ZERO
     payment_fees: Decimal = _ZERO
@@ -553,6 +601,7 @@ def order_pnl_from_mapping(m: Mapping) -> OrderPnl | None:
         gmv=money(m["gmv"]),
         refunds=money(m["refunds"]),
         cogs=_money_or_none(m["cogs"]),
+        **{key: money(m[key]) for key in COGS_KINDS},
         delivery_fees=money(m["delivery_fees"]),
         payment_fees=money(m["payment_fees"]),
         commission=money(m["commission"]),
@@ -594,11 +643,13 @@ async def for_order(db: AsyncSession, order_id: uuid.UUID) -> OrderPnl | None:
     cols = line_columns()
     row = (
         await db.execute(
-            select(
-                Order.id.label("order_id"),
-                channel_expression().label("channel"),
-                in_pnl_clause().label("in_pnl"),
-                *cols.values(),
+            with_cogs(
+                select(
+                    Order.id.label("order_id"),
+                    channel_expression().label("channel"),
+                    in_pnl_clause().label("in_pnl"),
+                    *cols.values(),
+                ).select_from(Order)
             ).where(Order.id == order_id)
         )
     ).one_or_none()
@@ -618,7 +669,11 @@ def totals_statement(*where):
     """
     cols = line_columns()
     per_order = (
-        select(channel_expression().label("channel"), *cols.values())
+        with_cogs(
+            select(channel_expression().label("channel"), *cols.values()).select_from(
+                Order
+            )
+        )
         .where(in_pnl_clause(), *where)
         .cte("pnl_orders")
         .prefix_with("MATERIALIZED")
@@ -654,6 +709,7 @@ async def totals_by_channel(db: AsyncSession, *where) -> dict[str, PnlTotals]:
             gmv=money(m["gmv"]),
             refunds=money(m["refunds"]),
             cogs=_money_or_none(m["cogs"]),
+            **{key: money(m[key]) for key in COGS_KINDS},
             delivery_fees=money(m["delivery_fees"]),
             payment_fees=money(m["payment_fees"]),
             commission=money(m["commission"]),
@@ -685,6 +741,7 @@ def statement_fields(lines: _Lines) -> dict[str, Decimal | None]:
         "output_vat": lines.output_vat,
         "net_revenue": lines.net_revenue,
         "cogs": lines.cogs,
+        **{key: getattr(lines, key) for key in COGS_KINDS},
         "pc1": lines.pc1,
         "delivery_fees": lines.delivery_fees,
         "payment_fees": lines.payment_fees,

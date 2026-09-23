@@ -59,6 +59,8 @@ type Row = {
   value: (c: Column) => number | null;
   pct?: (c: Column) => number | null;
   kind: 'line' | 'cost' | 'credit' | 'sub' | 'detail' | 'result';
+  /** Show a detail row even when it is zero everywhere — a zero is the point. */
+  always?: boolean;
 };
 
 // The statement, top to bottom. Costs are shown as negatives; the sub-lines
@@ -69,6 +71,12 @@ const ROWS: Row[] = [
   { label: 'VAT on sales', value: c => c.output_vat, kind: 'cost' },
   { label: 'Net revenue', value: c => c.net_revenue, kind: 'sub' },
   { label: 'COGS (net of VAT)', value: c => c.cogs, kind: 'cost' },
+  // By inventory item kind. Always shown: a packaging line at zero is the
+  // finding (packaging never priced), not noise to hide.
+  { label: 'Produced goods', value: c => c.cogs_produced, kind: 'detail', always: true },
+  { label: 'Raw ingredients', value: c => c.cogs_raw, kind: 'detail', always: true },
+  { label: 'Packaging', value: c => c.cogs_packaging, kind: 'detail', always: true },
+  { label: 'Resale goods', value: c => c.cogs_resale, kind: 'detail', always: true },
   { label: 'PC1', value: c => c.pc1, pct: c => c.pc1_pct, kind: 'sub' },
   { label: 'Delivery fees charged (no VAT)', value: c => c.delivery_fees, kind: 'credit' },
   { label: 'Payment fees', value: c => c.payment_fees, kind: 'cost' },
@@ -281,7 +289,8 @@ export default function ProfitLossPage() {
               </thead>
               <tbody>
                 {ROWS.filter(
-                  r => r.kind !== 'detail' || columns.some(c => (r.value(c) ?? 0) !== 0),
+                  r =>
+                    r.kind !== 'detail' || r.always || columns.some(c => (r.value(c) ?? 0) !== 0),
                 ).map(r => {
                   return (
                     <tr

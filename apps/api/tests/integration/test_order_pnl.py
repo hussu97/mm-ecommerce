@@ -105,7 +105,16 @@ async def world(engine):
             ingredient_unit="gram",
             storage_to_ingredient_factor=D("1"),
         )
-        db.add_all([registered, unregistered, item])
+        box = InventoryItem(
+            sku=f"pnl-box-{tag}",
+            name="Box",
+            kind="packaging",
+            tracking_mode="stocked",
+            storage_unit="piece",
+            ingredient_unit="piece",
+            storage_to_ingredient_factor=D("1"),
+        )
+        db.add_all([registered, unregistered, item, box])
         await db.flush()
 
         def order(suffix, **over):
@@ -263,12 +272,15 @@ async def world(engine):
             )
         await db.flush()
 
-        for kind, quantity, unit_cost, order_id in (
-            (InventoryTransactionTypeEnum.PURCHASING, "10", "2", None),
+        for kind, lines, order_id in (
+            (
+                InventoryTransactionTypeEnum.PURCHASING,
+                [(item.id, "10", "2"), (box.id, "5", "1.05")],
+                None,
+            ),
             (
                 InventoryTransactionTypeEnum.CONSUMPTION_FROM_ORDERS,
-                "3",
-                "0",
+                [(item.id, "3", "0"), (box.id, "1", "0")],
                 orders["A"].id,
             ),
         ):
@@ -282,12 +294,13 @@ async def world(engine):
                 order_id=order_id,
                 items=[
                     InventoryTransactionItem(
-                        item_id=item.id,
+                        item_id=item_id,
                         quantity=D(quantity),
                         unit="storage",
                         conversion_factor=D("1"),
                         unit_cost=D(unit_cost),
                     )
+                    for item_id, quantity, unit_cost in lines
                 ],
             )
             db.add(transaction)
@@ -300,6 +313,7 @@ async def world(engine):
             "tag": tag,
             "branch": branch.id,
             "item": item.id,
+            "box": box.id,
             "entities": (registered.id, unregistered.id),
             "orders": {k: o.id for k, o in orders.items()},
         }
@@ -332,9 +346,11 @@ async def world(engine):
                 InventoryTransaction.branch_id == ids["branch"]
             ),
             InventoryLevel.__table__.delete().where(
-                InventoryLevel.item_id == ids["item"]
+                InventoryLevel.item_id.in_([ids["item"], ids["box"]])
             ),
-            InventoryItem.__table__.delete().where(InventoryItem.id == ids["item"]),
+            InventoryItem.__table__.delete().where(
+                InventoryItem.id.in_([ids["item"], ids["box"]])
+            ),
             AggregatorStatementLine.__table__.delete().where(
                 AggregatorStatementLine.source_key.like(f"pnl-{ids['tag']}-%")
             ),
@@ -370,16 +386,20 @@ async def test_a_website_order_shows_its_vat_as_lines(engine, world):
     assert p.refunds == D("21.00")
     assert p.output_vat == D("4.50")  # 5.50 − 21.00 × 5/105
     assert p.net_revenue == D("79.50")
-    assert p.cogs == D("5.71")  # 3 g × 2.00 FIFO, less its 5/105 purchase VAT
-    assert p.pc1 == D("73.79")
+    # 3 g butter × 2.00 → 5.71 net, one box × 1.05 → 1.00 net (5/105 VAT off)
+    assert p.cogs_raw == D("5.71")
+    assert p.cogs_packaging == D("1.00")
+    assert p.cogs_produced == D("0.00") and p.cogs_resale == D("0.00")
+    assert p.cogs == D("6.71")  # exactly the sum of its kinds
+    assert p.pc1 == D("72.79")
     assert p.delivery_fees == D("21.00")  # no VAT on it
     assert p.payment_fees == D("4.20")
     assert p.delivery_cost == D("10.50")
     assert p.fees_vat == D("0.70")  # (4.20 + 10.50) × 5/105
-    assert p.pc2 == D("80.79")
+    assert p.pc2 == D("79.79")
     assert p.discounts == D("10.50")
-    assert p.pc3 == D("70.29")
-    assert p.share(p.pc3) == D("66.94")
+    assert p.pc3 == D("69.29")
+    assert p.share(p.pc3) == D("65.99")
     assert p.net_vat == D("3.80")  # 4.50 − 0.70; COGS VAT was reclaimed at purchase
 
 
@@ -440,9 +460,10 @@ async def test_the_report_is_the_sum_of_its_orders(engine, world):
     assert total.orders_with_cogs == 1
     assert total.gmv == D("197.00")  # 105 + 42 + 50
     assert total.delivery_fees == D("21.00")
-    assert total.cogs == D("5.71")
-    # PC3 = 70.29 + 23.20 + 43.50 − 11.60 − 21.00
-    assert total.pc3 == D("104.39")
+    assert total.cogs == D("6.71")
+    assert total.cogs_packaging == D("1.00")
+    # PC3 = 69.29 + 23.20 + 43.50 − 11.60 − 21.00
+    assert total.pc3 == D("103.39")
     assert by_channel["talabat"].pc3 == D("2.20")  # 23.20 − 21.00
 
 

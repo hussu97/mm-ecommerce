@@ -17104,8 +17104,16 @@ export interface components {
             cogs: number | null;
             /** Cogs Missing */
             cogs_missing: boolean;
+            /** Cogs Packaging */
+            cogs_packaging: number;
+            /** Cogs Produced */
+            cogs_produced: number;
             /** Cogs Provisional */
             cogs_provisional: number;
+            /** Cogs Raw */
+            cogs_raw: number;
+            /** Cogs Resale */
+            cogs_resale: number;
             /** Commission */
             commission: number;
             /** Delivery Cost */
@@ -18099,8 +18107,16 @@ export interface components {
             charged_cancellations: number;
             /** Cogs */
             cogs: number | null;
+            /** Cogs Packaging */
+            cogs_packaging: number;
+            /** Cogs Produced */
+            cogs_produced: number;
             /** Cogs Provisional */
             cogs_provisional: number;
+            /** Cogs Raw */
+            cogs_raw: number;
+            /** Cogs Resale */
+            cogs_resale: number;
             /** Commission */
             commission: number;
             /** Delivery Cost */

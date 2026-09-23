@@ -2271,9 +2271,11 @@ async def get_all_admin(
     # order's margin from this list.
     await order_pnl.without_jit(db)
     stmt = (
-        base_stmt.add_columns(
-            _item_count_subquery().label("item_count"),
-            *_pnl_columns(),
+        order_pnl.with_cogs(
+            base_stmt.add_columns(
+                _item_count_subquery().label("item_count"),
+                *_pnl_columns(),
+            )
         )
         .options(*_list_row_load_options())
         .order_by(Order.created_at.desc())

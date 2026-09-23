@@ -90,6 +90,14 @@ export function PnlLines({ pnl }: { pnl: OrderPnl }) {
               }`
         }
       />
+      {pnl.cogs !== null && (
+        <>
+          <Line label="Produced goods" value={pnl.cogs_produced} tone="cost" indent />
+          <Line label="Raw ingredients" value={pnl.cogs_raw} tone="cost" indent />
+          <Line label="Packaging" value={pnl.cogs_packaging} tone="cost" indent />
+          <Line label="Resale goods" value={pnl.cogs_resale} tone="cost" indent />
+        </>
+      )}
       <Line label="PC1" value={pnl.pc1} tone="subtotal" pct={pnl.pc1_pct} />
       {pnl.delivery_fees !== 0 && (
         <Line

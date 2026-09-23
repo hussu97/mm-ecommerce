@@ -35,6 +35,13 @@ class PnlStatement(BaseModel):
     #: order that drew none (before its branch's inventory go-live, or a sale
     #: that never posted).
     cogs: float | None
+    #: COGS by inventory item kind, net of VAT; they sum to `cogs`. Produced
+    #: goods include semi-finished (made in-house in production); raw materials
+    #: are ingredients a sale drew directly.
+    cogs_produced: float
+    cogs_raw: float
+    cogs_packaging: float
+    cogs_resale: float
     #: Net revenue − COGS.
     pc1: float
     #: Delivery + small-basket fees the customer paid us (website). Outside the

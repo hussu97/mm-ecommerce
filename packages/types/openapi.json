@@ -22338,8 +22338,24 @@
             "title": "Cogs Missing",
             "type": "boolean"
           },
+          "cogs_packaging": {
+            "title": "Cogs Packaging",
+            "type": "number"
+          },
+          "cogs_produced": {
+            "title": "Cogs Produced",
+            "type": "number"
+          },
           "cogs_provisional": {
             "title": "Cogs Provisional",
+            "type": "number"
+          },
+          "cogs_raw": {
+            "title": "Cogs Raw",
+            "type": "number"
+          },
+          "cogs_resale": {
+            "title": "Cogs Resale",
             "type": "number"
           },
           "commission": {
@@ -22462,6 +22478,10 @@
           "output_vat",
           "net_revenue",
           "cogs",
+          "cogs_produced",
+          "cogs_raw",
+          "cogs_packaging",
+          "cogs_resale",
           "pc1",
           "delivery_fees",
           "payment_fees",
@@ -25140,8 +25160,24 @@
             ],
             "title": "Cogs"
           },
+          "cogs_packaging": {
+            "title": "Cogs Packaging",
+            "type": "number"
+          },
+          "cogs_produced": {
+            "title": "Cogs Produced",
+            "type": "number"
+          },
           "cogs_provisional": {
             "title": "Cogs Provisional",
+            "type": "number"
+          },
+          "cogs_raw": {
+            "title": "Cogs Raw",
+            "type": "number"
+          },
+          "cogs_resale": {
+            "title": "Cogs Resale",
             "type": "number"
           },
           "commission": {
@@ -25264,6 +25300,10 @@
           "output_vat",
           "net_revenue",
           "cogs",
+          "cogs_produced",
+          "cogs_raw",
+          "cogs_packaging",
+          "cogs_resale",
           "pc1",
           "delivery_fees",
           "payment_fees",
