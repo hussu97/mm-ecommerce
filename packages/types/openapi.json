@@ -8854,6 +8854,18 @@
             "title": "Branch Id",
             "type": "string"
           },
+          "business_date": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Business Date"
+          },
           "coupon_promotion_id": {
             "anyOf": [
               {
@@ -8902,6 +8914,19 @@
             ],
             "title": "Device Id"
           },
+          "display_number": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Number"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -8946,6 +8971,32 @@
               }
             ],
             "title": "Opened At"
+          },
+          "ticket_prefix": {
+            "anyOf": [
+              {
+                "maxLength": 6,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Prefix"
+          },
+          "ticket_seq": {
+            "anyOf": [
+              {
+                "maximum": 999999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Seq"
           },
           "till_id": {
             "anyOf": [
