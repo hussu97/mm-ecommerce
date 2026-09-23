@@ -561,7 +561,7 @@ async def _apply(
     owner_arg = (
         {"product_id": owner_id} if kind == _PRODUCT else {"option_id": owner_id}
     )
-    await writer(
+    written = await writer(
         db,
         branch=branch,
         in_stock=in_stock,
@@ -576,6 +576,8 @@ async def _apply(
         entity_label=f"{name} @ {branch.reference or branch.name}",
         **owner_arg,
     )
+    if written is None:
+        return  # a person took the row between the read and the write
     report.changes.append(
         Change(
             owner_kind=kind,

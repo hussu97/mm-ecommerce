@@ -399,6 +399,32 @@ async def test_a_staff_stockout_is_never_put_back_by_the_system(db, world):
     assert (row.is_in_stock, row.unavailable_source) == (False, "staff")
 
 
+async def test_an_auto_write_on_a_stale_read_never_takes_a_staff_row(db, world):
+    """The evaluator decided on a read taken before a cashier's 86 landed:
+    the writer re-checks the locked row and leaves the person's call alone."""
+    w = world
+    await availability.set_product_stock(
+        db,
+        branch=w["branch"],
+        product_id=w["kunafa"].id,
+        in_stock=False,
+        actor=w["user"],
+    )
+    await db.commit()
+    written = await availability.set_product_stock(
+        db,
+        branch=w["branch"],
+        product_id=w["kunafa"].id,
+        in_stock=False,
+        actor=availability.SYSTEM_ACTOR,
+        source=availability.SOURCE_AUTO,
+        auto_state={"items": []},
+    )
+    assert written is None
+    row = await _product_row(db, w, w["kunafa"])
+    assert (row.is_in_stock, row.unavailable_source) == (False, "staff")
+
+
 async def test_switching_the_flag_on_marks_the_branch(db, world):
     w = world
     await db.execute(

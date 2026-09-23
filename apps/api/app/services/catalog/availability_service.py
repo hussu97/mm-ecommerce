@@ -652,6 +652,17 @@ def effective_unavailable_source(row, now: datetime | None = None) -> str | None
     return row.unavailable_source or SOURCE_STAFF
 
 
+def _staff_controlled(row) -> bool:
+    """Whether a person currently owns this row's stock state: off sale by
+    their hand (and not lapsed), or put back over an auto-off until restock.
+    The auto writer re-checks this on the locked row it is about to write."""
+    if row is None:
+        return False
+    if row.staff_override_until_restock:
+        return True
+    return effective_unavailable_source(row) == SOURCE_STAFF
+
+
 def _state(row) -> dict:
     """The audited half of a row. A row built in memory reads its defaults."""
     until = row.out_of_stock_until
@@ -746,7 +757,7 @@ async def set_product_stock(
     auto_state: dict | None = None,
     entity_label: str | None = None,
     request=None,
-) -> BranchProduct:
+) -> BranchProduct | None:
     """Mark one product out at one branch, or put it back — and audit it.
 
     `actor` is the signed-in `User` (or an `Actor`; `SYSTEM_ACTOR` for the
@@ -755,12 +766,18 @@ async def set_product_stock(
     """
     row = (
         await db.execute(
-            select(BranchProduct).where(
+            select(BranchProduct)
+            .where(
                 BranchProduct.branch_id == branch.id,
                 BranchProduct.product_id == product_id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
+    if source == SOURCE_AUTO and _staff_controlled(row):
+        # The system decided on a stale read; a person has since taken the
+        # row (a fresh 86, or put it back over an auto-off). They win.
+        return None
 
     if row is None:
         row = BranchProduct(branch_id=branch.id, product_id=product_id)
@@ -805,16 +822,22 @@ async def set_option_stock(
     auto_state: dict | None = None,
     entity_label: str | None = None,
     request=None,
-) -> BranchModifierOption:
+) -> BranchModifierOption | None:
     """Mark one modifier option out at one branch, or put it back — and audit it."""
     row = (
         await db.execute(
-            select(BranchModifierOption).where(
+            select(BranchModifierOption)
+            .where(
                 BranchModifierOption.branch_id == branch.id,
                 BranchModifierOption.modifier_option_id == option_id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
+    if source == SOURCE_AUTO and _staff_controlled(row):
+        # The system decided on a stale read; a person has since taken the
+        # row (a fresh 86, or put it back over an auto-off). They win.
+        return None
 
     if row is None:
         row = BranchModifierOption(branch_id=branch.id, modifier_option_id=option_id)

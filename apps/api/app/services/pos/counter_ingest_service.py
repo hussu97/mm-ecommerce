@@ -546,11 +546,22 @@ async def _build_lines(
     products_by_id = {str(p["id"]): p for p in bundle_payload.get("products", [])}
     modifiers_by_id = {str(m["id"]): m for m in bundle_payload.get("modifiers", [])}
 
+    # One lookup for every flow the sale can land on: the lines' own, the
+    # tickets', and the bundle's pre-routed one per product.
+    bundle_flows: set[uuid.UUID] = set()
+    for line in sale.lines:
+        routed = (products_by_id.get(str(line.product_id)) or {}).get("kitchen_flow_id")
+        if routed:
+            try:
+                bundle_flows.add(uuid.UUID(str(routed)))
+            except ValueError:
+                pass
     flow_ids = await _valid_ids(
         db,
         KitchenFlow,
         {line.kitchen_flow_id for line in sale.lines}
-        | {t.kitchen_flow_id for t in sale.kitchen_tickets},
+        | {t.kitchen_flow_id for t in sale.kitchen_tickets}
+        | bundle_flows,
     )
     reason_ids = await _valid_ids(
         db, Reason, {line.void_reason_id for line in sale.lines}
@@ -620,7 +631,7 @@ async def _build_lines(
             flags.append(FLAG_UNKNOWN_KITCHEN_FLOW)
         if flow_id is None and bundle_flow:
             candidate = uuid.UUID(str(bundle_flow))
-            if candidate in await _valid_ids(db, KitchenFlow, {candidate}):
+            if candidate in flow_ids:
                 flow_id = candidate
 
         item = await pos_order_service._build_item(
@@ -1091,12 +1102,13 @@ async def ingest(
     order.pricing_status = pricing_status
 
     # The dockets the register printed, exactly as it printed them.
+    ticket_flow_ids = await _valid_ids(
+        db, KitchenFlow, {t.kitchen_flow_id for t in sale.kitchen_tickets}
+    )
     for ticket in sorted(sale.kitchen_tickets, key=lambda t: t.sequence):
         ticket_items = [items[i] for i in ticket.line_ids if i in items]
         flow_id = ticket.kitchen_flow_id
-        if flow_id is not None and flow_id not in await _valid_ids(
-            db, KitchenFlow, {flow_id}
-        ):
+        if flow_id is not None and flow_id not in ticket_flow_ids:
             flags.append(FLAG_UNKNOWN_KITCHEN_FLOW)
             flow_id = ticket_items[0].kitchen_flow_id if ticket_items else None
         await pos_order_service._record_kitchen_ticket(
