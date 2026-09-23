@@ -72,6 +72,53 @@ class TestDecisionTable:
     def test_stock_above_zero_changes_nothing(self):
         assert _decide(_row(), stock={CAKE: Decimal("0.5")}) is None
 
+    def test_stock_short_of_one_sale_goes_off(self):
+        """A 9-piece box with 5 brownies left cannot be sold."""
+        decision = auto.decide(
+            None,
+            sold=True,
+            leaves=frozenset({CAKE}),
+            on_hand={CAKE: Decimal("5")},
+            now=NOW,
+            required={CAKE: Decimal("9")},
+        )
+        assert decision.action == "off"
+        assert decision.triggers == (CAKE,)
+
+    def test_stock_covering_one_sale_stays_on(self):
+        assert (
+            auto.decide(
+                None,
+                sold=True,
+                leaves=frozenset({CAKE}),
+                on_hand={CAKE: Decimal("5")},
+                now=NOW,
+                required={CAKE: Decimal("3")},
+            )
+            is None
+        )
+
+    def test_an_auto_row_comes_back_once_one_sale_is_covered(self):
+        row = _row(in_stock=False, source="auto", auto_state=_state(CAKE))
+        still_short = auto.decide(
+            row,
+            sold=True,
+            leaves=frozenset({CAKE}),
+            on_hand={CAKE: Decimal("8")},
+            now=NOW,
+            required={CAKE: Decimal("9")},
+        )
+        assert still_short is None
+        back = auto.decide(
+            row,
+            sold=True,
+            leaves=frozenset({CAKE}),
+            on_hand={CAKE: Decimal("9")},
+            now=NOW,
+            required={CAKE: Decimal("9")},
+        )
+        assert back.action == "on"
+
     def test_only_the_depleted_leaves_are_triggers(self):
         decision = _decide(
             None,
@@ -177,6 +224,23 @@ class TestLeavesByOwner:
             items={i.id: i for i in (cake, flour, box)},
         )
         assert auto.leaves_by_owner(catalog) == {("product", product): {cake.id}}
+
+    def test_requirements_are_one_sale_in_storage_units(self):
+        brownie = _item("produced_good")
+        brownie.storage_to_ingredient_factor = Decimal("1")
+        cream = _item("produced_good")
+        cream.storage_to_ingredient_factor = Decimal("1000")  # 1 tub = 1000 g
+        box = _item("packaging")
+        option = uuid.uuid4()
+        version = _version(brownie, cream, box)
+        version.lines[0].quantity = Decimal("9")
+        version.lines[1].quantity = Decimal("250")
+        catalog = ActiveRecipeCatalog(
+            versions={("modifier_option", option): version},
+            items={i.id: i for i in (brownie, cream, box)},
+        )
+        needs = auto.requirements_by_owner(catalog)[("modifier_option", option)]
+        assert needs == {brownie.id: Decimal("9"), cream.id: Decimal("0.25")}
 
     def test_a_product_with_only_packaging_has_no_leaves(self):
         box = _item("packaging")
@@ -553,7 +617,7 @@ async def test_one_email_carries_every_change_with_its_trigger(monkeypatch):
         "Pistachio Kunafa",
         "Lotus filling",
         "Kunafa Tray",
-        "Stock ≤ 0",
+        "Not enough stock for one sale",
         "Stock recovered",
         "Consumption from orders",
         "POS-B001-2026-09-23-0042",
