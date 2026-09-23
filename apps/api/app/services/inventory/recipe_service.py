@@ -566,6 +566,12 @@ async def activate(
     # update is transactional with activation, so a sweeper can never observe a
     # generation whose recipe version is not visible yet.
     await _bump_catalog_generation(db)
+    # Auto off-sale (experimental): the produced goods either version reaches
+    # are re-evaluated at every enabled branch, so an owner whose new recipe
+    # dropped one is released. A no-op while no branch has the flag on.
+    from app.services.inventory import auto_availability_service
+
+    await auto_availability_service.mark_recipe_change(db, [current, candidate])
     return await _load_version(db, candidate.id)
 
 

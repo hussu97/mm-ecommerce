@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +51,9 @@ class OptionAvailability(BaseModel):
     is_in_stock: bool
     #: Null when it is out until somebody says otherwise.
     out_of_stock_until: str | None = None
+    #: Who has it off sale: "staff", "auto" (a produced good in its recipe ran
+    #: out here), or null while on sale. Additive — older terminals ignore it.
+    unavailable_source: str | None = None
 
 
 class ProductAvailability(BaseModel):
@@ -62,6 +65,8 @@ class ProductAvailability(BaseModel):
     image_url: str | None = None
     is_in_stock: bool
     out_of_stock_until: str | None = None
+    #: "staff", "auto", or null while on sale — see `OptionAvailability`.
+    unavailable_source: str | None = None
     #: Empty for a product with no modifiers, which is the whole reason the
     #: terminal can mark those out with one tap and no sheet.
     options: list[OptionAvailability] = Field(default_factory=list)
@@ -169,6 +174,9 @@ async def _rows(
                         out_of_stock_until=_iso(
                             row.out_of_stock_until if row else None
                         ),
+                        unavailable_source=(
+                            availability_service.effective_unavailable_source(row)
+                        ),
                     )
                 )
 
@@ -181,6 +189,9 @@ async def _rows(
                 image_url=(product.image_urls or [None])[0],
                 is_in_stock=product.id not in availability.unavailable_product_ids,
                 out_of_stock_until=_iso(row.out_of_stock_until if row else None),
+                unavailable_source=availability_service.effective_unavailable_source(
+                    row
+                ),
                 options=options,
                 is_sellable=availability.product_available(product),
             )
@@ -247,9 +258,10 @@ async def _option_ids_of(db: AsyncSession, product_id: uuid.UUID) -> list[uuid.U
 async def set_product_availability(
     product_id: uuid.UUID,
     data: SetStockRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     device: Device = Depends(get_current_device),
-    _: User = Depends(require("pos.products.availability")),
+    user: User = Depends(require("pos.products.availability")),
 ) -> ProductAvailability:
     """
     Mark one website product out at this branch, or put it back.
@@ -264,12 +276,16 @@ async def set_product_availability(
     if product is None or not product.is_active:
         raise NotFoundError("Product not found")
 
+    # Audited inside the writer, against the cashier signed in on this till.
     row = await availability_service.set_product_stock(
         db,
         branch=branch,
         product_id=product_id,
         in_stock=data.in_stock,
         duration=data.duration,
+        actor=user,
+        entity_label=f"{product.name} @ {branch.reference}",
+        request=request,
     )
     option_ids: list[uuid.UUID] = []
     if data.include_options:
@@ -279,6 +295,8 @@ async def set_product_availability(
             product_id=product_id,
             in_stock=data.in_stock,
             duration=data.duration,
+            actor=user,
+            request=request,
         )
         option_ids = list(await _option_ids_of(db, product_id))
 
@@ -302,9 +320,10 @@ async def set_product_availability(
 async def set_option_availability(
     option_id: uuid.UUID,
     data: SetStockRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     device: Device = Depends(get_current_device),
-    _: User = Depends(require("pos.products.availability")),
+    user: User = Depends(require("pos.products.availability")),
 ) -> ProductAvailability:
     """
     Mark one filling out at this branch.
@@ -326,6 +345,9 @@ async def set_option_availability(
         option_id=option_id,
         in_stock=data.in_stock,
         duration=data.duration,
+        actor=user,
+        entity_label=f"{option.name} @ {branch.reference}",
+        request=request,
     )
 
     product_id = (

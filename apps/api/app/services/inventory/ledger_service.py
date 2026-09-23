@@ -127,6 +127,14 @@ async def reconcile_levels(
                     through_sequence=out.through_sequence if out else None,
                 )
             )
+    if apply and drifts:
+        # Auto off-sale (experimental): a corrected level can cross zero, so the
+        # produced goods it corrected are re-evaluated (no-op unless enabled).
+        from app.services.inventory import auto_availability_service
+
+        await auto_availability_service.mark_items_at_enabled_branches(
+            db, item_ids={drift.item_id for drift in drifts}, branch_id=branch_id
+        )
     return drifts
 
 

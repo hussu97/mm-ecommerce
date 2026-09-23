@@ -64,6 +64,7 @@ __all__ = [
     "send_order_undelivered",
     "maps_url",
     "report_failed_sends",
+    "send_auto_availability_change",
     "send_custom_order_enquiry",
     "send_owner_order_notification",
     "send_password_reset",
@@ -90,6 +91,9 @@ CUSTOM_ORDER_ENQUIRY_RECIPIENTS = ("fatema_f@hotmail.co.uk",)
 #: or fewer than requested). Kept separate from the report recipients so the two
 #: notifications can be routed independently later.
 TRANSFER_VARIANCE_RECIPIENTS = ("fahimakhtarabbasi@gmail.com",)
+#: Who is told when the system takes a product/option off sale (or puts it back)
+#: because a produced good ran out — the experimental auto-availability pilot.
+AUTO_AVAILABILITY_RECIPIENTS = ("h_abbasi97@hotmail.com",)
 
 #: The clock every date in an email is printed on. A customer in Sharjah reading
 #: "ready at 16:30" is standing on this one, and a UTC stamp would be four hours
@@ -195,6 +199,10 @@ def _admin_transfer_url(order_id: str) -> str:
 
 def _admin_purchase_order_url(po_id: str) -> str:
     return f"{settings.ADMIN_URL.rstrip('/')}/purchase-orders/{po_id}"
+
+
+def _admin_inventory_transaction_url(transaction_id: str) -> str:
+    return f"{settings.ADMIN_URL.rstrip('/')}/inventory/transactions/{transaction_id}"
 
 
 # ─── Building the picture an order email paints ───────────────────────────────
@@ -1136,6 +1144,99 @@ async def send_purchase_order_receiving_variance(
             result,
             purchase_order_reference,
         )
+
+
+#: The words the owner reads for `availability_service.REASON_*`.
+_AUTO_AVAILABILITY_REASONS = {
+    "stock_depleted": "Stock ≤ 0",
+    "stock_recovered": "Stock recovered",
+    "removed_from_recipe": "Removed from recipe",
+    "feature_disabled": "Feature disabled",
+}
+
+
+def _movement_row(movement: dict | None) -> dict | None:
+    """One ledger line as the email prints it, with a link to what caused it."""
+    if not movement:
+        return None
+    if movement.get("order_number"):
+        url = _admin_order_url(movement["order_number"])
+    elif movement.get("purchase_order_id"):
+        url = _admin_purchase_order_url(movement["purchase_order_id"])
+    else:
+        url = _admin_inventory_transaction_url(movement["transaction_id"])
+    at = movement.get("at")
+    quantity = Decimal(str(movement.get("quantity") or 0))
+    return {
+        "type": str(movement.get("type") or "").replace("_", " ").capitalize(),
+        "reference": movement.get("order_number") or movement.get("reference"),
+        "quantity": f"{quantity:+.2f}",
+        "at": at.astimezone(TZ).strftime("%d %b %Y, %H:%M") if at else "",
+        "actor": movement.get("actor") or "system",
+        "url": url,
+    }
+
+
+async def send_auto_availability_change(
+    *,
+    branch_name: str,
+    branch_reference: str | None,
+    changes: list[dict[str, Any]],
+) -> None:
+    """Tell the owner the system changed what one branch sells — one email per
+    branch per batch, never one per item. Always English; links go to the
+    English-only admin console.
+
+    Each ``changes`` entry carries ``direction`` ("OFF"/"ON"), ``kind``,
+    ``name``, ``reason`` (an ``availability_service.REASON_*``) and ``items``:
+    the triggering produced goods, each with ``name``, current branch
+    ``on_hand`` and its latest ``movement`` (a dict from
+    ``auto_availability_service``, or None)."""
+    if not changes:
+        return
+    offs = sum(1 for change in changes if change.get("direction") == "OFF")
+    ons = len(changes) - offs
+    parts = [f"{offs} off sale" if offs else "", f"{ons} back on sale" if ons else ""]
+    subject = f"Auto availability — {branch_name}: " + ", ".join(p for p in parts if p)
+    rows = [
+        {
+            **change,
+            "reason_label": _AUTO_AVAILABILITY_REASONS.get(
+                change.get("reason") or "", change.get("reason") or ""
+            ),
+            # Not "items": Jinja would resolve `change.items` to dict.items().
+            "triggers": [
+                {
+                    "name": item.get("name"),
+                    "on_hand": f"{Decimal(str(item.get('on_hand') or 0)):.2f}",
+                    "movement": _movement_row(item.get("movement")),
+                }
+                for item in change.get("items") or []
+            ],
+        }
+        for change in changes
+    ]
+    for recipient in AUTO_AVAILABILITY_RECIPIENTS:
+        try:
+            html = _render(
+                "auto_availability_change.html",
+                recipient_email=recipient,
+                locale="en",
+                branch_name=branch_name,
+                branch_reference=branch_reference,
+                changes=rows,
+            )
+            result = await _send_async(recipient, subject, html)
+        except Exception as exc:
+            logger.error(
+                "auto_availability_change render/send failed for %s to %s: %s",
+                branch_name,
+                recipient,
+                exc,
+                exc_info=True,
+            )
+            result = {"status": "failed", "resend_id": None, "error": str(exc)}
+        await _log("auto_availability_change", recipient, subject, result)
 
 
 async def send_order_packed(order: OrderResponse) -> None:

@@ -124,6 +124,7 @@ from .inventory import (  # noqa: F401
 )
 from .inventory_v2 import (  # noqa: F401
     BranchInventorySettings,
+    InventoryAvailabilityDirty,
     InventoryItemKindEnum,
     InventoryLot,
     InventoryReportCadenceEnum,

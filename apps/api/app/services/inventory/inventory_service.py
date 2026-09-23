@@ -67,6 +67,7 @@ from app.models.inventory import (
 )
 from app.models.inventory_v2 import (
     BranchInventorySettings,
+    InventoryItemKindEnum,
     InventoryTrackingModeEnum,
 )
 from app.models.order import Order
@@ -390,10 +391,13 @@ async def post_transaction(
     total = Decimal("0")
     costed: list[tuple[InventoryTransactionItem, InventoryLevel]] = []
     engine_lines: list = []
+    produced_good_ids: set[uuid.UUID] = set()
     for line in transaction.items:
         item = await db.get(InventoryItem, line.item_id)
         if item is None:
             raise BadRequestError(f"Inventory item {line.item_id} not found")
+        if item.kind == InventoryItemKindEnum.PRODUCED_GOOD.value:
+            produced_good_ids.add(item.id)
         if item.tracking_mode == InventoryTrackingModeEnum.PHANTOM.value:
             raise BadRequestError(
                 f"{item.name} is a phantom recipe item and cannot hold stock"
@@ -496,6 +500,24 @@ async def post_transaction(
     transaction.total_cost = _money(
         total + Decimal(str(transaction.additional_cost or 0))
     )
+
+    # Auto off-sale (experimental): note which produced goods moved at a branch
+    # that has it on, so the scheduler re-evaluates their products within a
+    # tick. One upsert, committed atomically with the movement; nothing is
+    # evaluated here, so an order close or a counter sale never waits on it.
+    if produced_good_ids and (
+        branch_settings is not None
+        and branch_settings.auto_availability_enabled is True
+    ):
+        from app.services.inventory import auto_availability_service
+
+        await auto_availability_service.mark_dirty(
+            db,
+            branch_id=transaction.branch_id,
+            item_ids=produced_good_ids,
+            transaction_id=transaction.id,
+        )
+
     transaction.warehouse_id = warehouse_id
     transaction.status = TransactionStatusEnum.CLOSED.value
     transaction.poster_id = user.id if user else None

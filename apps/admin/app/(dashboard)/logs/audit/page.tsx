@@ -22,6 +22,8 @@ const ENTITY_OPTIONS = [
   { value: 'category', label: 'Category' },
   { value: 'order', label: 'Order' },
   { value: 'promo_code', label: 'Promo Code' },
+  { value: 'branch_product', label: 'Branch Product Availability' },
+  { value: 'branch_modifier_option', label: 'Branch Option Availability' },
 ];
 
 const ACTION_VARIANT: Record<AuditAction, 'success' | 'danger' | 'warning' | 'neutral'> = {

@@ -226,6 +226,12 @@ class BranchProductResponse(BaseModel):
     #: way back in, and a CHECK refuses a row that is available and still
     #: counting down.
     out_of_stock_until: datetime | None = None
+    #: Who has it off sale: "staff", "auto" (a produced good in its active
+    #: recipe ran out at this branch), or null while on sale. Additive.
+    unavailable_source: Literal["staff", "auto"] | None = None
+    #: A person put an auto-off row back on sale; the system leaves it alone
+    #: until every trigger item is back above zero.
+    staff_override_until_restock: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -275,6 +281,9 @@ class BranchModifierOptionResponse(BaseModel):
     #: meaningful while `is_in_stock` is false — the same convention as
     #: `BranchProductResponse`.
     out_of_stock_until: datetime | None = None
+    #: "staff", "auto", or null while on sale — as `BranchProductResponse`.
+    unavailable_source: Literal["staff", "auto"] | None = None
+    staff_override_until_restock: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -515,12 +524,17 @@ async def set_branch_availability(
         )
 
     if data.is_in_stock is not None:
+        # Audited inside the writer (source, reason, before/after), like every
+        # other availability change — so it is not logged again below.
         row = await availability_service.set_product_stock(
             db,
             branch=branch,
             product_id=product_id,
             in_stock=data.is_in_stock,
             duration=data.duration,
+            actor=user,
+            entity_label=f"{product.name} @ {branch.reference}",
+            request=request,
         )
     else:
         row = (
@@ -535,6 +549,10 @@ async def set_branch_availability(
             row = BranchProduct(branch_id=data.branch_id, product_id=product_id)
             db.add(row)
 
+    before = {
+        "is_active": row.is_active,
+        "price": str(row.price) if row.price is not None else None,
+    }
     if data.is_active is not None:
         row.is_active = data.is_active
     if data.price is not None:
@@ -547,26 +565,28 @@ async def set_branch_availability(
     # branch that just changed.
     await catalogue_cache.retire()
 
-    # Logged, because this is a change somebody will ask about later: a cake
-    # that vanished from one emirate's website overnight is a question with a
-    # name and a time on the answer.
-    await audit_service.log_action(
-        db,
-        action="UPDATE",
-        entity_type="branch_product",
-        entity_id=str(row.id),
-        entity_label=f"{product.name} @ {branch.reference}",
-        admin=user,
-        changes={
-            "is_in_stock": row.is_in_stock,
-            "out_of_stock_until": (
-                row.out_of_stock_until.isoformat() if row.out_of_stock_until else None
-            ),
-            "is_active": row.is_active,
-            "price": str(row.price) if row.price is not None else None,
-        },
-        request=request,
-    )
+    # The stock half is on the trail already (the writer logs it). What only
+    # this route writes — the branch price and the per-branch listing switch —
+    # is logged here, and only when it was sent: a cake that vanished from one
+    # emirate's website overnight is a question with a name and a time on the
+    # answer.
+    if data.is_active is not None or data.price is not None:
+        await audit_service.log_action(
+            db,
+            action="UPDATE",
+            entity_type="branch_product",
+            entity_id=str(row.id),
+            entity_label=f"{product.name} @ {branch.reference}",
+            admin=user,
+            changes={
+                "before": before,
+                "after": {
+                    "is_active": row.is_active,
+                    "price": str(row.price) if row.price is not None else None,
+                },
+            },
+            request=request,
+        )
 
     # The aggregators are fed from the same fact. Effective availability rather
     # than the flag that was sent: this route can also deactivate the row, and
@@ -627,34 +647,22 @@ async def set_modifier_option_availability(
             f"Expected one of {', '.join(availability_service.DURATIONS)}"
         )
 
+    # Audited inside the writer, like every other availability change.
     row = await availability_service.set_option_stock(
         db,
         branch=branch,
         option_id=option_id,
         in_stock=data.is_in_stock,
         duration=data.duration,
+        actor=user,
+        entity_label=f"{option.name} @ {branch.reference}",
+        request=request,
     )
     await db.refresh(row)
 
     # The website resolves a product's sellability from its options, and its
     # per-branch answers are cached by the branch that just changed.
     await catalogue_cache.retire()
-
-    await audit_service.log_action(
-        db,
-        action="UPDATE",
-        entity_type="branch_modifier_option",
-        entity_id=str(row.id),
-        entity_label=f"{option.name} @ {branch.reference}",
-        admin=user,
-        changes={
-            "is_in_stock": row.is_in_stock,
-            "out_of_stock_until": (
-                row.out_of_stock_until.isoformat() if row.out_of_stock_until else None
-            ),
-        },
-        request=request,
-    )
 
     # GrubOps is fed the same fact per option (its push already speaks option ids).
     grubops_service.push_change_in_background(

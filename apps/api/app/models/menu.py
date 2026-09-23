@@ -315,12 +315,36 @@ class BranchProduct(Base, UUIDMixin, TimestampMixin):
     out_of_stock_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: Who took it off sale — 'staff' (a person, on the terminal or console) or
+    #: 'auto' (`auto_availability_service`, because a produced good in its
+    #: active recipe ran out at this branch). NULL while on sale; a CHECK keeps
+    #: it off rows that are in stock. The system only ever puts back what the
+    #: system took off.
+    unavailable_source: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    #: For an 'auto' row: the trigger items and their branch stock when it went
+    #: off. Provenance for the audit and the owner's email; cleared by any
+    #: staff write.
+    auto_state: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    #: A person put an auto-off row back on sale. Staff wins: the system leaves
+    #: the row alone until every trigger item is back above zero, then clears
+    #: this. `availability_service.sweep` never deletes a row carrying it.
+    staff_override_until_restock: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     __table_args__ = (
         UniqueConstraint("branch_id", "product_id", name="uq_branch_product"),
         CheckConstraint(
             "out_of_stock_until IS NULL OR is_in_stock = false",
             name="ck_branch_products_until_only_when_out",
+        ),
+        CheckConstraint(
+            "unavailable_source IS NULL OR unavailable_source IN ('staff', 'auto')",
+            name="ck_branch_products_unavailable_source",
+        ),
+        CheckConstraint(
+            "unavailable_source IS NULL OR is_in_stock = false",
+            name="ck_branch_products_source_only_when_out",
         ),
     )
 
@@ -349,6 +373,14 @@ class BranchModifierOption(Base, UUIDMixin, TimestampMixin):
             "out_of_stock_until IS NULL OR is_in_stock = false",
             name="ck_branch_modifier_options_until_only_when_out",
         ),
+        CheckConstraint(
+            "unavailable_source IS NULL OR unavailable_source IN ('staff', 'auto')",
+            name="ck_branch_modifier_options_unavailable_source",
+        ),
+        CheckConstraint(
+            "unavailable_source IS NULL OR is_in_stock = false",
+            name="ck_branch_modifier_options_source_only_when_out",
+        ),
     )
 
     branch_id: Mapped[uuid.UUID] = mapped_column(
@@ -368,6 +400,22 @@ class BranchModifierOption(Base, UUIDMixin, TimestampMixin):
     )
     out_of_stock_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    #: Who took it off sale — 'staff' (a person, on the terminal or console) or
+    #: 'auto' (`auto_availability_service`, because a produced good in its
+    #: active recipe ran out at this branch). NULL while on sale; a CHECK keeps
+    #: it off rows that are in stock. The system only ever puts back what the
+    #: system took off.
+    unavailable_source: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    #: For an 'auto' row: the trigger items and their branch stock when it went
+    #: off. Provenance for the audit and the owner's email; cleared by any
+    #: staff write.
+    auto_state: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    #: A person put an auto-off row back on sale. Staff wins: the system leaves
+    #: the row alone until every trigger item is back above zero, then clears
+    #: this. `availability_service.sweep` never deletes a row carrying it.
+    staff_override_until_restock: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
 
     def __repr__(self) -> str:

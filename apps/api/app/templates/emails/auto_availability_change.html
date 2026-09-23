@@ -1,0 +1,79 @@
+{#
+  The system changed what one branch sells: a produced good in a product's or
+  option's active recipe hit branch stock <= 0 (taken off sale), or recovered /
+  left the recipe / the feature was switched off (put back on sale).
+
+  One email per branch per batch. Each change lists the triggering produced
+  goods with their current branch stock and the latest movement that moved
+  them, linked to the order, purchase order or ledger transaction. Always
+  English: an internal notification, and the admin it links to is English-only.
+#}
+{% extends "base.html" %}
+{% import "_parts.html" as parts with context %}
+
+{% block title %}Auto availability — {{ branch_name }}{% endblock %}
+{% block preheader %}{{ branch_name }} &middot; {{ changes|length }} change{{ '' if changes|length == 1 else 's' }} from produced-good stock{% endblock %}
+
+{% block content %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="hero" align="center">
+    <p class="hero-eyebrow">Auto availability (experimental)</p>
+    <h2 class="hero-title">{{ branch_name }}{% if branch_reference %} ({{ branch_reference }}){% endif %}</h2>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <tr><td class="body-copy" style="padding-top: 26px;">
+    <p>
+      The system changed what this branch sells because of its
+      <strong>produced-good stock</strong>. A product or option goes off sale
+      when a produced good in its recipe reaches zero here, and comes back when
+      the stock recovers. Putting an auto-off item back on sale by hand keeps it
+      on until the stock is restocked.
+    </p>
+
+    {% for change in changes %}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="panel" style="margin-top: 16px;">
+      <tr><td class="panel-pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="kv-value" style="padding: 4px 0;">
+              <strong style="color: {{ '#b42318' if change.direction == 'OFF' else '#067647' }};">{{ change.direction }}</strong>
+              &middot; {{ change.kind }}: <span dir="auto">{{ change.name }}</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="kv-label" style="padding: 4px 0;">Reason: {{ change.reason_label }}</td>
+          </tr>
+        </table>
+        {% if change.triggers %}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 8px;">
+          <tr>
+            <td class="kv-label" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Produced good</td>
+            <td class="kv-label" align="right" style="padding: 6px 0; border-bottom: 1px solid #e5e5e5;">Branch stock</td>
+            <td class="kv-label" style="padding: 6px 0 6px 12px; border-bottom: 1px solid #e5e5e5;">Latest movement</td>
+          </tr>
+          {% for item in change.triggers %}
+          <tr>
+            <td class="kv-value" style="padding: 6px 0; vertical-align: top;" dir="auto">{{ item.name }}</td>
+            <td class="kv-value" align="right" style="padding: 6px 0; vertical-align: top;"><strong>{{ item.on_hand }}</strong></td>
+            <td class="kv-value" style="padding: 6px 0 6px 12px; vertical-align: top;">
+              {% if item.movement %}
+                {{ item.movement.type }} &middot;
+                <a href="{{ item.movement.url }}" target="_blank" rel="noopener">{{ item.movement.reference }}</a>
+                &middot; {{ item.movement.quantity }}<br>
+                <span class="kv-label">{{ item.movement.at }} &middot; <span dir="auto">{{ item.movement.actor }}</span></span>
+              {% else %}
+                <span class="kv-label">No movement at this branch</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+      </td></tr>
+    </table>
+    {% endfor %}
+  </td></tr>
+</table>
+{% endblock %}
