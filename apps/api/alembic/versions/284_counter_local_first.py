@@ -28,7 +28,7 @@ Widening a varchar and adding a column with a constant default are both
 metadata-only in Postgres 11+, so this does not rewrite `orders`.
 
 Revision ID: 284_counter_local_first
-Revises: 282_counter_promo_branch_modes
+Revises: 283_auto_availability
 Create Date: 2026-09-23
 """
 
@@ -42,8 +42,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "284_counter_local_first"
-# rechain: after 283_auto_availability_produced_goods
-down_revision: Union[str, None] = "282_counter_promo_branch_modes"
+down_revision: Union[str, None] = "283_auto_availability"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

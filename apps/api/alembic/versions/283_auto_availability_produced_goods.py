@@ -27,7 +27,7 @@ Additive only: nullable or defaulted columns, one new table. Old POS builds
 ignore the new ``unavailable_source`` response field.
 
 Revision ID: 283_auto_availability
-Revises: 281_fifo_costing_v3
+Revises: 282_counter_promo_branch_modes
 Create Date: 2026-09-23
 """
 
@@ -43,8 +43,7 @@ from alembic import op
 # ≤32 chars: `alembic_version.version_num` is VARCHAR(32), so the file name's
 # longer spelling cannot be the id (test_migration_chain enforces it).
 revision: str = "283_auto_availability"
-# rechain: after 282_counter_promo_branch_modes
-down_revision: Union[str, None] = "281_fifo_costing_v3"
+down_revision: Union[str, None] = "282_counter_promo_branch_modes"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
