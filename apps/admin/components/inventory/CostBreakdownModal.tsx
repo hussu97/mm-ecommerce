@@ -50,6 +50,37 @@ function EstimateBadge() {
   );
 }
 
+// The branch the popup opens on, remembered per device. '' means "All branches".
+const BRANCH_STORAGE_KEY = 'mm-admin-cost-breakdown-branch';
+
+function readSavedBranch(): string | null {
+  try {
+    return localStorage.getItem(BRANCH_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveBranch(branchId: string) {
+  try {
+    localStorage.setItem(BRANCH_STORAGE_KEY, branchId);
+  } catch {
+    // Private mode or blocked storage: the choice just isn't remembered.
+  }
+}
+
+/** The last branch picked on this device, if it is still active; else the
+ *  Sharjah kitchen (where the stock is made and costed); else the first. */
+export function defaultBranchId(branches: Branch[]): string {
+  const saved = readSavedBranch();
+  if (saved === '' || (saved && branches.some((branch) => branch.id === saved))) return saved;
+  const kitchen =
+    branches.find((branch) => /sharjah/i.test(branch.name) && branch.type === 'kitchen') ??
+    branches.find((branch) => /sharjah/i.test(branch.name)) ??
+    branches.find((branch) => branch.type === 'kitchen');
+  return (kitchen ?? branches[0])?.id ?? '';
+}
+
 export function CostBreakdownModal({
   item,
   branches,
@@ -59,7 +90,15 @@ export function CostBreakdownModal({
   branches: Branch[];
   onClose: () => void;
 }) {
-  const [branchId, setBranchId] = useState<string>(branches[0]?.id ?? '');
+  // `branches` is the active list, so a remembered branch that has since been
+  // deactivated falls through to the default. Resolved on render (not stored
+  // on mount) so it is right even if the branch list arrives after opening.
+  const [chosenBranchId, setChosenBranchId] = useState<string | null>(null);
+  const branchId = chosenBranchId ?? defaultBranchId(branches);
+  const setBranchId = (next: string) => {
+    setChosenBranchId(next);
+    saveBranch(next);
+  };
   const [tab, setTab] = useState<'stock' | 'history'>('stock');
   const branchName = useMemo(
     () => new Map(branches.map((branch) => [branch.id, branch.name])),
