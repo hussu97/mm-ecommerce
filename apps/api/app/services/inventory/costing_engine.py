@@ -35,8 +35,9 @@ The rules, per (item, warehouse):
    them, shortfall debt — takes its price, and the change carries on into the
    batches, sales and transfers that used them.
 4. Until then a provisional cost is *estimated* at the last priced cost at the
-   warehouse, else the latest purchase-order cost of the item anywhere, else 0,
-   and flagged so screens can say so.
+   warehouse, else (for a made item) its current recipe cost there, else the
+   latest purchase-order cost of the item anywhere, else 0 — and flagged so
+   screens can say so.
 5. A voided receipt is never a pricing source; reversing it removes its own
    layer first, then draws FIFO like any issue.
 6. A cost adjustment rescales what survives. Those posted before the v3
@@ -343,6 +344,56 @@ class Scaled(Cost):
         return Resolved(_cost(base.unit_cost * factor), False, self.priced_by)
 
 
+class FinalAverage(Cost):
+    """An item's average at a warehouse once the whole replay has run."""
+
+    __slots__ = ("engine", "key")
+
+    def __init__(self, engine: "CostingEngine", key: tuple[uuid.UUID, uuid.UUID]):
+        super().__init__()
+        self.engine = engine
+        self.key = key
+
+    def _resolve(self) -> Resolved:
+        state = self.engine.states.get(self.key)
+        if state is None:
+            return Resolved(ZERO, True, None)
+        qty = ZERO
+        value = ZERO
+        provisional = False
+        for layer in state.live():
+            resolved = layer.cost.resolve()
+            qty += layer.remaining
+            value += layer.remaining * resolved.unit_cost
+            provisional = provisional or resolved.provisional
+        if qty > 0:
+            return Resolved(_cost(value / qty), provisional, None)
+        if state.last_cost is not None:
+            return state.last_cost.resolve()
+        return Resolved(ZERO, True, None)
+
+
+class RecipeEstimate(Cost):
+    """What one unit of a made item costs from its current recipe, here.
+
+    The estimate for made stock that no production batch accounts for — a count
+    found some, or it arrived before production was recorded. Built from the
+    replay's own final ingredient costs, so it is as deterministic as the rest.
+    """
+
+    __slots__ = ("components",)
+
+    def __init__(self, components: list[tuple[Decimal, Cost]]):
+        super().__init__()
+        self.components = components
+
+    def _resolve(self) -> Resolved:
+        total = sum(
+            (qty * cost.resolve().unit_cost for qty, cost in self.components), ZERO
+        )
+        return Resolved(_cost(total), True, None)
+
+
 # ─── State ───────────────────────────────────────────────────────────────────
 
 
@@ -526,6 +577,7 @@ class CostingEngine:
         | None = None,
         fast: bool = False,
         seeds: list[SeedState] | None = None,
+        recipes: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal]]] | None = None,
     ) -> None:
         self.cutover_sequence = cutover_sequence
         self.reversed = reversed_transactions or set()
@@ -535,6 +587,9 @@ class CostingEngine:
         self.external_sends = external_sends or {}
         self.external_group_inputs = external_group_inputs or {}
         self.fast = fast
+        #: {made item: [(ingredient, storage qty per storage unit made), …]} —
+        #: its current recipe, for estimating made stock no batch accounts for.
+        self.recipes = recipes or {}
         self.states: dict[tuple[uuid.UUID, uuid.UUID], ItemState] = {}
         self.records: dict[uuid.UUID, LineRecord] = {}
         self.order: list[uuid.UUID] = []
@@ -599,7 +654,15 @@ class CostingEngine:
         # Latest purchase-order price posted before this line, anywhere.
         at = bisect.bisect_left(prices, (line.sequence, Decimal("-1")))
         fallback = prices[at - 1][1] if at > 0 else ZERO
-        return Pending(state.last_priced, fallback)
+        estimate = state.last_priced
+        if estimate is None and line.item_id in self.recipes:
+            estimate = RecipeEstimate(
+                [
+                    (qty, FinalAverage(self, (ingredient, line.warehouse_id)))
+                    for ingredient, qty in self.recipes[line.item_id]
+                ]
+            )
+        return Pending(estimate, fallback)
 
     @staticmethod
     def _transfer_key(line: LedgerLine) -> tuple | None:

@@ -34,6 +34,7 @@ from sqlalchemy import bindparam, case, func, literal, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import AppError
 from app.models.base import utcnow
 from app.models.branch import Branch
 from app.models.inventory import (
@@ -41,6 +42,7 @@ from app.models.inventory import (
     InventoryCostingState,
     InventoryCostLayer,
     InventoryCostLayerConsumption,
+    InventoryItem,
     InventoryLevel,
     InventoryLineCost,
     InventoryTransaction,
@@ -48,6 +50,7 @@ from app.models.inventory import (
     InventoryTransactionTypeEnum,
     TransactionStatusEnum,
 )
+from app.models.inventory_v2 import RecipeOwnerKindEnum
 from app.services.inventory.costing_engine import (
     CostingEngine,
     LedgerLine,
@@ -277,6 +280,58 @@ async def _external_sends(
                 bool(provisional),
             )
     return out
+
+
+async def _recipes(
+    db: AsyncSession,
+) -> dict[uuid.UUID, list[tuple[uuid.UUID, Decimal]]]:
+    """Every made item's current recipe, in storage units per storage unit made."""
+    from app.services.inventory import recipe_service
+
+    catalog = await recipe_service.load_active_catalog(db)
+    owners = [
+        owner_id
+        for (kind, owner_id) in catalog.versions
+        if kind == RecipeOwnerKindEnum.INVENTORY_ITEM.value
+    ]
+    if not owners:
+        return {}
+    factors = {
+        item.id: Decimal(str(item.storage_to_ingredient_factor or 1))
+        for item in (
+            await db.execute(
+                select(InventoryItem).where(
+                    InventoryItem.id.in_(set(owners) | set(catalog.items))
+                )
+            )
+        )
+        .scalars()
+        .all()
+    }
+    recipes: dict[uuid.UUID, list[tuple[uuid.UUID, Decimal]]] = {}
+    for owner_id in owners:
+        try:
+            expanded, _ = await recipe_service.expand_owner(
+                db,
+                kind=RecipeOwnerKindEnum.INVENTORY_ITEM.value,
+                owner_id=owner_id,
+                catalog=catalog,
+            )
+        except AppError:
+            continue
+        # expand_owner is per owner *ingredient* unit, in each leaf's ingredient
+        # unit; the engine works in storage units on both sides.
+        per_storage = factors.get(owner_id, Decimal(1))
+        recipes[owner_id] = [
+            (
+                line.item_id,
+                Decimal(str(line.quantity))
+                / (factors.get(line.item_id) or Decimal(1))
+                * per_storage,
+            )
+            for line in expanded.values()
+        ]
+    return recipes
 
 
 async def cutover_sequence(db: AsyncSession) -> int | None:
@@ -587,6 +642,7 @@ async def replay(
         reversed_transactions=reversed_,
         po_prices=await _po_prices(db, reversed_),
         external_sends=await _external_sends(db, lines, warehouse_ids),
+        recipes=await _recipes(db),
     )
     for line in lines:
         engine.apply(line)

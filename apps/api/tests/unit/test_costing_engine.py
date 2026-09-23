@@ -1115,3 +1115,29 @@ def test_invariant_holds_on_random_ledgers_with_reversals(seed):
     assert_invariant(projection)
     for level in projection.levels.values():
         assert level.average_cost >= 0
+
+
+def test_made_stock_no_batch_explains_is_estimated_from_its_recipe():
+    flour, cake = uuid.uuid4(), uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("purchasing", "1000", "0.5", item=flour, po=True)
+    found = ledger.add("inventory_count", "4", item=cake)  # never produced here
+    engine = CostingEngine(
+        cutover_sequence=None,
+        reversed_transactions=ledger.reversed(),
+        po_prices=ledger.po_prices(),
+        recipes={cake: [(flour, D("30"))]},
+    )
+    for line in ledger.lines:
+        engine.apply(line)
+    projection = engine.project()
+    cost = projection.line_costs[found.line_id]
+    assert cost.unit_cost == D("15")  # 30 g × 0.5
+    assert cost.is_provisional
+    # A real batch later prices it for good.
+    group = uuid.uuid4()
+    ledger.add("consumption_from_production", "-40", item=flour, group=group)
+    ledger.add("production", "2", item=cake, group=group)
+    projection = replay(ledger)
+    assert projection.line_costs[found.line_id].unit_cost == D("10")
+    assert not projection.line_costs[found.line_id].is_provisional
