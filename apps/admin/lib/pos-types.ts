@@ -561,31 +561,6 @@ export interface PurchaseOrderItemOption {
   sku: string | null;
 }
 
-export interface CostLayer {
-  id: string;
-  warehouse_id: string;
-  warehouse_name: string | null;
-  source_kind: string;
-  posting_sequence: number;
-  purchase_order_id: string | null;
-  original_quantity: number;
-  remaining_quantity: number;
-  unit_cost: number;
-  received_at: string;
-  // Human source ref (PO-… for a purchase, ADJ-…/CAD-… for a manual
-  // reversal/adjustment) and the server-computed remaining × unit_cost.
-  source_reference: string | null;
-  line_value: number | null;
-}
-
-export interface ItemCostLayers {
-  item_id: string;
-  total_quantity: number;
-  total_value: number;
-  average_cost: number;
-  layers: CostLayer[];
-}
-
 export interface InventoryTransaction {
   id: string;
   reference: string;

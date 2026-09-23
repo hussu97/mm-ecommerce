@@ -12,14 +12,15 @@ import {
   branchesApi,
   inventoryApi,
 } from '@/lib/pos-api';
-import type { Branch, InventoryCategory, InventoryItem, InventoryLevel, ItemCostLayers, Supplier } from '@/lib/pos-types';
+import type { Branch, InventoryCategory, InventoryItem, InventoryLevel, Supplier } from '@/lib/pos-types';
 import { ApiError } from '@/lib/api';
-import { Badge, Spinner } from '@/components/ui';
-import { Modal, ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
+import { Badge } from '@/components/ui';
+import { ResourcePage, StatusBadge, type ColumnDef } from '@/components/pos/ResourcePage';
 import { RowAction } from '@/components/ui/DataTable';
 import { RecipeButton } from '@/components/inventory/RecipeButton';
+import { CostBreakdownModal } from '@/components/inventory/CostBreakdownModal';
 import { useConfirm, useToast } from '@/components/ui/feedback';
-import { formatCost, formatQuantity, interactiveRowClass } from '@/lib/utils';
+import { formatCost, formatQuantity } from '@/lib/utils';
 
 // Made items (produced or semi-finished) are the only kinds that can own a recipe.
 const MADE_KINDS = new Set(['produced_good', 'semi_finished']);
@@ -312,7 +313,9 @@ export default function ItemsPage() {
           ),
         },
         {
-          header: 'Cost',
+          // The estate-wide FIFO average (every branch's stock together); the
+          // breakdown it opens can be narrowed to one branch.
+          header: 'Cost (all branches)',
           // Highlighted + clickable: opens the cost-layer breakdown for the
           // current on-hand (how this average is reached, and from which POs).
           render: (i) => (
@@ -395,92 +398,9 @@ export default function ItemsPage() {
         { name: 'is_active', label: 'Active', type: 'checkbox' },
       ]}
     />
-    {costItem && <CostLayersModal item={costItem} onClose={() => setCostItem(null)} />}
+    {costItem && (
+      <CostBreakdownModal item={costItem} branches={activeBranches} onClose={() => setCostItem(null)} />
+    )}
     </>
-  );
-}
-
-function CostLayersModal({ item, onClose }: { item: InventoryItem; onClose: () => void }) {
-  const [data, setData] = useState<ItemCostLayers | null>(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-    inventoryApi
-      .itemCostLayers(item.id)
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch((err) => { if (!cancelled) setError(err instanceof ApiError ? err.message : 'Failed to load cost layers.'); });
-    return () => { cancelled = true; };
-  }, [item.id]);
-
-  return (
-    <Modal title={`Cost layers — ${item.name}`} onClose={onClose} wide>
-      <p className="mb-3 text-xs text-gray-500 font-body">
-        Stock is valued first-in, first-out: each layer is a quantity still on the shelf at the
-        cost it arrived at, oldest first (the order the next issue consumes them). The average is
-        what these layers imply.
-      </p>
-      {error && <p className="text-xs text-red-600 font-body">{error}</p>}
-      {!data ? (
-        <div className="flex justify-center py-10"><Spinner /></div>
-      ) : data.layers.length === 0 ? (
-        <p className="py-8 text-center text-sm text-gray-400 font-body">
-          No costed stock. A purchase will lay down the first layer.
-        </p>
-      ) : (
-        <>
-          <div className="mb-3 flex gap-6 text-sm">
-            <div><span className="text-gray-500 font-body">On hand</span><br /><span className="font-display text-primary">{formatQuantity(data.total_quantity)} {item.storage_unit}</span></div>
-            <div><span className="text-gray-500 font-body">Value</span><br /><span className="font-display text-primary">{formatCost(data.total_value)}</span></div>
-            <div><span className="text-gray-500 font-body">Avg cost</span><br /><span className="font-display text-primary">{formatCost(data.average_cost)}</span></div>
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 text-[11px] uppercase tracking-widest text-gray-500 font-body">
-                <th className="py-2 text-left">Source</th>
-                <th className="py-2 text-left">Received</th>
-                <th className="py-2 text-left">Warehouse</th>
-                <th className="py-2 text-right">Qty</th>
-                <th className="py-2 text-center"> </th>
-                <th className="py-2 text-right">Unit cost</th>
-                <th className="py-2 text-right">= Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.layers.map((layer) => (
-                <tr key={layer.id} className={`border-b border-gray-100 ${interactiveRowClass}`}>
-                  <td className="py-2">
-                    {layer.source_reference
-                      ? <span className="font-medium text-gray-800">{layer.source_reference}</span>
-                      : <span className="text-gray-400">—</span>}
-                    <br /><span className="text-[10px] uppercase tracking-wide text-gray-400 font-body">{layer.source_kind.replaceAll('_', ' ')}</span>
-                  </td>
-                  <td className="py-2 text-gray-500">{layer.received_at.slice(0, 10)}</td>
-                  <td className="py-2 text-gray-600">{layer.warehouse_name ?? '—'}</td>
-                  <td className="py-2 text-right tabular-nums">{formatQuantity(layer.remaining_quantity)}</td>
-                  <td className="py-2 text-center text-gray-400">×</td>
-                  <td className="py-2 text-right tabular-nums">{formatCost(layer.unit_cost)}</td>
-                  <td className="py-2 text-right tabular-nums">{formatCost(layer.line_value ?? layer.remaining_quantity * layer.unit_cost)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-gray-300 font-medium">
-                <td className="py-2" colSpan={3}>Total on hand</td>
-                <td className="py-2 text-right tabular-nums">{formatQuantity(data.total_quantity)}</td>
-                <td />
-                <td />
-                <td className="py-2 text-right tabular-nums">{formatCost(data.total_value)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <p className="mt-3 text-xs text-gray-500 font-body">
-            Average cost = total value ÷ on-hand qty ={' '}
-            {formatCost(data.total_value)} ÷ {formatQuantity(data.total_quantity)} {item.storage_unit} ={' '}
-            <span className="font-medium text-gray-800">{formatCost(data.average_cost)}</span> per {item.storage_unit}
-          </p>
-        </>
-      )}
-    </Modal>
   );
 }

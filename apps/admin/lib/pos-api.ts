@@ -16,7 +16,7 @@ import type {
   PermissionCatalogue, Printer, ProducibleItemBasis, ProductionOrder, ProductionOrderCreate, ProductionOrderSummary,
   PurchaseOrder, PurchaseOrderItemOption,
   Reason, Role, SalesBreakdownRow, SalesSummary, Staff,
-  Supplier, SupplierItem, ItemCostLayers, Tax,
+  Supplier, SupplierItem, Tax,
   TaxGroup, Till, VatLedgerResponse, Warehouse, WeeklyHours, WeeklyHoursWrite,
 } from './pos-types';
 
@@ -26,6 +26,10 @@ export type RecipeDraft = Schemas['RecipeDraftRequest'];
 export type RecipeExpansion = Schemas['RecipeExpansionResponse'];
 export type RecipeOwnerRow = Schemas['RecipeOwnerRow'];
 export type ResetCostFromRecipeResponse = Schemas['ResetCostFromRecipeResponse'];
+export type ItemCostLayers = Schemas['ItemCostLayersResponse'];
+export type ItemCostHistory = Schemas['ItemCostHistoryResponse'];
+export type RecipeQuoteRequest = Schemas['RecipeQuoteRequest'];
+export type RecipeQuote = Schemas['RecipeQuoteResponse'];
 export type PaginatedRecipeOwners = Schemas['PaginatedRecipeOwners'];
 export type ReportTemplate = Schemas['ReportTemplateResponse'];
 export type ReportTemplateWrite = Schemas['ReportTemplateUpsert'];
@@ -249,6 +253,10 @@ export const inventoryApi = {
     api.put<SupplierItem[]>(`/inventory/suppliers/${id}/items`, items),
   itemCostLayers: (itemId: string, branchId?: string) =>
     api.get<ItemCostLayers>(`/inventory/items/${itemId}/cost-layers${buildQs({ branch_id: branchId })}`),
+  itemCostHistory: (itemId: string, branchId: string, page: number, perPage: number) =>
+    api.get<ItemCostHistory>(
+      `/inventory/items/${itemId}/cost-history${buildQs({ branch_id: branchId, page, per_page: perPage })}`,
+    ),
   resetCostFromRecipe: (itemId: string) =>
     api.post<ResetCostFromRecipeResponse>(`/inventory/items/${itemId}/reset-cost-from-recipe`, {}),
 
@@ -308,7 +316,7 @@ export const inventoryApi = {
 
   recipeOwners: (
     ownerKind: string,
-    params: { search?: string; active?: string; recipe?: string; sort?: string; sort_dir?: string },
+    params: { search?: string; active?: string; recipe?: string; sort?: string; sort_dir?: string; branch_id?: string },
     page: number,
     perPage: number,
   ) =>
@@ -316,6 +324,7 @@ export const inventoryApi = {
       `/inventory/recipe-owners/${ownerKind}${buildQs({ ...params, page, per_page: perPage })}`,
     ),
 
+  recipeQuote: (data: RecipeQuoteRequest) => api.post<RecipeQuote>('/inventory/recipes-v2/quote', data),
   versionedRecipe: (ownerKind: string, ownerId: string) =>
     api.get<VersionedRecipe>(`/inventory/recipes-v2/${ownerKind}/${ownerId}`),
   saveRecipeDraft: (ownerKind: string, ownerId: string, data: RecipeDraft) =>

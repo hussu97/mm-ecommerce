@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 import { Badge, Button, Input, LoadError, Pagination, Select, TabBar } from '@/components/ui';
@@ -9,7 +9,8 @@ import { Modal, StatusBadge } from '@/components/pos/ResourcePage';
 import { RecipeEditor } from '@/components/inventory/RecipeEditor';
 import { useApiList } from '@/hooks/useApiList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { inventoryApi, type RecipeOwnerRow } from '@/lib/pos-api';
+import { branchesApi, inventoryApi, type RecipeOwnerRow } from '@/lib/pos-api';
+import type { Branch } from '@/lib/pos-types';
 import { formatCost, formatQuantity } from '@/lib/utils';
 
 type OwnerKind = 'product' | 'modifier_option' | 'inventory_item';
@@ -111,6 +112,15 @@ export function RecipeOwnersPage({ ownerKind, noun, showKind, searchPlaceholder 
   const [recipe, setRecipe] = useState<RecipeFilter>('all');
   const [sort, setSort] = useState<SortState>({ key: 'name', direction: 'asc' });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Recipe cost at one branch's FIFO ingredient costs ('' = every branch).
+  const [costBranchId, setCostBranchId] = useState('');
+  const [branches, setBranches] = useState<Branch[]>([]);
+  useEffect(() => {
+    void branchesApi
+      .list()
+      .then((rows) => setBranches(rows.filter((b) => b.is_active && !b.deleted_at)))
+      .catch(() => setBranches([]));
+  }, []);
 
   // The recipe editor popup, holding a queue of owner ids so a multi-select can
   // step through several recipes without returning to the list between each.
@@ -129,11 +139,12 @@ export function RecipeOwnersPage({ ownerKind, noun, showKind, searchPlaceholder 
           recipe,
           sort: sort.key,
           sort_dir: sort.direction,
+          branch_id: costBranchId || undefined,
         },
         page,
         perPage,
       ),
-    [ownerKind, debouncedSearch, active, recipe, sort.key, sort.direction],
+    [ownerKind, debouncedSearch, active, recipe, sort.key, sort.direction, costBranchId],
   );
 
   const { items, total, pages, page, perPage, setPage, setPerPage, loading, loadError, refetch } =
@@ -277,6 +288,17 @@ export function RecipeOwnersPage({ ownerKind, noun, showKind, searchPlaceholder 
               setRecipe(e.target.value as RecipeFilter);
               setPage(1);
             }}
+          />
+        </div>
+        <div className="w-52">
+          <Select
+            aria-label="Cost at branch"
+            options={[
+              { value: '', label: 'Cost: all branches' },
+              ...branches.map((b) => ({ value: b.id, label: `Cost at ${b.name}` })),
+            ]}
+            value={costBranchId}
+            onChange={(e) => setCostBranchId(e.target.value)}
           />
         </div>
       </div>
