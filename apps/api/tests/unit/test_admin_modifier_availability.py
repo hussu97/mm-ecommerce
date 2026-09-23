@@ -50,7 +50,9 @@ async def _call(monkeypatch, user, **payload):
     db = _Db()
     stamped: dict = {}
 
-    async def set_option_stock(_db, *, branch, option_id, in_stock, duration):
+    async def set_option_stock(
+        _db, *, branch, option_id, in_stock, duration, actor, **_kw
+    ):
         stamped.update(
             branch=branch, option_id=option_id, in_stock=in_stock, duration=duration
         )

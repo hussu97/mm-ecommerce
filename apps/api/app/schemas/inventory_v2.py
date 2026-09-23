@@ -203,6 +203,9 @@ class BranchInventorySettingsUpdate(BaseModel):
     allow_negative_stock: bool | None = None
     approval_cost_threshold: Decimal | None = Field(None, ge=0)
     approval_variance_percent: Decimal | None = Field(None, ge=0)
+    #: Experimental: take products/options off sale automatically when a
+    #: produced good in their recipe hits branch stock <= 0.
+    auto_availability_enabled: bool | None = None
 
 
 class BranchInventorySettingsResponse(ORMModel):
@@ -217,6 +220,7 @@ class BranchInventorySettingsResponse(ORMModel):
     approval_variance_percent: Decimal
     go_live_sequence: int | None
     go_live_at: datetime | None
+    auto_availability_enabled: bool = False
 
 
 class ReverseTransactionRequest(BaseModel):

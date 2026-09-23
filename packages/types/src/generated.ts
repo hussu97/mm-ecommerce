@@ -10705,6 +10705,11 @@ export interface components {
             /** Approval Variance Percent */
             approval_variance_percent: string;
             /**
+             * Auto Availability Enabled
+             * @default false
+             */
+            auto_availability_enabled: boolean;
+            /**
              * Branch Id
              * Format: uuid
              */
@@ -10735,6 +10740,8 @@ export interface components {
             approval_cost_threshold?: number | string | null;
             /** Approval Variance Percent */
             approval_variance_percent?: number | string | null;
+            /** Auto Availability Enabled */
+            auto_availability_enabled?: boolean | null;
             /** Inventory Enabled */
             inventory_enabled?: boolean | null;
             /** Production Enabled */
@@ -10790,6 +10797,13 @@ export interface components {
             modifier_option_id: string;
             /** Out Of Stock Until */
             out_of_stock_until?: string | null;
+            /**
+             * Staff Override Until Restock
+             * @default false
+             */
+            staff_override_until_restock: boolean;
+            /** Unavailable Source */
+            unavailable_source?: ("staff" | "auto") | null;
         };
         /** BranchProductResponse */
         BranchProductResponse: {
@@ -10811,6 +10825,13 @@ export interface components {
              * Format: uuid
              */
             product_id: string;
+            /**
+             * Staff Override Until Restock
+             * @default false
+             */
+            staff_override_until_restock: boolean;
+            /** Unavailable Source */
+            unavailable_source?: ("staff" | "auto") | null;
         };
         /** BranchResponse */
         BranchResponse: {

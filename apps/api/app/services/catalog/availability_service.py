@@ -42,7 +42,7 @@ from app.models.menu import BranchModifierOption, BranchProduct
 from app.models.modifier import Modifier, ModifierOption, ProductModifier
 from app.models.polygon_branch_fulfilment import PolygonBranchFulfilment
 from app.models.product import Product
-from app.services import option_snapshot
+from app.services import audit_service, option_snapshot
 from app.services.pos import business_day_service
 
 #: How long "for an hour" is. Named because it is a shop's decision rather
@@ -574,6 +574,9 @@ async def sweep(db: AsyncSession) -> int:
             model.is_in_stock.is_(False),
             model.out_of_stock_until.isnot(None),
             model.out_of_stock_until <= now,
+            # A staff override of an auto-off row is state the auto-availability
+            # loop still needs ("leave it until restock"), not a lapsed stockout.
+            model.staff_override_until_restock.is_(False),
         ]
         if model is BranchProduct:
             conditions += [
@@ -587,6 +590,147 @@ async def sweep(db: AsyncSession) -> int:
 
 
 # ─── Writing ──────────────────────────────────────────────────────────────────
+#
+# The only three writers of the stock columns, and each one audits its own
+# change — so the terminal, the console and the system are all on the trail,
+# and no route has to remember to (the console used to; the terminal did not).
+#
+# **Provenance.** A row taken off sale records who did it: `staff` (a person)
+# or `auto` (`auto_availability_service`, when a produced good in the active
+# recipe hits zero at the branch). The system only ever puts back what the
+# system took off; a person always wins. When a person puts an *auto*-off row
+# back on sale, `staff_override_until_restock` is set and the system leaves the
+# row alone until every trigger item is back above zero.
+
+SOURCE_STAFF = "staff"
+SOURCE_AUTO = "auto"
+#: Mirrors `ck_branch_products_unavailable_source` (migration 283).
+SOURCES: tuple[str, ...] = (SOURCE_STAFF, SOURCE_AUTO)
+
+#: Why a row changed, recorded on the audit entry and printed in the owner's
+#: email. A person's change is always `staff`; the other four are the system's.
+REASON_STAFF = "staff"
+REASON_STOCK_DEPLETED = "stock_depleted"
+REASON_STOCK_RECOVERED = "stock_recovered"
+REASON_REMOVED_FROM_RECIPE = "removed_from_recipe"
+REASON_FEATURE_DISABLED = "feature_disabled"
+
+
+@dataclass(frozen=True)
+class Actor:
+    """Who a change is recorded against on the audit trail."""
+
+    id: uuid.UUID
+    email: str
+
+    @classmethod
+    def of(cls, user) -> Actor:
+        return cls(id=user.id, email=user.email)
+
+
+#: The system's own name on the audit trail. `audit_logs.admin_id` is NOT NULL
+#: with no foreign key, so the nil UUID is a legal actor that is plainly nobody.
+SYSTEM_ACTOR = Actor(id=uuid.UUID(int=0), email="system:auto-availability")
+
+
+def _actor(actor) -> Actor:
+    return actor if isinstance(actor, Actor) else Actor.of(actor)
+
+
+def effective_unavailable_source(row, now: datetime | None = None) -> str | None:
+    """`staff`, `auto`, or None when the row does not keep it off sale.
+
+    What the console and the terminal show as the badge: a lapsed stockout is
+    on sale again whatever its source column says, so it reads None.
+    """
+    if row is None or row.is_in_stock is not False:
+        return None
+    until = row.out_of_stock_until
+    if until is not None and until <= (now or _now()):
+        return None
+    # A row off sale from before provenance existed was a person's doing.
+    return row.unavailable_source or SOURCE_STAFF
+
+
+def _state(row) -> dict:
+    """The audited half of a row. A row built in memory reads its defaults."""
+    until = row.out_of_stock_until
+    return {
+        "is_in_stock": row.is_in_stock is not False,
+        "out_of_stock_until": until.isoformat() if until else None,
+        "unavailable_source": row.unavailable_source,
+        "staff_override_until_restock": bool(row.staff_override_until_restock),
+    }
+
+
+def _apply(
+    row,
+    *,
+    in_stock: bool,
+    until: datetime | None,
+    source: str,
+    auto_state: dict | None,
+) -> None:
+    """Write the stock columns by the provenance rules above."""
+    if source not in SOURCES:
+        raise ValueError(f"Unknown availability source {source!r}")
+    if source == SOURCE_AUTO:
+        # The system never sets a clock (auto-off lasts until the stock comes
+        # back) and never touches price or is_active — only the stock state.
+        row.is_in_stock = in_stock
+        row.out_of_stock_until = None
+        row.unavailable_source = None if in_stock else SOURCE_AUTO
+        row.auto_state = None if in_stock else auto_state
+        return
+
+    was_auto_off = row.is_in_stock is False and row.unavailable_source == SOURCE_AUTO
+    row.is_in_stock = in_stock
+    # Putting something back clears the clock as well as the flag; the CHECK
+    # refuses a row that is available and still counting down.
+    row.out_of_stock_until = None if in_stock else until
+    row.unavailable_source = None if in_stock else SOURCE_STAFF
+    row.auto_state = None
+    if in_stock and was_auto_off:
+        # Staff wins until restock: the system may not take it straight back off.
+        row.staff_override_until_restock = True
+    elif not in_stock:
+        # A fresh staff stockout supersedes the override: once its own clock
+        # lapses the row must be back under automatic control, not shielded by
+        # a flag from an earlier "put it back".
+        row.staff_override_until_restock = False
+
+
+async def _audit(
+    db: AsyncSession,
+    *,
+    entity_type: str,
+    row,
+    label: str,
+    before: dict,
+    source: str,
+    reason: str,
+    actor: Actor,
+    request=None,
+) -> None:
+    changes: dict = {
+        "before": before,
+        "after": _state(row),
+        "source": source,
+        "reason": reason,
+    }
+    if row.auto_state:
+        changes["auto_state"] = row.auto_state
+    await audit_service.log_actor_action(
+        db,
+        action="UPDATE",
+        entity_type=entity_type,
+        entity_id=str(row.id),
+        entity_label=label,
+        actor_id=actor.id,
+        actor_email=actor.email,
+        changes=changes,
+        request=request,
+    )
 
 
 async def set_product_stock(
@@ -595,9 +739,20 @@ async def set_product_stock(
     branch: Branch,
     product_id: uuid.UUID,
     in_stock: bool,
+    actor,
     duration: str = DURATION_INDEFINITE,
+    source: str = SOURCE_STAFF,
+    reason: str | None = None,
+    auto_state: dict | None = None,
+    entity_label: str | None = None,
+    request=None,
 ) -> BranchProduct:
-    """Mark one product out at one branch, or put it back."""
+    """Mark one product out at one branch, or put it back — and audit it.
+
+    `actor` is the signed-in `User` (or an `Actor`; `SYSTEM_ACTOR` for the
+    system). Required, so no writer can skip the trail. `duration` is ignored
+    for `source='auto'`, which is always indefinite.
+    """
     row = (
         await db.execute(
             select(BranchProduct).where(
@@ -611,13 +766,29 @@ async def set_product_stock(
         row = BranchProduct(branch_id=branch.id, product_id=product_id)
         db.add(row)
 
-    row.is_in_stock = in_stock
-    # Putting something back clears the clock as well as the flag; the CHECK
-    # refuses a row that is available and still counting down.
-    row.out_of_stock_until = (
-        None if in_stock else await resolve_until(db, branch=branch, duration=duration)
+    before = _state(row)
+    until = (
+        None
+        if in_stock or source == SOURCE_AUTO
+        else await resolve_until(db, branch=branch, duration=duration)
     )
+    _apply(row, in_stock=in_stock, until=until, source=source, auto_state=auto_state)
     await db.flush()
+
+    if entity_label is None:
+        name = await db.scalar(select(Product.name).where(Product.id == product_id))
+        entity_label = f"{name or product_id} @ {branch.reference}"
+    await _audit(
+        db,
+        entity_type="branch_product",
+        row=row,
+        label=entity_label,
+        before=before,
+        source=source,
+        reason=reason or REASON_STAFF,
+        actor=_actor(actor),
+        request=request,
+    )
     return row
 
 
@@ -627,9 +798,15 @@ async def set_option_stock(
     branch: Branch,
     option_id: uuid.UUID,
     in_stock: bool,
+    actor,
     duration: str = DURATION_INDEFINITE,
+    source: str = SOURCE_STAFF,
+    reason: str | None = None,
+    auto_state: dict | None = None,
+    entity_label: str | None = None,
+    request=None,
 ) -> BranchModifierOption:
-    """Mark one modifier option out at one branch, or put it back."""
+    """Mark one modifier option out at one branch, or put it back — and audit it."""
     row = (
         await db.execute(
             select(BranchModifierOption).where(
@@ -643,11 +820,31 @@ async def set_option_stock(
         row = BranchModifierOption(branch_id=branch.id, modifier_option_id=option_id)
         db.add(row)
 
-    row.is_in_stock = in_stock
-    row.out_of_stock_until = (
-        None if in_stock else await resolve_until(db, branch=branch, duration=duration)
+    before = _state(row)
+    until = (
+        None
+        if in_stock or source == SOURCE_AUTO
+        else await resolve_until(db, branch=branch, duration=duration)
     )
+    _apply(row, in_stock=in_stock, until=until, source=source, auto_state=auto_state)
     await db.flush()
+
+    if entity_label is None:
+        name = await db.scalar(
+            select(ModifierOption.name).where(ModifierOption.id == option_id)
+        )
+        entity_label = f"{name or option_id} @ {branch.reference}"
+    await _audit(
+        db,
+        entity_type="branch_modifier_option",
+        row=row,
+        label=entity_label,
+        before=before,
+        source=source,
+        reason=reason or REASON_STAFF,
+        actor=_actor(actor),
+        request=request,
+    )
     return row
 
 
@@ -657,13 +854,17 @@ async def set_all_options_stock(
     branch: Branch,
     product_id: uuid.UUID,
     in_stock: bool,
+    actor,
     duration: str = DURATION_INDEFINITE,
+    source: str = SOURCE_STAFF,
+    request=None,
 ) -> int:
     """
     Every option on one product, in one go.
 
     The terminal's "all of them" control. A counter that has run out of one
-    ingredient across every filling should press one button, not eleven.
+    ingredient across every filling should press one button, not eleven. Each
+    option is audited on its own, because each is its own row.
     """
     option_ids = (
         (
@@ -683,6 +884,19 @@ async def set_all_options_stock(
             branch=branch,
             option_id=option_id,
             in_stock=in_stock,
+            actor=actor,
             duration=duration,
+            source=source,
+            request=request,
         )
     return len(option_ids)
+
+
+async def clear_restock_override(db: AsyncSession, row) -> None:
+    """Every trigger item is back above zero: the system may act on it again.
+
+    Not an availability change — the row stays exactly as on or off as it was
+    — so it is not audited; the trail already holds the staff write that set it.
+    """
+    row.staff_override_until_restock = False
+    await db.flush()

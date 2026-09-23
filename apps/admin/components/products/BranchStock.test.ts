@@ -78,4 +78,32 @@ describe('what a branch says about a product', () => {
 
     expect(status.inStock).toBe(false);
   });
+
+  it('marks a row the system took off as auto, and only that one', () => {
+    // The "Auto (stock)" badge: a produced good in the recipe hit zero here.
+    const auto = branchStockStatus(
+      [row({ unavailable_source: 'auto' })],
+      PRODUCT,
+      BRANCH,
+      NOON,
+    );
+    expect(auto).toEqual({ inStock: false, until: null, auto: true });
+
+    const staff = branchStockStatus(
+      [row({ unavailable_source: 'staff' })],
+      PRODUCT,
+      BRANCH,
+      NOON,
+    );
+    expect(staff.auto).toBeUndefined();
+
+    // Back on sale reads as on sale, whatever the column last said.
+    const back = branchStockStatus(
+      [row({ is_in_stock: true, unavailable_source: null })],
+      PRODUCT,
+      BRANCH,
+      NOON,
+    );
+    expect(back.auto).toBeUndefined();
+  });
 });

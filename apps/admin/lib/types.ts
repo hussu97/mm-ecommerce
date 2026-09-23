@@ -1452,6 +1452,14 @@ export interface BranchProductAvailability {
    * available and still counting down.
    */
   out_of_stock_until: string | null;
+  /**
+   * Who has it off sale: `staff`, `auto` (a produced good in its active recipe
+   * ran out at this branch — the experimental auto-availability pilot), or null
+   * while on sale. Mirrors `BranchProductResponse` in `@mm/types`.
+   */
+  unavailable_source?: 'staff' | 'auto' | null;
+  /** A person put an auto-off row back on sale; it stays on until restock. */
+  staff_override_until_restock?: boolean;
 }
 
 /**
@@ -1468,6 +1476,9 @@ export interface BranchModifierOptionAvailability {
   is_in_stock: boolean;
   /** When it comes back, or null for "until somebody puts it back". */
   out_of_stock_until: string | null;
+  /** `staff`, `auto`, or null while on sale — as `BranchProductAvailability`. */
+  unavailable_source?: 'staff' | 'auto' | null;
+  staff_override_until_restock?: boolean;
 }
 
 /**

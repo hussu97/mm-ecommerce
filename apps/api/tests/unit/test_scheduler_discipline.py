@@ -64,6 +64,10 @@ _LOOP_BEATS = {
     "app.services.branch_hours_sync": ("run_forever", "branch_hours_sync"),
     "app.services.grubops.grubops_reconcile": ("run_forever", "grubops_reconcile"),
     "app.services.grubops.grubops_orders": ("run_forever", "grubops_orders"),
+    "app.services.inventory.auto_availability_service": (
+        "run_forever",
+        "auto_availability",
+    ),
 }
 
 

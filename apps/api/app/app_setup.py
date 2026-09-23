@@ -266,6 +266,17 @@ async def start_storefront_schedulers() -> list[asyncio.Task]:
         )
     )
 
+    # Auto off-sale from produced-good stock (experimental; Barsha pilot). Same
+    # lifespan reasons as its neighbours — no cron here, an advisory lock so a
+    # second copy is harmless. Always started: the per-branch
+    # `auto_availability_enabled` flag is the switch, and with no branch on it
+    # only releases (nothing) and drains (nothing).
+    from app.services.inventory import auto_availability_service
+
+    background.append(
+        spawn_tracked(auto_availability_service.run_forever(), name="auto_availability")
+    )
+
     # The VAT ledger refresh. Same lifespan reasons as its neighbours —
     # no cron here, an advisory lock so a second copy across blue/green is
     # harmless, storefront only. Own flag so the derived VAT cache can be

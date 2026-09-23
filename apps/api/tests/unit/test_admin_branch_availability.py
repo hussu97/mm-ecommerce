@@ -65,6 +65,8 @@ class _Db:
             row.is_in_stock = True
         if row.is_active is None:
             row.is_active = True
+        if getattr(row, "staff_override_until_restock", False) is None:
+            row.staff_override_until_restock = False
 
     def add(self, _row):
         return None
@@ -74,8 +76,10 @@ async def _call(monkeypatch, user, **payload):
     db = _Db()
     stamped: dict = {}
 
-    async def set_product_stock(_db, *, branch, product_id, in_stock, duration):
-        stamped.update(branch=branch, in_stock=in_stock, duration=duration)
+    async def set_product_stock(
+        _db, *, branch, product_id, in_stock, duration, actor, **_kw
+    ):
+        stamped.update(branch=branch, in_stock=in_stock, duration=duration, actor=actor)
         return SimpleNamespace(
             id=uuid.uuid4(),
             branch_id=branch.id,

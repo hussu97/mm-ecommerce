@@ -166,6 +166,50 @@ class BranchInventorySettings(Base, UUIDMixin, TimestampMixin):
     go_live_at: Mapped[Any | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: Experimental (Barsha pilot): take products/options off sale when a
+    #: produced good in their active recipe hits branch stock <= 0, and put them
+    #: back when it recovers. See `auto_availability_service`.
+    auto_availability_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+
+class InventoryAvailabilityDirty(Base):
+    """A (branch, produced good) whose stock moved and wants re-evaluating.
+
+    Upserted by `inventory_service.post_transaction` in the same transaction as
+    the movement — one cheap statement, and only for produced goods at branches
+    with `auto_availability_enabled` — so order close and counter sale never
+    wait on the evaluation. `auto_availability_service` drains it every 30 s.
+    Also marked by recipe activation and by `reconcile_levels(apply=True)`.
+    """
+
+    __tablename__ = "inventory_availability_dirty"
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("inventory_items.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    #: The posting that last marked it — null for a recipe or reconcile mark.
+    #: A breadcrumb, deliberately without a foreign key (the ledger is
+    #: immutable, and the posting path should not lock the transaction row).
+    last_txn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    #: `clock_timestamp()`: the drain deletes a row only while it still carries
+    #: the stamp it read, so a mark landing mid-evaluation survives to the next
+    #: tick.
+    marked_at: Mapped[Any] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("clock_timestamp()"),
+    )
 
 
 class InventoryLot(Base, UUIDMixin, TimestampMixin):

@@ -77,7 +77,27 @@ export interface BranchStockStatus {
   inStock: boolean;
   /** When it comes back, or null for "until somebody puts it back". */
   until: string | null;
+  /**
+   * Off sale because the system took it off: a produced good in its active
+   * recipe reached zero at this branch (the experimental auto-availability
+   * pilot). Set only when true. Putting it back by hand wins until restock.
+   */
+  auto?: boolean;
 }
+
+/** Stock status plus the `auto` flag, for a row that is off sale. */
+function withSource(
+  status: { inStock: boolean; until: string | null },
+  source: 'staff' | 'auto' | null | undefined,
+): BranchStockStatus {
+  return !status.inStock && source === 'auto' ? { ...status, auto: true } : status;
+}
+
+/** The badge an auto-off row wears, on the list, the panel and the grid. */
+const AUTO_LABEL = 'Auto (stock)';
+const AUTO_TITLE =
+  'Taken off sale automatically: a produced good in its recipe is at zero stock here. ' +
+  'It comes back when stock recovers; putting it back by hand keeps it on until restock.';
 
 /**
  * What one branch says about one product.
@@ -113,7 +133,10 @@ export function branchStockStatus(
     row.out_of_stock_until !== null &&
     new Date(row.out_of_stock_until).getTime() <= now;
   const out = !row.is_active || (!row.is_in_stock && !lapsed);
-  return { inStock: !out, until: out ? row.out_of_stock_until : null };
+  return withSource(
+    { inStock: !out, until: out ? row.out_of_stock_until : null },
+    row.is_active ? row.unavailable_source : null,
+  );
 }
 
 /**
@@ -143,16 +166,21 @@ export function BranchStockBadges({
             title={
               status.inStock
                 ? `${branch.name}: on sale`
-                : `${branch.name}: off sale ${untilLabel(status.until)}`
+                : status.auto
+                  ? `${branch.name}: ${AUTO_LABEL}. ${AUTO_TITLE}`
+                  : `${branch.name}: off sale ${untilLabel(status.until)}`
             }
             className={cn(
               'font-body text-[10px] tracking-wide px-1.5 py-0.5 rounded-sm border',
               status.inStock
                 ? 'border-green-200 bg-green-50 text-green-700'
-                : 'border-red-200 bg-red-50 text-red-700',
+                : status.auto
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-red-200 bg-red-50 text-red-700',
             )}
           >
             {branch.reference}
+            {status.auto && ' · auto'}
           </span>
         );
       })}
@@ -213,7 +241,10 @@ export function modifierOptionStatus(
     row.out_of_stock_until !== null &&
     new Date(row.out_of_stock_until).getTime() <= now;
   const out = !row.is_in_stock && !lapsed;
-  return { inStock: !out, until: out ? row.out_of_stock_until : null };
+  return withSource(
+    { inStock: !out, until: out ? row.out_of_stock_until : null },
+    row.unavailable_source,
+  );
 }
 
 /** The active option ids across all a product's linked modifiers. */
@@ -356,12 +387,17 @@ export function BranchStockPanel({ productId }: { productId: string }) {
             <Badge variant={status.inStock ? 'success' : 'danger'}>
               {status.inStock ? 'On sale' : 'Off sale'}
             </Badge>
+            {status.auto && (
+              <span title={AUTO_TITLE}>
+                <Badge variant="warning">{AUTO_LABEL}</Badge>
+              </span>
+            )}
 
             {/* Only where there is a clock to report. "Off sale" with no
                 sentence beside it is the indefinite case, and it reads as a
                 different instruction — somebody has to come back and do
                 something. */}
-            {!status.inStock && (
+            {!status.inStock && !status.auto && (
               <span className="text-[11px] font-body text-gray-500">
                 back {untilLabel(status.until)}
               </span>
@@ -578,7 +614,9 @@ function ModifierOptionRow({
                 title={
                   status.inStock
                     ? `${branch.name}: in stock — click to mark out`
-                    : `${branch.name}: out ${untilLabel(status.until)} — click to put back`
+                    : status.auto
+                      ? `${branch.name}: ${AUTO_LABEL}. ${AUTO_TITLE} Click to put back.`
+                      : `${branch.name}: out ${untilLabel(status.until)} — click to put back`
                 }
                 onClick={() =>
                   status.inStock
@@ -589,10 +627,12 @@ function ModifierOptionRow({
                   'min-w-[3.5rem] font-body text-[11px] px-2 py-1 rounded-sm border transition-colors disabled:opacity-50',
                   status.inStock
                     ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
-                    : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100',
+                    : status.auto
+                      ? 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                      : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100',
                 )}
               >
-                {status.inStock ? 'In' : 'Out'}
+                {status.inStock ? 'In' : status.auto ? 'Auto' : 'Out'}
               </button>
               {isOpen && (
                 <div className="absolute z-10 mt-1 left-1/2 -translate-x-1/2 min-w-[9rem] bg-white border border-gray-200 shadow-md">

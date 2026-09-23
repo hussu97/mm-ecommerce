@@ -4033,6 +4033,11 @@
             "title": "Approval Variance Percent",
             "type": "string"
           },
+          "auto_availability_enabled": {
+            "default": false,
+            "title": "Auto Availability Enabled",
+            "type": "boolean"
+          },
           "branch_id": {
             "format": "uuid",
             "title": "Branch Id",
@@ -4143,6 +4148,17 @@
               }
             ],
             "title": "Approval Variance Percent"
+          },
+          "auto_availability_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Availability Enabled"
           },
           "inventory_enabled": {
             "anyOf": [
@@ -4305,6 +4321,26 @@
               }
             ],
             "title": "Out Of Stock Until"
+          },
+          "staff_override_until_restock": {
+            "default": false,
+            "title": "Staff Override Until Restock",
+            "type": "boolean"
+          },
+          "unavailable_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "staff",
+                  "auto"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Source"
           }
         },
         "required": [
@@ -4358,6 +4394,26 @@
             "format": "uuid",
             "title": "Product Id",
             "type": "string"
+          },
+          "staff_override_until_restock": {
+            "default": false,
+            "title": "Staff Override Until Restock",
+            "type": "boolean"
+          },
+          "unavailable_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "staff",
+                  "auto"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Source"
           }
         },
         "required": [

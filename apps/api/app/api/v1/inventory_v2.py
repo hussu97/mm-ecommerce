@@ -66,6 +66,7 @@ from app.schemas.production import ProducibleItemBasis
 from app.services import audit_service
 from app.services.inventory import (
     access_service,
+    auto_availability_service,
     ledger_service,
     recipe_catalog_service,
     recipe_service,
@@ -389,9 +390,15 @@ async def update_branch_inventory_settings(
         raise ConflictError(
             "A manager-approved opening count is required before inventory can be enabled"
         )
+    was_auto = bool(settings.auto_availability_enabled)
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(settings, key, value)
     await db.flush()
+    if settings.auto_availability_enabled and not was_auto:
+        # Evaluate the branch on the next tick rather than at the 15-minute
+        # sweep. Switching it off needs nothing here: the loop releases every
+        # auto-off row at a branch whose flag is off (audited and emailed).
+        await auto_availability_service.mark_branch_dirty(db, branch_id)
     return settings
 
 
