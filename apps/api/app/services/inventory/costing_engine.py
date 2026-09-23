@@ -41,8 +41,11 @@ The rules, per (item, warehouse):
    warehouse, else (for a made item) its current recipe cost there, else the
    latest purchase-order cost of the item anywhere, else 0 — and flagged so
    screens can say so.
-5. A voided receipt is never a pricing source; reversing it removes its own
-   layer first, then draws FIFO like any issue.
+5. A voided receipt is never a pricing source, not even for what was used
+   from it before the void: its stock is provisional like a shortfall, so a
+   mis-keyed PO (2000 g entered for 20000 g) that was consumed and then
+   re-received correctly costs those uses at the corrected price. Reversing it
+   removes its own layer first, then draws FIFO like any issue.
 6. A cost adjustment rescales what survives. Those posted before the v3
    cutover were workarounds for the bugs this engine replaced, and are skipped.
 
@@ -852,8 +855,11 @@ class CostingEngine:
                 return self._estimate(state, line), PURCHASING, False
             if booked <= 0:
                 return self._estimate(state, line), PURCHASING, False
-            voided = line.transaction_id in self.reversed
-            return Fixed(booked, line.line_id), PURCHASING, not voided
+            if line.transaction_id in self.reversed:
+                # Rule 5: its booked price was wrong or never real, so what was
+                # drawn from it before the void waits on the next priced inflow.
+                return self._estimate(state, line), PURCHASING, False
+            return Fixed(booked, line.line_id), PURCHASING, True
         if line.type == OPENING_BALANCE:
             if booked > 0:
                 return Fixed(booked, line.line_id), OPENING_BALANCE, True

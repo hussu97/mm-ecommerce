@@ -816,6 +816,38 @@ def test_reversing_a_partly_consumed_receipt_draws_the_rest_fifo():
     assert_invariant(projection)
 
 
+def test_use_of_a_voided_receipt_takes_the_corrected_receipts_price():
+    # PO-004003: flour keyed as 2000 g for AED 90 (0.045/g), used, then voided
+    # and re-received as the real 20000 g (0.0045/g).
+    flour = uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("inventory_count", "3636", item=flour)
+    ledger.add("purchasing", "2000", "0.045", item=flour, po=True, ref="wrong")
+    use = ledger.add("consumption_from_production", "-4500", item=flour)
+    ledger.add("quantity_adjustment", "-2000", "0.045", item=flour, reverses="wrong")
+    ledger.add("purchasing", "20000", "0.0045", item=flour, po=True)
+    projection = replay(ledger)
+    cost = projection.line_costs[use.line_id]
+    assert cost.unit_cost == D("0.0045")
+    assert not cost.is_provisional
+    level = projection.levels[(flour, WH)]
+    assert level.quantity == D("19136")
+    assert level.average_cost == D("0.0045")
+    assert_invariant(projection)
+
+
+def test_use_of_a_voided_receipt_is_provisional_until_priced():
+    item = uuid.uuid4()
+    ledger = Ledger()
+    ledger.add("purchasing", "10", "9", item=item, po=True, ref="wrong")
+    use = ledger.add("consumption_from_orders", "-4", item=item)
+    ledger.add("quantity_adjustment", "-10", "9", item=item, reverses="wrong")
+    cost = replay(ledger).line_costs[use.line_id]
+    assert cost.is_provisional
+    # The voided price is not even the estimate.
+    assert cost.unit_cost != D("9")
+
+
 def test_undoing_an_issue_restores_its_exact_layers():
     item = uuid.uuid4()
     ledger = Ledger()
