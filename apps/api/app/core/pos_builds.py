@@ -14,11 +14,7 @@ from __future__ import annotations
 #: set to run a promotion as a *coupon* needs it: an older terminal cannot
 #: select a coupon, so at that branch the promotion simply never applies on it.
 #: (Auto mode is applied server-side and needs no particular build.)
-#:
-#: TODO: set to the build that ships `CouponBar` once it is cut. 0 means "every
-#: build", so until then the console only warns about terminals whose build is
-#: unknown.
-COUPON_MIN_BUILD = 0
+COUPON_MIN_BUILD = 1057
 
 #: The first mm-pos build allowed to run the counter local-first (price, take
 #: the tender for, number and print a sale on the iPad and sync it afterwards).
@@ -26,11 +22,9 @@ COUPON_MIN_BUILD = 0
 #: the branch flag is, and `POST /pos/counter/sales` answers 426 — a guard
 #: against an unfinished TestFlight build syncing sales the server cannot trust.
 #: A terminal that reports no build is treated as below it.
-#:
-#: TODO: set to the build that ships local-first checkout once it is cut (the
-#: fleet is on 1056 as this lands). Until a build this high exists, and until a
-#: branch's `counter_local_first` flag is moved off `off`, nothing changes.
-COUNTER_LOCAL_FIRST_MIN_BUILD = 1100
+#: Nothing changes at a branch until its `counter_local_first` flag is moved
+#: off `off` as well.
+COUNTER_LOCAL_FIRST_MIN_BUILD = 1057
 
 
 def build_at_least(build_number: str | None, minimum: int) -> bool:
