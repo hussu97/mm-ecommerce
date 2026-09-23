@@ -190,13 +190,11 @@ export default function PurchaseOrdersPage() {
 
   return (
     <div>
+      {/* The section title lives in the layout, above the tabs. */}
       <header className="mb-5 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="font-display text-xl text-primary tracking-wide">Purchase Orders</h1>
-          <p className="text-xs text-gray-500 font-body mt-1">
-            Submit → approve → receive. An unapproved order stays editable; approving requires a second person.
-          </p>
-        </div>
+        <p className="text-xs text-gray-500 font-body">
+          Submit → approve → receive. An unapproved order stays editable; approving requires a second person.
+        </p>
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={exportXlsx} loading={exporting}>Export</Button>
           <Button onClick={() => setCreating(true)}>New Order</Button>

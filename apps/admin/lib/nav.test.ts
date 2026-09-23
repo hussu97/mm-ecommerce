@@ -11,7 +11,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { NAV, canAccessConsole, canAccessNav, type NavEntry } from './nav';
+import {
+  NAV,
+  SUBROUTE_REQUIRES,
+  canAccessConsole,
+  canAccessNav,
+  holdsPermission,
+  requiredPermissionFor,
+  type NavEntry,
+} from './nav';
 
 const ADMIN = join(__dirname, '..');
 
@@ -46,6 +54,13 @@ describe('sidebar nav permissions', () => {
     expect(unknown, 'these `requires` are not real permission slugs').toEqual([]);
   });
 
+  it('names only real slugs in the sub-route gates too', () => {
+    const slugs = serverSlugs();
+    const unknown = Object.entries(SUBROUTE_REQUIRES)
+      .flatMap(([path, req]) => req.filter((s) => !slugs.has(s)).map((s) => `${path} → ${s}`));
+    expect(unknown, 'these SUBROUTE_REQUIRES are not real permission slugs').toEqual([]);
+  });
+
   it('gates entries by the viewer, and a super-admin sees everything', () => {
     const orders = entries.find((e) => e.href === '/orders')!;
     const security = entries.find((e) => e.href === '/security')!; // requires: null
@@ -59,6 +74,33 @@ describe('sidebar nav permissions', () => {
     expect(canAccessNav(orders, { is_superadmin: true, permissions: [] })).toBe(true);
     // No user at all sees nothing.
     expect(canAccessNav(orders, null)).toBe(false);
+  });
+});
+
+describe('page gate', () => {
+  it('takes the owning entry\'s slug for an ordinary route and its detail pages', () => {
+    expect(requiredPermissionFor('/purchase-orders')).toBe('inventory.purchase_orders.manage');
+    expect(requiredPermissionFor('/purchase-orders/some-po-id')).toBe('inventory.purchase_orders.manage');
+    expect(requiredPermissionFor('/security')).toBeNull();
+    expect(requiredPermissionFor('/no-such-screen')).toBeNull();
+  });
+
+  it('gates Suppliers (a Purchase Orders tab) on inventory.read, like its API', () => {
+    // Moved from Inventory: without its own gate it would inherit the section's
+    // PO slug and lock out the inventory staff who used it there.
+    const needed = requiredPermissionFor('/purchase-orders/suppliers');
+    expect(needed).toEqual(['inventory.read']);
+    expect(holdsPermission(needed, { permissions: ['inventory.read'] })).toBe(true);
+    expect(holdsPermission(needed, { permissions: ['inventory.purchase_orders.manage'] })).toBe(false);
+    expect(holdsPermission(needed, { permissions: ['orders.read'] })).toBe(false);
+    expect(holdsPermission(needed, { is_superadmin: true, permissions: [] })).toBe(true);
+  });
+
+  it('checks a single slug, a public screen, and the signed-out', () => {
+    expect(holdsPermission('orders.read', { permissions: ['orders.read'] })).toBe(true);
+    expect(holdsPermission('orders.read', { permissions: [] })).toBe(false);
+    expect(holdsPermission(null, { permissions: [] })).toBe(true);
+    expect(holdsPermission(null, null)).toBe(false);
   });
 });
 

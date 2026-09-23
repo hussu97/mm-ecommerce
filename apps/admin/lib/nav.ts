@@ -122,14 +122,48 @@ export function canAccessNav(
   return (user.permissions ?? []).includes(entry.requires);
 }
 
-/** The permission the screen at *pathname* needs, or null when the active entry
- *  is public or no entry owns the path. Used to gate the page body, so a
- *  deep-link to a screen the user lacks shows the no-access page, not a 403. */
-export function requiredPermissionFor(pathname: string): string | null {
+/**
+ * Gates for sub-routes whose API is not the one their sidebar entry's slug
+ * names. A path lights (and is otherwise gated by) the entry that owns its
+ * longest prefix, which is right for a detail page — but Suppliers is a tab of
+ * Purchase Orders served by the `inventory.read` supplier routes, so gating it on
+ * the section's `inventory.purchase_orders.manage` would lock out the inventory
+ * staff who used it when it was an Inventory tab. Each value is an ANY-OF list:
+ * holding one slug is enough. Consulted before the entry lookup, longest prefix
+ * first.
+ */
+export const SUBROUTE_REQUIRES: Record<string, string[]> = {
+  // The supplier API reads on inventory.read, so that is the gate — not the
+  // section's PO slug, which would lock out the inventory staff who used it.
+  '/purchase-orders/suppliers': ['inventory.read'],
+};
+
+/** The permission the screen at *pathname* needs — one slug, an any-of list
+ *  (from `SUBROUTE_REQUIRES`), or null when the active entry is public or no
+ *  entry owns the path. Used to gate the page body, so a deep-link to a screen
+ *  the user lacks shows the no-access page, not a 403. */
+export function requiredPermissionFor(pathname: string): string | string[] | null {
+  const sub = Object.keys(SUBROUTE_REQUIRES)
+    .sort((a, b) => b.length - a.length)
+    .find((p) => pathname === p || pathname.startsWith(`${p}/`));
+  if (sub) return SUBROUTE_REQUIRES[sub];
   const href = activeNavHref(pathname);
   if (!href) return null;
   const entry = NAV.find((e): e is NavEntry => 'href' in e && e.href === href);
   return entry ? entry.requires : null;
+}
+
+/** Whether *user* satisfies a `requiredPermissionFor` result: a super-admin
+ *  always does, `null` is public, a slug must be held, and an any-of list needs
+ *  one of its slugs. */
+export function holdsPermission(
+  needed: string | string[] | null,
+  user: { is_superadmin?: boolean; permissions?: string[] } | null | undefined,
+): boolean {
+  if (!user) return false;
+  if (needed === null || user.is_superadmin) return true;
+  const held = user.permissions ?? [];
+  return (typeof needed === 'string' ? [needed] : needed).some((s) => held.includes(s));
 }
 
 /**
