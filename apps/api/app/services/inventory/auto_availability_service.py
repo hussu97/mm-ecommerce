@@ -1059,11 +1059,17 @@ async def publish(reports: list[BranchReport]) -> None:
                 in_stock=in_stock,
                 until=None,
             )
-        await email_service.send_auto_availability_change(
-            branch_name=report.branch_name,
-            branch_reference=report.branch_reference,
-            changes=report.email_rows,
-        )
+    # One email for the whole sweep, however many branches and items moved.
+    await email_service.send_auto_availability_change(
+        branches=[
+            {
+                "branch_name": report.branch_name,
+                "branch_reference": report.branch_reference,
+                "changes": report.email_rows,
+            }
+            for report in changed
+        ]
+    )
 
 
 async def run_forever() -> None:

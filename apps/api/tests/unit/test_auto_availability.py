@@ -562,7 +562,9 @@ def _stub_send(monkeypatch):
 async def test_no_changes_no_email(monkeypatch):
     sent = _stub_send(monkeypatch)
     await email_service.send_auto_availability_change(
-        branch_name="Al Barsha", branch_reference="B001", changes=[]
+        branches=[
+            {"branch_name": "Al Barsha", "branch_reference": "B001", "changes": []}
+        ]
     )
     assert sent == []
 
@@ -580,38 +582,61 @@ async def test_one_email_carries_every_change_with_its_trigger(monkeypatch):
         "purchase_order_id": None,
     }
     await email_service.send_auto_availability_change(
-        branch_name="Al Barsha",
-        branch_reference="B001",
-        changes=[
+        branches=[
             {
-                "direction": "OFF",
-                "kind": "Product",
-                "name": "Pistachio Kunafa",
-                "reason": "stock_depleted",
-                "items": [
+                "branch_name": "Al Barsha",
+                "branch_reference": "B001",
+                "changes": [
                     {
-                        "name": "Kunafa Tray",
-                        "on_hand": Decimal("0"),
-                        "movement": movement,
-                    }
+                        "direction": "OFF",
+                        "kind": "Product",
+                        "name": "Pistachio Kunafa",
+                        "reason": "stock_depleted",
+                        "items": [
+                            {
+                                "name": "Kunafa Tray",
+                                "on_hand": Decimal("0"),
+                                "movement": movement,
+                            }
+                        ],
+                    },
+                    {
+                        "direction": "ON",
+                        "kind": "Option",
+                        "name": "Lotus filling",
+                        "reason": "stock_recovered",
+                        "items": [
+                            {
+                                "name": "Lotus Cream",
+                                "on_hand": Decimal("4"),
+                                "movement": None,
+                            }
+                        ],
+                    },
                 ],
             },
             {
-                "direction": "ON",
-                "kind": "Option",
-                "name": "Lotus filling",
-                "reason": "stock_recovered",
-                "items": [
-                    {"name": "Lotus Cream", "on_hand": Decimal("4"), "movement": None}
+                "branch_name": "Sharjah Kitchen",
+                "branch_reference": "K001",
+                "changes": [
+                    {
+                        "direction": "OFF",
+                        "kind": "Option",
+                        "name": "9 Pieces",
+                        "reason": "stock_depleted",
+                        "items": [],
+                    },
                 ],
             },
         ],
     )
+    # One email for the whole sweep: both branches, every change.
     assert len(sent) == len(email_service.AUTO_AVAILABILITY_RECIPIENTS) == 1
     (message,) = sent
     assert message["to"] == "h_abbasi97@hotmail.com"
-    assert "Al Barsha" in message["subject"]
-    assert "1 off sale" in message["subject"] and "1 back on sale" in message["subject"]
+    assert "Al Barsha" in message["subject"] and "Sharjah Kitchen" in message["subject"]
+    assert "2 off sale" in message["subject"] and "1 back on sale" in message["subject"]
+    assert "9 Pieces" in message["html"] and "Sharjah Kitchen" in message["html"]
     html = message["html"]
     for fragment in (
         "Pistachio Kunafa",
@@ -641,7 +666,7 @@ def test_a_movement_links_to_what_caused_it():
     )
 
 
-async def test_publish_sends_one_email_per_branch_and_pushes_grubops(monkeypatch):
+async def test_publish_sends_one_email_per_sweep_and_pushes_grubops(monkeypatch):
     emails, pushes = [], []
 
     async def send(**kwargs):
@@ -679,9 +704,17 @@ async def test_publish_sends_one_email_per_branch_and_pushes_grubops(monkeypatch
     quiet = auto.BranchReport(
         branch_id=uuid.uuid4(), branch_name="Quiet", branch_reference="Q"
     )
-    await auto.publish([barsha, quiet])
+    sharjah = auto.BranchReport(
+        branch_id=uuid.uuid4(),
+        branch_name="Sharjah",
+        branch_reference="K001",
+        changes=[change("product", True)],
+        email_rows=[{"direction": "ON"}],
+    )
+    await auto.publish([barsha, quiet, sharjah])
 
-    assert [e["branch_name"] for e in emails] == ["Al Barsha"]
-    assert len(emails[0]["changes"]) == 2
+    (email,) = emails  # one email for the sweep, not one per branch
+    assert [b["branch_name"] for b in email["branches"]] == ["Al Barsha", "Sharjah"]
+    assert len(email["branches"][0]["changes"]) == 2
     off = next(p for p in pushes if p["in_stock"] is False)
     assert len(off["product_ids"]) == 1 and len(off["option_ids"]) == 1
