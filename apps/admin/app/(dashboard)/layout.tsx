@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { loginPathFor } from '@/lib/auth-redirect';
-import { activeNavHref, canAccessNav, NAV, requiredPermissionFor } from '@/lib/nav';
+import { activeNavHref, canAccessNav, holdsPermission, NAV, requiredPermissionFor } from '@/lib/nav';
 import { DensityToggle } from '@/components/ui/DensityToggle';
 import { cn } from '@/lib/utils';
 
@@ -154,11 +154,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push('/login');
   }
 
-  // The screen at this path is off-limits when its nav entry names a slug the
-  // user lacks — enforced here (not just hidden from the sidebar) so a deep link
+  // The screen at this path is off-limits when its nav entry (or its
+  // `SUBROUTE_REQUIRES` gate) names a slug the user lacks — enforced here (not just hidden from the sidebar) so a deep link
   // or a bookmark lands on a clear no-access page rather than a 403-driven mess.
-  const needed = requiredPermissionFor(pathname);
-  const canView = needed === null || user.is_superadmin || user.permissions.includes(needed);
+  const canView = holdsPermission(requiredPermissionFor(pathname), user);
 
   return (
     <div className="flex min-h-screen">
