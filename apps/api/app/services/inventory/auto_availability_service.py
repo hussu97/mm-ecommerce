@@ -1,8 +1,10 @@
 """Auto off-sale from produced-good stock (experimental; Barsha pilot).
 
-When a branch runs out of a ``produced_good`` (branch on-hand ≤ 0), every product
-and modifier option whose *active* recipe draws it is taken off sale at that
-branch, and put back when the stock recovers. Only branches with
+When a branch's stock of a ``produced_good`` cannot cover one sale (on-hand below
+what one unit of the owner's recipe draws, and always at ≤ 0), every product and
+modifier option in that position is taken off sale at that branch, and put back
+when the stock recovers. A "9 Pieces" box option goes off with 5 brownies left
+while "3 Pieces" stays on. Only branches with
 ``branch_inventory_settings.auto_availability_enabled`` take part.
 
 **Trigger.** ``inventory_service.post_transaction`` — the one level writer —
@@ -27,12 +29,13 @@ on sale, no override               off       auto-off (source 'auto', auto_state
 source 'auto' (off)                on        auto-on (stock recovered / removed
                                              from recipe)
 ``staff_override_until_restock``   —         skip; clear the flag once no trigger
-                                             item is ≤ 0
+                                             item is short
 source 'staff' (off)               —         never touched
 =================================  ========  =====================================
 
 *Desired off* = any produced-good leaf of the owner's expanded active recipe has
-branch on-hand ≤ 0. Products with ``consumes_stock=False`` draw nothing through
+branch on-hand ≤ 0 or below what one sale of the owner draws
+(``requirements_by_owner``, in storage units). Products with ``consumes_stock=False`` draw nothing through
 their own recipe and are skipped (their options still count — the same rule
 ``recipe_service.snapshot_order`` applies). Raw materials, packaging and every
 other kind are ignored. Turning the branch flag off releases every 'auto' row
@@ -278,10 +281,47 @@ def leaves_by_owner(
     return out
 
 
+def requirements_by_owner(
+    catalog: recipe_service.ActiveRecipeCatalog,
+) -> dict[tuple[str, uuid.UUID], dict[uuid.UUID, Decimal]]:
+    """Every product/option recipe → how much of each produced good ONE sale of
+    it takes, in the storage units stock is counted in.
+
+    A "9 Pieces" box option draws 9 brownies: with 5 on the shelf it cannot be
+    sold even though stock is above zero. Owners whose recipe cannot be
+    expanded are left out (their leaves are None and the evaluator skips them).
+    """
+    out: dict[tuple[str, uuid.UUID], dict[uuid.UUID, Decimal]] = {}
+    for (kind, owner_id), version in catalog.versions.items():
+        if kind not in (_PRODUCT, _OPTION):
+            continue
+        try:
+            expanded = recipe_service.expand_lines(
+                catalog,
+                owner_kind=kind,
+                owner_id=owner_id,
+                basis=version.basis,
+                batch_yield=version.batch_yield,
+                lines=version.lines,
+            )
+        except AppError:
+            continue
+        needs: dict[uuid.UUID, Decimal] = {}
+        for item_id, line in expanded.items():
+            item = catalog.items.get(item_id)
+            if item is None or item.kind != _PRODUCED_GOOD:
+                continue
+            factor = Decimal(str(item.storage_to_ingredient_factor or 1)) or Decimal(1)
+            needs[item_id] = Decimal(str(line.quantity)) / factor
+        out[(kind, owner_id)] = needs
+    return out
+
+
 @dataclass(frozen=True)
 class Decision:
     """What to do with one row. `triggers` are the items behind it: the ones at
-    ≤ 0 for an off, the ones that took it off (from `auto_state`) for an on."""
+    short of one sale for an off, the ones that took it off (from `auto_state`)
+    for an on."""
 
     action: str  # "off" | "on" | "clear_override"
     reason: str | None = None
@@ -305,6 +345,7 @@ def decide(
     leaves: frozenset[uuid.UUID] | None,
     on_hand: Mapping[uuid.UUID, Decimal],
     now: datetime | None = None,
+    required: Mapping[uuid.UUID, Decimal] | None = None,
 ) -> Decision | None:
     """The decision table, for one product or option row at one branch.
 
@@ -315,11 +356,15 @@ def decide(
     """
     if leaves is None:
         return None
-    depleted = (
-        tuple(sorted((i for i in leaves if on_hand.get(i, Decimal(0)) <= 0), key=str))
-        if sold
-        else ()
-    )
+
+    def short(item_id: uuid.UUID) -> bool:
+        have = on_hand.get(item_id, Decimal(0))
+        # Short of what one sale takes (a 9-piece box with 5 left), and always
+        # at or below zero whatever the recipe says.
+        need = (required or {}).get(item_id, Decimal(0))
+        return have <= 0 or have < need
+
+    depleted = tuple(sorted((i for i in leaves if short(i)), key=str)) if sold else ()
 
     if row is not None and row.staff_override_until_restock:
         # Staff wins until restock: hands off while anything is still at zero.
@@ -632,6 +677,8 @@ async def evaluate_branch(
     leaves: Mapping[tuple[str, uuid.UUID], frozenset[uuid.UUID] | None],
     item_ids: set[uuid.UUID] | None = None,
     now: datetime | None = None,
+    requirements: Mapping[tuple[str, uuid.UUID], Mapping[uuid.UUID, Decimal]]
+    | None = None,
 ) -> BranchReport:
     """Apply the decision table at one branch. Flushes; the caller commits.
 
@@ -756,6 +803,7 @@ async def evaluate_branch(
             leaves=owner_leaves(kind, owner_id),
             on_hand=on_hand,
             now=now,
+            required=(requirements or {}).get((kind, owner_id)),
         )
         if decision is not None:
             decisions.append((kind, owner_id, name or str(owner_id), decision, row))
@@ -879,19 +927,19 @@ async def release_disabled_branches(db: AsyncSession) -> list[BranchReport]:
 #: drains after nearly every sale, and the graph only changes on an activation —
 #: which bumps the generation — so a drain reuses it. The full sweep always
 #: reloads, which also picks up an item whose kind was edited (no bump for that).
-_leaves_cache: tuple[int, dict] | None = None
+_leaves_cache: tuple[int, tuple[dict, dict]] | None = None
 
 
-async def _leaves(
-    db: AsyncSession, *, refresh: bool
-) -> dict[tuple[str, uuid.UUID], frozenset[uuid.UUID] | None]:
+async def _leaves(db: AsyncSession, *, refresh: bool) -> tuple[dict, dict]:
+    """`(leaves_by_owner, requirements_by_owner)` for the active catalogue."""
     global _leaves_cache
     generation = await recipe_service.current_catalog_generation(db)
     if not refresh and _leaves_cache is not None and _leaves_cache[0] == generation:
         return _leaves_cache[1]
-    leaves = leaves_by_owner(await recipe_service.load_active_catalog(db))
-    _leaves_cache = (generation, leaves)
-    return leaves
+    catalog = await recipe_service.load_active_catalog(db)
+    maps = (leaves_by_owner(catalog), requirements_by_owner(catalog))
+    _leaves_cache = (generation, maps)
+    return maps
 
 
 async def tick(db: AsyncSession, *, full: bool) -> list[BranchReport]:
@@ -931,7 +979,7 @@ async def tick(db: AsyncSession, *, full: bool) -> list[BranchReport]:
         await db.commit()
         return reports
 
-    leaves = await _leaves(db, refresh=full)
+    leaves, requirements = await _leaves(db, refresh=full)
     # Same: the catalogue is plain data from here on; release the snapshot.
     await db.commit()
 
@@ -946,6 +994,7 @@ async def tick(db: AsyncSession, *, full: bool) -> list[BranchReport]:
                 branch,
                 leaves=leaves,
                 item_ids=None if full else set(read),
+                requirements=requirements,
             )
             if read:
                 # Only the marks this pass read: one that landed mid-evaluation

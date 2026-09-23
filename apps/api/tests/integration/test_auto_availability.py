@@ -383,6 +383,25 @@ async def test_the_whole_lifecycle(db, world):
     ] == "feature_disabled"
 
 
+async def test_stock_short_of_one_sale_takes_only_that_owner_off(db, world):
+    """0.7 of the cake: Kunafa (needs 1) cannot be sold, Lotus (needs 0.5) can
+    — the 9-piece box with 5 brownies left, in miniature."""
+    w = world
+    await _stock(db, w, w["cake"], "0.7")
+    await db.commit()
+    assert _changes(await auto.tick(db, full=True)) == {
+        ("Kunafa", False, availability.REASON_STOCK_DEPLETED)
+    }
+    lotus = await _option_row(db, w, w["lotus"])
+    assert lotus is None or lotus.is_in_stock is True
+
+    await _stock(db, w, w["cake"], "1")
+    await db.commit()
+    assert _changes(await auto.tick(db, full=True)) == {
+        ("Kunafa", True, availability.REASON_STOCK_RECOVERED)
+    }
+
+
 async def test_a_staff_stockout_is_never_put_back_by_the_system(db, world):
     w = world
     await availability.set_product_stock(

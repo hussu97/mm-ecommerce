@@ -1207,7 +1207,7 @@ async def send_purchase_order_receiving_variance(
 
 #: The words the owner reads for `availability_service.REASON_*`.
 _AUTO_AVAILABILITY_REASONS = {
-    "stock_depleted": "Stock ≤ 0",
+    "stock_depleted": "Not enough stock for one sale",
     "stock_recovered": "Stock recovered",
     "removed_from_recipe": "Removed from recipe",
     "feature_disabled": "Feature disabled",
